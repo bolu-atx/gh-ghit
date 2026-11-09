@@ -116,8 +116,11 @@ pub fn linkify(text: &str) -> String {
 }
 
 fn linkify_plain(seg: &str) -> String {
-    let s = issue_re().replace_all(seg, "[#$1](issue:$1)");
-    bare_re().replace_all(&s, "${1}[#$2](issue:$2)").into_owned()
+    // Issue refs stay plain `#123` text: the renderer prints link
+    // destinations verbatim, and `(issue:123)` echoes are visual noise.
+    // Click-to-open works off the visible text, not the markup.
+    let s = issue_re().replace_all(seg, "(#$1)");
+    bare_re().replace_all(&s, "${1}#$2").into_owned()
 }
 
 fn ref_bare_re() -> &'static Regex {
@@ -314,8 +317,10 @@ mod tests {
 
     #[test]
     fn linkify_skips_code() {
-        assert!(linkify("see (#1) and #2").contains("[#1](issue:1)"));
-        assert!(!linkify("`#3` and ```\n(#4)\n```").contains("(issue:3)"));
+        // Issue refs render as plain text; only real URLs keep destinations.
+        assert_eq!(linkify("see (#1) and #2"), "see (#1) and #2");
+        assert!(!linkify("see (#1)").contains("issue:"));
+        assert_eq!(linkify("`#3` and ```\n(#4)\n```"), "`#3` and ```\n(#4)\n```");
         assert_eq!(linkify("[#4](http://x)"), "[#4](http://x)");
     }
 

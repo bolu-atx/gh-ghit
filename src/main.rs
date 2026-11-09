@@ -89,6 +89,7 @@ struct App {
     bar: String,
     scroll: u16,
     message: String,
+    message_at: Option<std::time::Instant>,
     issue_state: ListState,
     pr_state: ListState,
     active_list: ActiveList,
@@ -134,6 +135,7 @@ impl App {
             bar: String::new(),
             scroll: 0,
             message: String::new(),
+            message_at: None,
             issue_state: ListState::default(),
             pr_state: ListState::default(),
             active_list: ActiveList::Issues,
@@ -152,6 +154,20 @@ impl App {
             tabs_area: Rect::default(),
             bar_area: Rect::default(),
             board_cells: Vec::new(),
+        }
+    }
+
+    /// Status-line message that expires after a few seconds so the
+    /// shortcut hints always come back.
+    fn notify(&mut self, msg: String) {
+        self.message = msg;
+        self.message_at = Some(std::time::Instant::now());
+    }
+
+    fn message_visible(&self) -> bool {
+        match (self.message.is_empty(), self.message_at) {
+            (false, Some(at)) => at.elapsed() < std::time::Duration::from_secs(4),
+            _ => false,
         }
     }
 
@@ -252,7 +268,7 @@ impl App {
                 self.focus = Focus::Main;
                 self.message.clear();
             }
-            Err(e) => self.message = e,
+            Err(e) => self.notify(e),
         }
     }
 
@@ -282,22 +298,22 @@ impl App {
 
     fn toggle_pin(&mut self) {
         let Some(n) = self.current else {
-            self.message = "view an issue first".to_string();
+            self.notify("view an issue first".to_string());
             return;
         };
         let Some(key) = self.repo_key() else {
-            self.message = "pinning needs a repo: use -R or run inside one".to_string();
+            self.notify("pinning needs a repo: use -R or run inside one".to_string());
             return;
         };
         let mut pins = cache::load_pins(&key);
         if pins.contains(&n) {
             pins.retain(|x| *x != n);
             self.pinned.remove(&n);
-            self.message = format!("unpinned #{n}");
+            self.notify(format!("unpinned #{n}"));
         } else {
             pins.push(n);
             self.pinned.insert(n);
-            self.message = format!("pinned #{n}");
+            self.notify(format!("pinned #{n}"));
         }
         self.pin_order = pins.clone();
         cache::save_pins(&key, &pins);
@@ -312,14 +328,14 @@ impl App {
 
     fn refresh_current(&mut self) {
         let Some(n) = self.current else {
-            self.message = "view an issue first".to_string();
+            self.notify("view an issue first".to_string());
             return;
         };
         if let Some(owner) = board_owner(self.repo_flag.clone().or_else(|| self.repo_slug.clone())) {
             cache::cache_drop(&format!("board-{}", owner.to_lowercase()));
         }
         self.load_issue(n, true);
-        self.message = format!("refreshed #{n}");
+        self.notify(format!("refreshed #{n}"));
     }
 
     fn open_number(&mut self, n: u64) {
@@ -331,7 +347,7 @@ impl App {
         } else {
             open::that(format!("https://github.com/issues/{n}")).ok();
         }
-        self.message = format!("opened #{n} in browser");
+        self.notify(format!("opened #{n} in browser"));
     }
 
     fn submit_bar(&mut self) {
@@ -350,7 +366,7 @@ impl App {
                 if let Some(n) = self.current {
                     self.open_number(n);
                 } else {
-                    self.message = "view an issue first".to_string();
+                    self.notify("view an issue first".to_string());
                 }
             }
             "q" | "quit" | "exit" => {}
@@ -459,7 +475,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Char('h') | KeyCode::Left => board_move(app, -1, 0),
             KeyCode::Char('l') | KeyCode::Right => board_move(app, 1, 0),
             KeyCode::Char('t') => {
-                app.message = format!("theme: {}", theme::cycle());
+                app.notify(format!("theme: {}", theme::cycle()));
             }
             KeyCode::Char(' ') => {
                 let pos = (app.board_col, app.board_row);
@@ -510,7 +526,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('1') => app.tab = Tab::Body,
         KeyCode::Char('2') => app.tab = Tab::Comments,
         KeyCode::Char('t') => {
-            app.message = format!("theme: {}", theme::cycle());
+            app.notify(format!("theme: {}", theme::cycle()));
         }
         KeyCode::Char('b') => open_board(app),
         KeyCode::Char('j') => move_selection(app, 1),
@@ -532,7 +548,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             if let Some(n) = app.current {
                 app.open_number(n);
             } else {
-                app.message = "view an issue first".to_string();
+                app.notify("view an issue first".to_string());
             }
         }
         KeyCode::Char('r') => app.refresh_current(),
@@ -676,7 +692,7 @@ fn open_board(app: &mut App) {
     }
     let owner = board_owner(app.repo_flag.clone().or_else(|| app.repo_slug.clone()));
     let Some(owner) = owner else {
-        app.message = "board needs a repo: use -R or run inside one".to_string();
+        app.notify("board needs a repo: use -R or run inside one".to_string());
         return;
     };
     app.board_loading = true;
@@ -710,7 +726,7 @@ fn poll_board(app: &mut App) {
             app.board_states.clear();
             app.board_expanded = None;
         }
-        Err(e) => app.message = e,
+        Err(e) => app.notify(e),
     }
 }
 
@@ -762,16 +778,16 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
     render_main(f, cols[1], app);
     app.capture_body_rows(f.buffer_mut());
 
-    let footer_line = if app.message.is_empty() {
-        Line::from(Span::styled(
-            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · t theme · click #n · q quit",
-            Style::new().fg(muted()),
-        ))
-    } else {
+    let footer_line = if app.message_visible() {
         Line::from(vec![
             Span::styled("! ", Style::new().fg(amber()).bold()),
             Span::styled(app.message.clone(), Style::new().fg(amber())),
         ])
+    } else {
+        Line::from(Span::styled(
+            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · t theme · click #n · q quit",
+            Style::new().fg(muted()),
+        ))
     };
     f.render_widget(Paragraph::new(footer_line), root[1]);
 
@@ -960,7 +976,13 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .style(base())
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
-    f.render_widget(pane, rows[2]);
+    // Breathing room: text never touches the column edges.
+    let gutter = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
+        .split(rows[2]);
+    app.body_area = gutter[1];
+    f.render_widget(pane, gutter[1]);
 
     let bar_block = Block::default()
         .borders(Borders::ALL)
