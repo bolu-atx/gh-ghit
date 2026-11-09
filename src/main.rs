@@ -428,15 +428,13 @@ fn event_loop(
 ) -> Result<(), String> {
     loop {
         terminal.draw(|f| render(f, app)).map_err(|e| e.to_string())?;
-        if !event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
-            continue;
+        if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
+            match event::read().map_err(|e| e.to_string())? {
+                Event::Key(key) => handle_key(app, key),
+                Event::Mouse(m) => handle_mouse(app, m),
+                _ => {}
+            };
         }
-        match event::read().map_err(|e| e.to_string())? {
-            Event::Key(key) => handle_key(app, key),
-            Event::Mouse(m) => handle_mouse(app, m),
-            _ => {}
-        };
-        app.capture_body_rows(terminal.current_buffer_mut());
         poll_board(app);
         if app.quit {
             return Ok(());
@@ -746,6 +744,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
     render_sidebar(f, cols[0], app);
     render_main(f, cols[1], app);
+    app.capture_body_rows(f.buffer_mut());
 
     let footer_line = if app.message.is_empty() {
         Line::from(Span::styled(
@@ -1288,7 +1287,6 @@ mod render_smoke {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, app)).expect("draw");
-        app.capture_body_rows(terminal.backend().buffer());
         terminal
             .backend()
             .buffer()

@@ -1,20 +1,20 @@
-//! ghit visual theme: a warm editorial desk.
+//! ghit visual theme: ayu mirage.
 //!
-//! Ink background, paper text, one amber accent. Selection is a marker plus
-//! bold type, never a full-width color block.
+//! Desaturated blue-ink background, warm accent, quiet gray-blue muted tone.
+//! Selection is a marker plus bold type, never a full-width color block.
 use ratatui::style::{Color, Style};
 use ratatui::text::Text;
 use tui_markdown::{Options, StyleSheet, from_str_with_options};
 
-pub const INK: Color = Color::Rgb(23, 19, 16);
-pub const CODE_BG: Color = Color::Rgb(38, 31, 24);
-pub const PAPER: Color = Color::Rgb(236, 227, 212);
-pub const AMBER: Color = Color::Rgb(227, 154, 45);
-pub const TEAL: Color = Color::Rgb(90, 158, 143);
-pub const MUTED: Color = Color::Rgb(140, 132, 116);
-pub const RED: Color = Color::Rgb(193, 75, 63);
-pub const GREEN: Color = Color::Rgb(127, 163, 90);
-pub const VIOLET: Color = Color::Rgb(142, 111, 184);
+pub const INK: Color = Color::Rgb(0x1F, 0x24, 0x30);
+pub const CODE_BG: Color = Color::Rgb(0x1C, 0x21, 0x2B);
+pub const PAPER: Color = Color::Rgb(0xCC, 0xCA, 0xC2);
+pub const AMBER: Color = Color::Rgb(0xFF, 0xCC, 0x66);
+pub const TEAL: Color = Color::Rgb(0x95, 0xE6, 0xCB);
+pub const MUTED: Color = Color::Rgb(0x6C, 0x7A, 0x8B);
+pub const RED: Color = Color::Rgb(0xFF, 0x66, 0x66);
+pub const GREEN: Color = Color::Rgb(0x87, 0xD9, 0x6C);
+pub const VIOLET: Color = Color::Rgb(0xDF, 0xBF, 0xFF);
 
 pub fn base() -> Style {
     Style::new().bg(INK).fg(PAPER)
