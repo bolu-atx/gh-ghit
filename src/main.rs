@@ -6,6 +6,7 @@
 mod cache;
 mod gh;
 mod model;
+mod theme;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
@@ -20,7 +21,7 @@ use crossterm::ExecutableCommand;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
@@ -547,6 +548,11 @@ fn board_selected_number(app: &App) -> Option<u64> {
 // ---------------------------------------------------------------------------
 
 fn render(f: &mut ratatui::Frame, app: &mut App) {
+    use theme::{AMBER, INK, MUTED};
+    f.render_widget(
+        Block::default().style(Style::new().bg(INK)),
+        f.area(),
+    );
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
@@ -554,42 +560,79 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(42), Constraint::Min(1)])
+        .constraints([Constraint::Length(44), Constraint::Min(1)])
         .split(root[0]);
 
     render_sidebar(f, cols[0], app);
     render_main(f, cols[1], app);
 
-    let hint = "1 body · 2 comments · b board · j/k scroll · : cmd · o open · r refresh · p pin · q quit";
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(app.message.clone(), Style::default().fg(Color::Yellow)),
-    ]))
-    .block(Block::default().title(hint));
-    f.render_widget(footer, root[1]);
+    let footer_line = if app.message.is_empty() {
+        Line::from(Span::styled(
+            "1 body · 2 comments · b board · j/k scroll · : cmd · o open · r refresh · p pin · q quit",
+            Style::new().fg(MUTED),
+        ))
+    } else {
+        Line::from(vec![
+            Span::styled("! ", Style::new().fg(AMBER).bold()),
+            Span::styled(app.message.clone(), Style::new().fg(AMBER)),
+        ])
+    };
+    f.render_widget(Paragraph::new(footer_line), root[1]);
 
     if app.board.is_some() {
         render_board(f, f.area(), app);
     }
 }
 
-fn section_list<'a>(title: String, numbers: &[u64], app: &App, selected: Option<usize>) -> (List<'a>, ListState) {
+fn section_list<'a>(
+    title: Line<'a>,
+    numbers: &[u64],
+    app: &App,
+    selected: Option<usize>,
+) -> (List<'a>, ListState) {
+    use theme::{AMBER, INK, MUTED, PAPER, state_color};
     let items: Vec<ListItem<'a>> = numbers
         .iter()
-        .map(|n| {
-            let (first, second) = match app.data.get(n) {
+        .enumerate()
+        .map(|(idx, n)| {
+            let sel = selected == Some(idx);
+            let marker = if sel { "▌ " } else { "  " };
+            let marker_style = if sel {
+                Style::new().fg(AMBER).bold()
+            } else {
+                Style::new().fg(MUTED)
+            };
+            let (title_text, second) = match app.data.get(n) {
                 Some(d) => {
                     let st = app.statuses.get(n).cloned().unwrap_or_default();
-                    model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n))
+                    (
+                        model::slug(&d.title, 30),
+                        model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n)).1,
+                    )
                 }
-                None => (format!("#{n}"), String::new()),
+                None => (String::new(), String::new()),
             };
-            let pinned = app.pinned.contains(n);
+            let pin = if app.pinned.contains(n) { "◆ " } else { "" };
+            let data = app.data.get(n);
+            let num_style = Style::new()
+                .fg(data.map(|d| state_color(&d.state)).unwrap_or(MUTED))
+                .bold();
+            let title_style = if sel {
+                Style::new().fg(PAPER).bold()
+            } else {
+                Style::new().fg(PAPER)
+            };
             ListItem::new(vec![
-                Line::from(Span::styled(
-                    first,
-                    Style::default().add_modifier(if pinned { Modifier::BOLD } else { Modifier::empty() }),
-                )),
-                Line::from(Span::styled(second, Style::default().fg(Color::DarkGray))),
+                Line::from(vec![
+                    Span::styled(marker, marker_style),
+                    Span::styled(pin, Style::new().fg(AMBER)),
+                    Span::styled(format!("#{n} "), num_style),
+                    Span::styled(title_text, title_style),
+                ]),
+                Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(second, Style::new().fg(MUTED)),
+                ]),
                 Line::from(""),
             ])
         })
@@ -597,14 +640,23 @@ fn section_list<'a>(title: String, numbers: &[u64], app: &App, selected: Option<
     let mut state = ListState::default();
     state.select(selected);
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::new().bg(INK).fg(MUTED))
+                .title(title)
+                .style(Style::new().bg(INK)),
+        )
+        .highlight_style(Style::new().bold());
     (list, state)
+}
+
+fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
+    use theme::{AMBER, MUTED};
+    Line::from(vec![
+        Span::styled(format!("{name} "), Style::new().fg(AMBER).bold()),
+        Span::styled(detail.to_uppercase(), Style::new().fg(MUTED)),
+    ])
 }
 
 fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
@@ -614,14 +666,14 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
     let key = app.repo_key().unwrap_or_default();
     let (il, mut istate) = section_list(
-        format!("ISSUES · {key}"),
+        section_title("Issues", &key),
         &app.issues.clone(),
         app,
         app.issue_state.selected(),
     );
     f.render_stateful_widget(il, rows[0], &mut istate);
     let (pl, mut pstate) = section_list(
-        "PULL REQUESTS".to_string(),
+        section_title("Pull requests", ""),
         &app.prs.clone(),
         app,
         app.pr_state.selected(),
@@ -630,22 +682,47 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 }
 
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    use theme::{AMBER, INK, MUTED, PAPER, base};
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Min(1),
             Constraint::Length(3),
         ])
         .split(area);
 
-    let tabs = Tabs::new(vec!["Body (1)", "Comments (2)"])
+    let repo = app.repo_key().unwrap_or_default();
+    let mast = match app.current.and_then(|n| app.data.get(&n)) {
+        Some(d) => Line::from(vec![
+            Span::styled("ghit ", Style::new().fg(AMBER).bold()),
+            Span::styled(format!("{repo}  "), Style::new().fg(MUTED)),
+            Span::styled(format!("#{} ", d.number), Style::new().fg(MUTED)),
+            Span::styled(model::slug(&d.title, 60), Style::new().fg(PAPER).bold()),
+        ]),
+        None => Line::from(vec![
+            Span::styled("ghit ", Style::new().fg(AMBER).bold()),
+            Span::styled(repo, Style::new().fg(MUTED)),
+        ]),
+    };
+    f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
+
+    let tabs = Tabs::new(vec!["BODY", "COMMENTS"])
         .select(match app.tab {
             Tab::Body => 0,
             Tab::Comments => 1,
         })
-        .block(Block::default().borders(Borders::ALL).title("ghit"));
-    f.render_widget(tabs, rows[0]);
+        .style(Style::new().bg(INK).fg(MUTED))
+        .highlight_style(Style::new().bg(INK).fg(AMBER).bold().underlined())
+        .divider("  ")
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::new().bg(INK).fg(MUTED))
+                .style(Style::new().bg(INK)),
+        );
+    f.render_widget(tabs, rows[1]);
 
     let body = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => {
@@ -657,37 +734,47 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         }
         None => "No issue loaded.\n\nType a number in the command bar and hit Enter.\n(: or / focuses the bar)".to_string(),
     };
-    let rendered = tui_markdown::from_str(&body);
-    let pane = Paragraph::new(rendered).wrap(Wrap { trim: false }).scroll((app.scroll, 0));
-    f.render_widget(pane, rows[1]);
+    let rendered = theme::render_markdown(&body);
+    let pane = Paragraph::new(rendered)
+        .style(base())
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0));
+    f.render_widget(pane, rows[2]);
 
-    let bar_style = if app.focus == Focus::Bar {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-    let bar = Paragraph::new(format!(": {}", app.bar)).style(bar_style).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("#123 [#124 …] jump · o open · r refresh · p pin · q quit"),
+    let bar_block = Block::default().borders(Borders::ALL).style(base()).border_style(
+        Style::new().bg(INK).fg(if app.focus == Focus::Bar { AMBER } else { MUTED }),
     );
-    f.render_widget(bar, rows[2]);
+    let inner = bar_block.inner(rows[3]);
+    f.render_widget(bar_block, rows[3]);
+    let prompt = Line::from(vec![
+        Span::styled("❯ ", Style::new().bg(INK).fg(AMBER).bold()),
+        Span::styled(app.bar.clone(), Style::new().bg(INK).fg(PAPER)),
+    ]);
+    f.render_widget(Paragraph::new(prompt), inner);
     if app.focus == Focus::Bar {
-        f.set_cursor_position((rows[2].x + 2 + app.bar.len() as u16, rows[2].y + 1));
+        f.set_cursor_position((inner.x + 2 + app.bar.len() as u16, inner.y));
     }
 }
 
 fn render_board(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use theme::{AMBER, INK, MUTED, PAPER, base};
     let Some(board) = &app.board else { return };
     let cols = board_columns(&board.items, &board.order);
     let popup = centered(area, 92, 92);
     f.render_widget(Clear, popup);
-    let block = Block::default().borders(Borders::ALL).title(board.title.clone());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(AMBER))
+        .style(base())
+        .title(Span::styled(
+            format!(" {} ", board.title.to_uppercase()),
+            Style::new().bg(INK).fg(AMBER).bold(),
+        ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
     if cols.is_empty() {
-        f.render_widget(Paragraph::new("empty board"), inner);
+        f.render_widget(Paragraph::new("empty board").style(base()), inner);
         return;
     }
     let widths: Vec<Constraint> = cols.iter().map(|_| Constraint::Length(34)).collect();
@@ -704,30 +791,89 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &App) {
                     Some(n) => format!("#{n} {title}"),
                     None => format!("◇ {title}"),
                 };
-                let style = if sel {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+                let row = if sel {
+                    Line::from(vec![
+                        Span::styled("▌ ", Style::new().bg(INK).fg(AMBER).bold()),
+                        Span::styled(head, Style::new().bg(INK).fg(PAPER).bold()),
+                    ])
                 } else {
-                    Style::default()
+                    Line::from(Span::styled(format!("  {head}"), Style::new().bg(INK).fg(PAPER)))
                 };
-                ListItem::new(vec![Line::from(Span::styled(head, style))])
+                ListItem::new(vec![row])
             })
             .collect();
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(format!("{} ({})", name, cards.len())));
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::new().bg(INK).fg(MUTED))
+                .style(base())
+                .title(Line::from(vec![
+                    Span::styled(format!("{} ", name.to_uppercase()), Style::new().bg(INK).fg(AMBER).bold()),
+                    Span::styled(format!("({})", cards.len()), Style::new().bg(INK).fg(MUTED)),
+                ])),
+        );
         f.render_widget(list, *a);
     }
 }
 
 #[cfg(test)]
-mod smoke {
+mod render_smoke {
+    use super::*;
+    use crate::model::{Author, IssueData};
+    use ratatui::backend::TestBackend;
+
+    fn sample() -> IssueData {
+        IssueData {
+            number: 7,
+            title: "Fix the thing".to_string(),
+            state: "OPEN".to_string(),
+            author: Author { login: "bo".to_string() },
+            labels: vec![],
+            assignees: vec![],
+            created_at: "2026-01-02T00:00:00Z".to_string(),
+            url: "https://github.com/o/r/issues/7".to_string(),
+            body: "# hello\n\n- a\n- b\n".to_string(),
+            comments: vec![],
+            is_pr: false,
+        }
+    }
+
+    fn frame_text(app: &mut App) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
     #[test]
-    fn markdown_renders_to_lines() {
-        let text = tui_markdown::from_str("# hi\n\n- a\n- b\n");
-        assert!(text.height() > 3);
-        assert!(text.width() > 0);
+    fn desk_renders_issue() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let d = sample();
+        app.data.insert(7, d);
+        app.statuses.insert(7, vec![]);
+        app.issues.push(7);
+        app.show_issue(7);
+        let text = frame_text(&mut app);
+        assert!(text.contains("ghit"), "masthead wordmark");
+        assert!(text.contains("#7"), "issue number");
+        assert!(text.contains("BODY"), "tab label");
+        assert!(text.contains("hello"), "markdown body");
+    }
+
+    #[test]
+    fn desk_renders_empty() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let text = frame_text(&mut app);
+        assert!(text.contains("ghit"));
+        assert!(text.contains("No issue loaded"));
     }
 }
 
