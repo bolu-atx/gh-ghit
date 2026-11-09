@@ -598,7 +598,12 @@ fn section_list<'a>(title: String, numbers: &[u64], app: &App, selected: Option<
     state.select(selected);
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .highlight_style(Style::default().bg(Color::DarkGray));
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     (list, state)
 }
 
@@ -652,7 +657,8 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         }
         None => "No issue loaded.\n\nType a number in the command bar and hit Enter.\n(: or / focuses the bar)".to_string(),
     };
-    let pane = Paragraph::new(body).wrap(Wrap { trim: false }).scroll((app.scroll, 0));
+    let rendered = tui_markdown::from_str(&body);
+    let pane = Paragraph::new(rendered).wrap(Wrap { trim: false }).scroll((app.scroll, 0));
     f.render_widget(pane, rows[1]);
 
     let bar_style = if app.focus == Focus::Bar {
@@ -699,7 +705,10 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &App) {
                     None => format!("◇ {title}"),
                 };
                 let style = if sel {
-                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
@@ -709,6 +718,16 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(format!("{} ({})", name, cards.len())));
         f.render_widget(list, *a);
+    }
+}
+
+#[cfg(test)]
+mod smoke {
+    #[test]
+    fn markdown_renders_to_lines() {
+        let text = tui_markdown::from_str("# hi\n\n- a\n- b\n");
+        assert!(text.height() > 3);
+        assert!(text.width() > 0);
     }
 }
 

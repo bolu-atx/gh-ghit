@@ -63,7 +63,7 @@ and `q` to quit.
 
 ## Differences from the Python version
 
-- Renders markdown as plain text (no Textual `Markdown` widget).
+- Bodies and comments render with real markdown (`tui-markdown`).
 - Issue references are not clickable; type the number in the command bar instead.
 - Fetching is synchronous with a status line, not background workers.
 
