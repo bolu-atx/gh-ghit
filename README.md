@@ -3,8 +3,16 @@
 Terminal viewer for GitHub issues and PRs, backed by the [`gh`](https://cli.github.com) CLI.
 Punch in an issue number, read the ticket. `o` opens it in GitHub.
 
+![ghit demo](demo.gif)
+
 Rust port of the `ghit` TUI that lived in my dotfiles (`scripts/gh-issue-tui.py`).
 Strictly the TUI — the old throwaway `gh-issue.bash` viewer did not make the trip.
+
+## Why
+
+- Agent swarms and orchestration produce plans faster than any human can read them.
+- Triaging that volume in browser tabs takes a toll and does not scale.
+- `ghit` keeps issues and plans in one terminal view, so a human can keep up with the agents.
 
 ## Requirements
 
