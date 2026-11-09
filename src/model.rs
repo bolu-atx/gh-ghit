@@ -168,16 +168,20 @@ pub fn refs_in_line(line: &str, repo: Option<&str>) -> Vec<u64> {
     hits.into_iter().map(|(_, n)| n).collect()
 }
 
-pub fn status_text(statuses: &[(String, Option<String>)]) -> String {
-    statuses
-        .iter()
-        .take(2)
-        .map(|(_, s)| s.clone().unwrap_or_else(|| "—".to_string()))
-        .collect::<Vec<_>>()
-        .join(" · ")
+/// Semantic role of a meta-line segment; the UI maps each to a theme color.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetaKind {
+    Dim,
+    State,
+    Label,
+    Normal,
+    Project,
+    Url,
 }
 
-pub fn meta_line(d: &IssueData, statuses: &[(String, Option<String>)]) -> String {
+/// The `by … · labels: … · project: …` line as styled segments.
+/// `meta_line` is the plain-text join of these; both stay in sync by construction.
+pub fn meta_spans(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<(MetaKind, String)> {
     let labels = if d.labels.is_empty() {
         "none".to_string()
     } else {
@@ -189,27 +193,38 @@ pub fn meta_line(d: &IssueData, statuses: &[(String, Option<String>)]) -> String
         d.assignees.iter().map(|x| x.login.clone()).collect::<Vec<_>>().join(", ")
     };
     let kind = if d.is_pr { "PR" } else { "issue" };
-    let opened = d.created_at.get(..10).unwrap_or(&d.created_at);
+    let opened = d.created_at.get(..10).unwrap_or(&d.created_at).to_string();
     let project = {
         let s = status_text(statuses);
         if s.is_empty() { "—".to_string() } else { s }
     };
-    format!(
-        "{kind} · {} · by {} · opened {opened} · labels: {labels} · assignees: {people} · project: {project}\n\n{}",
-        d.state, d.author.login, d.url
-    )
+    vec![
+        (MetaKind::Dim, format!("{kind} · ")),
+        (MetaKind::State, d.state.clone()),
+        (MetaKind::Dim, format!(" · by {} · opened {opened} · labels: ", d.author.login)),
+        (MetaKind::Label, labels),
+        (MetaKind::Dim, " · assignees: ".to_string()),
+        (MetaKind::Normal, people),
+        (MetaKind::Dim, " · project: ".to_string()),
+        (MetaKind::Project, project),
+        (MetaKind::Dim, "\n\n".to_string()),
+        (MetaKind::Url, d.url.clone()),
+    ]
 }
 
-pub fn build_body_md(d: &IssueData, statuses: &[(String, Option<String>)]) -> String {
+/// Body markdown without the title/meta header (the header renders styled).
+pub fn body_md(d: &IssueData) -> String {
     let raw = d.body.trim();
-    let body = linkify(if raw.is_empty() { "(no description)" } else { raw });
-    format!(
-        "# #{}: {}\n\n{}\n\n---\n\n{}\n",
-        d.number,
-        linkify(&d.title),
-        meta_line(d, statuses),
-        body
-    )
+    linkify(if raw.is_empty() { "(no description)" } else { raw }).to_string()
+}
+
+pub fn status_text(statuses: &[(String, Option<String>)]) -> String {
+    statuses
+        .iter()
+        .take(2)
+        .map(|(_, s)| s.clone().unwrap_or_else(|| "—".to_string()))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 pub fn build_comments_md(d: &IssueData) -> String {
@@ -340,11 +355,20 @@ mod tests {
     }
 
     #[test]
+    fn meta_spans_carry_roles_and_join_to_plain_text() {
+        let d = sample_issue();
+        let parts = meta_spans(&d, &[]);
+        assert!(parts.iter().any(|(k, t)| *k == MetaKind::State && t == "OPEN"));
+        assert!(parts.iter().any(|(k, t)| *k == MetaKind::Label && t == "needs-triage"));
+        assert!(parts.iter().any(|(k, _)| *k == MetaKind::Url));
+        let joined: String = parts.into_iter().map(|(_, t)| t).collect();
+        assert!(joined.contains("project: —"));
+    }
+
+    #[test]
     fn status_and_meta() {
         assert_eq!(status_text(&[("Roadmap".into(), Some("In Progress".into()))]), "In Progress");
         assert_eq!(status_text(&[]), "");
-        let d = sample_issue();
-        assert!(meta_line(&d, &[]).contains("project: —"));
     }
 
     #[test]

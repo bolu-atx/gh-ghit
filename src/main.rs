@@ -580,12 +580,12 @@ fn in_rect(area: Rect, x: u16, y: u16) -> bool {
     area.contains(ratatui::layout::Position::new(x, y))
 }
 
-/// Sidebar rows are 3 lines each below a 1-line border.
+/// Sidebar rows are 3 lines each below a 1-line border plus a 1-line spacer.
 fn sidebar_hit(area: Rect, list: &[u64], x: u16, y: u16) -> Option<u64> {
-    if !in_rect(area, x, y) || y < area.y + 1 {
+    if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
-    list.get(((y - area.y - 1) / 3) as usize).copied()
+    list.get(((y - area.y - 2) / 3) as usize).copied()
 }
 
 fn handle_mouse(app: &mut App, m: MouseEvent) {
@@ -631,7 +631,7 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if in_rect(app.tabs_area, m.column, m.row) {
-                // "BODY" is 4 wide, then the divider: left half body, right half comments.
+                // "Body" is 4 wide, then the divider: left half body, right half comments.
                 app.tab = if m.column.saturating_sub(app.tabs_area.x) < 6 {
                     Tab::Body
                 } else {
@@ -823,10 +823,8 @@ fn section_list<'a>(
     selected: Option<usize>,
 ) -> (List<'a>, ListState) {
     use theme::{amber, ink, muted, paper, state_color};
-    let items: Vec<ListItem<'a>> = numbers
-        .iter()
-        .enumerate()
-        .map(|(idx, n)| {
+    let mut items: Vec<ListItem<'a>> = vec![ListItem::new(Line::from(""))];
+    items.extend(numbers.iter().enumerate().map(|(idx, n)| {
             let sel = selected == Some(idx);
             let marker = if sel { "▌ " } else { "  " };
             let marker_style = if sel {
@@ -867,10 +865,10 @@ fn section_list<'a>(
                 ]),
                 Line::from(""),
             ])
-        })
-        .collect();
+        }));
     let mut state = ListState::default();
-    state.select(selected);
+    // +1 for the breathing-room spacer row at the top.
+    state.select(selected.map(|s| s + 1));
     let list = List::new(items)
         .block(
             Block::default()
@@ -883,12 +881,51 @@ fn section_list<'a>(
     (list, state)
 }
 
+/// Styled header for the body pane: title plus the color-coded meta line.
+/// Each segment carries its semantic role; colors stay consistent by construction.
+fn header_lines<'a>(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Line<'a>> {
+    use model::MetaKind;
+    use theme::{amber, ink, muted, paper, teal};
+    let title = Line::from(vec![
+        Span::styled("■ ", Style::new().bg(ink()).fg(muted())),
+        Span::styled(format!("#{} ", d.number), Style::new().bg(ink()).fg(muted())),
+        Span::styled(model::slug(&d.title, 60), Style::new().bg(ink()).fg(paper()).bold()),
+    ]);
+    let mut lines = vec![title];
+    let mut current: Vec<Span<'static>> = Vec::new();
+    for (kind, text) in model::meta_spans(d, statuses) {
+        let style = match kind {
+            MetaKind::Dim => Style::new().bg(ink()).fg(muted()),
+            MetaKind::State => Style::new().bg(ink()).fg(theme::state_color(&d.state)).bold(),
+            MetaKind::Label => Style::new().bg(ink()).fg(amber()),
+            MetaKind::Normal => Style::new().bg(ink()).fg(paper()),
+            MetaKind::Project => Style::new().bg(ink()).fg(teal()).bold(),
+            MetaKind::Url => Style::new().bg(ink()).fg(teal()).underlined(),
+        };
+        let mut chunks = text.split('\n');
+        if let Some(first) = chunks.next() {
+            if !first.is_empty() {
+                current.push(Span::styled(first.to_string(), style));
+            }
+        }
+        for chunk in chunks {
+            lines.push(Line::from(std::mem::take(&mut current)));
+            if !chunk.is_empty() {
+                current.push(Span::styled(chunk.to_string(), style));
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(Line::from(current));
+    }
+    lines
+}
+
 fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
     use theme::{amber, muted};
-    Line::from(vec![
-        Span::styled(format!("{name} "), Style::new().fg(amber()).bold()),
-        Span::styled(detail.to_uppercase(), Style::new().fg(muted())),
-    ])
+    let name_span = Span::styled(format!("{name} "), Style::new().fg(amber()).bold());
+    let detail_span = Span::styled(detail.to_string(), Style::new().fg(muted()));
+    Line::from(vec![name_span, detail_span])
 }
 
 fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
@@ -921,6 +958,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Length(2),
             Constraint::Min(1),
             Constraint::Length(3),
@@ -928,9 +966,9 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
 
     let repo = app.repo_key().unwrap_or_default();
-    app.tabs_area = rows[1];
-    app.body_area = rows[2];
-    app.bar_area = rows[3];
+    // rows[0] masthead, rows[1] breathing room, rows[2] tabs, rows[3] pane, rows[4] bar.
+    app.tabs_area = rows[2];
+    app.bar_area = rows[4];
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => Line::from(vec![
             Span::styled("ghit ", Style::new().fg(amber()).bold()),
@@ -945,7 +983,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
-    let tabs = Tabs::new(vec!["BODY", "COMMENTS"])
+    let tabs = Tabs::new(vec!["Body", "Comments"])
         .select(match app.tab {
             Tab::Body => 0,
             Tab::Comments => 1,
@@ -959,20 +997,32 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .border_style(Style::new().bg(ink()).fg(muted()))
                 .style(Style::new().bg(ink())),
         );
-    f.render_widget(tabs, rows[1]);
+    f.render_widget(tabs, rows[2]);
 
-    let body = match app.current.and_then(|n| app.data.get(&n)) {
+    let owned_body: String;
+    let owned_comments: String;
+    let text = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => {
             let st = app.statuses.get(&d.number).cloned().unwrap_or_default();
             match app.tab {
-                Tab::Body => model::build_body_md(d, &st),
-                Tab::Comments => model::build_comments_md(d),
+                Tab::Body => {
+                    let mut lines = header_lines(d, &st);
+                    lines.push(Line::from(""));
+                    owned_body = model::body_md(d);
+                    lines.extend(theme::render_markdown(&owned_body));
+                    ratatui::text::Text::from(lines)
+                }
+                Tab::Comments => {
+                    owned_comments = model::build_comments_md(d);
+                    theme::render_markdown(&owned_comments)
+                }
             }
         }
-        None => "No issue loaded.\n\nType a number in the command bar and hit Enter.\n(: or / focuses the bar)".to_string(),
+        None => theme::render_markdown(
+            "No issue loaded.\n\nType a number in the command bar and hit Enter.\n(: or / focuses the bar)",
+        ),
     };
-    let rendered = theme::render_markdown(&body);
-    let pane = Paragraph::new(rendered)
+    let pane = Paragraph::new(text)
         .style(base())
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
@@ -980,7 +1030,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let gutter = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
-        .split(rows[2]);
+        .split(rows[3]);
     app.body_area = gutter[1];
     f.render_widget(pane, gutter[1]);
 
@@ -991,8 +1041,8 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .border_style(
             Style::new().bg(ink()).fg(if app.focus == Focus::Bar { amber() } else { muted() }),
         );
-    let inner = bar_block.inner(rows[3]);
-    f.render_widget(bar_block, rows[3]);
+    let inner = bar_block.inner(rows[4]);
+    f.render_widget(bar_block, rows[4]);
     let mut spans = vec![Span::styled("❯ ", Style::new().bg(ink()).fg(amber()).bold())];
     if app.bar.is_empty() {
         spans.push(Span::styled(
@@ -1054,8 +1104,8 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let popup = centered(area, 92, 92);
     f.render_widget(Clear, popup);
     let title = match &app.board {
-        Some(b) => format!(" {} ", b.title.to_uppercase()),
-        None => " FETCHING BOARD … ".to_string(),
+        Some(b) => format!(" {} ", b.title),
+        None => " Fetching board … ".to_string(),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1108,7 +1158,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .border_style(Style::new().bg(ink()).fg(if active { amber() } else { muted() }))
                 .style(base())
                 .title(Line::from(vec![
-                    Span::styled(format!("{} ", name.to_uppercase()), Style::new().bg(ink()).fg(amber()).bold()),
+                    Span::styled(format!("{} ", name), Style::new().bg(ink()).fg(amber()).bold()),
                     Span::styled(format!("({})", cards.len()), Style::new().bg(ink()).fg(muted())),
                 ])),
         );
@@ -1137,7 +1187,7 @@ fn card_kind(c: &crate::model::BoardItem) -> String {
         Some("PullRequest") => "PR".to_string(),
         Some("DraftIssue") => "DRAFT".to_string(),
         Some("Issue") => "ISSUE".to_string(),
-        Some(other) => other.to_uppercase(),
+        Some(other) => other.to_string(),
         None => "ITEM".to_string(),
     }
 }
@@ -1190,7 +1240,7 @@ fn board_card(c: &crate::model::BoardItem, sel: bool, expanded: bool) -> ListIte
         lines.push(Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
             Span::styled(
-                format!("{} · {}", status.to_uppercase(), card_kind(c)),
+                format!("{} · {}", status, card_kind(c)),
                 Style::new().bg(ink()).fg(amber()),
             ),
         ]));
@@ -1272,7 +1322,7 @@ mod render_smoke {
         let mut app = App::new(Some("o/r".to_string()));
         app.board_loading = true;
         let text = frame_text(&mut app);
-        assert!(text.contains("FETCHING"), "skeleton title");
+        assert!(text.contains("Fetching"), "skeleton title");
     }
 
     #[test]
@@ -1282,8 +1332,8 @@ mod render_smoke {
         assert!(text.contains("Card 0"));
         assert!(text.contains("● x"));
         // The swimlane carries the status; collapsed cards don't repeat it.
-        // (The column header "TODO (n)" is not indented like a card line.)
-        assert!(!text.contains("    TODO"), "status leaks into collapsed card");
+        // (The column header "Todo (n)" is not indented like a card line.)
+        assert!(!text.contains("    Todo"), "status leaks into collapsed card");
     }
 
     #[test]
@@ -1291,7 +1341,7 @@ mod render_smoke {
         let mut app = board_app(3);
         app.board_expanded = Some((0, 0));
         let text = frame_text(&mut app);
-        assert!(text.contains("TODO · ISSUE"));
+        assert!(text.contains("Todo · ISSUE"));
         assert!(text.contains("https://github.com/o/r/issues"));
         assert!(text.contains("Why"));
     }
@@ -1395,7 +1445,8 @@ mod render_smoke {
         let mut app = loaded_app();
         app.show_issue(9);
         let _ = frame_text(&mut app); // records hit areas
-        let (x, y) = (app.side_issue_area.x + 2, app.side_issue_area.y + 1);
+        // +2 skips the border and the breathing-room spacer row.
+        let (x, y) = (app.side_issue_area.x + 2, app.side_issue_area.y + 2);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
         assert_eq!(app.current, Some(7));
     }
@@ -1480,7 +1531,7 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("ghit"), "masthead wordmark");
         assert!(text.contains("#7"), "issue number");
-        assert!(text.contains("BODY"), "tab label");
+        assert!(text.contains("Body"), "tab label");
         assert!(text.contains("hello"), "markdown body");
     }
 
