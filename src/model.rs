@@ -120,6 +120,51 @@ fn linkify_plain(seg: &str) -> String {
     bare_re().replace_all(&s, "${1}[#$2](issue:$2)").into_owned()
 }
 
+fn ref_bare_re() -> &'static Regex {
+    // Only word characters disqualify a prefix (avoids `C#12`); `[` and `(`
+    // are kept because rendered markdown link labels look like `[#12]`.
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:^|[^\w])#(\d+)\b").unwrap())
+}
+
+fn ref_url_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"github\.com/([^/\s)]+)/([^/\s)]+)/(?:issues|pull)/(\d+)").unwrap()
+    })
+}
+
+/// Issue/PR numbers referenced in a visible line, in textual order.
+///
+/// Matches bare `#123` refs (code-adjacent ones excluded as in `linkify`) and
+/// `github.com` URLs that point at `repo` (`owner/repo`, case-insensitive).
+pub fn refs_in_line(line: &str, repo: Option<&str>) -> Vec<u64> {
+    let mut hits: Vec<(usize, u64)> = vec![];
+    for cap in ref_bare_re().captures_iter(line) {
+        let m = cap.get(1).unwrap();
+        if let Ok(n) = m.as_str().parse::<u64>() {
+            hits.push((m.start(), n));
+        }
+    }
+    for cap in ref_url_re().captures_iter(line) {
+        let same_repo = match repo {
+            Some(r) => {
+                let got = format!("{}/{}", &cap[1], &cap[2]).to_lowercase();
+                got == r.to_lowercase()
+            }
+            None => false,
+        };
+        if same_repo {
+            if let Ok(n) = cap[3].parse::<u64>() {
+                hits.push((cap.get(3).unwrap().start(), n));
+            }
+        }
+    }
+    hits.sort();
+    hits.dedup();
+    hits.into_iter().map(|(_, n)| n).collect()
+}
+
 pub fn status_text(statuses: &[(String, Option<String>)]) -> String {
     statuses
         .iter()
@@ -272,6 +317,21 @@ mod tests {
         assert!(linkify("see (#1) and #2").contains("[#1](issue:1)"));
         assert!(!linkify("`#3` and ```\n(#4)\n```").contains("(issue:3)"));
         assert_eq!(linkify("[#4](http://x)"), "[#4](http://x)");
+    }
+
+    #[test]
+    fn refs_in_line_finds_bare_refs() {
+        assert_eq!(refs_in_line("see (#1) and #2", None), vec![1, 2]);
+        assert_eq!(refs_in_line("[#4](issue:4)", None), vec![4]);
+        assert_eq!(refs_in_line("no refs here", None), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn refs_in_line_filters_urls_by_repo() {
+        let line = "see https://github.com/o/r/pull/12 and https://github.com/x/y/issues/34";
+        assert_eq!(refs_in_line(line, Some("o/r")), vec![12]);
+        assert_eq!(refs_in_line(line, Some("O/R")), vec![12]);
+        assert_eq!(refs_in_line(line, None), Vec::<u64>::new());
     }
 
     #[test]

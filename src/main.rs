@@ -24,7 +24,7 @@ use crossterm::ExecutableCommand;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
@@ -93,6 +93,8 @@ struct App {
     pr_state: ListState,
     active_list: ActiveList,
     quit: bool,
+    body_area: Rect,
+    body_rows: Vec<String>,
     board_loading: bool,
     board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
     board_states: Vec<ListState>,
@@ -141,6 +143,8 @@ impl App {
             board_rx: None,
             board_states: Vec::new(),
             quit: false,
+            body_area: Rect::default(),
+            body_rows: Vec::new(),
             side_issue_area: Rect::default(),
             side_pr_area: Rect::default(),
             tabs_area: Rect::default(),
@@ -432,6 +436,7 @@ fn event_loop(
             Event::Mouse(m) => handle_mouse(app, m),
             _ => {}
         };
+        app.capture_body_rows(terminal.current_buffer_mut());
         poll_board(app);
         if app.quit {
             return Ok(());
@@ -530,6 +535,21 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 }
 
+impl App {
+    /// Snapshot the visible body text so clicks can land on `#123` refs.
+    fn capture_body_rows(&mut self, buf: &ratatui::buffer::Buffer) {
+        let area = self.body_area;
+        self.body_rows = (0..area.height)
+            .map(|r| {
+                let y = area.y + r;
+                (area.x..area.x + area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect();
+    }
+}
+
 fn in_rect(area: Rect, x: u16, y: u16) -> bool {
     area.contains(ratatui::layout::Position::new(x, y))
 }
@@ -589,6 +609,17 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 } else {
                     Tab::Comments
                 };
+                return;
+            }
+            if in_rect(app.body_area, m.column, m.row) {
+                app.focus = Focus::Main;
+                let row = (m.row - app.body_area.y) as usize;
+                if let Some(line) = app.body_rows.get(row) {
+                    let repo = app.repo_key();
+                    if let Some(&n) = model::refs_in_line(line, repo.as_deref()).first() {
+                        app.load_issue(n, false);
+                    }
+                }
                 return;
             }
             app.focus = Focus::Main;
@@ -718,7 +749,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
     let footer_line = if app.message.is_empty() {
         Line::from(Span::styled(
-            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · q quit",
+            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · click #n · q quit",
             Style::new().fg(MUTED),
         ))
     } else {
@@ -730,7 +761,27 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
     f.render_widget(Paragraph::new(footer_line), root[1]);
 
     if board_open(app) {
+        dim_background(f, 0.35);
         render_board(f, f.area(), app);
+    }
+}
+
+/// Darken every rendered cell toward the background so the modal sits proud.
+fn dim_background(f: &mut ratatui::Frame, amount: f32) {
+    let Color::Rgb(ir, ig, ib) = theme::INK else {
+        return;
+    };
+    for cell in f.buffer_mut().content.iter_mut() {
+        match cell.fg {
+            Color::Rgb(r, g, b) => {
+                let mix = |c: u8, i: u8| (i as f32 + (c as f32 - i as f32) * amount) as u8;
+                cell.set_fg(Color::Rgb(mix(r, ir), mix(g, ig), mix(b, ib)));
+            }
+            Color::Reset => {}
+            _ => {
+                cell.set_fg(Color::Rgb(70, 76, 88));
+            }
+        }
     }
 }
 
@@ -847,6 +898,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
     let repo = app.repo_key().unwrap_or_default();
     app.tabs_area = rows[1];
+    app.body_area = rows[2];
     app.bar_area = rows[3];
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => Line::from(vec![
@@ -923,7 +975,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(AMBER))
+        .border_style(Style::new().bg(INK).fg(MUTED))
         .style(base())
         .title(Span::styled(title, Style::new().bg(INK).fg(AMBER).bold()));
     let inner = block.inner(popup);
@@ -1195,6 +1247,35 @@ mod render_smoke {
     }
 
     #[test]
+    fn mouse_click_on_ref_opens_issue() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+        let _ = frame_text(&mut app);
+        let row = app
+            .body_rows
+            .iter()
+            .position(|l| l.contains("#9"))
+            .expect("ref visible");
+        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(9));
+    }
+
+    #[test]
+    fn mouse_click_on_plain_text_keeps_issue() {
+        let mut app = loaded_app();
+        let _ = frame_text(&mut app);
+        let row = app
+            .body_rows
+            .iter()
+            .position(|l| l.contains("hello"))
+            .expect("body visible");
+        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
     fn mouse_wheel_scrolls() {
         let mut app = loaded_app();
         handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 60, 20));
@@ -1207,6 +1288,7 @@ mod render_smoke {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, app)).expect("draw");
+        app.capture_body_rows(terminal.backend().buffer());
         terminal
             .backend()
             .buffer()
