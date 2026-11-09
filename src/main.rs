@@ -27,7 +27,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
 };
 
 use model::{BoardData, IssueData, board_columns};
@@ -98,6 +98,7 @@ struct App {
     board_loading: bool,
     board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
     board_states: Vec<ListState>,
+    board_expanded: Option<(usize, usize)>,
     // Last-rendered hit areas for mouse clicks.
     side_issue_area: Rect,
     side_pr_area: Rect,
@@ -142,6 +143,7 @@ impl App {
             board_loading: false,
             board_rx: None,
             board_states: Vec::new(),
+            board_expanded: None,
             quit: false,
             body_area: Rect::default(),
             body_rows: Vec::new(),
@@ -456,6 +458,13 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::PageUp => board_move(app, 0, -5),
             KeyCode::Char('h') | KeyCode::Left => board_move(app, -1, 0),
             KeyCode::Char('l') | KeyCode::Right => board_move(app, 1, 0),
+            KeyCode::Char('t') => {
+                app.message = format!("theme: {}", theme::cycle());
+            }
+            KeyCode::Char(' ') => {
+                let pos = (app.board_col, app.board_row);
+                app.board_expanded = if app.board_expanded == Some(pos) { None } else { Some(pos) };
+            }
             KeyCode::Enter => {
                 if let Some(n) = board_selected_number(app) {
                     app.board = None;
@@ -500,6 +509,9 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
         KeyCode::Char('1') => app.tab = Tab::Body,
         KeyCode::Char('2') => app.tab = Tab::Comments,
+        KeyCode::Char('t') => {
+            app.message = format!("theme: {}", theme::cycle());
+        }
         KeyCode::Char('b') => open_board(app),
         KeyCode::Char('j') => move_selection(app, 1),
         KeyCode::Char('k') => move_selection(app, -1),
@@ -573,11 +585,13 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                     if app.board_col == c && app.board_row == r {
                         if let Some(n) = board_selected_number(app) {
                             app.board = None;
+                            app.board_expanded = None;
                             app.load_issue(n, false);
                         }
                     } else {
                         app.board_col = c;
                         app.board_row = r;
+                        app.board_expanded = None;
                     }
                 }
             }
@@ -694,12 +708,14 @@ fn poll_board(app: &mut App) {
             app.board_col = 0;
             app.board_row = 0;
             app.board_states.clear();
+            app.board_expanded = None;
         }
         Err(e) => app.message = e,
     }
 }
 
 fn board_move(app: &mut App, dx: isize, dy: isize) {
+    app.board_expanded = None;
     let Some(board) = &app.board else { return };
     let cols = board_columns(&board.items, &board.order);
     if cols.is_empty() {
@@ -727,9 +743,9 @@ fn board_selected_number(app: &App) -> Option<u64> {
 // ---------------------------------------------------------------------------
 
 fn render(f: &mut ratatui::Frame, app: &mut App) {
-    use theme::{AMBER, INK, MUTED};
+    use theme::{amber, ink, muted};
     f.render_widget(
-        Block::default().style(Style::new().bg(INK)),
+        Block::default().style(Style::new().bg(ink())),
         f.area(),
     );
     let root = Layout::default()
@@ -748,13 +764,13 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
     let footer_line = if app.message.is_empty() {
         Line::from(Span::styled(
-            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · click #n · q quit",
-            Style::new().fg(MUTED),
+            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · t theme · click #n · q quit",
+            Style::new().fg(muted()),
         ))
     } else {
         Line::from(vec![
-            Span::styled("! ", Style::new().fg(AMBER).bold()),
-            Span::styled(app.message.clone(), Style::new().fg(AMBER)),
+            Span::styled("! ", Style::new().fg(amber()).bold()),
+            Span::styled(app.message.clone(), Style::new().fg(amber())),
         ])
     };
     f.render_widget(Paragraph::new(footer_line), root[1]);
@@ -767,7 +783,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
 /// Darken every rendered cell toward the background so the modal sits proud.
 fn dim_background(f: &mut ratatui::Frame, amount: f32) {
-    let Color::Rgb(ir, ig, ib) = theme::INK else {
+    let Color::Rgb(ir, ig, ib) = theme::ink() else {
         return;
     };
     for cell in f.buffer_mut().content.iter_mut() {
@@ -790,7 +806,7 @@ fn section_list<'a>(
     app: &App,
     selected: Option<usize>,
 ) -> (List<'a>, ListState) {
-    use theme::{AMBER, INK, MUTED, PAPER, state_color};
+    use theme::{amber, ink, muted, paper, state_color};
     let items: Vec<ListItem<'a>> = numbers
         .iter()
         .enumerate()
@@ -798,9 +814,9 @@ fn section_list<'a>(
             let sel = selected == Some(idx);
             let marker = if sel { "▌ " } else { "  " };
             let marker_style = if sel {
-                Style::new().fg(AMBER).bold()
+                Style::new().fg(amber()).bold()
             } else {
-                Style::new().fg(MUTED)
+                Style::new().fg(muted())
             };
             let (title_text, second) = match app.data.get(n) {
                 Some(d) => {
@@ -815,23 +831,23 @@ fn section_list<'a>(
             let pin = if app.pinned.contains(n) { "◆ " } else { "" };
             let data = app.data.get(n);
             let num_style = Style::new()
-                .fg(data.map(|d| state_color(&d.state)).unwrap_or(MUTED))
+                .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
                 .bold();
             let title_style = if sel {
-                Style::new().fg(PAPER).bold()
+                Style::new().fg(paper()).bold()
             } else {
-                Style::new().fg(PAPER)
+                Style::new().fg(paper())
             };
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(marker, marker_style),
-                    Span::styled(pin, Style::new().fg(AMBER)),
+                    Span::styled(pin, Style::new().fg(amber())),
                     Span::styled(format!("#{n} "), num_style),
                     Span::styled(title_text, title_style),
                 ]),
                 Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(second, Style::new().fg(MUTED)),
+                    Span::styled(second, Style::new().fg(muted())),
                 ]),
                 Line::from(""),
             ])
@@ -843,19 +859,19 @@ fn section_list<'a>(
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::new().bg(INK).fg(MUTED))
+                .border_style(Style::new().bg(ink()).fg(muted()))
                 .title(title)
-                .style(Style::new().bg(INK)),
+                .style(Style::new().bg(ink())),
         )
         .highlight_style(Style::new().bold());
     (list, state)
 }
 
 fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
-    use theme::{AMBER, MUTED};
+    use theme::{amber, muted};
     Line::from(vec![
-        Span::styled(format!("{name} "), Style::new().fg(AMBER).bold()),
-        Span::styled(detail.to_uppercase(), Style::new().fg(MUTED)),
+        Span::styled(format!("{name} "), Style::new().fg(amber()).bold()),
+        Span::styled(detail.to_uppercase(), Style::new().fg(muted())),
     ])
 }
 
@@ -884,7 +900,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 }
 
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    use theme::{AMBER, INK, MUTED, PAPER, base};
+    use theme::{amber, ink, muted, paper, base};
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -901,14 +917,14 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.bar_area = rows[3];
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => Line::from(vec![
-            Span::styled("ghit ", Style::new().fg(AMBER).bold()),
-            Span::styled(format!("{repo}  "), Style::new().fg(MUTED)),
-            Span::styled(format!("#{} ", d.number), Style::new().fg(MUTED)),
-            Span::styled(model::slug(&d.title, 60), Style::new().fg(PAPER).bold()),
+            Span::styled("ghit ", Style::new().fg(amber()).bold()),
+            Span::styled(format!("{repo}  "), Style::new().fg(muted())),
+            Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
+            Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
         ]),
         None => Line::from(vec![
-            Span::styled("ghit ", Style::new().fg(AMBER).bold()),
-            Span::styled(repo, Style::new().fg(MUTED)),
+            Span::styled("ghit ", Style::new().fg(amber()).bold()),
+            Span::styled(repo, Style::new().fg(muted())),
         ]),
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
@@ -918,14 +934,14 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Tab::Body => 0,
             Tab::Comments => 1,
         })
-        .style(Style::new().bg(INK).fg(MUTED))
-        .highlight_style(Style::new().bg(INK).fg(AMBER).bold().underlined())
+        .style(Style::new().bg(ink()).fg(muted()))
+        .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
         .divider("  ")
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
-                .border_style(Style::new().bg(INK).fg(MUTED))
-                .style(Style::new().bg(INK)),
+                .border_style(Style::new().bg(ink()).fg(muted()))
+                .style(Style::new().bg(ink())),
         );
     f.render_widget(tabs, rows[1]);
 
@@ -946,26 +962,73 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .scroll((app.scroll, 0));
     f.render_widget(pane, rows[2]);
 
-    let bar_block = Block::default().borders(Borders::ALL).style(base()).border_style(
-        Style::new().bg(INK).fg(if app.focus == Focus::Bar { AMBER } else { MUTED }),
-    );
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .style(base())
+        .border_style(
+            Style::new().bg(ink()).fg(if app.focus == Focus::Bar { amber() } else { muted() }),
+        );
     let inner = bar_block.inner(rows[3]);
     f.render_widget(bar_block, rows[3]);
-    let prompt = Line::from(vec![
-        Span::styled("❯ ", Style::new().bg(INK).fg(AMBER).bold()),
-        Span::styled(app.bar.clone(), Style::new().bg(INK).fg(PAPER)),
-    ]);
-    f.render_widget(Paragraph::new(prompt), inner);
-    if app.focus == Focus::Bar {
+    let mut spans = vec![Span::styled("❯ ", Style::new().bg(ink()).fg(amber()).bold())];
+    if app.bar.is_empty() {
+        spans.push(Span::styled(
+            "type #123, o, q …",
+            Style::new().bg(ink()).fg(muted()).italic(),
+        ));
+    } else {
+        spans.push(Span::styled(app.bar.clone(), Style::new().bg(ink()).fg(paper())));
+    }
+    // Theme pill pinned right, like a status chip.
+    let pill = format!(" {} ", theme::name());
+    let used = 2 + app.bar.chars().count().max(19) + pill.chars().count() + 2;
+    let fill = (inner.width as usize).saturating_sub(used);
+    if fill >= 1 {
+        spans.push(Span::raw(" ".repeat(fill)));
+        spans.push(Span::styled(
+            pill,
+            Style::new().bg(amber()).fg(ink()).bold(),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)).style(base()), inner);
+    if app.focus == Focus::Bar && !app.bar.is_empty() {
         f.set_cursor_position((inner.x + 2 + app.bar.len() as u16, inner.y));
+    } else if app.focus == Focus::Bar {
+        f.set_cursor_position((inner.x + 2, inner.y));
     }
 }
 
-/// Fixed card height in lines: title, labels, status, spacer.
-const CARD_H: u16 = 4;
+/// Collapsed card: title, labels, spacer. Expanded adds status, url, excerpt.
+const BASE_CARD_H: u16 = 3;
+const EXPANDED_CARD_H: u16 = 6;
+
+fn card_height(expanded: bool) -> u16 {
+    if expanded {
+        EXPANDED_CARD_H
+    } else {
+        BASE_CARD_H
+    }
+}
+
+/// Column areas with a 1-cell gutter so borders never touch.
+fn column_layout(area: Rect, n_cols: usize, col_width: u16) -> Vec<Rect> {
+    let mut constraints = Vec::with_capacity(n_cols * 2);
+    for i in 0..n_cols {
+        constraints.push(Constraint::Length(col_width));
+        if i + 1 < n_cols {
+            constraints.push(Constraint::Length(1));
+        }
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+    chunks.iter().step_by(2).copied().collect()
+}
 
 fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    use theme::{AMBER, INK, MUTED, base};
+    use theme::{amber, ink, muted, base};
     let popup = centered(area, 92, 92);
     f.render_widget(Clear, popup);
     let title = match &app.board {
@@ -974,11 +1037,23 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().bg(INK).fg(MUTED))
+        .border_style(Style::new().bg(ink()).fg(muted()))
         .style(base())
-        .title(Span::styled(title, Style::new().bg(INK).fg(AMBER).bold()));
+        .title(Span::styled(title, Style::new().bg(ink()).fg(amber()).bold()));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+    let (inner, hint_area) = (chunks[0], chunks[1]);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "h/l columns · j/k cards · space expand · enter open · esc close",
+            Style::new().bg(ink()).fg(muted()),
+        ))),
+        hint_area,
+    );
 
     let Some(board) = &app.board else {
         render_skeleton(f, inner);
@@ -992,93 +1067,137 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     while app.board_states.len() < cols.len() {
         app.board_states.push(ListState::default());
     }
-    let widths: Vec<Constraint> = cols.iter().map(|_| Constraint::Length(36)).collect();
-    let col_areas = Layout::default().direction(Direction::Horizontal).constraints(widths).split(inner);
+    let col_areas = column_layout(inner, cols.len(), 36);
     app.board_cells.clear();
     for (i, (name, cards)) in cols.iter().enumerate() {
         let Some(a) = col_areas.get(i) else { continue };
         let items: Vec<ListItem> = cards
             .iter()
             .enumerate()
-            .map(|(ri, c)| board_card(c, app.board_col == i && app.board_row == ri))
+            .map(|(ri, c)| {
+                let sel = app.board_col == i && app.board_row == ri;
+                board_card(c, sel, app.board_expanded == Some((i, ri)))
+            })
             .collect();
         let active = app.board_col == i;
         let list = List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::new().bg(INK).fg(if active { AMBER } else { MUTED }))
+                .border_style(Style::new().bg(ink()).fg(if active { amber() } else { muted() }))
                 .style(base())
                 .title(Line::from(vec![
-                    Span::styled(format!("{} ", name.to_uppercase()), Style::new().bg(INK).fg(AMBER).bold()),
-                    Span::styled(format!("({})", cards.len()), Style::new().bg(INK).fg(MUTED)),
+                    Span::styled(format!("{} ", name.to_uppercase()), Style::new().bg(ink()).fg(amber()).bold()),
+                    Span::styled(format!("({})", cards.len()), Style::new().bg(ink()).fg(muted())),
                 ])),
         );
         let state = &mut app.board_states[i];
         state.select(if active { Some(app.board_row) } else { None });
         f.render_stateful_widget(list, *a, state);
-        // Map visible cards back to click areas using the widget's scroll offset.
+        // Map visible cards back to click areas using the widget's scroll
+        // offset. Cards have variable height, so walk line offsets.
         let offset = app.board_states[i].offset();
         let col_inner = Block::default().borders(Borders::ALL).inner(*a);
+        let mut y = col_inner.y;
         for (ri, _) in cards.iter().enumerate().skip(offset) {
-            let y = col_inner.y + (ri - offset) as u16 * CARD_H;
-            if y + CARD_H > col_inner.y + col_inner.height {
+            let h = card_height(app.board_expanded == Some((i, ri)));
+            if y + h > col_inner.y + col_inner.height {
                 break;
             }
-            app.board_cells.push((Rect::new(col_inner.x, y, col_inner.width, CARD_H), i, ri));
+            app.board_cells.push((Rect::new(col_inner.x, y, col_inner.width, h), i, ri));
+            y += h;
         }
     }
 }
 
-fn board_card(c: &crate::model::BoardItem, sel: bool) -> ListItem<'static> {
-    use theme::{AMBER, INK, MUTED, PAPER};
+/// What kind of item this is: issue, PR, or draft.
+fn card_kind(c: &crate::model::BoardItem) -> String {
+    match c.content.get("type").and_then(|t| t.as_str()) {
+        Some("PullRequest") => "PR".to_string(),
+        Some("DraftIssue") => "DRAFT".to_string(),
+        Some("Issue") => "ISSUE".to_string(),
+        Some(other) => other.to_uppercase(),
+        None => "ITEM".to_string(),
+    }
+}
+
+fn card_url(c: &crate::model::BoardItem) -> Option<String> {
+    c.content.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
+}
+
+fn card_excerpt(c: &crate::model::BoardItem) -> String {
+    let body = c.content.get("body").and_then(|b| b.as_str()).unwrap_or("");
+    match body.lines().map(str::trim).find(|l| !l.is_empty()) {
+        Some(first) => model::slug(first, 28),
+        None => "–".to_string(),
+    }
+}
+
+fn board_card(c: &crate::model::BoardItem, sel: bool, expanded: bool) -> ListItem<'static> {
+    use theme::{amber, ink, muted, paper};
     let title = model::slug(&c.title, 26);
     let head = match c.number {
         Some(n) => format!("#{n} {title}"),
         None => format!("◇ {title}"),
     };
-    let mut chips: Vec<String> = c.labels.iter().take(3).map(|l| format!("● {}", l.name)).collect();
-    if c.labels.len() > 3 {
-        chips.push(format!("+{}", c.labels.len() - 3));
+    // Labels own the second line now that the swimlane carries the status.
+    let mut chips: Vec<String> = c.labels.iter().take(4).map(|l| format!("● {}", l.name)).collect();
+    if c.labels.len() > 4 {
+        chips.push(format!("+{}", c.labels.len() - 4));
     }
     let chips_line = if chips.is_empty() { "–".to_string() } else { chips.join("  ") };
-    let status = c.status.clone().unwrap_or_else(|| "No status".to_string());
     let first = if sel {
         Line::from(vec![
-            Span::styled("▌ ", Style::new().bg(INK).fg(AMBER).bold()),
-            Span::styled(head, Style::new().bg(INK).fg(PAPER).bold()),
+            Span::styled("▌ ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled(head, Style::new().bg(ink()).fg(paper()).bold()),
         ])
     } else {
         Line::from(vec![
-            Span::styled("  ", Style::new().bg(INK)),
-            Span::styled(head, Style::new().bg(INK).fg(PAPER)),
+            Span::styled("  ", Style::new().bg(ink())),
+            Span::styled(head, Style::new().bg(ink()).fg(paper())),
         ])
     };
-    ListItem::new(vec![
+    let mut lines = vec![
         first,
         Line::from(vec![
-            Span::styled("    ", Style::new().bg(INK)),
-            Span::styled(chips_line, Style::new().bg(INK).fg(MUTED)),
+            Span::styled("    ", Style::new().bg(ink())),
+            Span::styled(chips_line, Style::new().bg(ink()).fg(muted())),
         ]),
-        Line::from(vec![
-            Span::styled("    ", Style::new().bg(INK)),
-            Span::styled(status.to_uppercase(), Style::new().bg(INK).fg(MUTED)),
-        ]),
-        Line::from(Span::styled("", Style::new().bg(INK))),
-    ])
+    ];
+    if expanded {
+        let status = c.status.clone().unwrap_or_else(|| "No status".to_string());
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::new().bg(ink())),
+            Span::styled(
+                format!("{} · {}", status.to_uppercase(), card_kind(c)),
+                Style::new().bg(ink()).fg(amber()),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::new().bg(ink())),
+            Span::styled(
+                card_url(c).unwrap_or_else(|| "–".to_string()),
+                Style::new().bg(ink()).fg(muted()),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::new().bg(ink())),
+            Span::styled(card_excerpt(c), Style::new().bg(ink()).fg(paper())),
+        ]));
+    }
+    lines.push(Line::from(Span::styled("", Style::new().bg(ink()))));
+    ListItem::new(lines)
 }
 
 /// Placeholder columns shown while the network fetch is in flight.
 fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
-    use theme::{INK, MUTED, base};
-    let widths: Vec<Constraint> = (0..3).map(|_| Constraint::Length(36)).collect();
-    let col_areas = Layout::default().direction(Direction::Horizontal).constraints(widths).split(area);
+    use theme::{ink, muted, base};
+    let col_areas = column_layout(area, 3, 36);
     for a in col_areas.iter() {
         let ghost: Vec<ListItem> = (0..4)
             .map(|_| {
                 ListItem::new(vec![
-                    Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", Style::new().bg(INK).fg(MUTED))),
-                    Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", Style::new().bg(INK).fg(MUTED))),
-                    Line::from(Span::styled("    ▓▓▓▓▓", Style::new().bg(INK).fg(MUTED))),
+                    Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", Style::new().bg(ink()).fg(muted()))),
+                    Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", Style::new().bg(ink()).fg(muted()))),
                     Line::from(""),
                 ])
             })
@@ -1086,9 +1205,9 @@ fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
         let list = List::new(ghost).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::new().bg(INK).fg(MUTED))
+                .border_style(Style::new().bg(ink()).fg(muted()))
                 .style(base())
-                .title(Span::styled(" ━━━ ", Style::new().bg(INK).fg(MUTED))),
+                .title(Span::styled(" ━━━ ", Style::new().bg(ink()).fg(muted()))),
         );
         f.render_widget(list, *a);
     }
@@ -1110,7 +1229,11 @@ mod render_smoke {
                 number: Some(100 + i as u64),
                 status: Some("Todo".to_string()),
                 labels: vec![Label { name: "x".to_string() }],
-                content: serde_json::Value::Null,
+                content: serde_json::json!({
+                    "type": "Issue",
+                    "url": format!("https://github.com/o/r/issues/{}", 100 + i),
+                    "body": "## Why\n\nSome details here",
+                }),
             })
             .collect();
         app.board = Some(BoardData {
@@ -1131,12 +1254,39 @@ mod render_smoke {
     }
 
     #[test]
-    fn board_cards_show_labels_and_status() {
+    fn board_cards_show_labels_not_status() {
         let mut app = board_app(3);
         let text = frame_text(&mut app);
         assert!(text.contains("Card 0"));
-        assert!(text.contains("TODO"));
         assert!(text.contains("● x"));
+        // The swimlane carries the status; collapsed cards don't repeat it.
+        // (The column header "TODO (n)" is not indented like a card line.)
+        assert!(!text.contains("    TODO"), "status leaks into collapsed card");
+    }
+
+    #[test]
+    fn board_expanded_card_shows_detail() {
+        let mut app = board_app(3);
+        app.board_expanded = Some((0, 0));
+        let text = frame_text(&mut app);
+        assert!(text.contains("TODO · ISSUE"));
+        assert!(text.contains("https://github.com/o/r/issues"));
+        assert!(text.contains("Why"));
+    }
+
+    #[test]
+    fn space_toggles_expansion_and_move_clears_it() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = board_app(3);
+        let space = || KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
+        handle_key(&mut app, space());
+        assert_eq!(app.board_expanded, Some((0, 0)));
+        handle_key(&mut app, space());
+        assert_eq!(app.board_expanded, None);
+        handle_key(&mut app, space());
+        board_move(&mut app, 0, 1);
+        assert_eq!(app.board_expanded, None);
+        assert_eq!((app.board_col, app.board_row), (0, 1));
     }
 
     #[test]
