@@ -1,6 +1,6 @@
-//! ghit themes: ayu mirage and ayu dark.
+//! ghit themes: ayu mirage, ayu dark, and GitHub light.
 //!
-//! Desaturated blue-ink backgrounds, one warm accent. Selection is a marker
+//! One accent color per theme. Selection is a marker
 //! plus bold type, never a full-width color block. The active palette is
 //! global so every widget and the markdown stylesheet stay in sync; `t`
 //! cycles it at runtime.
@@ -47,7 +47,19 @@ pub const DARK: Palette = Palette {
     violet: Color::Rgb(0xD2, 0xA6, 0xFF),
 };
 
-pub const THEMES: &[(&str, Palette)] = &[("mirage", MIRAGE), ("ayu dark", DARK)];
+pub const LIGHT: Palette = Palette {
+    ink: Color::Rgb(0xFF, 0xFF, 0xFF),
+    code_bg: Color::Rgb(0xF6, 0xF8, 0xFA),
+    paper: Color::Rgb(0x1F, 0x23, 0x28),
+    amber: Color::Rgb(0x09, 0x69, 0xDA),
+    teal: Color::Rgb(0x09, 0x69, 0xDA),
+    muted: Color::Rgb(0x59, 0x63, 0x6E),
+    red: Color::Rgb(0xD1, 0x24, 0x2C),
+    green: Color::Rgb(0x1A, 0x7F, 0x37),
+    violet: Color::Rgb(0x82, 0x50, 0xDF),
+};
+
+pub const THEMES: &[(&str, Palette)] = &[("mirage", MIRAGE), ("ayu dark", DARK), ("github light", LIGHT)];
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
@@ -194,11 +206,12 @@ mod tests {
     }
 
     #[test]
-    fn toggle_cycles_both_themes() {
+    fn toggle_cycles_all_themes() {
         ACTIVE.store(0, Ordering::Relaxed);
         assert_eq!(name(), "mirage");
         assert_eq!(cycle(), "ayu dark");
-        assert_eq!(name(), "ayu dark");
+        assert_eq!(cycle(), "github light");
+        assert_eq!(name(), "github light");
         assert_eq!(cycle(), "mirage");
         ACTIVE.store(0, Ordering::Relaxed);
     }
