@@ -30,7 +30,7 @@ jobs:
           OUTDIR = "/tmp/cap"
           os.makedirs(OUTDIR + "/fakehome", exist_ok=True)
           # (wait_seconds, keys_to_send); snapshot marks are the cumulative waits
-          STEPS = [(8.0, ""), (2.0, "jjj"), (2.0, "2"), (2.0, "1"), (1.5, "q")]
+          STEPS = [(8.0, ""), (2.5, "t"), (2.0, "t"), (2.0, "2"), (2.0, "1"), (1.5, "q")]
           chunks, marks = [], []
           start = time.time()
           pid, fd = pty.fork()
