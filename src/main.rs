@@ -93,6 +93,9 @@ struct App {
     pr_state: ListState,
     active_list: ActiveList,
     quit: bool,
+    board_loading: bool,
+    board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
+    board_states: Vec<ListState>,
     // Last-rendered hit areas for mouse clicks.
     side_issue_area: Rect,
     side_pr_area: Rect,
@@ -134,6 +137,9 @@ impl App {
             board: None,
             board_col: 0,
             board_row: 0,
+            board_loading: false,
+            board_rx: None,
+            board_states: Vec::new(),
             quit: false,
             side_issue_area: Rect::default(),
             side_pr_area: Rect::default(),
@@ -426,6 +432,7 @@ fn event_loop(
             Event::Mouse(m) => handle_mouse(app, m),
             _ => {}
         };
+        poll_board(app);
         if app.quit {
             return Ok(());
         }
@@ -434,11 +441,16 @@ fn event_loop(
 
 fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     // Board modal captures everything.
-    if app.board.is_some() {
+    if board_open(app) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => app.board = None,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.board = None;
+                app.board_loading = false;
+            }
             KeyCode::Char('j') | KeyCode::Down => board_move(app, 0, 1),
             KeyCode::Char('k') | KeyCode::Up => board_move(app, 0, -1),
+            KeyCode::PageDown => board_move(app, 0, 5),
+            KeyCode::PageUp => board_move(app, 0, -5),
             KeyCode::Char('h') | KeyCode::Left => board_move(app, -1, 0),
             KeyCode::Char('l') | KeyCode::Right => board_move(app, 1, 0),
             KeyCode::Enter => {
@@ -494,6 +506,12 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Up => {
             app.scroll = app.scroll.saturating_sub(3);
         }
+        KeyCode::PageDown => {
+            app.scroll = app.scroll.saturating_add(12);
+        }
+        KeyCode::PageUp => {
+            app.scroll = app.scroll.saturating_sub(12);
+        }
         KeyCode::Char(':') | KeyCode::Char('/') => app.focus = Focus::Bar,
         KeyCode::Char('o') => {
             if let Some(n) = app.current {
@@ -525,7 +543,7 @@ fn sidebar_hit(area: Rect, list: &[u64], x: u16, y: u16) -> Option<u64> {
 }
 
 fn handle_mouse(app: &mut App, m: MouseEvent) {
-    if app.board.is_some() {
+    if board_open(app) {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let hit = app
@@ -608,17 +626,45 @@ fn move_selection(app: &mut App, delta: isize) {
     app.show_issue(order[next]);
 }
 
+/// Modal opens instantly with a skeleton; the network fetch lands in the background.
 fn open_board(app: &mut App) {
+    if board_open(app) {
+        return;
+    }
     let owner = board_owner(app.repo_flag.clone().or_else(|| app.repo_slug.clone()));
     let Some(owner) = owner else {
         app.message = "board needs a repo: use -R or run inside one".to_string();
         return;
     };
-    match gh::fetch_board(&owner) {
+    app.board_loading = true;
+    app.board_col = 0;
+    app.board_row = 0;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.board_rx = Some(rx);
+    std::thread::spawn(move || {
+        let _ = tx.send(gh::fetch_board(&owner));
+    });
+}
+
+/// The board modal is up, whether still fetching or fully loaded.
+fn board_open(app: &App) -> bool {
+    app.board.is_some() || app.board_loading
+}
+
+fn poll_board(app: &mut App) {
+    if !app.board_loading {
+        return;
+    }
+    let res = app.board_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+    let Some(res) = res else { return };
+    app.board_rx = None;
+    app.board_loading = false;
+    match res {
         Ok(data) => {
             app.board = Some(data);
             app.board_col = 0;
             app.board_row = 0;
+            app.board_states.clear();
         }
         Err(e) => app.message = e,
     }
@@ -683,7 +729,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
     };
     f.render_widget(Paragraph::new(footer_line), root[1]);
 
-    if app.board.is_some() {
+    if board_open(app) {
         render_board(f, f.area(), app);
     }
 }
@@ -864,70 +910,134 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
 }
 
+/// Fixed card height in lines: title, labels, status, spacer.
+const CARD_H: u16 = 4;
+
 fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    use theme::{AMBER, INK, MUTED, PAPER, base};
-    let Some(board) = &app.board else { return };
-    let cols = board_columns(&board.items, &board.order);
+    use theme::{AMBER, INK, MUTED, base};
     let popup = centered(area, 92, 92);
     f.render_widget(Clear, popup);
+    let title = match &app.board {
+        Some(b) => format!(" {} ", b.title.to_uppercase()),
+        None => " FETCHING BOARD … ".to_string(),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(AMBER))
         .style(base())
-        .title(Span::styled(
-            format!(" {} ", board.title.to_uppercase()),
-            Style::new().bg(INK).fg(AMBER).bold(),
-        ));
+        .title(Span::styled(title, Style::new().bg(INK).fg(AMBER).bold()));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
+    let Some(board) = &app.board else {
+        render_skeleton(f, inner);
+        return;
+    };
+    let cols = board_columns(&board.items, &board.order);
     if cols.is_empty() {
         f.render_widget(Paragraph::new("empty board").style(base()), inner);
         return;
     }
-    let widths: Vec<Constraint> = cols.iter().map(|_| Constraint::Length(34)).collect();
+    while app.board_states.len() < cols.len() {
+        app.board_states.push(ListState::default());
+    }
+    let widths: Vec<Constraint> = cols.iter().map(|_| Constraint::Length(36)).collect();
     let col_areas = Layout::default().direction(Direction::Horizontal).constraints(widths).split(inner);
     app.board_cells.clear();
     for (i, (name, cards)) in cols.iter().enumerate() {
         let Some(a) = col_areas.get(i) else { continue };
-        let col_inner = Block::default().borders(Borders::ALL).inner(*a);
-        for (ri, _) in cards.iter().enumerate() {
-            app.board_cells.push((
-                Rect::new(col_inner.x, col_inner.y + ri as u16, col_inner.width, 1),
-                i,
-                ri,
-            ));
-        }
         let items: Vec<ListItem> = cards
             .iter()
             .enumerate()
-            .map(|(ri, c)| {
-                let sel = app.board_col == i && app.board_row == ri;
-                let title = model::slug(&c.title, 26);
-                let head = match c.number {
-                    Some(n) => format!("#{n} {title}"),
-                    None => format!("◇ {title}"),
-                };
-                let row = if sel {
-                    Line::from(vec![
-                        Span::styled("▌ ", Style::new().bg(INK).fg(AMBER).bold()),
-                        Span::styled(head, Style::new().bg(INK).fg(PAPER).bold()),
-                    ])
-                } else {
-                    Line::from(Span::styled(format!("  {head}"), Style::new().bg(INK).fg(PAPER)))
-                };
-                ListItem::new(vec![row])
-            })
+            .map(|(ri, c)| board_card(c, app.board_col == i && app.board_row == ri))
             .collect();
+        let active = app.board_col == i;
         let list = List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::new().bg(INK).fg(MUTED))
+                .border_style(Style::new().bg(INK).fg(if active { AMBER } else { MUTED }))
                 .style(base())
                 .title(Line::from(vec![
                     Span::styled(format!("{} ", name.to_uppercase()), Style::new().bg(INK).fg(AMBER).bold()),
                     Span::styled(format!("({})", cards.len()), Style::new().bg(INK).fg(MUTED)),
                 ])),
+        );
+        let state = &mut app.board_states[i];
+        state.select(if active { Some(app.board_row) } else { None });
+        f.render_stateful_widget(list, *a, state);
+        // Map visible cards back to click areas using the widget's scroll offset.
+        let offset = app.board_states[i].offset();
+        let col_inner = Block::default().borders(Borders::ALL).inner(*a);
+        for (ri, _) in cards.iter().enumerate().skip(offset) {
+            let y = col_inner.y + (ri - offset) as u16 * CARD_H;
+            if y + CARD_H > col_inner.y + col_inner.height {
+                break;
+            }
+            app.board_cells.push((Rect::new(col_inner.x, y, col_inner.width, CARD_H), i, ri));
+        }
+    }
+}
+
+fn board_card(c: &crate::model::BoardItem, sel: bool) -> ListItem<'static> {
+    use theme::{AMBER, INK, MUTED, PAPER};
+    let title = model::slug(&c.title, 26);
+    let head = match c.number {
+        Some(n) => format!("#{n} {title}"),
+        None => format!("◇ {title}"),
+    };
+    let mut chips: Vec<String> = c.labels.iter().take(3).map(|l| format!("● {}", l.name)).collect();
+    if c.labels.len() > 3 {
+        chips.push(format!("+{}", c.labels.len() - 3));
+    }
+    let chips_line = if chips.is_empty() { "–".to_string() } else { chips.join("  ") };
+    let status = c.status.clone().unwrap_or_else(|| "No status".to_string());
+    let first = if sel {
+        Line::from(vec![
+            Span::styled("▌ ", Style::new().bg(INK).fg(AMBER).bold()),
+            Span::styled(head, Style::new().bg(INK).fg(PAPER).bold()),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("  ", Style::new().bg(INK)),
+            Span::styled(head, Style::new().bg(INK).fg(PAPER)),
+        ])
+    };
+    ListItem::new(vec![
+        first,
+        Line::from(vec![
+            Span::styled("    ", Style::new().bg(INK)),
+            Span::styled(chips_line, Style::new().bg(INK).fg(MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("    ", Style::new().bg(INK)),
+            Span::styled(status.to_uppercase(), Style::new().bg(INK).fg(MUTED)),
+        ]),
+        Line::from(Span::styled("", Style::new().bg(INK))),
+    ])
+}
+
+/// Placeholder columns shown while the network fetch is in flight.
+fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
+    use theme::{INK, MUTED, base};
+    let widths: Vec<Constraint> = (0..3).map(|_| Constraint::Length(36)).collect();
+    let col_areas = Layout::default().direction(Direction::Horizontal).constraints(widths).split(area);
+    for a in col_areas.iter() {
+        let ghost: Vec<ListItem> = (0..4)
+            .map(|_| {
+                ListItem::new(vec![
+                    Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", Style::new().bg(INK).fg(MUTED))),
+                    Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", Style::new().bg(INK).fg(MUTED))),
+                    Line::from(Span::styled("    ▓▓▓▓▓", Style::new().bg(INK).fg(MUTED))),
+                    Line::from(""),
+                ])
+            })
+            .collect();
+        let list = List::new(ghost).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::new().bg(INK).fg(MUTED))
+                .style(base())
+                .title(Span::styled(" ━━━ ", Style::new().bg(INK).fg(MUTED))),
         );
         f.render_widget(list, *a);
     }
@@ -936,8 +1046,56 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 #[cfg(test)]
 mod render_smoke {
     use super::*;
-    use crate::model::{Author, IssueData};
+    use crate::model::{Author, BoardData, BoardItem, IssueData, Label};
     use ratatui::backend::TestBackend;
+
+    fn board_app(n_cards: usize) -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let items: Vec<BoardItem> = (0..n_cards)
+            .map(|i| BoardItem {
+                id: format!("c{i}"),
+                title: format!("Card {i}"),
+                number: Some(100 + i as u64),
+                status: Some("Todo".to_string()),
+                labels: vec![Label { name: "x".to_string() }],
+                content: serde_json::Value::Null,
+            })
+            .collect();
+        app.board = Some(BoardData {
+            number: 1,
+            title: "Roadmap".to_string(),
+            order: vec!["Todo".to_string()],
+            items,
+        });
+        app
+    }
+
+    #[test]
+    fn board_skeleton_shows_while_loading() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.board_loading = true;
+        let text = frame_text(&mut app);
+        assert!(text.contains("FETCHING"), "skeleton title");
+    }
+
+    #[test]
+    fn board_cards_show_labels_and_status() {
+        let mut app = board_app(3);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Card 0"));
+        assert!(text.contains("TODO"));
+        assert!(text.contains("● x"));
+    }
+
+    #[test]
+    fn board_scrolls_selected_into_view() {
+        let mut app = board_app(30);
+        app.board_row = 29;
+        let text = frame_text(&mut app);
+        assert!(text.contains("Card 29"), "selected card visible");
+        assert!(app.board_states[0].offset() > 0, "list scrolled");
+    }
 
     fn sample(number: u64) -> IssueData {
         IssueData {
