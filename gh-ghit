@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# gh extension entry point. Forwards everything to the ghit binary.
+# Install the binary with: cargo install --git https://github.com/bolu-atx/gh-ghit
+set -euo pipefail
+if command -v ghit >/dev/null 2>&1; then
+  exec ghit "$@"
+fi
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec cargo run --quiet --manifest-path "$here/Cargo.toml" -- "$@"
