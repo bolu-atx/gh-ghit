@@ -1,0 +1,73 @@
+name: demo
+
+# One-shot demo recorder. Runs on a scratch branch, uploads the raw
+# terminal capture as an artifact, then the branch is deleted.
+# Rendered to GIF locally, not here.
+on:
+  workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build ghit
+        run: cargo build --release --locked
+      - name: Record session under a pty
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHIT_BIN: ${{ github.workspace }}/target/release/ghit
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token
+          python3 - <<'EOF'
+          import fcntl, json, os, pty, select, struct, sys, termios, time
+          COLS, ROWS = 118, 30
+          OUTDIR = "/tmp/cap"
+          os.makedirs(OUTDIR + "/fakehome", exist_ok=True)
+          # (wait_seconds, keys_to_send); snapshot marks are the cumulative waits
+          STEPS = [(8.0, ""), (2.0, "jjj"), (2.0, "2"), (2.0, "1"), (1.5, "q")]
+          chunks, marks = [], []
+          start = time.time()
+          pid, fd = pty.fork()
+          if pid == 0:
+              fcntl.ioctl(1, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
+              env = dict(os.environ, TERM="xterm-256color", HOME=OUTDIR + "/fakehome")
+              os.execve(os.environ["GHIT_BIN"],
+                        [os.environ["GHIT_BIN"], "1", "-R", "bolu-atx/gh-ghit"], env)
+          def drain(timeout):
+              end = time.time() + timeout
+              while time.time() < end:
+                  r, _, _ = select.select([fd], [], [], max(0, end - time.time()))
+                  if not r:
+                      return
+                  try:
+                      data = os.read(fd, 65536)
+                  except OSError:
+                      return
+                  if not data:
+                      return
+                  chunks.append([round(time.time() - start, 3), data.decode("latin-1")])
+          try:
+              for wait, keys in STEPS:
+                  drain(wait)
+                  marks.append(round(time.time() - start, 3))
+                  if keys:
+                      os.write(fd, keys.encode())
+              drain(3.0)
+          finally:
+              try:
+                  os.waitpid(pid, os.WNOHANG)
+              except ChildProcessError:
+                  pass
+          with open(OUTDIR + "/stream.json", "w") as f:
+              json.dump({"width": COLS, "height": ROWS, "marks": marks, "chunks": chunks}, f)
+          print(f"captured {len(chunks)} chunks over {time.time()-start:.1f}s, marks={marks}")
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-cap
+          path: /tmp/cap/stream.json
