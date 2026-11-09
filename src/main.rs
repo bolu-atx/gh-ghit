@@ -13,7 +13,10 @@ use std::io::Stdout;
 use std::time::Duration;
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+    MouseEvent, MouseEventKind,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -59,7 +62,7 @@ fn main() {
 // App state
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
     Body,
     Comments,
@@ -89,6 +92,13 @@ struct App {
     issue_state: ListState,
     pr_state: ListState,
     active_list: ActiveList,
+    quit: bool,
+    // Last-rendered hit areas for mouse clicks.
+    side_issue_area: Rect,
+    side_pr_area: Rect,
+    tabs_area: Rect,
+    bar_area: Rect,
+    board_cells: Vec<(Rect, usize, usize)>,
     // Board modal.
     board: Option<BoardData>,
     board_col: usize,
@@ -124,6 +134,12 @@ impl App {
             board: None,
             board_col: 0,
             board_row: 0,
+            quit: false,
+            side_issue_area: Rect::default(),
+            side_pr_area: Rect::default(),
+            tabs_area: Rect::default(),
+            bar_area: Rect::default(),
+            board_cells: Vec::new(),
         }
     }
 
@@ -360,6 +376,7 @@ fn run_tui(app: &mut App, numbers: &[u64]) -> Result<(), String> {
     enable_raw_mode().map_err(|e| e.to_string())?;
     let mut stdout = std::io::stdout();
     stdout.execute(EnterAlternateScreen).map_err(|e| e.to_string())?;
+    stdout.execute(EnableMouseCapture).map_err(|e| e.to_string())?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
 
@@ -386,6 +403,10 @@ fn run_tui(app: &mut App, numbers: &[u64]) -> Result<(), String> {
     let result = event_loop(&mut terminal, app);
 
     disable_raw_mode().map_err(|e| e.to_string())?;
+    terminal
+        .backend_mut()
+        .execute(DisableMouseCapture)
+        .map_err(|e| e.to_string())?;
     terminal.backend_mut().execute(LeaveAlternateScreen).map_err(|e| e.to_string())?;
     terminal.show_cursor().map_err(|e| e.to_string())?;
     result
@@ -400,108 +421,191 @@ fn event_loop(
         if !event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
             continue;
         }
-        let Event::Key(key) = event::read().map_err(|e| e.to_string())? else {
-            continue;
-        };
-
-        // Board modal captures everything.
-        if app.board.is_some() {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => app.board = None,
-                KeyCode::Char('j') | KeyCode::Down => board_move(app, 0, 1),
-                KeyCode::Char('k') | KeyCode::Up => board_move(app, 0, -1),
-                KeyCode::Char('h') | KeyCode::Left => board_move(app, -1, 0),
-                KeyCode::Char('l') | KeyCode::Right => board_move(app, 1, 0),
-                KeyCode::Enter => {
-                    if let Some(n) = board_selected_number(app) {
-                        app.board = None;
-                        app.load_issue(n, false);
-                    }
-                }
-                _ => {}
-            }
-            continue;
-        }
-
-        if app.focus == Focus::Bar {
-            match key.code {
-                KeyCode::Esc => {
-                    app.focus = Focus::Main;
-                    app.bar.clear();
-                }
-                KeyCode::Enter => {
-                    let quit = matches!(app.bar.trim(), "q" | "quit" | "exit");
-                    app.submit_bar();
-                    if quit {
-                        return Ok(());
-                    }
-                }
-                KeyCode::Char(c) => {
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'c' || c == 'd') {
-                        return Ok(());
-                    }
-                    app.bar.push(c);
-                }
-                KeyCode::Backspace => {
-                    app.bar.pop();
-                }
-                _ => {}
-            }
-            continue;
-        }
-
-        match key.code {
-            KeyCode::Char('q') => return Ok(()),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
-            KeyCode::Char('1') => app.tab = Tab::Body,
-            KeyCode::Char('2') => app.tab = Tab::Comments,
-            KeyCode::Char('b') => open_board(app),
-            KeyCode::Char('j') | KeyCode::Down => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) || app.data.is_empty() {
-                    move_selection(app, 1);
-                } else {
-                    app.scroll = app.scroll.saturating_add(3);
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) || app.data.is_empty() {
-                    move_selection(app, -1);
-                } else {
-                    app.scroll = app.scroll.saturating_sub(3);
-                }
-            }
-            KeyCode::Char(':') | KeyCode::Char('/') => app.focus = Focus::Bar,
-            KeyCode::Char('o') => {
-                if let Some(n) = app.current {
-                    app.open_number(n);
-                } else {
-                    app.message = "view an issue first".to_string();
-                }
-            }
-            KeyCode::Char('r') => app.refresh_current(),
-            KeyCode::Char('p') => app.toggle_pin(),
-            KeyCode::Esc => app.bar.clear(),
-            KeyCode::Tab => {
-                app.tab = if app.tab == Tab::Body { Tab::Comments } else { Tab::Body };
-            }
+        match event::read().map_err(|e| e.to_string())? {
+            Event::Key(key) => handle_key(app, key),
+            Event::Mouse(m) => handle_mouse(app, m),
             _ => {}
+        };
+        if app.quit {
+            return Ok(());
         }
     }
 }
 
-fn move_selection(app: &mut App, delta: isize) {
-    let (list, state) = match app.active_list {
-        ActiveList::Issues => (&app.issues, &mut app.issue_state),
-        ActiveList::Prs => (&app.prs, &mut app.pr_state),
-    };
-    if list.is_empty() {
+fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    // Board modal captures everything.
+    if app.board.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.board = None,
+            KeyCode::Char('j') | KeyCode::Down => board_move(app, 0, 1),
+            KeyCode::Char('k') | KeyCode::Up => board_move(app, 0, -1),
+            KeyCode::Char('h') | KeyCode::Left => board_move(app, -1, 0),
+            KeyCode::Char('l') | KeyCode::Right => board_move(app, 1, 0),
+            KeyCode::Enter => {
+                if let Some(n) = board_selected_number(app) {
+                    app.board = None;
+                    app.load_issue(n, false);
+                }
+            }
+            _ => {}
+        }
         return;
     }
-    let cur = state.selected().unwrap_or(0) as isize;
-    let next = (cur + delta).clamp(0, list.len() as isize - 1) as usize;
-    state.select(Some(next));
-    let n = list[next];
-    app.show_issue(n);
+
+    if app.focus == Focus::Bar {
+        match key.code {
+            KeyCode::Esc => {
+                app.focus = Focus::Main;
+                app.bar.clear();
+            }
+            KeyCode::Enter => {
+                let quit = matches!(app.bar.trim(), "q" | "quit" | "exit");
+                app.submit_bar();
+                if quit {
+                    app.quit = true;
+                }
+            }
+            KeyCode::Char(c) => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'c' || c == 'd') {
+                    app.quit = true;
+                    return;
+                }
+                app.bar.push(c);
+            }
+            KeyCode::Backspace => {
+                app.bar.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Char('q') => app.quit = true,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
+        KeyCode::Char('1') => app.tab = Tab::Body,
+        KeyCode::Char('2') => app.tab = Tab::Comments,
+        KeyCode::Char('b') => open_board(app),
+        KeyCode::Char('j') => move_selection(app, 1),
+        KeyCode::Char('k') => move_selection(app, -1),
+        KeyCode::Down => {
+            app.scroll = app.scroll.saturating_add(3);
+        }
+        KeyCode::Up => {
+            app.scroll = app.scroll.saturating_sub(3);
+        }
+        KeyCode::Char(':') | KeyCode::Char('/') => app.focus = Focus::Bar,
+        KeyCode::Char('o') => {
+            if let Some(n) = app.current {
+                app.open_number(n);
+            } else {
+                app.message = "view an issue first".to_string();
+            }
+        }
+        KeyCode::Char('r') => app.refresh_current(),
+        KeyCode::Char('p') => app.toggle_pin(),
+        KeyCode::Esc => app.bar.clear(),
+        KeyCode::Tab => {
+            app.tab = if app.tab == Tab::Body { Tab::Comments } else { Tab::Body };
+        }
+        _ => {}
+    }
+}
+
+fn in_rect(area: Rect, x: u16, y: u16) -> bool {
+    area.contains(ratatui::layout::Position::new(x, y))
+}
+
+/// Sidebar rows are 3 lines each below a 1-line border.
+fn sidebar_hit(area: Rect, list: &[u64], x: u16, y: u16) -> Option<u64> {
+    if !in_rect(area, x, y) || y < area.y + 1 {
+        return None;
+    }
+    list.get(((y - area.y - 1) / 3) as usize).copied()
+}
+
+fn handle_mouse(app: &mut App, m: MouseEvent) {
+    if app.board.is_some() {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let hit = app
+                    .board_cells
+                    .iter()
+                    .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
+                    .map(|(_, c, r)| (*c, *r));
+                if let Some((c, r)) = hit {
+                    if app.board_col == c && app.board_row == r {
+                        if let Some(n) = board_selected_number(app) {
+                            app.board = None;
+                            app.load_issue(n, false);
+                        }
+                    } else {
+                        app.board_col = c;
+                        app.board_row = r;
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => board_move(app, 0, 1),
+            MouseEventKind::ScrollUp => board_move(app, 0, -1),
+            _ => {}
+        }
+        return;
+    }
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if in_rect(app.bar_area, m.column, m.row) {
+                app.focus = Focus::Bar;
+                return;
+            }
+            if let Some(n) = sidebar_hit(app.side_issue_area, &app.issues, m.column, m.row)
+                .or_else(|| sidebar_hit(app.side_pr_area, &app.prs, m.column, m.row))
+            {
+                app.focus = Focus::Main;
+                app.show_issue(n);
+                return;
+            }
+            if in_rect(app.tabs_area, m.column, m.row) {
+                // "BODY" is 4 wide, then the divider: left half body, right half comments.
+                app.tab = if m.column.saturating_sub(app.tabs_area.x) < 6 {
+                    Tab::Body
+                } else {
+                    Tab::Comments
+                };
+                return;
+            }
+            app.focus = Focus::Main;
+        }
+        MouseEventKind::ScrollDown => {
+            app.scroll = app.scroll.saturating_add(3);
+        }
+        MouseEventKind::ScrollUp => {
+            app.scroll = app.scroll.saturating_sub(3);
+        }
+        _ => {}
+    }
+}
+
+/// j/k walks issues then PRs as one flat list, crossing the section boundary.
+fn move_selection(app: &mut App, delta: isize) {
+    let order: Vec<u64> = app.issues.iter().chain(app.prs.iter()).copied().collect();
+    if order.is_empty() {
+        return;
+    }
+    let last = order.len() - 1;
+    let next = match app
+        .current
+        .and_then(|n| order.iter().position(|x| *x == n))
+    {
+        Some(pos) => (pos as isize + delta).clamp(0, last as isize) as usize,
+        None => {
+            if delta > 0 {
+                0
+            } else {
+                last
+            }
+        }
+    };
+    app.show_issue(order[next]);
 }
 
 fn open_board(app: &mut App) {
@@ -568,7 +672,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
     let footer_line = if app.message.is_empty() {
         Line::from(Span::styled(
-            "1 body · 2 comments · b board · j/k scroll · : cmd · o open · r refresh · p pin · q quit",
+            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · q quit",
             Style::new().fg(MUTED),
         ))
     } else {
@@ -665,6 +769,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
     let key = app.repo_key().unwrap_or_default();
+    app.side_issue_area = rows[0];
+    app.side_pr_area = rows[1];
     let (il, mut istate) = section_list(
         section_title("Issues", &key),
         &app.issues.clone(),
@@ -694,6 +800,8 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
 
     let repo = app.repo_key().unwrap_or_default();
+    app.tabs_area = rows[1];
+    app.bar_area = rows[3];
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => Line::from(vec![
             Span::styled("ghit ", Style::new().fg(AMBER).bold()),
@@ -756,7 +864,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn render_board(f: &mut ratatui::Frame, area: Rect, app: &App) {
+fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use theme::{AMBER, INK, MUTED, PAPER, base};
     let Some(board) = &app.board else { return };
     let cols = board_columns(&board.items, &board.order);
@@ -779,8 +887,17 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &App) {
     }
     let widths: Vec<Constraint> = cols.iter().map(|_| Constraint::Length(34)).collect();
     let col_areas = Layout::default().direction(Direction::Horizontal).constraints(widths).split(inner);
+    app.board_cells.clear();
     for (i, (name, cards)) in cols.iter().enumerate() {
         let Some(a) = col_areas.get(i) else { continue };
+        let col_inner = Block::default().borders(Borders::ALL).inner(*a);
+        for (ri, _) in cards.iter().enumerate() {
+            app.board_cells.push((
+                Rect::new(col_inner.x, col_inner.y + ri as u16, col_inner.width, 1),
+                i,
+                ri,
+            ));
+        }
         let items: Vec<ListItem> = cards
             .iter()
             .enumerate()
@@ -822,20 +939,110 @@ mod render_smoke {
     use crate::model::{Author, IssueData};
     use ratatui::backend::TestBackend;
 
-    fn sample() -> IssueData {
+    fn sample(number: u64) -> IssueData {
         IssueData {
-            number: 7,
+            number,
             title: "Fix the thing".to_string(),
             state: "OPEN".to_string(),
             author: Author { login: "bo".to_string() },
             labels: vec![],
             assignees: vec![],
             created_at: "2026-01-02T00:00:00Z".to_string(),
-            url: "https://github.com/o/r/issues/7".to_string(),
+            url: format!("https://github.com/o/r/issues/{number}"),
             body: "# hello\n\n- a\n- b\n".to_string(),
             comments: vec![],
             is_pr: false,
         }
+    }
+
+    fn loaded_app() -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let mut pr = sample(9);
+        pr.is_pr = true;
+        for d in [sample(7), pr] {
+            let n = d.number;
+            let is_pr = d.is_pr;
+            app.data.insert(n, d);
+            app.statuses.insert(n, vec![]);
+            if is_pr {
+                app.prs.push(n);
+            } else {
+                app.issues.push(n);
+            }
+        }
+        app.show_issue(7);
+        app
+    }
+
+    fn key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    fn click(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
+    #[test]
+    fn jk_walks_issues_then_prs() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.current, Some(9));
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.current, Some(9));
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn arrows_scroll_instead() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.scroll, 3);
+        assert_eq!(app.current, Some(7));
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn mouse_click_selects_sidebar_row() {
+        let mut app = loaded_app();
+        app.show_issue(9);
+        let _ = frame_text(&mut app); // records hit areas
+        let (x, y) = (app.side_issue_area.x + 2, app.side_issue_area.y + 1);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn mouse_click_switches_tabs() {
+        let mut app = loaded_app();
+        let _ = frame_text(&mut app);
+        let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
+        handle_mouse(
+            &mut app,
+            click(MouseEventKind::Down(MouseButton::Left), tx + 8, y),
+        );
+        assert_eq!(app.tab, Tab::Comments);
+        handle_mouse(
+            &mut app,
+            click(MouseEventKind::Down(MouseButton::Left), tx + 1, y),
+        );
+        assert_eq!(app.tab, Tab::Body);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls() {
+        let mut app = loaded_app();
+        handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 60, 20));
+        assert_eq!(app.scroll, 3);
+        handle_mouse(&mut app, click(MouseEventKind::ScrollUp, 60, 20));
+        assert_eq!(app.scroll, 0);
     }
 
     fn frame_text(app: &mut App) -> String {
@@ -855,7 +1062,7 @@ mod render_smoke {
     fn desk_renders_issue() {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
-        let d = sample();
+        let d = sample(7);
         app.data.insert(7, d);
         app.statuses.insert(7, vec![]);
         app.issues.push(7);
