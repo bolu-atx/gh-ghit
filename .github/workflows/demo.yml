@@ -22,7 +22,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHIT_BIN: ${{ github.workspace }}/target/release/ghit
         run: |
-          echo "$GH_TOKEN" | gh auth login --with-token
+          # NOTE: no `gh auth login` — gh (and ghit via gh) already
+          # authenticates from GH_TOKEN in the environment.
           python3 - <<'EOF'
           import fcntl, json, os, pty, select, struct, sys, termios, time
           COLS, ROWS = 118, 30
