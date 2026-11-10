@@ -85,7 +85,6 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
         .map(|c| {
             let content = c.get("content").cloned().unwrap_or(serde_json::Value::Null);
             BoardItem {
-                id: c.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 title: c.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 number: c
                     .get("number")
@@ -102,7 +101,7 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
         })
         .collect();
 
-    let data = BoardData { number: num, title, order, items };
+    let data = BoardData { title, order, items };
     cache::cache_put(&key, &data);
     Ok(data)
 }

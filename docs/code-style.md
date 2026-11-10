@@ -16,7 +16,7 @@ in spirit. Fix the code, never silence the lint.
 - Prefer exhaustive handling: every user request lists ALL of its behaviors
   (happy path, error, empty, boundary). A happy-path-only patch is unfinished.
 - No dead code. No commented-out blocks. If a helper loses its last caller,
-  delete it.
+  delete it (see `docs/dead-code.md` and the `dead-code-sweep` skill).
 
 ## Rendering
 

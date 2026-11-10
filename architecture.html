@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ghit — Architecture Explainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;700&family=Instrument+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1F2430; --ink2:#232936; --code:#1C212B; --paper:#CCCAC2;
+  --amber:#FFCC66; --teal:#95E6CB; --muted:#6C7A8B; --red:#FF6666;
+  --green:#87D96C; --violet:#DFBFFF; --line:#39414f; --card:#242b38;
+}
+[data-theme="dark"]{ --ink:#0B0E14; --ink2:#0F131A; --code:#0F131A; --paper:#BFBBB6; --amber:#E6B450; --muted:#636A72; --line:#232a36; --card:#111722; }
+[data-theme="light"]{ --ink:#FFFFFF; --ink2:#F6F8FA; --code:#F6F8FA; --paper:#1F2328; --amber:#0969DA; --teal:#0969DA; --muted:#59636E; --red:#D1242C; --green:#1A7F37; --violet:#8250DF; --line:#d5dbe2; --card:#ffffff; }
+*{box-sizing:border-box; margin:0; padding:0}
+body{background:var(--ink); color:var(--paper); font-family:"Instrument Sans",sans-serif; line-height:1.6; overflow-x:hidden;}
+body::before{content:""; position:fixed; inset:0; pointer-events:none; opacity:.5;
+  background-image:radial-gradient(circle at 15% 10%, rgba(255,204,102,.07), transparent 40%), radial-gradient(circle at 85% 20%, rgba(149,230,203,.06), transparent 40%), radial-gradient(circle at 50% 90%, rgba(223,191,255,.05), transparent 45%);}
+.grain{position:fixed; inset:0; pointer-events:none; opacity:.06; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");}
+.wrap{max-width:1080px; margin:0 auto; padding:0 28px; position:relative; z-index:1;}
+header.hero{padding:72px 0 30px;}
+.kicker{font-family:"JetBrains Mono",monospace; font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--amber);}
+h1{font-family:"Fraunces",serif; font-weight:900; font-size:clamp(44px,7vw,84px); line-height:.95; letter-spacing:-.02em; margin:14px 0 10px;}
+h1 em{font-style:italic; color:var(--teal);}
+.sub{font-size:18px; color:var(--muted); max-width:640px;}
+.terminal{margin:34px 0 10px; background:var(--code); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.term-bar{display:flex; gap:8px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line);}
+.dot{width:11px; height:11px; border-radius:50%;}
+.term-body{padding:22px 24px 26px; font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.75;}
+.c-amber{color:var(--amber)} .c-teal{color:var(--teal)} .c-mut{color:var(--muted)} .c-green{color:var(--green)} .c-violet{color:var(--violet)} .c-red{color:var(--red)}
+.meta-row{display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 0;}
+.pill{font-family:"JetBrains Mono",monospace; font-size:12px; border:1px solid var(--line); border-radius:999px; padding:7px 14px; background:rgba(255,255,255,.02);}
+.pill b{color:var(--amber);}
+section{padding:44px 0;}
+h2{font-family:"Fraunces",serif; font-size:clamp(28px,4vw,44px); font-weight:700; letter-spacing:-.01em; margin-bottom:6px;}
+h2 .num{font-family:"JetBrains Mono",monospace; font-size:14px; color:var(--amber); vertical-align:super; margin-right:10px;}
+.lede{color:var(--muted); max-width:680px; margin-bottom:26px;}
+.grid2{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+@media(max-width:820px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px; position:relative; transition:transform .25s, border-color .25s;}
+.card:hover{border-color:var(--amber);}
+.card h3{font-family:"JetBrains Mono",monospace; font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--teal); margin-bottom:8px;}
+.card p, .card li{font-size:14.5px; color:var(--paper);}
+.card code, p code, li code{font-family:"JetBrains Mono",monospace; font-size:12.5px; background:rgba(255,204,102,.1); color:var(--amber); padding:2px 7px; border-radius:6px;}
+.layers{display:flex; flex-direction:column; gap:0; margin-top:8px;}
+.layer{display:grid; grid-template-columns:150px 1fr; gap:16px; align-items:center; background:var(--card); border:1px solid var(--line); padding:16px 20px; position:relative;}
+.layer:first-child{border-radius:14px 14px 0 0;} .layer:last-child{border-radius:0 0 14px 14px;}
+.layer:not(:last-child){border-bottom:none;}
+.layer::after{content:"▼"; position:absolute; left:50%; bottom:-15px; z-index:2; font-size:10px; color:var(--amber); background:var(--ink); border:1px solid var(--line); width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
+.layer:last-child::after{display:none;}
+.layer .file{font-family:"JetBrains Mono",monospace; font-weight:700; color:var(--amber); font-size:14px;}
+.layer .owns{font-size:14px;} .layer .owns small{display:block; color:var(--muted); font-size:12.5px;}
+.tag{display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; border:1px solid var(--line); padding:2px 8px; border-radius:99px; margin-right:6px; color:var(--muted);}
+.tag.pure{color:var(--green); border-color:var(--green);} .tag.io{color:var(--violet); border-color:var(--violet);} .tag.state{color:var(--amber); border-color:var(--amber);}
+.loop{display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin:20px 0;}
+@media(max-width:820px){.loop{grid-template-columns:1fr 1fr;}}
+.step{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 14px; text-align:center; position:relative; cursor:pointer; transition:border-color .2s;}
+.step.active{border-color:var(--amber); box-shadow:0 0 0 1px var(--amber);}
+.step .n{font-family:"JetBrains Mono",monospace; color:var(--amber); font-size:12px;}
+.step b{display:block; margin:4px 0; font-size:14px;} .step span{font-size:12px; color:var(--muted);}
+.step:not(:last-child)::after{content:"→"; position:absolute; right:-14px; top:40%; color:var(--amber); font-weight:700;}
+.flow{display:grid; grid-template-columns:1fr auto 1fr auto 1fr; gap:12px; align-items:stretch; margin:20px 0;}
+@media(max-width:820px){.flow{grid-template-columns:1fr;}}
+.node{background:var(--code); border:1px solid var(--line); border-radius:12px; padding:18px; font-size:13.5px;}
+.node b{font-family:"JetBrains Mono",monospace; color:var(--teal); font-size:12.5px; display:block; margin-bottom:6px;}
+.arrow{align-self:center; color:var(--amber); font-weight:700; text-align:center; font-family:"JetBrains Mono",monospace; font-size:12px;}
+table.spec{width:100%; border-collapse:collapse; font-size:13.5px; margin-top:14px;}
+table.spec th{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);}
+table.spec td{padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:top;}
+table.spec td:first-child{font-family:"JetBrains Mono",monospace; color:var(--amber); white-space:nowrap;}
+.callout{border:1px solid var(--line); border-top:3px solid var(--amber); background:rgba(255,204,102,.05); padding:16px 20px; border-radius:12px; margin:18px 0; font-size:14.5px;}
+.callout.teal{border-top-color:var(--teal); background:rgba(149,230,203,.05);}
+.callout.red{border-top-color:var(--red); background:rgba(255,102,102,.05);}
+.callout .lbl{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--amber); display:block; margin-bottom:6px;}
+.callout.teal .lbl{color:var(--teal);} .callout.red .lbl{color:var(--red);}
+.chan{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
+.chan span{font-family:"JetBrains Mono",monospace; font-size:11.5px; background:var(--code); border:1px solid var(--line); padding:5px 11px; border-radius:8px;}
+.chan span i{color:var(--violet); font-style:normal;}
+footer{padding:40px 0 70px; color:var(--muted); font-size:13px;}
+.btnrow{display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;}
+button.theme{background:transparent; color:var(--paper); border:1px solid var(--line); border-radius:99px; padding:8px 18px; font-family:"JetBrains Mono",monospace; font-size:12px; cursor:pointer;}
+button.theme:hover{border-color:var(--amber); color:var(--amber);}
+pre.snip{background:var(--code); border:1px solid var(--line); border-radius:12px; padding:18px 20px; font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.7; overflow-x:auto; margin:14px 0;}
+.toc{display:flex; gap:8px; flex-wrap:wrap; margin:26px 0 6px;}
+.toc a{font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--teal); text-decoration:none; border:1px solid var(--line); padding:6px 13px; border-radius:99px;}
+.toc a:hover{border-color:var(--teal);}
+h4.rule{font-family:"JetBrains Mono",monospace; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--amber); margin:26px 0 8px;}
+</style></head>
+<body><div class="grain"></div>
+<div class="wrap">
+<header class="hero">
+<div class="kicker">ghit · terminal viewer for GitHub issues + PRs · onboarding brief</div>
+<h1>Fetch on threads.<br><em>Render in one place.</em></h1>
+<p class="sub">ghit is one Rust binary. It shows GitHub issues and PRs in a terminal. It uses the <code>gh</code> CLI and token GraphQL. The UI loop is synchronous. Worker threads do network I/O. Channels carry results back. This page maps the code for new senior engineers.</p>
+<div class="toc">
+<a href="#layers">01 layers</a><a href="#loop">02 event loop</a><a href="#fetch">03 background fetch</a><a href="#contracts">04 module contracts</a><a href="#decisions">05 decisions</a><a href="#extend">06 extend it</a>
+</div>
+<div class="btnrow">
+<button class="theme" onclick="document.documentElement.dataset.theme='mirage'">ayu mirage</button>
+<button class="theme" onclick="document.documentElement.dataset.theme='dark'">ayu dark</button>
+<button class="theme" onclick="document.documentElement.dataset.theme='light'">github light</button>
+</div>
+<div class="terminal"><div class="term-bar"><span class="dot" style="background:var(--red)"></span><span class="dot" style="background:var(--amber)"></span><span class="dot" style="background:var(--green)"></span><span class="c-mut" style="margin-left:8px; font-family:'JetBrains Mono',monospace; font-size:12px;">ghit -R owner/repo 123 — XDG_DATA_HOME=/tmp/ghit-e2e</span></div>
+<div class="term-body"><span class="c-mut">❯ cargo build · cargo test</span> <span class="c-green">0 warnings</span><br><span class="c-amber">┌ issues</span> <span class="c-teal">#123</span> pinned · <span class="c-teal">#124</span> open<br><span class="c-amber">├ body</span>&nbsp;&nbsp; markdown via tui-markdown · <span class="c-mut">click #refs with SGR mouse</span><br><span class="c-amber">└ board</span>&nbsp; skeleton first → <span class="c-green">threads fill cards</span> · <span class="c-mut">b to open</span></div></div>
+<div class="meta-row"><span class="pill"><b>stack</b> rust · ratatui 0.30 · crossterm 0.29 · ureq 2</span><span class="pill"><b>async</b> none — std threads + mpsc</span><span class="pill"><b>cache</b> 30-min JSON · pinned-issue files</span></div>
+</header>
+
+<section id="layers">
+<h2><span class="num">01</span>Layers, top to bottom</h2>
+<p class="lede">Dependencies point one way. The UI never fetches. Input never draws. Pure logic never touches the network. Learn this diagram first.</p>
+<div class="layers">
+<div class="layer"><span class="file">cli.rs</span><span class="owns">Argument parsing only. <code>Args</code> + numeric startup filter. <span class="tag pure">pure</span><small>No state, no fetching, no widgets.</small></span></div>
+<div class="layer"><span class="file">app.rs</span><span class="owns">State + event loop + background wiring. Owns every channel. <span class="tag state">stateful</span><small>Delegates rules to <code>core</code>, drawing to <code>ui</code>, data to <code>github</code>.</small></span></div>
+<div class="layer"><span class="file">input.rs / ui.rs / theme.rs</span><span class="owns">Input maps keys/mouse to <code>App</code> calls. UI reads <code>App</code> and records hit areas. Theme is functions only, never literals. <span class="tag state">stateful</span><small>Input reads hit areas; never draws. UI never fetches.</small></span></div>
+<div class="layer"><span class="file">core.rs / model.rs</span><span class="owns">Pure domain. Bar parsing, selection, board cursor, pin order, slugs, link refs. <span class="tag pure">pure · unit-tested</span><small>No App, no channels, no widgets — testable without a TUI.</small></span></div>
+<div class="layer"><span class="file">github.rs → api.rs / gh.rs / cache.rs</span><span class="owns">Data-access facade. UI layers import only <code>github</code>. GraphQL over <code>ureq</code>, legacy board via <code>gh</code> subprocess, 30-min JSON cache. <span class="tag io">blocking io</span><small><code>gh.rs</code> is deprecated: board only, no new callers.</small></span></div>
+</div>
+<div class="callout teal"><span class="lbl">The invariant that matters</span>Dependencies flow one way: <code>ui / input → app → github → api | gh | cache</code>. <code>core / model</code> stay pure helpers beside everything. A new network path follows four steps. Add it in <code>api.rs</code>. Expose it in <code>github.rs</code>. Spawn a thread in <code>app.rs</code>. Poll the channel each frame. Never fetch from <code>ui.rs</code>.</div>
+</section>
+
+<section id="loop">
+<h2><span class="num">02</span>The frame loop</h2>
+<p class="lede">ratatui is synchronous. Each iteration draws the screen. It then reads one input event. It then polls each channel with a non-blocking <code>try_recv</code>. The loop never waits for the network. Select a step to trace it.</p>
+<div class="loop" id="loopSteps">
+<div class="step active" data-i="0"><span class="n">a</span><b>draw</b><span>ui::render + capture hit areas</span></div>
+<div class="step" data-i="1"><span class="n">b</span><b>event</b><span>poll 100ms → key / mouse</span></div>
+<div class="step" data-i="2"><span class="n">c</span><b>poll ×5</b><span>bootstrap · sections · issues · board · details</span></div>
+<div class="step" data-i="3"><span class="n">d</span><b>merge</b><span>write to App maps and lists</span></div>
+<div class="step" data-i="4"><span class="n">e</span><b>quit?</b><span>return or next frame</span></div>
+</div>
+<pre class="snip" id="loopDetail"><span class="c-amber">loop {</span>
+  terminal.draw(|f| ui::render(f, app))?;      <span class="c-mut">// a — full repaint, record body_rows + rects</span>
+  <span class="c-teal">if</span> event::poll(100ms)? { <span class="c-teal">match</span> event::read()? {
+    Key(k)   =&gt; input::handle_key(app, k),     <span class="c-mut">// b — input mutates App only</span>
+    Mouse(m) =&gt; input::handle_mouse(app, m),   <span class="c-mut">//     hit-test against last frame's rects</span>
+  }}
+  poll_bootstrap(app); poll_sections(app);     <span class="c-mut">// c — try_recv, never blocks</span>
+  poll_issues(app); poll_board(app); poll_details(app);
+  <span class="c-teal">if</span> app.quit { <span class="c-teal">return</span> Ok(()) }              <span class="c-mut">// e</span>
+<span class="c-amber">}</span></pre>
+<div class="callout"><span class="lbl">Why 100ms</span>100ms bounds input delay and frame cost. It needs no timers. Without data, the loop idles in <code>poll</code>. With data, the next frame picks it up. The board uses this. It opens at once with an empty frame. Cards fill in over later frames.</div>
+</section>
+
+<section id="fetch">
+<h2><span class="num">03</span>Background fetch, one shape</h2>
+<p class="lede">Every network path uses the same pattern. The channels are the concurrency model. There is no executor and no task table. Each fetch kind owns one <code>mpsc</code> pair.</p>
+<div class="flow">
+<div class="node"><b>UI thread — app.rs</b>It creates <code>(tx, rx)</code>. It stores <code>rx</code> on <code>App</code>. It spawns a <code>std::thread</code> with <code>tx</code> and cloned args. It returns at once. The modal shows an empty frame.</div>
+<div class="arrow">thread<br>──▶</div>
+<div class="node"><b>worker — github.rs</b>It runs a blocking <code>ureq</code> POST or a <code>gh</code> subprocess. It reads the cache first (<code>cache_get</code>). It writes the cache after (<code>cache_put</code>). It sends one <code>Result</code>. Then the thread exits.</div>
+<div class="arrow">tx.send<br>──▶</div>
+<div class="node"><b>next frame — poll_*</b><code>try_recv / try_iter</code> drains ready results. It merges them into <code>data / board / statuses</code>. It clears pending flags. Errors become status line messages. Nothing panics.</div>
+</div>
+<div class="chan"><span><i>bootstrap_rx</i> repo slug</span><span><i>section_rx</i> PR sections</span><span><i>issue_rx</i> (n, bundle) ×N</span><span><i>board_rx</i> BoardData</span><span><i>detail_rx</i> (n, detail) ×N</span></div>
+<div class="grid2" style="margin-top:18px;">
+<div class="card"><h3>Many threads, no executor</h3><p>Board details spawn one thread per card. <code>detail_pending</code> guards each number so it fetches once. Warm cache hits skip the network through <code>BoardDetail::from_issue</code>. Cards fill in over time. No join is necessary.</p></div>
+<div class="card"><h3>Failure is a string</h3><p>Each fetch returns <code>Result&lt;T, String&gt;</code>. If the network, auth, or repo fails, the app shows a status line note. The note expires after 4 seconds. The TUI stays up. Clicked rows still appear in the list.</p></div>
+</div>
+</section>
+
+<section id="contracts">
+<h2><span class="num">04</span>Module contracts</h2>
+<p class="lede">What each file owns, what it may import, and where its tests live. As a rule, keep pure logic in <code>core</code>/<code>model</code>. Keep all I/O behind <code>github</code>.</p>
+<table class="spec">
+<tr><th>module</th><th>owns</th><th>may import</th><th>tests</th></tr>
+<tr><td>main.rs</td><td>entry: parse → <code>App::new</code> → <code>run</code></td><td>cli, app</td><td>—</td></tr>
+<tr><td>cli.rs</td><td><code>Args</code>, numeric startup filter</td><td>nothing</td><td>unit: non-numeric ignored</td></tr>
+<tr><td>app.rs</td><td><code>App</code> state, loop, thread spawn, channel polls</td><td>core, github, api, cache, model, input, ui</td><td>frame tests via ui</td></tr>
+<tr><td>core.rs</td><td><code>parse_bar</code>, selection, board cursor, pins, window cycle</td><td>nothing (std only)</td><td>unit per rule</td></tr>
+<tr><td>model.rs</td><td><code>IssueData</code>, <code>BoardData</code>, <code>slug</code>, <code>linkify</code>, <code>refs_in_line</code></td><td>regex, serde</td><td>unit per helper</td></tr>
+<tr><td>github.rs</td><td>facade: <code>fetch_number</code>, <code>fetch_pr_sections</code>, <code>resolve_repo</code></td><td>api, gh, cache, model</td><td>unit: URL shapes</td></tr>
+<tr><td>api.rs</td><td>token GraphQL: sections, issue, board detail</td><td>cache, model, ureq</td><td>parse fns</td></tr>
+<tr><td>gh.rs</td><td><b>deprecated</b> board via <code>gh</code> subprocess — one call site</td><td>cache, model</td><td>— (port to GraphQL, delete)</td></tr>
+<tr><td>cache.rs</td><td>30-min JSON + <code>pinned-&lt;repo&gt;.txt</code> under XDG data home</td><td>fs only</td><td>unit: roundtrip, TTL</td></tr>
+<tr><td>input.rs</td><td>key/mouse → <code>App</code> calls; delegates math to <code>core</code></td><td>app, core</td><td>via frame tests</td></tr>
+<tr><td>ui.rs</td><td>all rendering; records hit areas consumed by input</td><td>app, model, theme</td><td><code>render_smoke</code> frame tests</td></tr>
+<tr><td>theme.rs</td><td>palettes + <code>ink()</code> fns + markdown stylesheet; <code>t</code> cycles</td><td>ratatui, tui-markdown</td><td>—</td></tr>
+</table>
+<div class="callout red"><span class="lbl">Trap for newcomers</span><code>terminal.current_buffer_mut()</code> after <code>draw</code> is the blank post-swap buffer. <code>capture_body_rows</code> must read the frame under draw (<code>f.buffer_mut()</code> inside <code>render</code>). Read <code>ui.rs</code> before you change click-to-open behavior.</div>
+</section>
+
+<section id="decisions">
+<h2><span class="num">05</span>Decisions you inherit</h2>
+<p class="lede">The codebase already made four decisions. Understand the reasons before you propose alternatives.</p>
+<div class="grid2">
+<div class="card"><h3>Sync ratatui, no tokio</h3><p><code>draw()</code> blocks and returns. No await exists. The network is blocking too (<code>ureq</code>, subprocesses). An executor would only wrap <code>spawn_blocking</code>. Five channels and one thread per fetch cover the load. Revisit this only if the stack goes fully async.</p></div>
+<div class="card"><h3>Threads over tasks</h3><p>The fetch count is small: one board, N issues, N details. Each fetch waits on I/O. One thread per fetch is simpler than a runtime. A pending set stops duplicates. Each thread sends once, exits, and the next frame polls.</p></div>
+<div class="card"><h3>gh.rs is end-of-life</h3><p>All issue and PR reads use token GraphQL in <code>api.rs</code>. Only the project board still shells out. The port path is marked. Reimplement <code>fetch_board</code> in <code>api.rs</code>. Keep the one <code>board_via_gh</code> shim in <code>app.rs</code> as the seam. Then delete <code>gh.rs</code>.</p></div>
+<div class="card"><h3>Theme is functions</h3><p>Render code holds no hardcoded colors. Each widget calls <code>theme::ink()</code> and similar functions. This one rule lets <code>t</code> repaint the whole app, including the markdown stylesheet. Keep it.</p></div>
+</div>
+</section>
+
+<section id="extend">
+<h2><span class="num">06</span>Extend it safely</h2>
+<p class="lede">The checklist for a first contribution, in order.</p>
+<h4 class="rule">A — add a fetch path</h4>
+<pre class="snip"><span class="c-mut">// 1. api.rs — blocking fn returning Result&lt;T, String&gt;</span>
+<span class="c-teal">pub fn</span> <span class="c-amber">my_fetch</span>(repo: &amp;str) -&gt; <span class="c-teal">Result</span>&lt;MyData, String&gt;
+<span class="c-mut">// 2. github.rs — facade + cache key, UI imports only this</span>
+<span class="c-mut">// 3. app.rs — channel pair on App, spawn thread, poll_* each frame</span>
+<span class="c-mut">// 4. ui.rs — skeleton first, fill when poll lands</span></pre>
+<h4 class="rule">B — verify like CI does</h4>
+<pre class="snip"><span class="c-mut">$</span> cargo test                                            <span class="c-mut"># unit + headless frame tests, must be green</span>
+<span class="c-mut">$</span> cargo build 2&gt;&amp;1 | grep -cE <span class="c-amber">"^warning|^error"</span>          <span class="c-mut"># expect 0</span>
+<span class="c-mut">$</span> XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123</pre>
+<div class="callout teal"><span class="lbl">Live-drive rule</span>Test interactive changes in tmux before you push. The mouse is real SGR. Send <code>\x1b[&lt;0;x;ym</code> for press and <code>\x1b[&lt;3;x;my</code> for release. Never press <code>o</code> during verification. It opens a browser. UI changes need a <code>render_smoke</code> frame test.</div>
+<footer>Built from the source — <code>main.rs · cli.rs · app.rs · core.rs · model.rs · github.rs · api.rs · gh.rs · cache.rs · input.rs · ui.rs · theme.rs</code>. Single binary <code>ghit</code>, repo <code>bolu-atx/gh-ghit</code>.</footer>
+</div>
+<script>
+document.documentElement.dataset.theme = 'mirage';
+var notes = [
+  'a — render() paints sidebar and body. capture_body_rows then snapshots the frame. Click-to-open uses that snapshot.',
+  'b — crossterm poll(100ms) bounds delay. Input writes to App only. It never fetches.',
+  'c — five try_recv polls run. A ready channel merges in the same iteration.',
+  'd — results land in the data, board, and statuses maps. Pending flags clear. Errors become status line notes.',
+  'e — the quit flag ends the loop. Teardown leaves raw mode, mouse capture, and alt screen.'
+];
+var steps = document.querySelectorAll('#loopSteps .step');
+var detail = document.getElementById('loopDetail');
+var base = detail.innerHTML;
+steps.forEach(function(s){ s.addEventListener('click', function(){
+  steps.forEach(function(x){ x.classList.remove('active'); });
+  s.classList.add('active');
+  detail.innerHTML = base + '\n<span class="c-amber">── ' + notes[+s.dataset.i] + '</span>';
+});});
+if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { document.querySelectorAll('*').forEach(function(e){ e.style.transition='none'; }); }
+</script>
+</body></html>

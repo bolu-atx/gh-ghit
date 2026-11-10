@@ -32,12 +32,6 @@ pub(crate) enum Focus {
     Bar,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ActiveList {
-    Issues,
-    Prs,
-}
-
 pub(crate) struct App {
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
@@ -64,7 +58,6 @@ pub(crate) struct App {
     pub(crate) message_at: Option<std::time::Instant>,
     pub(crate) issue_state: ListState,
     pub(crate) pr_state: ListState,
-    pub(crate) active_list: ActiveList,
     pub(crate) quit: bool,
     pub(crate) body_area: Rect,
     pub(crate) body_rows: Vec<String>,
@@ -116,7 +109,6 @@ impl App {
             message_at: None,
             issue_state: ListState::default(),
             pr_state: ListState::default(),
-            active_list: ActiveList::Issues,
             board: None,
             board_col: 0,
             board_row: 0,
@@ -225,11 +217,9 @@ impl App {
         if let Some(d) = self.data.get(&n) {
             let is_pr = d.is_pr;
             if is_pr {
-                self.active_list = ActiveList::Prs;
                 self.pr_state.select(self.prs.iter().position(|x| *x == n));
                 self.issue_state.select(None);
             } else {
-                self.active_list = ActiveList::Issues;
                 self.issue_state.select(self.issues.iter().position(|x| *x == n));
                 self.pr_state.select(None);
             }

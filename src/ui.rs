@@ -620,7 +620,6 @@ mod render_smoke {
         app.repo_slug = Some("o/r".to_string());
         let items: Vec<BoardItem> = (0..n_cards)
             .map(|i| BoardItem {
-                id: format!("c{i}"),
                 title: format!("Card {i}"),
                 number: Some(100 + i as u64),
                 status: Some("Todo".to_string()),
@@ -634,7 +633,6 @@ mod render_smoke {
             })
             .collect();
         app.board = Some(BoardData {
-            number: 1,
             title: "Roadmap".to_string(),
             order: vec!["Todo".to_string()],
             items,
