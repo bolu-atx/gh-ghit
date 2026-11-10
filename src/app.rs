@@ -48,6 +48,13 @@ pub(crate) enum Focus {
     Bar,
 }
 
+/// What a filter-dialog query commit asks the caller to fetch.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum QueryAction {
+    Run(String),
+    Refetch,
+}
+
 pub(crate) struct App {
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
@@ -61,14 +68,33 @@ pub(crate) struct App {
     pub(crate) requested: Option<u64>,
     pub(crate) data: HashMap<u64, IssueData>,
     pub(crate) statuses: HashMap<u64, Vec<(String, Option<String>)>>,
-    pub(crate) issues: Vec<u64>,
-    pub(crate) prs: Vec<u64>,
+    /// Numbers the user explicitly asked for or clicked, in first-seen
+    /// order. Merely viewing a recent row never lands here.
+    pub(crate) visited: Vec<u64>,
+    /// Background-fetched recent rows (window listing or GitHub search),
+    /// in fetch order.
+    pub(crate) recent: Vec<u64>,
     pub(crate) pinned: HashSet<u64>,
     pub(crate) pin_order: Vec<u64>,
     pub(crate) current: Option<u64>,
     pub(crate) tab: Tab,
     pub(crate) focus: Focus,
     pub(crate) bar: String,
+    /// `/` search text. Persists after commit so matches stay highlighted;
+    /// `searching` is true only while editing it in the bar.
+    pub(crate) search: String,
+    pub(crate) searching: bool,
+    /// Filter dialog (`f`) state.
+    pub(crate) filter_open: bool,
+    pub(crate) query_edit: bool,
+    pub(crate) query_draft: String,
+    pub(crate) query_active: String,
+    pub(crate) show_open_prs: bool,
+    pub(crate) show_merged_prs: bool,
+    pub(crate) show_open_issues: bool,
+    pub(crate) show_closed_issues: bool,
+    /// The next section payload replaces (search) instead of appending.
+    pub(crate) section_replace: bool,
     pub(crate) scroll: u16,
     pub(crate) message: String,
     pub(crate) message_at: Option<std::time::Instant>,
@@ -86,9 +112,12 @@ pub(crate) struct App {
     pub(crate) detail_pending: HashSet<u64>,
     pub(crate) detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
     pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
-    // Last-rendered hit areas for mouse clicks.
+    // Last-rendered hit areas for mouse clicks. The row maps hold the
+    // display order per pane, `None` marking a divider slot.
     pub(crate) side_issue_area: Rect,
     pub(crate) side_pr_area: Rect,
+    pub(crate) side_issue_rows: Vec<Option<u64>>,
+    pub(crate) side_pr_rows: Vec<Option<u64>>,
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
@@ -112,14 +141,25 @@ impl App {
             issue_tx, issue_rx, issue_pending: HashSet::new(), requested: None,
             data: HashMap::new(),
             statuses: HashMap::new(),
-            issues: vec![],
-            prs: vec![],
+            visited: vec![],
+            recent: vec![],
             pinned: HashSet::new(),
             pin_order: vec![],
             current: None,
             tab: Tab::Body,
             focus: Focus::Main,
             bar: String::new(),
+            search: String::new(),
+            searching: false,
+            filter_open: false,
+            query_edit: false,
+            query_draft: String::new(),
+            query_active: String::new(),
+            show_open_prs: true,
+            show_merged_prs: true,
+            show_open_issues: true,
+            show_closed_issues: true,
+            section_replace: false,
             scroll: 0,
             message: String::new(),
             message_at: None,
@@ -142,6 +182,8 @@ impl App {
             body_rows: Vec::new(),
             side_issue_area: Rect::default(),
             side_pr_area: Rect::default(),
+            side_issue_rows: vec![],
+            side_pr_rows: vec![],
             tabs_area: Rect::default(),
             bar_area: Rect::default(),
             board_cells: Vec::new(),
@@ -174,28 +216,77 @@ impl App {
         self.repo_slug = github::resolve_repo(self.repo_flag.as_deref());
     }
 
-    /// File `number` under its section. Clicked and fetched rows join the
-    /// sidebar even when their data arrived earlier (warm cache, board
-    /// detail prefetch) and the fetch path below is skipped.
-    pub(crate) fn ensure_listed(&mut self, number: u64, is_pr: bool) {
-        let key = if is_pr { "pr" } else { "issue" };
-        let list = if is_pr { &mut self.prs } else { &mut self.issues };
-        if !list.contains(&number) {
-            list.push(number);
-            self.sort_section(key);
+    /// File `number` under requested rows. Call this only for explicit
+    /// user actions (typing, clicking, search commit): background fetches
+    /// and cursor movement must not relocate rows between groups.
+    pub(crate) fn ensure_visited(&mut self, number: u64) {
+        if !self.visited.contains(&number) {
+            self.visited.push(number);
+        }
+        self.sync_selection();
+    }
+
+    /// File `number` under recent rows (background fetch). Requested rows
+    /// never repeat here; see `sections`.
+    pub(crate) fn ensure_recent(&mut self, number: u64) {
+        if !self.recent.contains(&number) {
+            self.recent.push(number);
         }
     }
 
-    /// Pull open PRs plus PRs merged inside the window into the section.
+    /// Pull recent issues plus open/windowed-merged PRs into the sidebar.
     /// Offline or out of a repo this is a no-op: clicked rows still list.
-    pub(crate) fn merge_pr_sections(&mut self) {
+    pub(crate) fn merge_recent_sections(&mut self) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
         let hours = self.merged_window_hours;
         let (tx, rx) = std::sync::mpsc::channel();
         self.section_rx = Some(rx);
         rt().spawn(async move {
-            let _ = tx.send(github::fetch_pr_sections(&repo, hours).await);
+            let _ = tx.send(github::fetch_recent_sections(&repo, hours).await);
         });
+    }
+
+    /// Window change: drop unopened background rows and refetch from
+    /// scratch so a narrower window actually shrinks the list. Explicitly
+    /// opened rows keep their data and stay listed.
+    pub(crate) fn refetch_recent(&mut self) {
+        self.drop_unvisited_background();
+        self.query_active.clear();
+        self.query_draft.clear();
+        self.merge_recent_sections();
+    }
+
+    /// Server-side GitHub search scoped to the repo. Results replace the
+    /// recent list when they land; see `section_replace`.
+    pub(crate) fn run_gh_search(&mut self, query: String) {
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
+            self.notify("search needs a repo: use -R or run inside one".to_string());
+            return;
+        };
+        self.section_replace = true;
+        self.notify(format!("searching: {query}"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.section_rx = Some(rx);
+        rt().spawn(async move {
+            let _ = tx.send(github::search_repo(&repo, &query).await);
+        });
+    }
+
+    /// Drop background rows the user never opened, with their cached data.
+    fn drop_unvisited_background(&mut self) {
+        let keep: HashSet<u64> = self.visited.iter().copied()
+            .chain(self.pin_order.iter().copied())
+            .chain(self.pinned.iter().copied())
+            .collect();
+        self.recent.retain(|n| keep.contains(n));
+        for n in self.partial.iter().copied().collect::<Vec<_>>() {
+            if !keep.contains(&n) {
+                self.partial.remove(&n);
+                self.data.remove(&n);
+                self.statuses.remove(&n);
+                self.board_details.remove(&n);
+            }
+        }
     }
 
     pub(crate) fn window_label(&self) -> String {
@@ -205,8 +296,6 @@ impl App {
     pub(crate) fn load_issue(&mut self, number: u64, force: bool) {
         self.requested = Some(number);
         if !force && self.data.contains_key(&number) && !self.partial.contains(&number) {
-            let is_pr = self.data[&number].is_pr;
-            self.ensure_listed(number, is_pr);
             self.show_issue(number);
             self.bar.clear();
             self.focus = Focus::Main;
@@ -220,9 +309,152 @@ impl App {
         });
     }
 
-    fn sort_section(&mut self, sec: &str) {
-        let list = if sec == "pr" { &mut self.prs } else { &mut self.issues };
-        *list = core::apply_pin_order(list, &self.pin_order, &self.pinned);
+    /// Sidebar split: pinned | requested | recent, pins never duplicated.
+    pub(crate) fn sections(&self) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+        core::section_split(&self.pin_order, &self.visited, &self.recent, &self.pinned)
+    }
+
+    /// Row title for search, empty when the row is still loading.
+    fn row_title(&self, n: u64) -> String {
+        self.data.get(&n).map(|d| d.title.clone()).unwrap_or_default()
+    }
+
+    /// True for issues, false for PRs and rows still loading (filed with
+    /// issues until their data arrives and re-files them).
+    fn is_pr(&self, n: u64) -> bool {
+        self.data.get(&n).map(|d| d.is_pr).unwrap_or(false)
+    }
+
+    /// Recent-row visibility under the `f` state toggles. Pins and
+    /// requested rows always show: filters thin the firehose, never rows
+    /// the user explicitly opened.
+    fn recent_visible(&self, n: u64) -> bool {
+        let Some(d) = self.data.get(&n) else { return true };
+        let closed = matches!(d.state.as_str(), "CLOSED" | "MERGED");
+        if d.is_pr {
+            if closed { self.show_merged_prs } else { self.show_open_prs }
+        } else if closed {
+            self.show_closed_issues
+        } else {
+            self.show_open_issues
+        }
+    }
+
+    /// (pinned, requested, recent) for one pane. When `filtered`, the `/`
+    /// query narrows rows; the committed highlight in `search` always
+    /// applies at render through `section_list`.
+    pub(crate) fn pane_groups(&self, want_pr: bool, filtered: bool) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+        let (p, v, r) = self.sections();
+        let q = self.search.clone();
+        let pick = |list: Vec<u64>| -> Vec<u64> {
+            list.into_iter()
+                .filter(|n| {
+                    self.is_pr(*n) == want_pr
+                        && (!filtered
+                            || q.trim().is_empty()
+                            || core::matches_search(*n, &self.row_title(*n), &q))
+                })
+                .collect()
+        };
+        let pinned = pick(p);
+        let requested = pick(v);
+        let mut recent = pick(r);
+        recent.retain(|n| self.recent_visible(*n));
+        (pinned, requested, recent)
+    }
+
+    /// Display rows for the Issues pane, `None` marking divider slots.
+    pub(crate) fn issue_rows(&self) -> Vec<Option<u64>> {
+        let (p, v, r) = self.pane_groups(false, self.searching);
+        core::pane_order(&p, &v, &r)
+    }
+
+    /// Display rows for the Pull requests pane, `None` marking dividers.
+    pub(crate) fn pr_rows(&self) -> Vec<Option<u64>> {
+        let (p, v, r) = self.pane_groups(true, self.searching);
+        core::pane_order(&p, &v, &r)
+    }
+
+    /// Flat j/k order: issues pane, then PRs pane.
+    pub(crate) fn flat_numbers(&self) -> Vec<u64> {
+        let (ip, iv, ir) = self.pane_groups(false, false);
+        let (pp, pv, pr) = self.pane_groups(true, false);
+        ip.into_iter().chain(iv).chain(ir).chain(pp).chain(pv).chain(pr).collect()
+    }
+
+    /// Flat order limited to `/` search hits, for Enter / n / N jumps.
+    pub(crate) fn search_hits(&self) -> Vec<u64> {
+        if self.search.trim().is_empty() {
+            return vec![];
+        }
+        let (ip, iv, ir) = self.pane_groups(false, false);
+        let (pp, pv, pr) = self.pane_groups(true, false);
+        ip.into_iter()
+            .chain(iv).chain(ir).chain(pp).chain(pv).chain(pr)
+            .filter(|n| core::matches_search(*n, &self.row_title(*n), &self.search))
+            .collect()
+    }
+
+    /// Commit `/` search: jump to the first hit, keep the highlight.
+    /// An explicit open, so the row files under requested.
+    pub(crate) fn commit_search(&mut self) {
+        self.searching = false;
+        self.focus = Focus::Main;
+        if let Some(n) = self.search_hits().first().copied() {
+            self.ensure_visited(n);
+            self.load_issue(n, false);
+        }
+    }
+
+    /// Start editing the GitHub query in the filter dialog.
+    pub(crate) fn start_query_edit(&mut self) {
+        self.query_draft = self.query_active.clone();
+        self.query_edit = true;
+    }
+
+    /// What committing the query draft means. Pure for tests: the caller
+    /// performs the fetch. Non-empty runs a search, empty clears back to
+    /// the window listing.
+    pub(crate) fn commit_query_draft(&mut self) -> QueryAction {
+        self.query_edit = false;
+        self.filter_open = false;
+        self.focus = Focus::Main;
+        let q = self.query_draft.trim().to_string();
+        self.query_active = q.clone();
+        if q.is_empty() { QueryAction::Refetch } else { QueryAction::Run(q) }
+    }
+
+    /// Recent pane subtitle: window label, or the active search query.
+    pub(crate) fn recent_detail(&self) -> String {
+        let n = self.issue_rows().len() + self.pr_rows().len();
+        if self.query_active.trim().is_empty() {
+            format!("{} · {n}", self.window_label())
+        } else {
+            format!("\"{}\" · {n}", self.query_active)
+        }
+    }
+
+    /// Position of `current` in display rows, +1 for the top spacer row.
+    fn selected_index(rows: &[Option<u64>], current: Option<u64>) -> Option<usize> {
+        current
+            .and_then(|n| rows.iter().position(|r| *r == Some(n)))
+            .map(|p| p + 1)
+    }
+
+    fn sync_selection(&mut self) {
+        let issue_rows = self.issue_rows();
+        let pr_rows = self.pr_rows();
+        match self.current {
+            Some(n) if issue_rows.contains(&Some(n)) => {
+                self.issue_state.select(Self::selected_index(&issue_rows, self.current));
+                self.pr_state.select(None);
+            }
+            Some(n) if pr_rows.contains(&Some(n)) => {
+                self.issue_state.select(None);
+                self.pr_state.select(Self::selected_index(&pr_rows, self.current));
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn show_issue(&mut self, n: u64) {
@@ -230,16 +462,7 @@ impl App {
         if self.partial.contains(&n) { self.load_issue(n, false); }
         self.current = Some(n);
         self.scroll = 0;
-        if let Some(d) = self.data.get(&n) {
-            let is_pr = d.is_pr;
-            if is_pr {
-                self.pr_state.select(self.prs.iter().position(|x| *x == n));
-                self.issue_state.select(None);
-            } else {
-                self.issue_state.select(self.issues.iter().position(|x| *x == n));
-                self.pr_state.select(None);
-            }
-        }
+        self.sync_selection();
     }
 
     pub(crate) fn toggle_pin(&mut self) {
@@ -263,12 +486,6 @@ impl App {
         }
         self.pin_order = pins.clone();
         cache::save_pins(&key, &pins);
-        let sec = if self.data.get(&n).map(|d| d.is_pr).unwrap_or(false) {
-            "pr"
-        } else {
-            "issue"
-        };
-        self.sort_section(sec);
         self.show_issue(n);
     }
 
@@ -282,7 +499,14 @@ impl App {
             cache::cache_drop(&format!("board-{}", owner.to_lowercase()));
         }
         self.load_issue(n, true);
-        self.merge_pr_sections();
+        // A search listing refreshes from the server; a window listing
+        // re-appends (idempotent through the contains checks in polling).
+        if self.query_active.trim().is_empty() {
+            self.merge_recent_sections();
+        } else {
+            let q = self.query_active.clone();
+            self.run_gh_search(q);
+        }
         self.notify(format!("refreshed #{n}"));
     }
 
@@ -302,6 +526,7 @@ impl App {
         match core::parse_bar(&self.bar.clone()) {
             core::BarCommand::Numbers(numbers) => {
                 for n in numbers {
+                    self.ensure_visited(n);
                     self.load_issue(n, false);
                 }
             }
@@ -518,8 +743,12 @@ fn poll_bootstrap(app: &mut App) {
         pins.retain(|n| !numbers.contains(n));
         app.pinned = pins.iter().copied().collect();
         app.pin_order = pins.clone();
-        for n in pins.into_iter().chain(numbers) { app.load_issue(n, false); }
-        app.merge_pr_sections();
+        for n in pins { app.load_issue(n, false); }
+        for n in numbers {
+            app.ensure_visited(n);
+            app.load_issue(n, false);
+        }
+        app.merge_recent_sections();
     } else {
         for n in numbers { app.load_issue(n, false); }
     }
@@ -528,6 +757,9 @@ fn poll_bootstrap(app: &mut App) {
 pub(crate) fn poll_sections(app: &mut App) {
     let Some(result) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
     app.section_rx = None;
+    if std::mem::take(&mut app.section_replace) {
+        app.drop_unvisited_background();
+    }
     match result {
         Ok(rows) => {
             let mut last = None;
@@ -538,7 +770,7 @@ pub(crate) fn poll_sections(app: &mut App) {
                     app.data.insert(n, row.issue);
                     app.statuses.insert(n, row.statuses);
                     app.board_details.insert(n, row.detail);
-                    app.ensure_listed(n, true);
+                    app.ensure_recent(n);
                     last = Some(n);
                 }
             }
@@ -550,17 +782,18 @@ pub(crate) fn poll_sections(app: &mut App) {
     }
 }
 
-fn poll_issues(app: &mut App) {
+pub(crate) fn poll_issues(app: &mut App) {
     let ready: Vec<_> = app.issue_rx.try_iter().collect();
     for (number, result) in ready {
         app.issue_pending.remove(&number);
         match result {
             Ok((data, statuses)) => {
-                let is_pr = data.is_pr;
+                // Completing the full fetch never files the row: viewing a
+                // recent row must not relocate it to requested. Explicit
+                // actions file through `ensure_visited` at their own site.
                 app.partial.remove(&number);
                 app.data.insert(number, data);
                 app.statuses.insert(number, statuses);
-                app.ensure_listed(number, is_pr);
                 if app.requested == Some(number) {
                     app.show_issue(number);
                     app.bar.clear();

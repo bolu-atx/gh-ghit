@@ -33,6 +33,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Enter => {
                 if let Some(n) = board_selected_number(app) {
                     app.board = None;
+                    app.ensure_visited(n);
                     app.load_issue(n, false);
                 }
             }
@@ -41,13 +42,25 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
 
+    // Filter dialog captures everything except the command bar path below.
+    if app.filter_open {
+        handle_filter_key(app, key);
+        return;
+    }
+
     if app.focus == Focus::Bar {
         match key.code {
             KeyCode::Esc => {
                 app.focus = Focus::Main;
+                app.searching = false;
                 app.bar.clear();
+                app.search.clear();
             }
             KeyCode::Enter => {
+                if app.searching {
+                    app.commit_search();
+                    return;
+                }
                 let quit = matches!(app.bar.trim(), "q" | "quit" | "exit");
                 app.submit_bar();
                 if quit {
@@ -59,10 +72,18 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                     app.quit = true;
                     return;
                 }
-                app.bar.push(c);
+                if app.searching {
+                    app.search.push(c);
+                } else {
+                    app.bar.push(c);
+                }
             }
             KeyCode::Backspace => {
-                app.bar.pop();
+                if app.searching {
+                    app.search.pop();
+                } else {
+                    app.bar.pop();
+                }
             }
             _ => {}
         }
@@ -78,6 +99,10 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.notify(format!("theme: {}", crate::theme::cycle()));
         }
         KeyCode::Char('b') => app.open_board(),
+        KeyCode::Char('f') => {
+            app.filter_open = true;
+            app.query_edit = false;
+        }
         KeyCode::Char('j') => move_selection(app, 1),
         KeyCode::Char('k') => move_selection(app, -1),
         KeyCode::Down => {
@@ -92,7 +117,17 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::PageUp => {
             app.scroll = app.scroll.saturating_sub(12);
         }
-        KeyCode::Char(':') | KeyCode::Char('/') => app.focus = Focus::Bar,
+        KeyCode::Char(':') => {
+            app.searching = false;
+            app.focus = Focus::Bar;
+        }
+        KeyCode::Char('/') => {
+            app.searching = true;
+            app.search.clear();
+            app.focus = Focus::Bar;
+        }
+        KeyCode::Char('n') => jump_search_hit(app, 1),
+        KeyCode::Char('N') => jump_search_hit(app, -1),
         KeyCode::Char('o') => {
             if let Some(n) = app.current {
                 app.open_number(n);
@@ -104,10 +139,14 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('p') => app.toggle_pin(),
         KeyCode::Char('w') => {
             app.merged_window_hours = core::cycle_window(app.merged_window_hours);
-            app.merge_pr_sections();
+            app.refetch_recent();
             app.notify(format!("merged window: {}", app.window_label()));
         }
-        KeyCode::Esc => app.bar.clear(),
+        KeyCode::Esc => {
+            app.bar.clear();
+            app.searching = false;
+            app.search.clear();
+        }
         KeyCode::Tab => {
             app.tab = if app.tab == Tab::Body { Tab::Comments } else { Tab::Body };
         }
@@ -115,11 +154,82 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 }
 
-/// j/k walks issues then PRs as one flat list, crossing the section boundary.
+/// j/k walks the issues pane then the PRs pane as one flat list.
 fn move_selection(app: &mut App, delta: isize) {
-    let order: Vec<u64> = app.issues.iter().chain(app.prs.iter()).copied().collect();
+    let order = app.flat_numbers();
     if let Some(n) = core::next_in_order(&order, app.current, delta) {
         app.show_issue(n);
+    }
+}
+
+/// n/N jumps between `/` search hits, wrapping at the ends.
+fn jump_search_hit(app: &mut App, delta: isize) {
+    let hits = app.search_hits();
+    if hits.is_empty() {
+        app.notify("no search: press /".to_string());
+        return;
+    }
+    if let Some(n) = core::next_in_order(&hits, app.current, delta) {
+        app.show_issue(n);
+    }
+}
+
+/// Filter dialog keys: window presets refetch the window listing, toggles
+/// only hide recent rows here, `e` edits the GitHub query.
+fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    use crate::app::QueryAction;
+    if app.query_edit {
+        match key.code {
+            KeyCode::Esc => {
+                // Revert the draft; the dialog stays open.
+                app.query_draft = app.query_active.clone();
+                app.query_edit = false;
+            }
+            KeyCode::Enter => match app.commit_query_draft() {
+                QueryAction::Run(q) => app.run_gh_search(q),
+                QueryAction::Refetch => {
+                    app.refetch_recent();
+                    app.notify("back to recent".to_string());
+                }
+            },
+            KeyCode::Char(c) => app.query_draft.push(c),
+            KeyCode::Backspace => {
+                app.query_draft.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
+    match key.code {
+        KeyCode::Char('f') | KeyCode::Esc | KeyCode::Char('q') => {
+            app.filter_open = false;
+        }
+        KeyCode::Char('e') => app.start_query_edit(),
+        KeyCode::Char('1') => {
+            app.merged_window_hours = 1;
+            app.refetch_recent();
+            app.notify(format!("merged window: {}", app.window_label()));
+        }
+        KeyCode::Char('2') => {
+            app.merged_window_hours = 24;
+            app.refetch_recent();
+            app.notify(format!("merged window: {}", app.window_label()));
+        }
+        KeyCode::Char('3') => {
+            app.merged_window_hours = 168;
+            app.refetch_recent();
+            app.notify(format!("merged window: {}", app.window_label()));
+        }
+        KeyCode::Char('w') => {
+            app.merged_window_hours = core::cycle_window(app.merged_window_hours);
+            app.refetch_recent();
+            app.notify(format!("merged window: {}", app.window_label()));
+        }
+        KeyCode::Char('o') => app.show_open_prs = !app.show_open_prs,
+        KeyCode::Char('m') => app.show_merged_prs = !app.show_merged_prs,
+        KeyCode::Char('i') => app.show_open_issues = !app.show_open_issues,
+        KeyCode::Char('c') => app.show_closed_issues = !app.show_closed_issues,
+        _ => {}
     }
 }
 
@@ -127,12 +237,21 @@ fn in_rect(area: Rect, x: u16, y: u16) -> bool {
     area.contains(ratatui::layout::Position::new(x, y))
 }
 
-/// Sidebar rows are 3 lines each below a 1-line border plus a 1-line spacer.
-fn sidebar_hit(area: Rect, list: &[u64], x: u16, y: u16) -> Option<u64> {
+/// Sidebar rows are 3 lines each (`Some`) with 1-line dividers (`None`),
+/// below a 1-line border plus a 1-line spacer. Dividers never hit.
+fn sidebar_hit(area: Rect, rows: &[Option<u64>], x: u16, y: u16) -> Option<u64> {
     if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
-    list.get(((y - area.y - 2) / 3) as usize).copied()
+    let mut rel = (y - area.y - 2) as usize;
+    for row in rows {
+        let h = if row.is_some() { 3 } else { 1 };
+        if rel < h {
+            return *row;
+        }
+        rel -= h;
+    }
+    None
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
@@ -163,6 +282,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                         if let Some(n) = board_selected_number(app) {
                             app.board = None;
                             app.board_expanded = None;
+                            app.ensure_visited(n);
                             app.load_issue(n, false);
                         }
                     } else {
@@ -184,10 +304,13 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 app.focus = Focus::Bar;
                 return;
             }
-            if let Some(n) = sidebar_hit(app.side_issue_area, &app.issues, m.column, m.row)
-                .or_else(|| sidebar_hit(app.side_pr_area, &app.prs, m.column, m.row))
+            let issue_rows = app.side_issue_rows.clone();
+            let pr_rows = app.side_pr_rows.clone();
+            if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, m.column, m.row)
+                .or_else(|| sidebar_hit(app.side_pr_area, &pr_rows, m.column, m.row))
             {
                 app.focus = Focus::Main;
+                app.ensure_visited(n);
                 app.show_issue(n);
                 return;
             }
@@ -208,7 +331,10 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                     let rel_x = (m.column - app.body_area.x) as usize;
                     let links = crate::model::links_in_line(line, repo.as_deref());
                     match crate::model::nearest_link(line, &links, rel_x) {
-                        Some(crate::model::LinkTarget::Issue(n)) => app.load_issue(n, false),
+                        Some(crate::model::LinkTarget::Issue(n)) => {
+                            app.ensure_visited(n);
+                            app.load_issue(n, false);
+                        }
                         Some(crate::model::LinkTarget::Url(url)) => open_url(&url, app),
                         None => {}
                     }

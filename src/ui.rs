@@ -38,7 +38,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         ])
     } else {
         Line::from(Span::styled(
-            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · t theme · w merged-age · click #n/links · q quit",
+            "j/k move · ↑↓ scroll · 1/2 tab · b board · : cmd · / find · n/N next · f filter · o open · r refresh · p pin · t theme · w age · q quit",
             Style::new().fg(muted()),
         ))
     };
@@ -47,6 +47,91 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     if crate::app::board_open(app) {
         dim_background(f, 0.35);
         render_board(f, f.area(), app);
+    }
+
+    if app.filter_open {
+        dim_background(f, 0.35);
+        render_filter(f, f.area(), app);
+    }
+}
+
+/// Filter dialog (`f`): recent window, open/closed toggles, and a GitHub
+/// search query box. Window and query commits refetch; toggles only hide
+/// recent rows on this screen.
+fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, ink, muted, paper, base};
+    let popup = centered(area, 62, 52);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base())
+        .title(Span::styled(" Filter ", Style::new().bg(ink()).fg(amber()).bold()));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let window_mark = |hours: u64| {
+        if app.merged_window_hours == hours {
+            Span::styled("● ", Style::new().bg(ink()).fg(amber()).bold())
+        } else {
+            Span::styled("○ ", Style::new().bg(ink()).fg(muted()))
+        }
+    };
+    let toggle = |on: bool, label: &str, key: &str| {
+        let box_glyph = if on { "[x]" } else { "[ ]" };
+        let style = if on {
+            Style::new().bg(ink()).fg(paper())
+        } else {
+            Style::new().bg(ink()).fg(muted())
+        };
+        vec![
+            Span::styled(format!("{box_glyph} {label} "), style),
+            Span::styled(format!("({key})"), Style::new().bg(ink()).fg(muted())),
+        ]
+    };
+    let mut lines = vec![];
+    let query_text = if app.query_edit { &app.query_draft } else { &app.query_active };
+    let mut qline = vec![
+        Span::styled("query ", Style::new().bg(ink()).fg(muted())),
+        Span::styled(
+            if query_text.is_empty() { "github search, e to edit …".to_string() } else { query_text.clone() },
+            Style::new().bg(ink()).fg(if query_text.is_empty() { muted() } else { paper() }),
+        ),
+    ];
+    if app.query_edit {
+        qline.push(Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()));
+    } else {
+        qline.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
+    }
+    lines.push(Line::from(qline));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("window ", Style::new().bg(ink()).fg(muted())),
+        window_mark(1),
+        Span::styled("1h (1)  ", Style::new().bg(ink()).fg(paper())),
+        window_mark(24),
+        Span::styled("24h (2)  ", Style::new().bg(ink()).fg(paper())),
+        window_mark(168),
+        Span::styled("7d (3)", Style::new().bg(ink()).fg(paper())),
+    ]));
+    lines.push(Line::from(""));
+    let mut open_line = vec![Span::styled("show   ", Style::new().bg(ink()).fg(muted()))];
+    open_line.extend(toggle(app.show_open_prs, "open PRs", "o"));
+    open_line.push(Span::raw("   "));
+    open_line.extend(toggle(app.show_merged_prs, "merged PRs", "m"));
+    lines.push(Line::from(open_line));
+    let mut closed_line = vec![Span::styled("       ", Style::new().bg(ink()))];
+    closed_line.extend(toggle(app.show_open_issues, "open issues", "i"));
+    closed_line.push(Span::raw("   "));
+    closed_line.extend(toggle(app.show_closed_issues, "closed issues", "c"));
+    lines.push(Line::from(closed_line));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "1/2/3 window · e query · o/m/i/c toggle · w age · f/esc close",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    f.render_widget(Paragraph::new(lines).style(base()), inner);
+    if app.query_edit {
+        f.set_cursor_position((inner.x + 6 + app.query_draft.len() as u16, inner.y));
     }
 }
 
@@ -69,60 +154,95 @@ fn dim_background(f: &mut ratatui::Frame, amount: f32) {
     }
 }
 
-fn section_list<'a>(
-    title: Line<'a>,
-    numbers: &[u64],
+/// Split `text` into plain spans plus highlighted spans for each query
+/// hit, so `/` search visibly marks the matched characters.
+fn highlighted_spans(text: String, query: &str, base: Style) -> Vec<Span<'static>> {
+    use crate::theme::{amber, ink};
+    let hit = Style::new().fg(ink()).bg(amber()).bold();
+    let ranges = crate::core::match_ranges(&text, query);
+    if ranges.is_empty() {
+        return vec![Span::styled(text, base)];
+    }
+    let mut spans = vec![];
+    let mut last = 0;
+    for (s, e) in ranges {
+        if s > last {
+            spans.push(Span::styled(text[last..s].to_string(), base));
+        }
+        spans.push(Span::styled(text[s..e].to_string(), hit));
+        last = e;
+    }
+    if last < text.len() {
+        spans.push(Span::styled(text[last..].to_string(), base));
+    }
+    spans
+}
+
+/// One pane (Issues or PRs): pinned, requested, then recent rows with a
+/// thin divider row between non-empty groups. Everything is owned, so the
+/// returned list outlives the `&App` borrow and the caller can persist its
+/// `ListState` back into `App` for scroll continuity.
+fn section_list(
+    title: Line<'static>,
+    rows: &[Option<u64>],
     app: &App,
-    selected: Option<usize>,
-) -> (List<'a>, ListState) {
+    inner_width: usize,
+) -> List<'static> {
     use crate::theme::{amber, ink, muted, paper, state_color};
-    let mut items: Vec<ListItem<'a>> = vec![ListItem::new(Line::from(""))];
-    items.extend(numbers.iter().enumerate().map(|(idx, n)| {
-            let sel = selected == Some(idx);
-            let marker = if sel { "▌ " } else { "  " };
-            let marker_style = if sel {
-                Style::new().fg(amber()).bold()
-            } else {
-                Style::new().fg(muted())
-            };
-            let (title_text, second) = match app.data.get(n) {
-                Some(d) => {
-                    let st = app.statuses.get(n).cloned().unwrap_or_default();
-                    (
-                        model::slug(&d.title, 30),
-                        model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n)).1,
-                    )
-                }
-                None => (String::new(), String::new()),
-            };
-            let pin = if app.pinned.contains(n) { "◆ " } else { "" };
-            let data = app.data.get(n);
-            let num_style = Style::new()
-                .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
-                .bold();
-            let title_style = if sel {
-                Style::new().fg(paper()).bold()
-            } else {
-                Style::new().fg(paper())
-            };
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(marker, marker_style),
-                    Span::styled(pin, Style::new().fg(amber())),
-                    Span::styled(format!("#{n} "), num_style),
-                    Span::styled(title_text, title_style),
-                ]),
-                Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled(second, Style::new().fg(muted())),
-                ]),
-                Line::from(""),
-            ])
-        }));
-    let mut state = ListState::default();
-    // +1 for the breathing-room spacer row at the top.
-    state.select(selected.map(|s| s + 1));
-    let list = List::new(items)
+    let query = app.search.clone();
+    let mut items: Vec<ListItem<'static>> = vec![ListItem::new(Line::from(""))];
+    for row in rows {
+        let Some(n) = row else {
+            let rule = "─".repeat(inner_width.max(8));
+            items.push(ListItem::new(Line::from(Span::styled(
+                rule,
+                Style::new().bg(ink()).fg(muted()),
+            ))));
+            continue;
+        };
+        let sel = app.current == Some(*n);
+        let marker = if sel { "▌ " } else { "  " };
+        let marker_style = if sel {
+            Style::new().fg(amber()).bold()
+        } else {
+            Style::new().fg(muted())
+        };
+        let (title_text, second) = match app.data.get(n) {
+            Some(d) => {
+                let st = app.statuses.get(n).cloned().unwrap_or_default();
+                (
+                    model::slug(&d.title, 30),
+                    model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n)).1,
+                )
+            }
+            None => (String::new(), String::new()),
+        };
+        let pin = if app.pinned.contains(n) { "◆ " } else { "" };
+        let data = app.data.get(n);
+        let num_style = Style::new()
+            .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
+            .bold();
+        let title_style = if sel {
+            Style::new().fg(paper()).bold()
+        } else {
+            Style::new().fg(paper())
+        };
+        let mut first = vec![
+            Span::styled(marker, marker_style),
+            Span::styled(pin, Style::new().fg(amber())),
+        ];
+        first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
+        first.extend(highlighted_spans(title_text, &query, title_style));
+        items.push(ListItem::new(vec![
+            Line::from(first),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(second, Style::new().fg(muted())),
+            ]),
+            Line::from(""),
+        ]));
+    }
+    List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -130,8 +250,7 @@ fn section_list<'a>(
                 .title(title)
                 .style(Style::new().bg(ink())),
         )
-        .highlight_style(Style::new().bold());
-    (list, state)
+        .highlight_style(Style::new().bold())
 }
 
 /// Styled header for the body pane: title plus the color-coded meta line.
@@ -181,29 +300,46 @@ fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
     Line::from(vec![name_span, detail_span])
 }
 
+/// Position of `current` in display-row order, +1 for the top spacer.
+fn selected_index(rows: &[Option<u64>], current: Option<u64>) -> Option<usize> {
+    current
+        .and_then(|n| rows.iter().position(|r| *r == Some(n)))
+        .map(|p| p + 1)
+}
+
 fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    let rows = Layout::default()
+    let panes = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
+    let issue_rows = app.issue_rows();
+    let pr_rows = app.pr_rows();
     let key = app.repo_key().unwrap_or_default();
-    app.side_issue_area = rows[0];
-    app.side_pr_area = rows[1];
-    let (il, mut istate) = section_list(
+    app.side_issue_area = panes[0];
+    app.side_pr_area = panes[1];
+    app.side_issue_rows = issue_rows.clone();
+    app.side_pr_rows = pr_rows.clone();
+    let inner = |a: Rect| (a.width as usize).saturating_sub(2);
+    let il = section_list(
         section_title("Issues", &key),
-        &app.issues.clone(),
+        &issue_rows,
         app,
-        app.issue_state.selected(),
+        inner(panes[0]),
     );
-    f.render_stateful_widget(il, rows[0], &mut istate);
-    let window = app.window_label();
-    let (pl, mut pstate) = section_list(
-        section_title("Pull requests", &window),
-        &app.prs.clone(),
+    let mut istate = std::mem::take(&mut app.issue_state);
+    istate.select(selected_index(&issue_rows, app.current));
+    f.render_stateful_widget(il, panes[0], &mut istate);
+    app.issue_state = istate;
+    let pl = section_list(
+        section_title("Pull requests", &app.recent_detail()),
+        &pr_rows,
         app,
-        app.pr_state.selected(),
+        inner(panes[1]),
     );
-    f.render_stateful_widget(pl, rows[1], &mut pstate);
+    let mut pstate = std::mem::take(&mut app.pr_state);
+    pstate.select(selected_index(&pr_rows, app.current));
+    f.render_stateful_widget(pl, panes[1], &mut pstate);
+    app.pr_state = pstate;
 }
 
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
@@ -273,7 +409,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             }
         }
         None => crate::theme::render_markdown(
-            "No issue loaded.\n\nType a number in the command bar and hit Enter.\n(: or / focuses the bar)",
+            "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or search titles with `/`.",
         ),
     };
     let pane = Paragraph::new(text)
@@ -299,23 +435,29 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 }
 
 /// Command bar: prompt, input or hint, theme pill. Cursor math lives here
-/// because `Frame::set_cursor_position` takes absolute cells.
+/// because `Frame::set_cursor_position` takes absolute cells. In search
+/// mode the prompt is `/` and the text is the live title/# filter.
 fn render_bar(f: &mut ratatui::Frame, area: Rect, bar_block: Block<'_>, app: &App) {
     use crate::theme::{amber, ink, muted, paper, base};
     let inner = bar_block.inner(area);
     f.render_widget(bar_block, area);
-    let mut spans = vec![Span::styled("❯ ", Style::new().bg(ink()).fg(amber()).bold())];
-    if app.bar.is_empty() {
+    let mut spans = vec![Span::styled(
+        if app.searching { "/ " } else { "❯ " },
+        Style::new().bg(ink()).fg(amber()).bold(),
+    )];
+    let text = if app.searching { &app.search } else { &app.bar };
+    if text.is_empty() {
         spans.push(Span::styled(
-            "type #123, o, q …",
+            if app.searching { "search title or #n …" } else { "type #123, o, q …" },
             Style::new().bg(ink()).fg(muted()).italic(),
         ));
     } else {
-        spans.push(Span::styled(app.bar.clone(), Style::new().bg(ink()).fg(paper())));
+        spans.push(Span::styled(text.clone(), Style::new().bg(ink()).fg(paper())));
     }
     // Theme pill pinned right, like a status chip.
     let pill = format!(" {} ", crate::theme::name());
-    let used = 2 + app.bar.chars().count().max(19) + pill.chars().count() + 2;
+    let shown = if app.searching { &app.search } else { &app.bar };
+    let used = 2 + shown.chars().count().max(19) + pill.chars().count() + 2;
     let fill = (inner.width as usize).saturating_sub(used);
     if fill >= 1 {
         spans.push(Span::raw(" ".repeat(fill)));
@@ -326,7 +468,8 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, bar_block: Block<'_>, app: &Ap
     }
     f.render_widget(Paragraph::new(Line::from(spans)).style(base()), inner);
     if app.focus == crate::app::Focus::Bar {
-        let x = if app.bar.is_empty() { inner.x + 2 } else { inner.x + 2 + app.bar.len() as u16 };
+        let len = if app.searching { app.search.len() } else { app.bar.len() };
+        let x = if len == 0 { inner.x + 2 } else { inner.x + 2 + len as u16 };
         f.set_cursor_position((x, inner.y));
     }
 }
@@ -732,14 +875,9 @@ mod render_smoke {
         pr.is_pr = true;
         for d in [sample(7), pr] {
             let n = d.number;
-            let is_pr = d.is_pr;
             app.data.insert(n, d);
             app.statuses.insert(n, vec![]);
-            if is_pr {
-                app.prs.push(n);
-            } else {
-                app.issues.push(n);
-            }
+            app.visited.push(n);
         }
         app.show_issue(7);
         app
@@ -761,20 +899,45 @@ mod render_smoke {
     #[test]
     fn cached_click_still_joins_its_section() {
         // Data can arrive before the sidebar knows the number (warm cache,
-        // board prefetch): clicking must still file it under PRs, not drop it.
+        // board prefetch): an explicit open files it under requested.
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         let mut pr = sample(9);
         pr.is_pr = true;
         pr.url = "https://github.com/o/r/pull/9".to_string();
         app.data.insert(9, pr);
-        assert!(app.prs.is_empty());
+        assert!(app.visited.is_empty());
+        app.ensure_visited(9);
         app.load_issue(9, false);
-        assert_eq!(app.prs, vec![9]);
+        assert_eq!(app.visited, vec![9]);
         assert_eq!(app.current, Some(9));
         // A second click files nothing twice.
+        app.ensure_visited(9);
         app.load_issue(9, false);
-        assert_eq!(app.prs, vec![9]);
+        assert_eq!(app.visited, vec![9]);
+    }
+
+    #[test]
+    fn viewing_a_recent_row_does_not_relocate_it() {
+        // Regression: cursoring onto a recent row completes its fetch;
+        // the row must stay under recent, not move to requested.
+        use crate::app::poll_issues;
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let mut d = sample(42);
+        d.is_pr = true;
+        app.data.insert(42, d.clone());
+        app.statuses.insert(42, vec![]);
+        app.recent.push(42);
+        app.show_issue(42);
+        assert_eq!(app.visited, Vec::<u64>::new());
+        // Background fetch lands.
+        app.issue_tx.send((42, Ok((d, vec![])))).unwrap();
+        poll_issues(&mut app);
+        assert_eq!(app.visited, Vec::<u64>::new());
+        let (_, _, recent) = app.pane_groups(true, false);
+        assert_eq!(recent, vec![42]);
+        assert_eq!(app.current, Some(42));
     }
 
     #[test]
@@ -796,6 +959,123 @@ mod render_smoke {
         assert_eq!(app.current, Some(9));
         handle_key(&mut app, key(KeyCode::Char('k')));
         assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn panes_group_pins_requested_and_recent_with_dividers() {
+        let mut app = loaded_app();
+        app.pin_order = vec![9];
+        app.pinned = [9].into_iter().collect();
+        app.recent = vec![9, 7, 42];
+        let (ip, iv, ir) = app.pane_groups(false, false);
+        assert_eq!((ip, iv, ir), (vec![], vec![7], vec![42]));
+        let (pp, pv, pr) = app.pane_groups(true, false);
+        assert_eq!((pp, pv, pr), (vec![9], vec![], vec![]));
+        assert_eq!(app.issue_rows(), vec![Some(7), None, Some(42)]);
+        assert_eq!(app.pr_rows(), vec![Some(9)]);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Issues"));
+        assert!(text.contains("Pull requests"));
+    }
+
+    #[test]
+    fn overflowing_pane_keeps_selected_row_visible() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for n in 1..=30 {
+            let d = sample(n);
+            app.data.insert(n, d);
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        app.show_issue(30);
+        let _ = frame_text(&mut app);
+        assert!(app.issue_state.offset() > 0, "pane scrolled");
+    }
+
+    #[test]
+    fn slash_search_filters_and_enters_first_hit() {
+        use crossterm::event::{KeyEvent, KeyModifiers};
+        let mut app = loaded_app();
+        app.data.get_mut(&9).unwrap().title = "Zebra migration".to_string();
+        handle_key(&mut app, key(KeyCode::Char('/')));
+        assert!(app.searching);
+        for c in "zebra".chars() {
+            handle_key(&mut app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()));
+        }
+        assert!(app.issue_rows().is_empty());
+        assert_eq!(app.pr_rows(), vec![Some(9)]);
+        let text = frame_text(&mut app);
+        assert!(text.contains("zebra"));
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert!(!app.searching);
+        assert_eq!(app.current, Some(9));
+        // Highlight persists after commit.
+        assert_eq!(app.search, "zebra");
+    }
+
+    #[test]
+    fn search_n_jumps_between_hits() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().title = "Fix login".to_string();
+        app.data.get_mut(&9).unwrap().title = "Fix logout".to_string();
+        app.search = "fix".to_string();
+        assert_eq!(app.search_hits(), vec![7, 9]);
+        handle_key(&mut app, key(KeyCode::Char('n')));
+        assert_eq!(app.current, Some(9));
+        handle_key(&mut app, key(KeyCode::Char('N')));
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn filter_dialog_toggles_hide_recent_rows() {
+        let mut app = loaded_app();
+        let mut merged = sample(20);
+        merged.is_pr = true;
+        merged.state = "MERGED".to_string();
+        app.data.insert(20, merged);
+        app.statuses.insert(20, vec![]);
+        app.recent.push(20);
+        assert_eq!(app.pr_rows(), vec![Some(9), None, Some(20)]);
+        handle_key(&mut app, key(KeyCode::Char('f')));
+        assert!(app.filter_open);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Filter"));
+        assert!(text.contains("query"));
+        handle_key(&mut app, key(KeyCode::Char('m')));
+        assert!(!app.show_merged_prs);
+        assert_eq!(app.pr_rows(), vec![Some(9)]);
+        // Requested rows ignore the toggle.
+        handle_key(&mut app, key(KeyCode::Char('f')));
+        assert!(!app.filter_open);
+    }
+
+    #[test]
+    fn filter_query_draft_commits_and_clears() {
+        use crate::app::QueryAction;
+        let mut app = loaded_app();
+        app.filter_open = true;
+        app.start_query_edit();
+        assert_eq!(app.query_draft, "");
+        app.query_draft = "label:bug".to_string();
+        assert_eq!(app.commit_query_draft(), QueryAction::Run("label:bug".to_string()));
+        assert_eq!(app.query_active, "label:bug");
+        assert!(!app.filter_open);
+        app.filter_open = true;
+        app.start_query_edit();
+        assert_eq!(app.query_draft, "label:bug");
+        // Esc in edit mode reverts the draft but keeps the dialog.
+        app.query_draft = "other".to_string();
+        handle_key(&mut app, key(KeyCode::Esc));
+        assert!(app.filter_open);
+        assert!(!app.query_edit);
+        assert_eq!(app.query_draft, "label:bug");
+        assert_eq!(app.query_active, "label:bug");
+        // Empty commit clears back to the window listing.
+        app.start_query_edit();
+        app.query_draft = String::new();
+        assert_eq!(app.commit_query_draft(), QueryAction::Refetch);
+        assert!(app.query_active.is_empty());
     }
 
     #[test]
@@ -930,7 +1210,7 @@ mod render_smoke {
         let d = sample(7);
         app.data.insert(7, d);
         app.statuses.insert(7, vec![]);
-        app.issues.push(7);
+        app.visited.push(7);
         app.show_issue(7);
         let text = frame_text(&mut app);
         assert!(text.contains("ghit"), "masthead wordmark");

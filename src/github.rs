@@ -63,7 +63,8 @@ fn require_token() -> Result<&'static str, String> {
 }
 
 /// Fetch one issue/PR plus its project statuses. Failures are strings for
-/// the status line, never panics.
+/// the status line, never panics. File-cache access runs on the blocking
+/// pool so async workers never touch the disk.
 pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
@@ -72,23 +73,42 @@ pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueB
     let sname = format!("status-{raw}-{number}");
 
     if !force {
-        if let (Some(data), Some(statuses)) =
-            (cache::cache_get(&iname), cache::cache_get(&sname))
-        {
-            return Ok((data, statuses));
+        let iname_c = iname.clone();
+        let sname_c = sname.clone();
+        let hit: Option<IssueBundle> = tokio::task::spawn_blocking(move || {
+            match (cache::cache_get(&iname_c), cache::cache_get(&sname_c)) {
+                (Some(data), Some(statuses)) => Some((data, statuses)),
+                _ => None,
+            }
+        })
+        .await
+        .map_err(|e| format!("cache read failed: {e}"))?;
+        if let Some(bundle) = hit {
+            return Ok(bundle);
         }
     }
     let (data, statuses) = api::issue(repo, number, token).await?;
-    cache::cache_put(&iname, &data);
-    cache::cache_put(&sname, &statuses);
+    let (data_c, statuses_c) = (data.clone(), statuses.clone());
+    let _ = tokio::task::spawn_blocking(move || {
+        cache::cache_put(&iname, &data_c);
+        cache::cache_put(&sname, &statuses_c);
+    })
+    .await;
     Ok((data, statuses))
 }
 
-/// Open PRs plus PRs merged inside `hours`, as full rows.
-pub async fn fetch_pr_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
+/// Recent rows: open + windowed merged PRs, open + windowed closed issues.
+pub async fn fetch_recent_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
     api::sections(repo, hours, token).await
+}
+
+/// Server-side issue/PR search scoped to the repo.
+pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::search(repo, query, token).await
 }
 
 /// Per-card detail: dates plus comment count.
@@ -123,7 +143,8 @@ mod tests {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
         assert!(fetch_number("", 1, false).await.is_err());
-        assert!(fetch_pr_sections("", 24).await.is_err());
+        assert!(fetch_recent_sections("", 24).await.is_err());
+        assert!(search_repo("", "bug").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
     }
 }
