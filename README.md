@@ -5,9 +5,6 @@ Punch in an issue number, read the ticket. `o` opens it in GitHub.
 
 ![ghit demo](demo.gif)
 
-Rust port of the `ghit` TUI that lived in my dotfiles (`scripts/gh-issue-tui.py`).
-Strictly the TUI — the old throwaway `gh-issue.bash` viewer did not make the trip.
-
 ## Why
 
 - Agent swarms and orchestration produce plans faster than any human can read them.
@@ -52,13 +49,19 @@ Keybindings:
 
 | Key | Does |
 | --- | ---- |
-| `1` / `2` | Body / Comments tab |
+| `1` / `2` / `3` | Body / Comments / Diff tab |
 | `b` | Project board modal (`h`/`l` columns, `j`/`k` cards, `Enter` opens) |
 | `j` / `k` | Scroll (with no issue loaded: move selection) |
-| `:` or `/` | Focus the command bar |
+| `Tab` | Cycle focus between panes |
+| `:` or `/` | Focus the command bar (`/` starts a find; `n` / `N` jumps) |
+| `f` | Filter the sidebar |
+| `e` | Toggle the refs panel |
+| `s` / `Space` | Diff tab: toggle split view / fold file |
 | `o` | Open the current issue in GitHub |
 | `r` | Refresh (busts the cache for this issue and board) |
 | `p` | Pin to the top of the sidebar |
+| `t` | Cycle theme |
+| `w` | Cycle the merged-PR window |
 | `q` | Quit |
 
 The command bar takes space-separated issue lists (`12 34 56`), `o [n]` to open,
@@ -68,12 +71,6 @@ and `q` to quit.
 
 - Pins: `~/.local/share/ghit/pinned-<owner>__<repo>.txt` (or `$XDG_DATA_HOME`)
 - Read cache: `~/.local/share/ghit/cache/`, 30-minute TTL
-
-## Differences from the Python version
-
-- Bodies and comments render with real markdown (`tui-markdown`).
-- Issue references are not clickable; type the number in the command bar instead.
-- Fetching is synchronous with a status line, not background workers.
 
 ## License
 
