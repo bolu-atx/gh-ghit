@@ -68,24 +68,62 @@ fn parse_rows(value: &Value, now: chrono::DateTime<chrono::Utc>, hours: u64) -> 
     Ok(rows)
 }
 
-pub fn sections(repo: &str, hours: u64, bearer: &str) -> Result<Vec<Row>, String> {
+/// Shared HTTP client: one connection pool for all background fetches.
+/// `Client::clone` is cheap; every task shares the same pool.
+fn client() -> reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .user_agent("ghit")
+                .build()
+                .expect("reqwest client")
+        })
+        .clone()
+}
+
+async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Result<Value, String> {
+    client
+        .get(url)
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("bad GitHub response: {e}"))
+}
+
+async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
+    client
+        .post(url)
+        .bearer_auth(bearer)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("bad GitHub response: {e}"))
+}
+
+pub async fn sections(repo: &str, hours: u64, bearer: &str) -> Result<Vec<Row>, String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
-    let response = ureq::post(&url).set("Authorization", &format!("Bearer {bearer}")).set("User-Agent", "ghit").send_json(json!({"query": query(), "variables": {"owner": owner, "repo": name}})).map_err(|e| format!("GitHub request failed: {e}"))?;
-    let value: Value = response.into_json().map_err(|e| format!("bad GitHub response: {e}"))?;
+    let value = post_json(&client(), &url, bearer, &json!({"query": query(), "variables": {"owner": owner, "repo": name}})).await?;
     parse_rows(&value, chrono::Utc::now(), hours)
 }
 
-pub fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Statuses), String> {
+pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Statuses), String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
-    let get = |url: &str| -> Result<Value, String> {
-        ureq::get(url).set("Authorization", &format!("Bearer {bearer}")).set("User-Agent", "ghit")
-            .call().map_err(|e| format!("GitHub request failed: {e}"))?
-            .into_json().map_err(|e| format!("bad GitHub response: {e}"))
-    };
-    let mut v = get(&format!("{base}/repos/{repo}/issues/{number}"))?;
+    let client = client();
+    let mut v = get(&client, &format!("{base}/repos/{repo}/issues/{number}"), bearer).await?;
     let is_pr = !v["pull_request"].is_null();
     v["author"] = v["user"].clone();
     for (old, new) in [("created_at", "createdAt"), ("updated_at", "updatedAt"), ("html_url", "url")] { v[new] = v[old].clone(); }
@@ -96,7 +134,7 @@ pub fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Status
     let mut comments = Vec::new();
     let mut page = 1;
     loop {
-        let items = get(&format!("{base}/repos/{repo}/issues/{number}/comments?per_page=100&page={page}"))?;
+        let items = get(&client, &format!("{base}/repos/{repo}/issues/{number}/comments?per_page=100&page={page}"), bearer).await?;
         let items = items.as_array().ok_or("bad comments payload")?;
         for c in items { comments.push(json!({"author": c.get("user").filter(|u| !u.is_null()).cloned().unwrap_or(json!({})), "body": c["body"].as_str().unwrap_or(""), "createdAt": c["created_at"]})); }
         if items.len() < 100 { break; }
@@ -109,8 +147,10 @@ pub fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Status
     let field = if is_pr { "pullRequest" } else { "issue" };
     let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
-    let statuses = ureq::post(&url).set("Authorization", &format!("Bearer {bearer}")).set("User-Agent", "ghit").send_json(json!({"query":query,"variables":{"owner":owner,"repo":name,"num":number}})).ok()
-        .and_then(|r| r.into_json::<Value>().ok()).and_then(|v| v.pointer(&format!("/data/repository/{field}/projectItems/nodes")).and_then(Value::as_array).cloned()).unwrap_or_default()
+    // Project statuses stay best-effort: a failed lookup yields none,
+    // same as before, instead of failing the whole issue fetch.
+    let statuses = post_json(&client, &url, bearer, &json!({"query":query,"variables":{"owner":owner,"repo":name,"num":number}})).await.ok()
+        .and_then(|v| v.pointer(&format!("/data/repository/{field}/projectItems/nodes")).and_then(Value::as_array).cloned()).unwrap_or_default()
         .iter().map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
     Ok((data, statuses))
 }
