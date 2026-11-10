@@ -1,4 +1,4 @@
-use crate::model::{Author, BoardDetail, IssueData, Label};
+use crate::model::{Author, BoardDetail, DiffFile, IssueData, Label};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
@@ -209,6 +209,39 @@ pub async fn search(repo: &str, query: &str, bearer: &str) -> Result<Vec<Row>, S
         .collect()
 }
 
+/// One entry of the REST `pulls/{n}/files` listing. `patch` is absent
+/// for binary or oversized files; those render as header-only rows.
+pub fn diff_file(v: &Value) -> Result<DiffFile, String> {
+    Ok(DiffFile {
+        filename: v.get("filename").and_then(Value::as_str).ok_or("diff entry without a filename")?.to_owned(),
+        status: v.get("status").and_then(Value::as_str).unwrap_or("").to_owned(),
+        additions: v.get("additions").and_then(Value::as_u64).unwrap_or(0) as usize,
+        deletions: v.get("deletions").and_then(Value::as_u64).unwrap_or(0) as usize,
+        patch: v.get("patch").and_then(Value::as_str).unwrap_or("").to_owned(),
+    })
+}
+
+/// Changed files for one PR, oldest first, across all result pages.
+pub async fn pull_files(repo: &str, number: u64, bearer: &str) -> Result<Vec<DiffFile>, String> {
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
+    let client = client();
+    let mut out = Vec::new();
+    let mut page = 1;
+    loop {
+        let items = get(&client, &format!("{base}/repos/{repo}/pulls/{number}/files?per_page=100&page={page}"), bearer).await?;
+        let items = items.as_array().ok_or("bad diff payload")?;
+        for v in items {
+            out.push(diff_file(v)?);
+        }
+        if items.len() < 100 {
+            break;
+        }
+        page += 1;
+    }
+    Ok(out)
+}
+
 pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Statuses), String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
@@ -279,5 +312,15 @@ mod tests {
         assert!(!row.issue.is_pr);
         assert_eq!(row.issue.state, "CLOSED");
         assert!(search_row(&json!({"title":"no number"})).is_err());
+    }
+    #[test]
+    fn diff_file_maps_patch_and_binary() {
+        let f = diff_file(&json!({"filename":"src/a.rs","status":"modified","additions":3,"deletions":1,"patch":"@@ -1 +1 @@\n-old\n+new"})).unwrap();
+        assert_eq!(f.filename, "src/a.rs");
+        assert_eq!((f.additions, f.deletions), (3, 1));
+        assert!(f.patch.contains("@@"));
+        let bin = diff_file(&json!({"filename":"img.png","status":"added","additions":0,"deletions":0})).unwrap();
+        assert_eq!(bin.patch, "");
+        assert!(diff_file(&json!({"status":"modified"})).is_err());
     }
 }

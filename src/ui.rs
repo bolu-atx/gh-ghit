@@ -38,7 +38,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         ])
     } else {
         Line::from(Span::styled(
-            "j/k move · ↑↓ scroll · 1/2 tab · b board · : cmd · / find · n/N next · f filter · o open · r refresh · p pin · t theme · w age · q quit",
+            "j/k move · ↑↓ scroll · 1/2/3 tab · b board · : cmd · / find · n/N next · f filter · o open · r refresh · p pin · t theme · w age · q quit",
             Style::new().fg(muted()),
         ))
     };
@@ -293,6 +293,151 @@ fn header_lines<'a>(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec
     lines
 }
 
+/// First 50 files render; the rest collapse to a one-line note so a
+/// huge PR cannot flood the pane.
+const MAX_DIFF_FILES: usize = 50;
+
+/// Diff tab body: file headers plus hunks, unified or side-by-side.
+/// Issues get a short note, PRs without data yet get a loading line.
+/// `width` is the pane content width; narrow panes fall back to unified
+/// lines because two columns would fit nothing.
+fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'static> {
+    use crate::theme::{green, ink, muted, paper, red};
+    use model::DiffKind;
+    if !d.is_pr {
+        return ratatui::text::Text::from(Line::from(Span::styled(
+            "Diff is only available for pull requests.",
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    }
+    let Some(files) = app.diffs.get(&d.number) else {
+        let note = if app.diff_pending.contains(&d.number) {
+            "Fetching diff …"
+        } else {
+            "No diff loaded yet."
+        };
+        return ratatui::text::Text::from(Line::from(Span::styled(
+            note,
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    };
+    if files.is_empty() {
+        return ratatui::text::Text::from(Line::from(Span::styled(
+            "No changed files.",
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    }
+    let split = app.diff_split && width >= 40;
+    let mut lines = vec![Line::from(Span::styled(
+        format!(
+            "{} · {} (s: {})",
+            model::diff_summary(files),
+            if split { "split" } else { "unified" },
+            if split { "unified" } else { "split" },
+        ),
+        Style::new().bg(ink()).fg(muted()),
+    ))];
+    for f in files.iter().take(MAX_DIFF_FILES) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(f.filename.clone(), Style::new().bg(ink()).fg(paper()).bold()),
+            Span::styled(format!("  {}  ", f.status), Style::new().bg(ink()).fg(muted())),
+            Span::styled(format!("+{} ", f.additions), Style::new().bg(ink()).fg(green())),
+            Span::styled(format!("-{}", f.deletions), Style::new().bg(ink()).fg(red())),
+        ]));
+        if model::diff_lines(&f.patch).is_empty() {
+            lines.push(Line::from(Span::styled(
+                "(binary or large file, no patch)",
+                Style::new().bg(ink()).fg(muted()).italic(),
+            )));
+            continue;
+        }
+        if split {
+            lines.extend(split_file_lines(&f.patch, width));
+        } else {
+            for (kind, text) in model::diff_lines(&f.patch) {
+                let style = match kind {
+                    DiffKind::Hunk => Style::new().bg(ink()).fg(muted()).bold(),
+                    DiffKind::Add => Style::new().bg(ink()).fg(green()),
+                    DiffKind::Del => Style::new().bg(ink()).fg(red()),
+                    DiffKind::Context => Style::new().bg(ink()).fg(paper()),
+                };
+                lines.push(Line::from(Span::styled(text, style)));
+            }
+        }
+    }
+    if files.len() > MAX_DIFF_FILES {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("… and {} more files", files.len() - MAX_DIFF_FILES),
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    }
+    ratatui::text::Text::from(lines)
+}
+
+/// Fit `s` into exactly `w` cells: truncate, then pad with spaces.
+fn fit_cell(s: &str, w: usize) -> String {
+    let mut out: String = s.chars().take(w).collect();
+    while out.chars().count() < w {
+        out.push(' ');
+    }
+    out
+}
+
+/// Side-by-side rows for one file patch at `width` cells wide.
+fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
+    use crate::theme::{green, ink, muted, paper, red};
+    use model::{DiffKind, SplitRow};
+    let sep = " │ ";
+    let lw = width.saturating_sub(sep.len()) / 2;
+    let rw = width.saturating_sub(sep.len() + lw);
+    let mut lines = vec![Line::from(vec![
+        Span::styled(fit_cell("— old", lw), Style::new().bg(ink()).fg(muted())),
+        Span::styled(sep, Style::new().bg(ink()).fg(muted())),
+        Span::styled(fit_cell("+ new", rw), Style::new().bg(ink()).fg(muted())),
+    ])];
+    for row in model::split_rows(patch) {
+        match row {
+            SplitRow::Hunk(text) => lines.push(Line::from(Span::styled(
+                fit_cell(&text, width),
+                Style::new().bg(ink()).fg(muted()).bold(),
+            ))),
+            SplitRow::Pair { left, right } => {
+                let change = left.starts_with('-') && right.starts_with('+');
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        fit_cell(&left, lw),
+                        Style::new().bg(ink()).fg(if change { red() } else { paper() }),
+                    ),
+                    Span::styled(sep, Style::new().bg(ink()).fg(muted())),
+                    Span::styled(
+                        fit_cell(&right, rw),
+                        Style::new().bg(ink()).fg(if change { green() } else { paper() }),
+                    ),
+                ]));
+            }
+            SplitRow::LeftOnly { text, kind } => lines.push(Line::from(vec![
+                Span::styled(
+                    fit_cell(&text, lw),
+                    Style::new().bg(ink()).fg(if kind == DiffKind::Del { red() } else { paper() }),
+                ),
+                Span::styled(sep, Style::new().bg(ink()).fg(muted())),
+                Span::styled(fit_cell("", rw), Style::new().bg(ink())),
+            ])),
+            SplitRow::RightOnly { text, kind } => lines.push(Line::from(vec![
+                Span::styled(fit_cell("", lw), Style::new().bg(ink())),
+                Span::styled(sep, Style::new().bg(ink()).fg(muted())),
+                Span::styled(
+                    fit_cell(&text, rw),
+                    Style::new().bg(ink()).fg(if kind == DiffKind::Add { green() } else { paper() }),
+                ),
+            ])),
+        }
+    }
+    lines
+}
+
 fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
     use crate::theme::{amber, muted};
     let name_span = Span::styled(format!(" {name} "), Style::new().fg(amber()).bold());
@@ -373,10 +518,11 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
-    let tabs = Tabs::new(vec!["Body", "Comments"])
+    let tabs = Tabs::new(vec!["Body", "Comments", "Diff"])
         .select(match app.tab {
             Tab::Body => 0,
             Tab::Comments => 1,
+            Tab::Diff => 2,
         })
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
@@ -405,6 +551,10 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 Tab::Comments => {
                     owned_comments = model::build_comments_md(d);
                     crate::theme::render_markdown(&owned_comments)
+                }
+                Tab::Diff => {
+                    let width = (rows[3].width as usize).saturating_sub(5);
+                    diff_text(app, d, width)
                 }
             }
         }
@@ -1241,5 +1391,134 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("ghit"));
         assert!(text.contains("No issue loaded"));
+    }
+
+    fn diff_pr(number: u64) -> IssueData {
+        let mut d = sample(number);
+        d.is_pr = true;
+        d
+    }
+
+    #[test]
+    fn diff_tab_shows_files_and_hunks() {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+            DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
+        ]);
+        app.set_tab(Tab::Diff);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Diff"), "{text}");
+        assert!(text.contains("1 file") || text.contains("2 files"), "{text}");
+        assert!(text.contains("src/a.rs"), "{text}");
+        assert!(text.contains("@@ -1"), "{text}");
+        assert!(text.contains("-old"), "{text}");
+        assert!(text.contains("+new"), "{text}");
+        assert!(text.contains("binary or large file"), "{text}");
+    }
+
+    #[test]
+    fn diff_tab_notes_issues_have_no_diff() {
+        let mut app = loaded_app();
+        app.set_tab(Tab::Diff);
+        let text = frame_text(&mut app);
+        assert!(text.contains("only available for pull requests"), "{text}");
+    }
+
+    #[test]
+    fn diff_tab_shows_loading_while_pending() {
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diffs.remove(&9);
+        app.diff_pending.insert(9);
+        app.set_tab(Tab::Diff);
+        assert!(frame_text(&mut app).contains("Fetching diff"), "loading state");
+    }
+
+    #[test]
+    fn diff_fetch_lands_without_touching_selection() {
+        use crate::app::poll_diffs;
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        let files = vec![DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() }];
+        app.diff_tx.send((9, Ok(files))).unwrap();
+        poll_diffs(&mut app);
+        assert!(!app.diff_pending.contains(&9));
+        assert_eq!(app.diffs.get(&9).unwrap().len(), 1);
+        assert_eq!(app.current, Some(9));
+    }
+
+    #[test]
+    fn keys_and_tab_cycle_through_diff() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('3')));
+        assert_eq!(app.tab, Tab::Diff);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.tab, Tab::Body);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.tab, Tab::Comments);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.tab, Tab::Diff);
+    }
+
+    #[test]
+    fn mouse_click_reaches_diff_tab() {
+        let mut app = loaded_app();
+        let _ = frame_text(&mut app);
+        let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 18, y));
+        assert_eq!(app.tab, Tab::Diff);
+    }
+
+    fn diff_loaded_app() -> App {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        ]);
+        app.set_tab(Tab::Diff);
+        app
+    }
+
+    #[test]
+    fn split_mode_pairs_old_and_new_side_by_side() {
+        let mut app = diff_loaded_app();
+        app.diff_split = true;
+        let text = frame_text(&mut app);
+        assert!(text.contains("split (s: unified)"), "{text}");
+        assert!(text.contains("│"), "{text}");
+        assert!(text.contains("-old"), "{text}");
+        assert!(text.contains("+new"), "{text}");
+    }
+
+    #[test]
+    fn unified_mode_hints_at_split() {
+        let mut app = diff_loaded_app();
+        let text = frame_text(&mut app);
+        assert!(text.contains("unified (s: split)"), "{text}");
+    }
+
+    #[test]
+    fn s_toggles_split_only_on_diff_tab() {
+        let mut app = diff_loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        assert!(app.diff_split);
+        assert!(app.message.contains("split"));
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        assert!(!app.diff_split);
+        assert!(app.message.contains("unified"));
+        app.set_tab(Tab::Body);
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        assert!(!app.diff_split, "s outside Diff does nothing");
     }
 }

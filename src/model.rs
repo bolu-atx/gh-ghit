@@ -359,6 +359,109 @@ pub fn build_comments_md(d: &IssueData) -> String {
     out
 }
 
+/// One changed file in a PR diff, as returned by the REST files API.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiffFile {
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub additions: usize,
+    #[serde(default)]
+    pub deletions: usize,
+    #[serde(default)]
+    pub patch: String,
+}
+
+/// Semantic role of one patch line; the UI maps each to a theme color.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffKind {
+    Hunk,
+    Add,
+    Del,
+    Context,
+}
+
+/// Split a unified `patch` into tagged lines. Hunk headers (`@@`) tag as
+/// `Hunk`, `+` as `Add`, `-` as `Del`, everything else as `Context`.
+/// Empty or missing patches yield no lines: the UI shows the file header
+/// with a binary/large-file note instead.
+pub fn diff_lines(patch: &str) -> Vec<(DiffKind, String)> {
+    patch
+        .lines()
+        .map(|l| {
+            let kind = if l.starts_with("@@") {
+                DiffKind::Hunk
+            } else if l.starts_with('+') {
+                DiffKind::Add
+            } else if l.starts_with('-') {
+                DiffKind::Del
+            } else {
+                DiffKind::Context
+            };
+            (kind, l.to_string())
+        })
+        .collect()
+}
+
+/// Summary for the diff tab header: file count plus summed adds/deletes.
+pub fn diff_summary(files: &[DiffFile]) -> String {
+    let adds: usize = files.iter().map(|f| f.additions).sum();
+    let dels: usize = files.iter().map(|f| f.deletions).sum();
+    format!("{} file{} · +{adds} -{dels}", files.len(), if files.len() == 1 { "" } else { "s" })
+}
+
+/// One row of a side-by-side rendering of a unified patch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SplitRow {
+    /// Hunk header, rendered full-width.
+    Hunk(String),
+    /// Old line on the left, new line on the right. Context shows the
+    /// same text on both sides; a change pairs one `-` line with one `+`.
+    Pair { left: String, right: String },
+    /// Unpaired `-` line: right cell stays blank.
+    LeftOnly { text: String, kind: DiffKind },
+    /// Unpaired `+` line: left cell stays blank.
+    RightOnly { text: String, kind: DiffKind },
+}
+
+/// Pair a unified `patch` into side-by-side rows. Runs of `-` lines pair
+/// with the `+` lines that follow them, in order; leftovers render alone.
+/// Hunk headers pass through full-width. Empty patches yield no rows.
+pub fn split_rows(patch: &str) -> Vec<SplitRow> {
+    let mut rows: Vec<SplitRow> = vec![];
+    let mut dels: Vec<String> = vec![];
+    for (kind, text) in diff_lines(patch) {
+        match kind {
+            DiffKind::Hunk => {
+                for d in dels.drain(..) {
+                    rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del });
+                }
+                rows.push(SplitRow::Hunk(text));
+            }
+            DiffKind::Del => dels.push(text),
+            DiffKind::Add => {
+                if dels.is_empty() {
+                    rows.push(SplitRow::RightOnly { text, kind: DiffKind::Add });
+                } else {
+                    rows.push(SplitRow::Pair { left: dels.remove(0), right: text });
+                }
+            }
+            DiffKind::Context => {
+                for d in dels.drain(..) {
+                    rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del });
+                }
+                rows.push(SplitRow::Pair { left: text.clone(), right: text });
+            }
+        }
+    }
+    for d in dels.drain(..) {
+        rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del });
+    }
+    rows
+}
+
 /// Group cards by status column; unknowns go to an `Other` column.
 pub fn board_columns<'a>(items: &'a [BoardItem], order: &[String]) -> Vec<(String, Vec<&'a BoardItem>)> {
     let mut cols: Vec<(String, Vec<&'a BoardItem>)> = order.iter().map(|s| (s.clone(), vec![])).collect();
@@ -570,5 +673,40 @@ mod tests {
         assert!(first.contains("📌"));
         let (plain, _) = sidebar_lines(7, "t", &[], &[], 40, false);
         assert!(!plain.contains("📌"));
+    }
+
+    #[test]
+    fn diff_lines_tag_hunks_adds_and_dels() {
+        let patch = "@@ -1,2 +1,2 @@\n context\n-old\n+new";
+        let kinds: Vec<DiffKind> = diff_lines(patch).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(kinds, vec![DiffKind::Hunk, DiffKind::Context, DiffKind::Del, DiffKind::Add]);
+        assert!(diff_lines("").is_empty());
+    }
+
+    #[test]
+    fn split_rows_pair_changes_and_keep_context() {
+        let rows = split_rows("@@ -1,3 +1,3 @@\n ctx\n-old\n+new\ntrail");
+        assert_eq!(rows[0], SplitRow::Hunk("@@ -1,3 +1,3 @@".to_string()));
+        assert_eq!(rows[1], SplitRow::Pair { left: " ctx".to_string(), right: " ctx".to_string() });
+        assert_eq!(rows[2], SplitRow::Pair { left: "-old".to_string(), right: "+new".to_string() });
+        assert_eq!(rows[3], SplitRow::Pair { left: "trail".to_string(), right: "trail".to_string() });
+    }
+
+    #[test]
+    fn split_rows_leave_unpaired_lines_alone() {
+        let rows = split_rows("@@ -1 +1 @@\n-a\n-b\n+c");
+        assert_eq!(rows[1], SplitRow::Pair { left: "-a".to_string(), right: "+c".to_string() });
+        assert_eq!(rows[2], SplitRow::LeftOnly { text: "-b".to_string(), kind: DiffKind::Del });
+        assert!(split_rows("").is_empty());
+    }
+
+    #[test]
+    fn diff_summary_counts_files_and_lines() {
+        let files = vec![
+            DiffFile { filename: "a".into(), status: "modified".into(), additions: 10, deletions: 2, patch: String::new() },
+            DiffFile { filename: "b".into(), status: "added".into(), additions: 5, deletions: 0, patch: String::new() },
+        ];
+        assert_eq!(diff_summary(&files), "2 files · +15 -2");
+        assert_eq!(diff_summary(&files[..1]), "1 file · +10 -2");
     }
 }
