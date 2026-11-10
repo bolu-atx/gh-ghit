@@ -176,7 +176,7 @@ fn header_lines<'a>(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec
 
 fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
     use crate::theme::{amber, muted};
-    let name_span = Span::styled(format!("{name} "), Style::new().fg(amber()).bold());
+    let name_span = Span::styled(format!(" {name} "), Style::new().fg(amber()).bold());
     let detail_span = Span::styled(detail.to_string(), Style::new().fg(muted()));
     Line::from(vec![name_span, detail_span])
 }
@@ -420,7 +420,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .border_style(Style::new().bg(ink()).fg(if active { amber() } else { muted() }))
                 .style(base())
                 .title(Line::from(vec![
-                    Span::styled(format!("{} ", name), Style::new().bg(ink()).fg(crate::theme::column_color(name)).bold()),
+                    Span::styled(format!(" {} ", name), Style::new().bg(ink()).fg(crate::theme::column_color(name)).bold()),
                     Span::styled(format!("({})", cards.len()), Style::new().bg(ink()).fg(muted())),
                 ])),
         );
