@@ -42,6 +42,8 @@ pub struct IssueData {
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
     pub url: String,
     #[serde(default)]
     pub body: String,
@@ -64,7 +66,27 @@ pub struct BoardItem {
     #[serde(default)]
     pub labels: Vec<Label>,
     #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
     pub content: serde_json::Value,
+}
+
+/// Per-card detail fetched in the background: dates plus comment count.
+#[derive(Debug, Clone, Default)]
+pub struct BoardDetail {
+    pub created: String,
+    pub updated: String,
+    pub comments: usize,
+}
+
+impl BoardDetail {
+    pub fn from_issue(d: &IssueData) -> Self {
+        Self {
+            created: d.created_at.get(..10).unwrap_or("").to_string(),
+            updated: d.updated_at.get(..10).unwrap_or("").to_string(),
+            comments: d.comments.len(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,35 +159,129 @@ fn ref_url_re() -> &'static Regex {
     })
 }
 
-/// Issue/PR numbers referenced in a visible line, in textual order.
-///
-/// Matches bare `#123` refs (code-adjacent ones excluded as in `linkify`) and
-/// `github.com` URLs that point at `repo` (`owner/repo`, case-insensitive).
-pub fn refs_in_line(line: &str, repo: Option<&str>) -> Vec<u64> {
-    let mut hits: Vec<(usize, u64)> = vec![];
+/// Something clickable on a visible line, in textual order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkTarget {
+    /// An issue/PR number: opens in the viewer.
+    Issue(u64),
+    /// A real URL: opens in the browser.
+    Url(String),
+}
+
+fn http_paren_re() -> &'static Regex {
+    // The renderer prints links as `label (destination)`.
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\((https?://[^)\s]+)\)").unwrap())
+}
+
+fn http_bare_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:^|[^\w(])(https?://[^\s)\]]+)").unwrap())
+}
+
+fn trim_url(u: &str) -> &str {
+    u.trim_end_matches(['.', ',', ';', ':', '!', '?', '"', '\''])
+}
+
+/// True when `#123` is a rendered link label, i.e. directly followed by its
+/// ` (https://…)` destination. Those clicks belong to the URL, not the number.
+fn followed_by_url_dest(line: &str, end: usize) -> bool {
+    let rest = line[end..].trim_start_matches([' ', '\t']);
+    rest.starts_with("(http://") || rest.starts_with("(https://")
+}
+
+fn same_repo(cap: &regex::Captures, repo: Option<&str>) -> bool {
+    match repo {
+        Some(r) => format!("{}/{}", &cap[1], &cap[2]).to_lowercase() == r.to_lowercase(),
+        None => false,
+    }
+}
+
+/// Everything clickable on a visible line, in textual order: issue refs and
+/// same-repo issue URLs become `Issue`, anything else with an http(s)
+/// destination becomes `Url`. Positions are byte offsets for click
+/// disambiguation: the nearest to the click column wins.
+pub fn links_in_line(line: &str, repo: Option<&str>) -> Vec<(usize, LinkTarget)> {
+    let mut hits: Vec<(usize, LinkTarget)> = vec![];
+    let mut taken: Vec<(usize, usize)> = vec![];
+    let claim = |start: usize, end: usize, target: LinkTarget, hits: &mut Vec<(usize, LinkTarget)>, taken: &mut Vec<(usize, usize)>| {
+        if taken.iter().any(|&(s, e)| start < e && s < end) {
+            return;
+        }
+        hits.push((start, target));
+        taken.push((start, end));
+    };
+    for cap in ref_url_re().captures_iter(line) {
+        let m = cap.get(0).unwrap();
+        if same_repo(&cap, repo) {
+            if let Ok(n) = cap[3].parse::<u64>() {
+                claim(m.start(), m.end(), LinkTarget::Issue(n), &mut hits, &mut taken);
+            }
+        }
+    }
     for cap in ref_bare_re().captures_iter(line) {
         let m = cap.get(1).unwrap();
+        if followed_by_url_dest(line, m.end()) {
+            continue;
+        }
         if let Ok(n) = m.as_str().parse::<u64>() {
-            hits.push((m.start(), n));
+            claim(m.start(), m.end(), LinkTarget::Issue(n), &mut hits, &mut taken);
         }
     }
-    for cap in ref_url_re().captures_iter(line) {
-        let same_repo = match repo {
-            Some(r) => {
-                let got = format!("{}/{}", &cap[1], &cap[2]).to_lowercase();
-                got == r.to_lowercase()
+    for re in [http_paren_re(), http_bare_re()] {
+        for cap in re.captures_iter(line) {
+            let m = cap.get(1).unwrap();
+            let url = trim_url(m.as_str()).to_string();
+            if url.is_empty() {
+                continue;
             }
-            None => false,
-        };
-        if same_repo {
-            if let Ok(n) = cap[3].parse::<u64>() {
-                hits.push((cap.get(3).unwrap().start(), n));
-            }
+            claim(m.start(), m.end(), LinkTarget::Url(url), &mut hits, &mut taken);
         }
     }
-    hits.sort();
+    hits.sort_by_key(|(idx, _)| *idx);
     hits.dedup();
-    hits.into_iter().map(|(_, n)| n).collect()
+    hits
+}
+
+/// The clicked target on a line with several refs: nearest byte offset to
+/// the click column wins, so the second `#ref` in a row opens instead of
+/// the first. Offsets come from regex matches on this line, so slicing at
+/// them is always a char boundary.
+pub fn nearest_link(line: &str, links: &[(usize, LinkTarget)], col: usize) -> Option<LinkTarget> {
+    links
+        .iter()
+        .min_by_key(|(idx, _)| line[..*idx].chars().count().abs_diff(col))
+        .map(|(_, t)| t.clone())
+}
+
+/// Collapsed card footer, left side: label chips, or a dash when bare.
+pub fn card_footer_labels(c: &BoardItem) -> String {
+    if c.labels.is_empty() {
+        return "–".to_string();
+    }
+    let chips: Vec<String> = c.labels.iter().take(4).map(|l| format!("● {}", l.name)).collect();
+    if c.labels.len() > 4 {
+        format!("{}  +{}", chips.join("  "), c.labels.len() - 4)
+    } else {
+        chips.join("  ")
+    }
+}
+
+/// Collapsed card footer, right side: updated date plus comment count, or
+/// an ellipsis while the background detail fetch is still in flight.
+pub fn card_footer_date(detail: Option<&BoardDetail>) -> String {
+    match detail {
+        None => "…".to_string(),
+        Some(d) => {
+            let day = d.updated.get(..10).unwrap_or(&d.updated);
+            let comments = if d.comments == 0 {
+                "no comments".to_string()
+            } else {
+                format!("{} comment{}", d.comments, if d.comments == 1 { "" } else { "s" })
+            };
+            format!("{comments} · {day}")
+        }
+    }
 }
 
 /// Semantic role of a meta-line segment; the UI maps each to a theme color.
@@ -323,6 +439,7 @@ mod tests {
             labels: vec![Label { name: "needs-triage".to_string() }],
             assignees: vec![],
             created_at: "2026-01-02T00:00:00Z".to_string(),
+            updated_at: "2026-01-05T00:00:00Z".to_string(),
             url: "https://github.com/o/r/issues/1".to_string(),
             body: "see (#1) and #2".to_string(),
             comments: vec![],
@@ -339,19 +456,54 @@ mod tests {
         assert_eq!(linkify("[#4](http://x)"), "[#4](http://x)");
     }
 
+    fn nums(line: &str, repo: Option<&str>) -> Vec<u64> {
+        links_in_line(line, repo)
+            .into_iter()
+            .filter_map(|(_, t)| match t {
+                LinkTarget::Issue(n) => Some(n),
+                LinkTarget::Url(_) => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn refs_in_line_finds_bare_refs() {
-        assert_eq!(refs_in_line("see (#1) and #2", None), vec![1, 2]);
-        assert_eq!(refs_in_line("[#4](issue:4)", None), vec![4]);
-        assert_eq!(refs_in_line("no refs here", None), Vec::<u64>::new());
+        assert_eq!(nums("see (#1) and #2", None), vec![1, 2]);
+        assert_eq!(nums("[#4](issue:4)", None), vec![4]);
+        assert_eq!(nums("no refs here", None), Vec::<u64>::new());
+    }
+
+    fn targets(line: &str, repo: Option<&str>) -> Vec<LinkTarget> {
+        links_in_line(line, repo).into_iter().map(|(_, t)| t).collect()
+    }
+
+    #[test]
+    fn links_in_line_orders_issues_and_urls() {
+        use LinkTarget::{Issue, Url};
+        // Rendered markdown links show the destination in parens.
+        let line = "see #12 (https://example.com/a) then #34";
+        assert_eq!(
+            targets(line, Some("o/r")),
+            vec![Url("https://example.com/a".to_string()), Issue(34)]
+        );
+    }
+
+    #[test]
+    fn links_in_line_sends_same_repo_urls_in_app() {
+        use LinkTarget::{Issue, Url};
+        let line = "backport of #12 (https://github.com/o/r/pull/12), see #34 (https://github.com/x/y/issues/34)";
+        assert_eq!(
+            targets(line, Some("o/r")),
+            vec![Issue(12), Url("https://github.com/x/y/issues/34".to_string())]
+        );
     }
 
     #[test]
     fn refs_in_line_filters_urls_by_repo() {
         let line = "see https://github.com/o/r/pull/12 and https://github.com/x/y/issues/34";
-        assert_eq!(refs_in_line(line, Some("o/r")), vec![12]);
-        assert_eq!(refs_in_line(line, Some("O/R")), vec![12]);
-        assert_eq!(refs_in_line(line, None), Vec::<u64>::new());
+        assert_eq!(nums(line, Some("o/r")), vec![12]);
+        assert_eq!(nums(line, Some("O/R")), vec![12]);
+        assert_eq!(nums(line, None), Vec::<u64>::new());
     }
 
     #[test]
@@ -383,13 +535,36 @@ mod tests {
     #[test]
     fn board_groups_unknowns() {
         let items = vec![
-            BoardItem { id: "a".into(), title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![], content: serde_json::Value::Null },
-            BoardItem { id: "b".into(), title: "b".into(), number: Some(2), status: Some("Done".into()), labels: vec![], content: serde_json::Value::Null },
-            BoardItem { id: "c".into(), title: "c".into(), number: Some(3), status: Some("Mystery".into()), labels: vec![], content: serde_json::Value::Null },
+            BoardItem { id: "a".into(), title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![], repo: None, content: serde_json::Value::Null },
+            BoardItem { id: "b".into(), title: "b".into(), number: Some(2), status: Some("Done".into()), labels: vec![], repo: None, content: serde_json::Value::Null },
+            BoardItem { id: "c".into(), title: "c".into(), number: Some(3), status: Some("Mystery".into()), labels: vec![], repo: None, content: serde_json::Value::Null },
         ];
         let cols = board_columns(&items, &["Todo".to_string(), "Done".to_string()]);
         assert_eq!(cols.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), vec!["Todo", "Done", "Other"]);
         assert_eq!(cols[2].1.iter().map(|c| c.number).collect::<Vec<_>>(), vec![Some(3)]);
+    }
+
+    #[test]
+    fn nearest_link_picks_closest_ref_on_shared_row() {
+        let line = "backport of #12, see also #34 for context";
+        let links = links_in_line(line, None);
+        assert_eq!(links.len(), 2);
+        let near_first = line.find("#12").unwrap();
+        let near_second = line.find("#34").unwrap();
+        assert_eq!(nearest_link(line, &links, near_first), Some(LinkTarget::Issue(12)));
+        assert_eq!(nearest_link(line, &links, near_second), Some(LinkTarget::Issue(34)));
+        assert_eq!(nearest_link(line, &[], 0), None);
+    }
+
+    #[test]
+    fn card_footer_splits_labels_left_and_date_right() {
+        let item = BoardItem { id: "a".into(), title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![Label { name: "bug".into() }], repo: None, content: serde_json::Value::Null };
+        assert_eq!(card_footer_labels(&item), "● bug");
+        let bare = BoardItem { labels: vec![], ..item.clone() };
+        assert_eq!(card_footer_labels(&bare), "–");
+        assert_eq!(card_footer_date(None), "…");
+        let d = BoardDetail { created: "2026-01-02".into(), updated: "2026-01-05T00:00:00Z".into(), comments: 3 };
+        assert_eq!(card_footer_date(Some(&d)), "3 comments · 2026-01-05");
     }
 
     #[test]

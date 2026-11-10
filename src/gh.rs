@@ -50,7 +50,7 @@ fn gh_issue_raw(repo: &str, number: u64, fields: &str, kind: &str) -> Result<ser
     gh(&full)
 }
 
-const FIELDS: &str = "number,title,state,author,labels,assignees,createdAt,url,body,comments";
+const FIELDS: &str = "number,title,state,author,labels,assignees,createdAt,updatedAt,url,body,comments";
 
 /// Fetch an issue; fall back to PR view when the number is a pull request.
 pub fn gh_issue_json(repo: &str, number: u64) -> Result<IssueData, String> {
@@ -65,6 +65,32 @@ pub fn gh_issue_json(repo: &str, number: u64) -> Result<IssueData, String> {
         serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
     d.is_pr = d.url.contains("/pull/");
     Ok(d)
+}
+
+/// Labels live on the item itself; fall back to the content payload.
+/// Accepts `["name"]` or `[{"name": …}]` shapes and skips empty lists so a
+/// present-but-empty item list still falls through to the content labels.
+fn parse_labels(item: &serde_json::Value) -> Vec<crate::model::Label> {
+    let content = item.get("content");
+    for src in [item.get("labels"), content.and_then(|c| c.get("labels"))] {
+        if let Some(names) = src.and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|l| {
+                    l.as_str().map(str::to_string).or_else(|| {
+                        l.get("name").and_then(|n| n.as_str()).map(str::to_string)
+                    })
+                })
+                .collect::<Vec<_>>()
+        }) {
+            if !names.is_empty() {
+                return names
+                    .into_iter()
+                    .map(|name| crate::model::Label { name })
+                    .collect();
+            }
+        }
+    }
+    vec![]
 }
 
 /// `[(project title, status name|None)]` — `[]` when unknown or unset.
@@ -124,6 +150,56 @@ pub fn gh_project_statuses(
         .collect()
 }
 
+/// `(number, merged_at)` for PRs in `state`: `open` rows carry `None`.
+fn gh_pr_rows(repo: &str, state: &str) -> Vec<(u64, Option<String>)> {
+    let mut args: Vec<&str> = vec!["pr", "list", "--state", state, "--limit", "50", "--json", "number,mergedAt"];
+    let owned;
+    if !repo.is_empty() {
+        owned = vec!["-R".to_string(), repo.to_string()];
+        args.push(&owned[0]);
+        args.push(&owned[1]);
+    }
+    let v = gh(&args).unwrap_or(serde_json::Value::Null);
+    v.as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|p| {
+            let n = p.get("number").and_then(|n| n.as_u64())?;
+            let merged = p.get("mergedAt").and_then(|m| m.as_str()).map(|s| s.to_string());
+            Some((n, merged))
+        })
+        .collect()
+}
+
+/// Open PR numbers for the sidebar. Empty when offline: the section still
+/// shows clicked and fetched PRs.
+pub fn gh_open_prs(repo: &str) -> Vec<u64> {
+    gh_pr_rows(repo, "open").into_iter().map(|(n, _)| n).collect()
+}
+
+/// Keep merged rows whose `mergedAt` falls inside the window. Pure so the
+/// cutoff is testable with a fixed clock.
+pub fn filter_recent(
+    rows: &[(u64, Option<String>)],
+    now: chrono::DateTime<chrono::Utc>,
+    hours: u64,
+) -> Vec<u64> {
+    let cutoff = now - chrono::Duration::hours(hours as i64);
+    rows.iter()
+        .filter_map(|(n, m)| {
+            let ts = m.as_deref()?;
+            let when = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
+            (when.with_timezone(&chrono::Utc) >= cutoff).then_some(*n)
+        })
+        .collect()
+}
+
+/// Recently merged PR numbers inside the last `hours` hours.
+pub fn gh_recently_merged_prs(repo: &str, hours: u64) -> Vec<u64> {
+    filter_recent(&gh_pr_rows(repo, "merged"), chrono::Utc::now(), hours)
+}
+
 /// Board data for an org/user login: title, status order, cards.
 pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
     let key = format!("board-{}", owner.to_lowercase());
@@ -165,18 +241,11 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
                     .and_then(|v| v.as_u64())
                     .or_else(|| content.get("number").and_then(|v| v.as_u64())),
                 status: c.get("status").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                labels: content
-                    .get("labels")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|l| {
-                        l.get("name")
-                            .and_then(|n| n.as_str())
-                            .map(|n| crate::model::Label { name: n.to_string() })
-                    })
-                    .collect(),
+                labels: parse_labels(c),
+                repo: content
+                    .get("repository")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 content,
             }
         })
@@ -185,4 +254,31 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
     let data = BoardData { number: num, title, order, items };
     cache::cache_put(&key, &data);
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utc(h: u32, min: u32) -> chrono::DateTime<chrono::Utc> {
+        chrono::NaiveDate::from_ymd_opt(2026, 11, 10)
+            .unwrap()
+            .and_hms_opt(h, min, 0)
+            .unwrap()
+            .and_utc()
+    }
+
+    #[test]
+    fn merged_window_keeps_only_fresh_merges() {
+        let rows = vec![
+            (1, Some("2026-11-10T11:30:00Z".to_string())), // 30 min ago
+            (2, Some("2026-11-09T12:00:00Z".to_string())), // yesterday
+            (3, Some("2026-11-05T12:00:00Z".to_string())), // five days back
+            (4, None),                                     // still open
+        ];
+        let now = utc(12, 0);
+        assert_eq!(filter_recent(&rows, now, 1), vec![1]);
+        assert_eq!(filter_recent(&rows, now, 24), vec![1, 2]);
+        assert_eq!(filter_recent(&rows, now, 168), vec![1, 2, 3]);
+    }
 }

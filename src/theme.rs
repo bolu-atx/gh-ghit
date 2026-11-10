@@ -124,6 +124,23 @@ pub fn state_color(state: &str) -> Color {
     }
 }
 
+/// Swimlane header color, matched by keyword so custom board
+/// vocabularies ("In progress", "In Progress", …) still resolve.
+pub fn column_color(name: &str) -> Color {
+    let n = name.to_lowercase();
+    if n.contains("block") {
+        red()
+    } else if n.contains("progress") {
+        amber()
+    } else if n.contains("review") {
+        teal()
+    } else if n.contains("done") {
+        green()
+    } else {
+        muted()
+    }
+}
+
 /// Amber-led markdown: headings glow, code sits on a warm block,
 /// links read teal, quotes stay quiet.
 #[derive(Debug, Clone, Copy, Default)]
@@ -194,6 +211,17 @@ mod tests {
         assert!(sheet.heading(1).add_modifier.contains(Modifier::BOLD));
         assert_eq!(sheet.link().fg, Some(teal()));
         assert_eq!(sheet.code().bg, Some(code_bg()));
+    }
+
+    #[test]
+    fn columns_have_colors() {
+        ACTIVE.store(0, Ordering::Relaxed);
+        assert_eq!(column_color("Todo"), muted());
+        assert_eq!(column_color("In Progress"), amber());
+        assert_eq!(column_color("Blocked"), red());
+        assert_eq!(column_color("In Review"), teal());
+        assert_eq!(column_color("Done"), green());
+        assert_eq!(column_color("Something Else"), muted());
     }
 
     #[test]

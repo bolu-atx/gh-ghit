@@ -100,6 +100,11 @@ struct App {
     board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
     board_states: Vec<ListState>,
     board_expanded: Option<(usize, usize)>,
+    merged_window_hours: u64,
+    board_details: HashMap<u64, model::BoardDetail>,
+    detail_pending: HashSet<u64>,
+    detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
+    detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
     // Last-rendered hit areas for mouse clicks.
     side_issue_area: Rect,
     side_pr_area: Rect,
@@ -120,6 +125,7 @@ enum ActiveList {
 
 impl App {
     fn new(repo_flag: Option<String>) -> Self {
+        let (detail_tx, detail_rx) = std::sync::mpsc::channel();
         Self {
             repo_flag,
             repo_slug: None,
@@ -146,6 +152,11 @@ impl App {
             board_rx: None,
             board_states: Vec::new(),
             board_expanded: None,
+            merged_window_hours: 24,
+            board_details: HashMap::new(),
+            detail_pending: HashSet::new(),
+            detail_tx,
+            detail_rx,
             quit: false,
             body_area: Rect::default(),
             body_rows: Vec::new(),
@@ -244,8 +255,46 @@ impl App {
         Ok((data, statuses))
     }
 
+    /// File `number` under its section. Clicked and fetched rows join the
+    /// sidebar even when their data arrived earlier (warm cache, board
+    /// detail prefetch) and the fetch path below is skipped.
+    fn ensure_listed(&mut self, number: u64, is_pr: bool) {
+        let key = if is_pr { "pr" } else { "issue" };
+        let list = if is_pr { &mut self.prs } else { &mut self.issues };
+        if !list.contains(&number) {
+            list.push(number);
+            self.sort_section(key);
+        }
+    }
+
+    /// Pull open PRs plus PRs merged inside the window into the section.
+    /// Offline or out of a repo this is a no-op: clicked rows still list.
+    fn merge_pr_sections(&mut self) {
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
+            return;
+        };
+        let mut nums = gh::gh_open_prs(&repo);
+        nums.extend(gh::gh_recently_merged_prs(&repo, self.merged_window_hours));
+        for n in nums {
+            if self.prs.contains(&n) || self.issues.contains(&n) {
+                continue;
+            }
+            self.load_issue(n, false);
+        }
+    }
+
+    fn window_label(&self) -> String {
+        match self.merged_window_hours {
+            1 => "open + merged ≤1h".to_string(),
+            168 => "open + merged ≤7d".to_string(),
+            h => format!("open + merged ≤{h}h"),
+        }
+    }
+
     fn load_issue(&mut self, number: u64, force: bool) {
         if !force && self.data.contains_key(&number) {
+            let is_pr = self.data.get(&number).map(|d| d.is_pr).unwrap_or(false);
+            self.ensure_listed(number, is_pr);
             self.show_issue(number);
             self.bar.clear();
             self.focus = Focus::Main;
@@ -257,12 +306,7 @@ impl App {
                 let is_pr = data.is_pr;
                 self.data.insert(n, data);
                 self.statuses.insert(n, statuses);
-                let list = if is_pr { &mut self.prs } else { &mut self.issues };
-                if !list.contains(&n) {
-                    list.push(n);
-                }
-                let key = if is_pr { "pr" } else { "issue" };
-                self.sort_section(key);
+                self.ensure_listed(n, is_pr);
                 self.show_issue(n);
                 self.bar.clear();
                 self.focus = Focus::Main;
@@ -335,6 +379,7 @@ impl App {
             cache::cache_drop(&format!("board-{}", owner.to_lowercase()));
         }
         self.load_issue(n, true);
+        self.merge_pr_sections();
         self.notify(format!("refreshed #{n}"));
     }
 
@@ -419,6 +464,7 @@ fn run_tui(app: &mut App, numbers: &[u64]) -> Result<(), String> {
         for n in initial {
             app.load_issue(n, false);
         }
+        app.merge_pr_sections();
     } else {
         for &n in numbers {
             app.load_issue(n, false);
@@ -454,6 +500,7 @@ fn event_loop(
             };
         }
         poll_board(app);
+        poll_details(app);
         if app.quit {
             return Ok(());
         }
@@ -553,6 +600,15 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Char('r') => app.refresh_current(),
         KeyCode::Char('p') => app.toggle_pin(),
+        KeyCode::Char('w') => {
+            app.merged_window_hours = match app.merged_window_hours {
+                1 => 24,
+                24 => 168,
+                _ => 1,
+            };
+            app.merge_pr_sections();
+            app.notify(format!("merged window: {}", app.window_label()));
+        }
         KeyCode::Esc => app.bar.clear(),
         KeyCode::Tab => {
             app.tab = if app.tab == Tab::Body { Tab::Comments } else { Tab::Body };
@@ -596,8 +652,22 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                     .board_cells
                     .iter()
                     .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
-                    .map(|(_, c, r)| (*c, *r));
-                if let Some((c, r)) = hit {
+                    .map(|(rect, c, r)| (*rect, *c, *r));
+                if let Some((rect, c, r)) = hit {
+                    // Clicking the URL line of an expanded card opens it.
+                    if app.board_expanded == Some((c, r)) && m.row - rect.y == 3 {
+                        if let Some(board) = &app.board {
+                            let cols = board_columns(&board.items, &board.order);
+                            if let Some(url) = cols
+                                .get(c)
+                                .and_then(|(_, cards)| cards.get(r))
+                                .and_then(|card| card_url(card))
+                            {
+                                open_url(&url, app);
+                                return;
+                            }
+                        }
+                    }
                     if app.board_col == c && app.board_row == r {
                         if let Some(n) = board_selected_number(app) {
                             app.board = None;
@@ -644,8 +714,12 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 let row = (m.row - app.body_area.y) as usize;
                 if let Some(line) = app.body_rows.get(row) {
                     let repo = app.repo_key();
-                    if let Some(&n) = model::refs_in_line(line, repo.as_deref()).first() {
-                        app.load_issue(n, false);
+                    let rel_x = (m.column - app.body_area.x) as usize;
+                    let links = model::links_in_line(line, repo.as_deref());
+                    match model::nearest_link(line, &links, rel_x) {
+                        Some(model::LinkTarget::Issue(n)) => app.load_issue(n, false),
+                        Some(model::LinkTarget::Url(url)) => open_url(&url, app),
+                        None => {}
                     }
                 }
                 return;
@@ -710,6 +784,41 @@ fn board_open(app: &App) -> bool {
     app.board.is_some() || app.board_loading
 }
 
+/// Fetch dates and comment counts for every card, in the background.
+/// Cards fill in progressively; warm issue cache hits skip the network.
+fn kick_off_details(app: &mut App) {
+    let Some(board) = &app.board else { return };
+    let tx = app.detail_tx.clone();
+    for item in &board.items {
+        let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else {
+            continue;
+        };
+        if app.board_details.contains_key(&n) || app.detail_pending.contains(&n) {
+            continue;
+        }
+        if let Some(d) = app.data.get(&n) {
+            app.board_details.insert(n, model::BoardDetail::from_issue(d));
+            continue;
+        }
+        app.detail_pending.insert(n);
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let res = gh::gh_issue_json(&repo, n).map(|d| model::BoardDetail::from_issue(&d));
+            let _ = tx.send((n, res));
+        });
+    }
+}
+
+fn poll_details(app: &mut App) {
+    let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.detail_rx.try_iter().collect();
+    for (n, res) in ready {
+        app.detail_pending.remove(&n);
+        if let Ok(d) = res {
+            app.board_details.insert(n, d);
+        }
+    }
+}
+
 fn poll_board(app: &mut App) {
     if !app.board_loading {
         return;
@@ -725,6 +834,7 @@ fn poll_board(app: &mut App) {
             app.board_row = 0;
             app.board_states.clear();
             app.board_expanded = None;
+            kick_off_details(app);
         }
         Err(e) => app.notify(e),
     }
@@ -785,7 +895,7 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         ])
     } else {
         Line::from(Span::styled(
-            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · t theme · click #n · q quit",
+            "j/k issue · ↑↓ scroll · 1/2 tab · b board · : cmd · o open · r refresh · p pin · t theme · w merged-age · click #n/links · q quit",
             Style::new().fg(muted()),
         ))
     };
@@ -795,6 +905,21 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_board(f, f.area(), app);
     }
+}
+
+/// Open a URL in the browser. Stubbed in tests so suites never launch one.
+#[cfg(not(test))]
+fn open_url(url: &str, app: &mut App) {
+    if open::that(url).is_ok() {
+        app.notify(format!("opened {url}"));
+    } else {
+        app.notify(format!("couldn't open {url}"));
+    }
+}
+
+#[cfg(test)]
+fn open_url(url: &str, app: &mut App) {
+    app.notify(format!("opened {url}"));
 }
 
 /// Darken every rendered cell toward the background so the modal sits proud.
@@ -943,8 +1068,9 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         app.issue_state.selected(),
     );
     f.render_stateful_widget(il, rows[0], &mut istate);
+    let window = app.window_label();
     let (pl, mut pstate) = section_list(
-        section_title("Pull requests", ""),
+        section_title("Pull requests", &window),
         &app.prs.clone(),
         app,
         app.pr_state.selected(),
@@ -1143,12 +1269,14 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.board_cells.clear();
     for (i, (name, cards)) in cols.iter().enumerate() {
         let Some(a) = col_areas.get(i) else { continue };
+        let inner_w = a.width.saturating_sub(2);
         let items: Vec<ListItem> = cards
             .iter()
             .enumerate()
             .map(|(ri, c)| {
                 let sel = app.board_col == i && app.board_row == ri;
-                board_card(c, sel, app.board_expanded == Some((i, ri)))
+                let detail = c.number.and_then(|n| app.board_details.get(&n));
+                board_card(c, sel, app.board_expanded == Some((i, ri)), detail, inner_w)
             })
             .collect();
         let active = app.board_col == i;
@@ -1158,7 +1286,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .border_style(Style::new().bg(ink()).fg(if active { amber() } else { muted() }))
                 .style(base())
                 .title(Line::from(vec![
-                    Span::styled(format!("{} ", name), Style::new().bg(ink()).fg(amber()).bold()),
+                    Span::styled(format!("{} ", name), Style::new().bg(ink()).fg(theme::column_color(name)).bold()),
                     Span::styled(format!("({})", cards.len()), Style::new().bg(ink()).fg(muted())),
                 ])),
         );
@@ -1204,19 +1332,22 @@ fn card_excerpt(c: &crate::model::BoardItem) -> String {
     }
 }
 
-fn board_card(c: &crate::model::BoardItem, sel: bool, expanded: bool) -> ListItem<'static> {
-    use theme::{amber, ink, muted, paper};
+/// A board card: 3 lines collapsed (head, breathing room, footer with
+/// labels left and dates right), 6 lines expanded (status, URL, excerpt,
+/// dates plus comment count). Matches `BASE_CARD_H` / `EXPANDED_CARD_H`.
+fn board_card(
+    c: &crate::model::BoardItem,
+    sel: bool,
+    expanded: bool,
+    detail: Option<&crate::model::BoardDetail>,
+    inner_width: u16,
+) -> ListItem<'static> {
+    use theme::{amber, column_color, ink, muted, paper, teal};
     let title = model::slug(&c.title, 26);
     let head = match c.number {
         Some(n) => format!("#{n} {title}"),
         None => format!("◇ {title}"),
     };
-    // Labels own the second line now that the swimlane carries the status.
-    let mut chips: Vec<String> = c.labels.iter().take(4).map(|l| format!("● {}", l.name)).collect();
-    if c.labels.len() > 4 {
-        chips.push(format!("+{}", c.labels.len() - 4));
-    }
-    let chips_line = if chips.is_empty() { "–".to_string() } else { chips.join("  ") };
     let first = if sel {
         Line::from(vec![
             Span::styled("▌ ", Style::new().bg(ink()).fg(amber()).bold()),
@@ -1228,36 +1359,72 @@ fn board_card(c: &crate::model::BoardItem, sel: bool, expanded: bool) -> ListIte
             Span::styled(head, Style::new().bg(ink()).fg(paper())),
         ])
     };
-    let mut lines = vec![
+    if !expanded {
+        // Labels own the left; the swimlane carries the status, so the
+        // collapsed card never repeats it.
+        let room = (inner_width as usize).saturating_sub(4);
+        let right = model::card_footer_date(detail);
+        let max_left = room.saturating_sub(right.chars().count() + 2);
+        let mut left = model::card_footer_labels(c);
+        if left.chars().count() > max_left && max_left > 1 {
+            left = format!("{}…", left.chars().take(max_left.saturating_sub(1)).collect::<String>());
+        }
+        let pad = room.saturating_sub(left.chars().count() + right.chars().count()).max(1);
+        let footer = format!("    {left}{}{right}", " ".repeat(pad));
+        return ListItem::new(vec![
+            first,
+            Line::from(Span::styled("", Style::new().bg(ink()))),
+            Line::from(Span::styled(footer, Style::new().bg(ink()).fg(muted()))),
+        ]);
+    }
+    let status = c.status.clone().unwrap_or_else(|| "No status".to_string());
+    let mut meta = format!("{} · {}", status, card_kind(c));
+    if let Some(login) = card_assignee(c) {
+        meta.push_str(&format!(" · @{login}"));
+    }
+    let dates = match detail {
+        Some(d) => format!("{} → {} · {}", d.created, d.updated, comment_word(d.comments)),
+        None => "…".to_string(),
+    };
+    ListItem::new(vec![
         first,
         Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
-            Span::styled(chips_line, Style::new().bg(ink()).fg(muted())),
+            Span::styled(meta, Style::new().bg(ink()).fg(column_color(&status))),
         ]),
-    ];
-    if expanded {
-        let status = c.status.clone().unwrap_or_else(|| "No status".to_string());
-        lines.push(Line::from(vec![
-            Span::styled("    ", Style::new().bg(ink())),
-            Span::styled(
-                format!("{} · {}", status, card_kind(c)),
-                Style::new().bg(ink()).fg(amber()),
-            ),
-        ]));
-        lines.push(Line::from(vec![
+        Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
             Span::styled(
                 card_url(c).unwrap_or_else(|| "–".to_string()),
-                Style::new().bg(ink()).fg(muted()),
+                Style::new().bg(ink()).fg(teal()).underlined(),
             ),
-        ]));
-        lines.push(Line::from(vec![
+        ]),
+        Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
             Span::styled(card_excerpt(c), Style::new().bg(ink()).fg(paper())),
-        ]));
+        ]),
+        Line::from(vec![
+            Span::styled("    ", Style::new().bg(ink())),
+            Span::styled(dates, Style::new().bg(ink()).fg(muted())),
+        ]),
+        Line::from(Span::styled("", Style::new().bg(ink()))),
+    ])
+}
+
+fn comment_word(n: usize) -> String {
+    if n == 0 {
+        "no comments".to_string()
+    } else {
+        format!("{} comment{}", n, if n == 1 { "" } else { "s" })
     }
-    lines.push(Line::from(Span::styled("", Style::new().bg(ink()))));
-    ListItem::new(lines)
+}
+
+/// First assignee login off the card payload, when the board ships one.
+fn card_assignee(c: &crate::model::BoardItem) -> Option<String> {
+    let arr = c.content.get("assignees").and_then(|v| v.as_array())?;
+    arr.iter().filter_map(|a| {
+        a.get("login").and_then(|l| l.as_str()).or_else(|| a.as_str())
+    }).map(str::to_string).next()
 }
 
 /// Placeholder columns shown while the network fetch is in flight.
@@ -1288,7 +1455,7 @@ fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
 #[cfg(test)]
 mod render_smoke {
     use super::*;
-    use crate::model::{Author, BoardData, BoardItem, IssueData, Label};
+    use crate::model::{Author, BoardData, BoardDetail, BoardItem, IssueData, Label};
     use ratatui::backend::TestBackend;
 
     fn board_app(n_cards: usize) -> App {
@@ -1301,6 +1468,7 @@ mod render_smoke {
                 number: Some(100 + i as u64),
                 status: Some("Todo".to_string()),
                 labels: vec![Label { name: "x".to_string() }],
+                repo: Some("o/r".to_string()),
                 content: serde_json::json!({
                     "type": "Issue",
                     "url": format!("https://github.com/o/r/issues/{}", 100 + i),
@@ -1334,6 +1502,21 @@ mod render_smoke {
         // The swimlane carries the status; collapsed cards don't repeat it.
         // (The column header "Todo (n)" is not indented like a card line.)
         assert!(!text.contains("    Todo"), "status leaks into collapsed card");
+    }
+
+    #[test]
+    fn board_footer_shows_loading_then_dates() {
+        let mut app = board_app(1);
+        let before = frame_text(&mut app);
+        assert!(before.contains("● x"), "{before}");
+        assert!(before.contains("…"), "date cell loads in");
+        app.board_details.insert(100, BoardDetail {
+            created: "2026-11-01".to_string(),
+            updated: "2026-11-05".to_string(),
+            comments: 2,
+        });
+        let after = frame_text(&mut app);
+        assert!(after.contains("2 comments · 2026-11-05"), "{after}");
     }
 
     #[test]
@@ -1379,6 +1562,7 @@ mod render_smoke {
             labels: vec![],
             assignees: vec![],
             created_at: "2026-01-02T00:00:00Z".to_string(),
+            updated_at: "2026-01-05T00:00:00Z".to_string(),
             url: format!("https://github.com/o/r/issues/{number}"),
             body: "# hello\n\n- a\n- b\n".to_string(),
             comments: vec![],
@@ -1417,6 +1601,35 @@ mod render_smoke {
             row,
             modifiers: KeyModifiers::empty(),
         }
+    }
+
+    #[test]
+    fn cached_click_still_joins_its_section() {
+        // Data can arrive before the sidebar knows the number (warm cache,
+        // board prefetch): clicking must still file it under PRs, not drop it.
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let mut pr = sample(9);
+        pr.is_pr = true;
+        pr.url = "https://github.com/o/r/pull/9".to_string();
+        app.data.insert(9, pr);
+        assert!(app.prs.is_empty());
+        app.load_issue(9, false);
+        assert_eq!(app.prs, vec![9]);
+        assert_eq!(app.current, Some(9));
+        // A second click files nothing twice.
+        app.load_issue(9, false);
+        assert_eq!(app.prs, vec![9]);
+    }
+
+    #[test]
+    fn merged_window_label_reads_plain() {
+        let mut app = App::new(Some("o/r".to_string()));
+        assert_eq!(app.window_label(), "open + merged ≤24h");
+        app.merged_window_hours = 1;
+        assert_eq!(app.window_label(), "open + merged ≤1h");
+        app.merged_window_hours = 168;
+        assert_eq!(app.window_label(), "open + merged ≤7d");
     }
 
     #[test]
@@ -1481,6 +1694,42 @@ mod render_smoke {
         let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
         assert_eq!(app.current, Some(9));
+    }
+
+    #[test]
+    fn mouse_click_opens_nearest_ref_on_row() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "fix #7 then #9 ok".to_string();
+        let _ = frame_text(&mut app);
+        let row = app
+            .body_rows
+            .iter()
+            .position(|l| l.contains("#7 then #9"))
+            .expect("refs visible");
+        let line = app.body_rows[row].clone();
+        let (bax, bay) = (app.body_area.x, app.body_area.y);
+        let x9 = bax + line.find("#9").unwrap() as u16;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x9, bay + row as u16));
+        assert_eq!(app.current, Some(9));
+        let x7 = bax + line.find("#7").unwrap() as u16;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x7, bay + row as u16));
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn mouse_click_on_url_opens_browser_not_issue() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "see https://example.com/a ok".to_string();
+        let _ = frame_text(&mut app);
+        let row = app
+            .body_rows
+            .iter()
+            .position(|l| l.contains("example.com"))
+            .expect("url visible");
+        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(7));
+        assert!(app.message.contains("opened https://example.com/a"));
     }
 
     #[test]
