@@ -5,13 +5,18 @@ in spirit. Fix the code, never silence the lint.
 
 ## Shape of the code
 
-- Small functions with one job: fetch in `gh.rs`, pure transforms in
-  `model.rs`, state transitions as `App` methods or free functions in
-  `main.rs`, rendering as `render_*` functions.
+- Small functions with one job: fetch over HTTPS behind the `github.rs`
+  facade (`api.rs`/`cache.rs`; `gh.rs` is deprecated board-only),
+  pure domain transforms in `model.rs`,
+  pure business rules in `core.rs`, state and the event loop in `app.rs`,
+  input mapping in `input.rs`, rendering as `render_*` functions in `ui.rs`.
+- Layer discipline: `ui`/`input` never import `api`/`gh`/`cache`;
+  `model`/`core` never import ratatui or crossterm. New network paths go
+  through `github.rs`.
 - Prefer exhaustive handling: every user request lists ALL of its behaviors
   (happy path, error, empty, boundary). A happy-path-only patch is unfinished.
 - No dead code. No commented-out blocks. If a helper loses its last caller,
-  delete it.
+  delete it (see `docs/dead-code.md` and the `dead-code-sweep` skill).
 
 ## Rendering
 

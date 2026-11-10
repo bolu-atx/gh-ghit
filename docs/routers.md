@@ -7,11 +7,13 @@ one verification pass.
 
 | Task | Layer | Verify with |
 | ---- | ----- | ----------- |
-| Fetching, caching, pins | `gh.rs`, `cache.rs` | `cargo test` (unit) |
+| Fetching, caching, pins | `github.rs` over `api.rs` + `cache.rs` (`gh.rs` board-only, deprecated) | `cargo test` (unit) |
 | Text transforms, ref parsing | `model.rs` | `cargo test` (unit) |
+| Business rules (bar, selection, cursor, pins) | `core.rs` | `cargo test` (unit) |
+| CLI args | `cli.rs` | `cargo test` (unit) |
 | Theme, markdown stylesheet | `theme.rs` | `cargo test` + eyeball in tmux |
-| Keys, mouse, modal flow | `main.rs` event handling | `cargo test` + live drive |
-| Rendering, layout | `main.rs` render fns | frame tests + live drive |
+| Keys, mouse, modal flow | `input.rs` + `app.rs` | `cargo test` + live drive |
+| Rendering, layout | `ui.rs` render fns | frame tests + live drive |
 
 Cross-layer changes (e.g. a new data field shown in the UI) go data-first:
 `model.rs` type + unit test, then `render_*` + frame test, then live drive.
