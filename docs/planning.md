@@ -18,6 +18,10 @@ sub-issues, blocked-by/blocking, and labels).
   `blocked-by` / `blocking` when order matters, parent/sub-issue
   when one story truly contains another. Do not link related work
   that can land in any order — mention it in `How` instead.
+- **Board**: every issue lives on the
+  [`ghit dev` board](https://github.com/users/bolu-atx/projects/1).
+  Create with `gh issue create -p 'ghit dev' …` or add right after
+  filing — no issue floats outside the board.
 
 ## Issue body
 
@@ -76,7 +80,8 @@ One subject label per issue. Workflow labels (`duplicate`,
 - Keep the story current while you work: check off phases in
   `How`, append real `Verification performed` output, record your
   prompt and verifier under `Agents supplemental`.
-- File one issue per story you discover; link ordering with
-  `blocked-by` only when landing order truly matters.
+- File one issue per story you discover, straight onto the board
+  (`-p 'ghit dev'`); link ordering with `blocked-by` only when
+  landing order truly matters.
 - Never press `o` during verification (it opens a browser).
   End every tmux live drive with `q` and kill the session.
