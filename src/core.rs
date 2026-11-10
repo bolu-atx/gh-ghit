@@ -142,18 +142,19 @@ pub fn section_split(
 }
 
 /// Display rows for one pane (Issues or PRs): pinned, then requested, then
-/// recent, with a `None` divider slot between non-empty groups. Empty groups
-/// leave no divider behind.
-pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<Option<u64>> {
-    let mut out: Vec<Option<u64>> = vec![];
-    for group in [pinned, requested, recent] {
+/// recent, with a labeled divider slot between non-empty groups. Empty
+/// groups leave no divider behind.
+pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<crate::model::SideRow> {
+    use crate::model::SideRow;
+    let mut out: Vec<SideRow> = vec![];
+    for (label, group) in [("pinned", pinned), ("requested", requested), ("recent", recent)] {
         if group.is_empty() {
             continue;
         }
         if !out.is_empty() {
-            out.push(None);
+            out.push(SideRow::Divider(label));
         }
-        out.extend(group.iter().copied().map(Some));
+        out.extend(group.iter().copied().map(SideRow::Item));
     }
     out
 }
@@ -169,6 +170,103 @@ pub fn matches_search(number: u64, title: &str, query: &str) -> bool {
         return true;
     }
     title.to_lowercase().contains(&q)
+}
+
+/// Collapse whitespace runs to single spaces so yanked text pastes as one
+/// line for agents.
+pub fn collapse_single_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Trim `s` to `limit` chars, appending `…` on cut. Char-boundary safe;
+/// matches the `render_toast` width clamp so toasts stay testable.
+pub fn toast_snippet(s: &str, limit: usize) -> String {
+    let limit = limit.max(1);
+    if s.chars().count() <= limit {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(limit.saturating_sub(1)).collect();
+    format!("{cut}…")
+}
+
+/// Agent-ready issue/PR identity: `…` only enters via the toast, never here.
+pub fn yank_issue_text(number: u64, title: &str, url: &str) -> String {
+    format!("#{number} {} — {url}", collapse_single_line(title))
+}
+
+/// Agent-ready diff context: PR identity plus the file under `diff_cursor`.
+/// `first_hunk` is the `@@ … @@` header when the file is expanded.
+pub fn yank_diff_text(
+    number: u64,
+    title: &str,
+    url: &str,
+    filename: &str,
+    status: &str,
+    adds: usize,
+    dels: usize,
+    first_hunk: Option<&str>,
+) -> String {
+    let hunk = first_hunk
+        .map(|h| format!(" {}", collapse_single_line(h)))
+        .unwrap_or_default();
+    format!(
+        "#{number} {} — {filename} ({status} +{adds} -{dels}{hunk}) — {url}",
+        collapse_single_line(title)
+    )
+}
+
+/// Agent-ready diff line: PR identity plus the active patch line.
+pub fn yank_diff_line_text(
+    number: u64,
+    title: &str,
+    url: &str,
+    filename: &str,
+    line: &str,
+) -> String {
+    format!(
+        "#{number} {} — {filename}: \"{}\" — {url}",
+        collapse_single_line(title),
+        collapse_single_line(line)
+    )
+}
+
+/// First `@@` hunk header in a unified patch, if any.
+pub fn first_hunk(patch: &str) -> Option<String> {
+    patch.lines().find(|l| l.starts_with("@@")).map(|l| l.to_string())
+}
+
+/// Agent-ready refs context: the raw-body line mentioning `target`.
+/// Returns the full yank text, or `None` when no line mentions it.
+/// Line numbers are 1-based raw `body` lines, not wrapped render rows.
+pub fn yank_ref_text(
+    current: u64,
+    target: u64,
+    body: &str,
+    repo: Option<&str>,
+    target_title: Option<&str>,
+    target_url: Option<&str>,
+) -> Option<String> {
+    for (idx, line) in body.lines().enumerate() {
+        let hits = crate::model::links_in_line(line, repo);
+        if hits
+            .iter()
+            .any(|(_, t)| *t == crate::model::LinkTarget::Issue(target))
+        {
+            let snippet = toast_snippet(&collapse_single_line(line), 120);
+            let mut out = format!("#{current} refs #{target} (body line {}): \"{snippet}\"", idx + 1);
+            match (target_title, target_url) {
+                (Some(t), Some(u)) if !t.is_empty() && !u.is_empty() => {
+                    out.push_str(&format!(" — {} {u}", collapse_single_line(t)));
+                }
+                (_, Some(u)) if !u.is_empty() => {
+                    out.push_str(&format!(" — {u}"));
+                }
+                _ => {}
+            }
+            return Some(out);
+        }
+    }
+    None
 }
 
 /// Byte ranges of every case-insensitive non-overlapping hit of `query` in
@@ -264,10 +362,14 @@ mod tests {
 
     #[test]
     fn pane_order_dividers_between_groups_only() {
-        assert_eq!(pane_order(&[9], &[7], &[5]), vec![Some(9), None, Some(7), None, Some(5)]);
-        assert_eq!(pane_order(&[], &[7], &[]), vec![Some(7)]);
-        assert_eq!(pane_order(&[], &[], &[]), Vec::<Option<u64>>::new());
-        assert_eq!(pane_order(&[9], &[], &[5]), vec![Some(9), None, Some(5)]);
+        use crate::model::SideRow::{Divider, Item};
+        assert_eq!(
+            pane_order(&[9], &[7], &[5]),
+            vec![Item(9), Divider("requested"), Item(7), Divider("recent"), Item(5)]
+        );
+        assert_eq!(pane_order(&[], &[7], &[]), vec![Item(7)]);
+        assert_eq!(pane_order(&[], &[], &[]), Vec::<crate::model::SideRow>::new());
+        assert_eq!(pane_order(&[9], &[], &[5]), vec![Item(9), Divider("recent"), Item(5)]);
     }
 
     #[test]
@@ -285,5 +387,63 @@ mod tests {
         assert_eq!(match_ranges("Fix the thing", "th"), vec![(4, 6), (8, 10)]);
         assert_eq!(match_ranges("Fix the thing", ""), Vec::new());
         assert_eq!(match_ranges("abc", "z"), Vec::new());
+    }
+
+    #[test]
+    fn toast_snippet_trims_with_ellipsis() {
+        assert_eq!(toast_snippet("short", 80), "short");
+        assert_eq!(toast_snippet("12345", 5), "12345");
+        assert_eq!(toast_snippet("123456", 5), "1234…");
+        // Multibyte-safe: counts chars, never splits one.
+        assert_eq!(toast_snippet("héllo wörld", 6), "héllo…");
+        assert_eq!(toast_snippet("anything", 1), "…");
+    }
+
+    #[test]
+    fn yank_issue_collapses_title_to_one_line() {
+        assert_eq!(
+            yank_issue_text(7, "Fix  login\nbug", "https://example.com/7"),
+            "#7 Fix login bug — https://example.com/7"
+        );
+    }
+
+    #[test]
+    fn yank_diff_names_file_and_hunk() {
+        let text = yank_diff_text(
+            9,
+            "Add thing",
+            "https://example.com/pull/9",
+            "src/a.rs",
+            "modified",
+            10,
+            2,
+            Some("@@ -1 +1 @@"),
+        );
+        assert_eq!(
+            text,
+            "#9 Add thing — src/a.rs (modified +10 -2 @@ -1 +1 @@) — https://example.com/pull/9"
+        );
+        let folded = yank_diff_text(9, "Add thing", "u", "src/a.rs", "added", 5, 0, None);
+        assert_eq!(folded, "#9 Add thing — src/a.rs (added +5 -0) — u");
+    }
+
+    #[test]
+    fn yank_ref_reports_raw_body_line_and_snippet() {
+        let body = "intro line\nsee #9 for details\nlast";
+        let text = yank_ref_text(7, 9, body, None, Some("Nine"), Some("u9")).unwrap();
+        assert_eq!(text, "#7 refs #9 (body line 2): \"see #9 for details\" — Nine u9");
+    }
+
+    #[test]
+    fn yank_ref_returns_none_without_mention() {
+        assert!(yank_ref_text(7, 9, "no refs here", None, None, None).is_none());
+    }
+
+    #[test]
+    fn yank_diff_line_quotes_active_line() {
+        assert_eq!(
+            yank_diff_line_text(9, "Add thing", "u", "src/a.rs", "  +new"),
+            "#9 Add thing — src/a.rs: \"+new\" — u"
+        );
     }
 }

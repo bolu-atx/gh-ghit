@@ -156,6 +156,24 @@ fn ref_url_re() -> &'static Regex {
     })
 }
 
+/// A sidebar row: an issue/PR number, or a divider labeled with the
+/// section that follows it (`requested`, `recent`; the leading pinned
+/// section needs no divider since its rows carry 📌).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SideRow {
+    Item(u64),
+    Divider(&'static str),
+}
+
+impl SideRow {
+    pub fn number(self) -> Option<u64> {
+        match self {
+            SideRow::Item(n) => Some(n),
+            SideRow::Divider(_) => None,
+        }
+    }
+}
+
 /// Cap on related-issue rows pulled out of one body.
 pub const MAX_REFS: usize = 20;
 
@@ -440,6 +458,20 @@ pub fn diff_lines(patch: &str) -> Vec<(DiffKind, String)> {
         .collect()
 }
 
+/// File index of a rendered `▸ `/`▾ ` diff header row. Longest filename
+/// wins so `a.rs` never shadows `src/a.rs`. `None` for any other row.
+pub fn header_file_index(line: &str, files: &[DiffFile]) -> Option<usize> {
+    if !(line.starts_with("▸ ") || line.starts_with("▾ ")) {
+        return None;
+    }
+    files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| line.contains(&f.filename))
+        .max_by_key(|(_, f)| f.filename.len())
+        .map(|(i, _)| i)
+}
+
 /// Summary for the diff tab header: file count plus summed adds/deletes.
 pub fn diff_summary(files: &[DiffFile]) -> String {
     let adds: usize = files.iter().map(|f| f.additions).sum();
@@ -514,7 +546,11 @@ pub fn board_columns<'a>(items: &'a [BoardItem], order: &[String]) -> Vec<(Strin
     cols
 }
 
-/// Sidebar row: `#n title` on line one, label chips + project status on line two.
+/// Sidebar row: `#n title` on line one, label chips plus the project
+/// status on line two. Returns `(first, body, status)` with the status
+/// segment split out so the UI can paint it in the board color with the
+/// board glyph; `body` already carries the trailing pad so the joined
+/// row still fills exactly `width` cells.
 pub fn sidebar_lines(
     number: u64,
     title: &str,
@@ -522,15 +558,24 @@ pub fn sidebar_lines(
     statuses: &[(String, Option<String>)],
     width: usize,
     pinned: bool,
-) -> (String, String) {
+) -> (String, String, String) {
     let first = format!("#{}{} {}", number, if pinned { " 📌" } else { "" }, slug(title, 30.min(width)));
     let status = status_text(statuses);
+    let icon = crate::theme::column_icon(&status);
+    let seg = if status.is_empty() {
+        String::new()
+    } else if icon.is_empty() {
+        status.clone()
+    } else {
+        format!("{icon} {status}")
+    };
+    let status_w = seg.chars().count();
     let chips: Vec<String> = labels.iter().map(|l| format!("● {}", l.name)).collect();
     let mut second = String::new();
-    let room = if status.is_empty() {
+    let room = if seg.is_empty() {
         width
     } else {
-        width.saturating_sub(status.len() + 1)
+        width.saturating_sub(status_w + 1)
     };
     let mut used = 0;
     for (i, chip) in chips.iter().enumerate() {
@@ -552,13 +597,15 @@ pub fn sidebar_lines(
     } else if second.is_empty() {
         second = "–".to_string();
     }
-    let second = if status.is_empty() {
-        second
+    let (body, seg) = if seg.is_empty() {
+        (second, String::new())
     } else {
-        let pad = width.saturating_sub(second.len() + status.len()).max(1);
-        format!("{}{}{}", second, " ".repeat(pad), status)
+        let pad = width
+            .saturating_sub(second.chars().count() + status_w)
+            .max(1);
+        (format!("{}{}", second, " ".repeat(pad)), seg)
     };
-    (first, second)
+    (first, body, seg)
 }
 
 #[cfg(test)]
@@ -676,9 +723,11 @@ mod tests {
     fn sidebar_row_ends_with_status() {
         let d = sample_issue();
         let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
-        let (_, second) = sidebar_lines(d.number, &d.title, &d.labels, &st, 40, false);
+        let (_, body, seg) = sidebar_lines(d.number, &d.title, &d.labels, &st, 40, false);
+        let second = format!("{body}{seg}");
         assert!(second.ends_with("Todo"), "{second}");
-        assert_eq!(second.len(), 40, "{second}");
+        assert_eq!(second.chars().count(), 40, "{second}");
+        assert!(seg.starts_with(crate::theme::column_icon("Todo")), "{seg}");
     }
 
     #[test]
@@ -718,9 +767,9 @@ mod tests {
 
     #[test]
     fn pinned_marker() {
-        let (first, _) = sidebar_lines(7, "t", &[], &[], 40, true);
+        let (first, _, _) = sidebar_lines(7, "t", &[], &[], 40, true);
         assert!(first.contains("📌"));
-        let (plain, _) = sidebar_lines(7, "t", &[], &[], 40, false);
+        let (plain, _, _) = sidebar_lines(7, "t", &[], &[], 40, false);
         assert!(!plain.contains("📌"));
     }
 
@@ -757,5 +806,17 @@ mod tests {
         ];
         assert_eq!(diff_summary(&files), "2 files · +15 -2");
         assert_eq!(diff_summary(&files[..1]), "1 file · +10 -2");
+    }
+
+    #[test]
+    fn header_file_index_matches_longest_filename() {
+        let files = vec![
+            DiffFile { filename: "a.rs".into(), status: String::new(), additions: 0, deletions: 0, patch: String::new() },
+            DiffFile { filename: "src/a.rs".into(), status: String::new(), additions: 0, deletions: 0, patch: String::new() },
+        ];
+        assert_eq!(header_file_index("▸ \u{f15c} src/a.rs   modified", &files), Some(1));
+        assert_eq!(header_file_index("▾ \u{f15c} a.rs   added", &files), Some(0));
+        assert_eq!(header_file_index("  -old", &files), None);
+        assert_eq!(header_file_index("───", &files), None);
     }
 }

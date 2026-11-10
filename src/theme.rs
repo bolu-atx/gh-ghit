@@ -1,7 +1,8 @@
 //! ghit themes: system (terminal ANSI), ayu mirage, ayu dark, GitHub light.
 //!
 //! One accent color per theme. Selection is a marker
-//! plus bold type, never a full-width color block. The active palette is
+//! plus bold type plus a subtle background shade, and only on the
+//! focused pane; blurred panes go fully quiet. The active palette is
 //! global so every widget and the markdown stylesheet stay in sync; `t`
 //! cycles it at runtime. The choice persists in the data dir so restarts
 //! keep the last theme.
@@ -174,6 +175,27 @@ pub fn column_color(name: &str) -> Color {
     }
 }
 
+/// Swimlane glyph, matched by the same keywords in the same order as
+/// `column_color` so icon and color never disagree. Empty for unknown
+/// lanes, which stay quiet. Nerd Font codepoints are long-stable
+/// Font Awesome glyphs, like the rest of the UI vocabulary.
+pub fn column_icon(name: &str) -> &'static str {
+    let n = name.to_lowercase();
+    if n.contains("block") {
+        "\u{f05e}"
+    } else if n.contains("progress") {
+        "\u{f017}"
+    } else if n.contains("review") {
+        "\u{f06e}"
+    } else if n.contains("done") {
+        "\u{f00c}"
+    } else if n.contains("todo") {
+        "\u{f10c}"
+    } else {
+        ""
+    }
+}
+
 /// Amber-led markdown: headings glow, code sits on a warm block,
 /// links read teal, quotes stay quiet.
 #[derive(Debug, Clone, Copy, Default)]
@@ -276,6 +298,20 @@ mod tests {
         assert_eq!(column_color("Done"), green());
         assert_eq!(column_color("Something Else"), muted());
         ACTIVE.store(0, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn columns_have_icons_matching_colors() {
+        assert_eq!(column_icon("Todo"), "\u{f10c}");
+        assert_eq!(column_icon("In progress"), "\u{f017}");
+        assert_eq!(column_icon("In Progress"), "\u{f017}");
+        assert_eq!(column_icon("Blocked"), "\u{f05e}");
+        assert_eq!(column_icon("In Review"), "\u{f06e}");
+        assert_eq!(column_icon("Done"), "\u{f00c}");
+        // Same keyword precedence as the colors: progress wins the tie.
+        assert_eq!(column_icon("Todo · In Progress"), "\u{f017}");
+        assert_eq!(column_icon("Something Else"), "");
+        assert_eq!(column_icon("—"), "");
     }
 
     #[test]

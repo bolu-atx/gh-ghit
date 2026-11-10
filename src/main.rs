@@ -12,6 +12,7 @@ mod api;
 mod app;
 mod cache;
 mod cli;
+mod clipboard;
 mod core;
 mod gh;
 mod github;

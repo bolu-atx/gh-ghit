@@ -39,25 +39,92 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         render_main(f, cols[1], app);
     }
     app.capture_body_rows(f.buffer_mut());
-    // Visible rows of the diff file headers, in file order, for click and
-    // scroll-follow mapping. Only the Diff tab renders `▸ `/`▾ ` markers.
-    app.diff_headers = if app.tab == crate::app::Tab::Diff {
-        app.body_rows
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| l.starts_with("▸ ") || l.starts_with("▾ "))
-            .map(|(i, _)| i)
-            .collect()
+    // Diff tab bookkeeping from the fresh capture. Only the Diff tab
+    // renders `▸ `/`▾ ` markers. Headers match by filename (longest wins)
+    // so wrapped rows and scrolled-off files resolve exactly; every other
+    // row inherits the previous header's file, pre-header rows map to None.
+    if app.tab == crate::app::Tab::Diff {
+        let header_rows: Vec<(usize, usize)> = {
+            let empty: Vec<model::DiffFile> = vec![];
+            let files = app
+                .current
+                .and_then(|n| app.diffs.get(&n))
+                .map(|fs| fs.as_slice())
+                .unwrap_or(&empty);
+            app.body_rows
+                .iter()
+                .enumerate()
+                .filter_map(|(i, line)| model::header_file_index(line, files).map(|fi| (i, fi)))
+                .collect()
+        };
+        app.diff_headers = header_rows.iter().map(|(i, _)| *i).collect();
+        let mut row_files: Vec<Option<usize>> = vec![None; app.body_rows.len()];
+        let mut cur: Option<usize> = None;
+        let mut hi = 0;
+        for (i, slot) in row_files.iter_mut().enumerate() {
+            while hi < header_rows.len() && header_rows[hi].0 == i {
+                cur = Some(header_rows[hi].1);
+                hi += 1;
+            }
+            *slot = cur;
+        }
+        app.diff_row_files = row_files;
+        // Resolve the active line against the fresh capture: track the
+        // owning file, and unfold a collapsed file landed on by input.
+        // The lazy init anchor never expands: opening a Diff stays folded.
+        match app.diff_line {
+            None => {
+                if let Some(&h) = app.diff_headers.first() {
+                    app.diff_line = Some(app.body_base as usize + h);
+                }
+            }
+            Some(abs) => {
+                let vis = abs.saturating_sub(app.body_base as usize);
+                let landed = app.diff_row_files.get(vis).copied().flatten();
+                if let Some(f) = landed {
+                    app.diff_cursor = f;
+                    if app.diff_touched {
+                        let key = app.current.and_then(|n| {
+                            app.diffs
+                                .get(&n)
+                                .and_then(|fs| fs.get(f))
+                                .map(|file| (n, file.filename.clone()))
+                        });
+                        if let Some(k) = key {
+                            app.expanded_files.insert(k);
+                        }
+                    }
+                }
+                if vis < app.diff_row_files.len() {
+                    app.diff_touched = false;
+                }
+            }
+        }
+        // Active-line highlight, painted on the buffer after the paragraph
+        // so wrapped rows light up exactly. Same amber/ink vocabulary as
+        // the refs mention highlight.
+        if let Some(abs) = app.diff_line {
+            use crate::theme::{amber, ink};
+            let vis = abs.saturating_sub(app.scroll as usize);
+            if vis < app.body_area.height as usize {
+                let y = app.body_area.y + vis as u16;
+                let buf = f.buffer_mut();
+                for x in app.body_area.x..app.body_area.x + app.body_area.width {
+                    buf[(x, y)].set_style(Style::new().bg(amber()).fg(ink()));
+                }
+            }
+        }
     } else {
-        vec![]
-    };
+        app.diff_headers = vec![];
+        app.diff_row_files = vec![];
+    }
 
     // The footer always keeps the shortcut hints; notifications float as a
     // top-right toast instead of covering them. Labels are shortened to
     // bare keys where the key is mnemonic, but no hint is dropped, and the
     // line stays within the 120-column budget — so it carries no icons.
     let footer_line = Line::from(Span::styled(
-        "tab pane · j/k · ↑↓ · 1/2/3 · b board · : cmd · / find · n/N · f filter · o · r · p · e refs · t theme · w · q",
+        "tab panes · j/k · ↑↓ · 1/2/3 · b board · : cmd · / find · n/N · f filter · o · r · p · e refs · y yank · t theme · w · q",
         Style::new().fg(muted()),
     ));
     f.render_widget(Paragraph::new(footer_line), root[1]);
@@ -240,40 +307,48 @@ fn highlighted_spans(text: String, query: &str, base: Style) -> Vec<Span<'static
 /// `ListState` back into `App` for scroll continuity.
 fn section_list(
     title: Line<'static>,
-    rows: &[Option<u64>],
+    rows: &[crate::model::SideRow],
     app: &App,
     inner_width: usize,
     mark: Option<u64>,
     focused: bool,
 ) -> List<'static> {
-    use crate::theme::{amber, ink, muted, paper, state_color};
+    use crate::theme::{amber, code_bg, ink, muted, paper, state_color};
+    use crate::model::SideRow;
     let query = app.search.clone();
     let mut items: Vec<ListItem<'static>> = vec![ListItem::new(Line::from(""))];
     for row in rows {
-        let Some(n) = row else {
-            let rule = "─".repeat(inner_width.max(8));
+        let SideRow::Item(n) = row else {
+            let SideRow::Divider(label) = row else {
+                continue;
+            };
+            // Labeled rule: the section name rides inside the divider.
+            let head = format!("─ {label} ");
+            let fill = inner_width.max(8).saturating_sub(head.chars().count());
             items.push(ListItem::new(Line::from(Span::styled(
-                rule,
+                format!("{head}{}", "─".repeat(fill)),
                 Style::new().bg(ink()).fg(muted()),
             ))));
             continue;
         };
-        let sel = app.current == Some(*n) || mark == Some(*n);
-        let marker = if sel { "▌ " } else { "  " };
+        // The selection marker only renders on the focused pane. The
+        // ListState cursor underneath is untouched, so tabbing away and
+        // back restores the exact row and scroll position.
+        let sel = focused && (app.current == Some(*n) || mark == Some(*n));
+        let marker = if sel { "█ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
         } else {
             Style::new().fg(muted())
         };
-        let (title_text, second) = match app.data.get(n) {
+        let (title_text, body, seg) = match app.data.get(n) {
             Some(d) => {
                 let st = app.statuses.get(n).cloned().unwrap_or_default();
-                (
-                    model::slug(&d.title, 30),
-                    model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n)).1,
-                )
+                let (_, b, s) =
+                    model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n));
+                (model::slug(&d.title, 30), b, s)
             }
-            None => (String::new(), String::new()),
+            None => (String::new(), String::new(), String::new()),
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
@@ -293,11 +368,14 @@ fn section_list(
         ];
         first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
         first.extend(highlighted_spans(title_text, &query, title_style));
+        // Project status in the board color with the board glyph.
+        let seg_color = crate::theme::column_color(&seg);
         items.push(ListItem::new(vec![
             Line::from(first),
             Line::from(vec![
                 Span::raw("    "),
-                Span::styled(second, Style::new().fg(muted())),
+                Span::styled(body, Style::new().fg(muted())),
+                Span::styled(seg, Style::new().fg(seg_color)),
             ]),
             Line::from(""),
         ]));
@@ -307,11 +385,16 @@ fn section_list(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(if focused { BorderType::Double } else { BorderType::Plain })
                 .border_style(Style::new().bg(ink()).fg(border))
                 .title(title)
                 .style(Style::new().bg(ink())),
         )
-        .highlight_style(Style::new().bold())
+        .highlight_style(if focused {
+            Style::new().bold().bg(code_bg())
+        } else {
+            Style::new()
+        })
 }
 
 /// Styled header for the body pane: title plus the color-coded meta line.
@@ -332,11 +415,21 @@ fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Lin
             MetaKind::State => Style::new().bg(ink()).fg(crate::theme::state_color(&d.state)).bold(),
             MetaKind::Label => Style::new().bg(ink()).fg(amber()),
             MetaKind::Normal => Style::new().bg(ink()).fg(paper()),
-            MetaKind::Project => Style::new().bg(ink()).fg(teal()).bold(),
+            MetaKind::Project => Style::new()
+                .bg(ink())
+                .fg(crate::theme::column_color(&text))
+                .bold(),
             MetaKind::Url => Style::new().bg(ink()).fg(teal()).underlined(),
         };
         let mut chunks = text.split('\n');
         if let Some(first) = chunks.next() {
+            // Project status carries the board glyph in the board color.
+            if kind == MetaKind::Project {
+                let icon = crate::theme::column_icon(&text);
+                if !icon.is_empty() && first != "—" && !first.is_empty() {
+                    current.push(Span::styled(format!("{icon} "), style));
+                }
+            }
             if !first.is_empty() {
                 current.push(Span::styled(first.to_string(), style));
             }
@@ -553,18 +646,25 @@ fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
 /// (amber), so a terminal without the font degrades to tofu plus readable
 /// text. Glyph sources are Font Awesome codepoints from the Nerd Fonts
 /// cheatsheet, all long-stable single-cell icons.
-fn section_title<'a>(name: &str, detail: &str, icon: &str) -> Line<'a> {
+fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line<'a> {
     use crate::theme::{amber, muted};
-    let icon_span = Span::styled(format!(" {icon} "), Style::new().fg(muted()));
-    let name_span = Span::styled(format!("{name} "), Style::new().fg(amber()).bold());
+    // Inactive panes go quiet: the colored name drops to the detail grey
+    // so the active pane is obvious at a glance.
+    let (icon_fg, name_style) = if active {
+        (muted(), Style::new().fg(amber()).bold())
+    } else {
+        (muted(), Style::new().fg(muted()))
+    };
+    let icon_span = Span::styled(format!(" {icon} "), Style::new().fg(icon_fg));
+    let name_span = Span::styled(format!("{name} "), name_style);
     let detail_span = Span::styled(detail.to_string(), Style::new().fg(muted()));
     Line::from(vec![icon_span, name_span, detail_span])
 }
 
 /// Position of `current` in display-row order, +1 for the top spacer.
-fn selected_index(rows: &[Option<u64>], current: Option<u64>) -> Option<usize> {
+fn selected_index(rows: &[model::SideRow], current: Option<u64>) -> Option<usize> {
     current
-        .and_then(|n| rows.iter().position(|r| *r == Some(n)))
+        .and_then(|n| rows.iter().position(|r| r.number() == Some(n)))
         .map(|p| p + 1)
 }
 
@@ -581,28 +681,29 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.side_issue_rows = issue_rows.clone();
     app.side_pr_rows = pr_rows.clone();
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
-    let left_focused = app.pane == crate::app::Pane::Left;
+    let issues_focused = app.pane == crate::app::Pane::Issues;
     let il = section_list(
         // Nerd Font Font Awesome fa-exclamation-circle.
-        section_title("Issues", &key, "\u{f06a}"),
+        section_title("Issues", &key, "\u{f06a}", issues_focused),
         &issue_rows,
         app,
         inner(panes[0]),
         None,
-        left_focused,
+        issues_focused,
     );
     let mut istate = std::mem::take(&mut app.issue_state);
     istate.select(selected_index(&issue_rows, app.current));
     f.render_stateful_widget(il, panes[0], &mut istate);
     app.issue_state = istate;
+    let prs_focused = app.pane == crate::app::Pane::PRs;
     let pl = section_list(
         // Nerd Font Font Awesome fa-code-fork.
-        section_title("Pull requests", &app.recent_detail(), "\u{f126}"),
+        section_title("Pull requests", &app.recent_detail(), "\u{f126}", prs_focused),
         &pr_rows,
         app,
         inner(panes[1]),
         None,
-        left_focused,
+        prs_focused,
     );
     let mut pstate = std::mem::take(&mut app.pr_state);
     pstate.select(selected_index(&pr_rows, app.current));
@@ -618,19 +719,20 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.refs_area = area;
     app.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
+    let refs_focused = app.pane == crate::app::Pane::Refs;
     let list = section_list(
         // Nerd Font Font Awesome fa-link.
-        section_title("Refs", &format!("{} mentioned", rows.len()), "\u{f0c1}"),
+        section_title("Refs", &format!("{} mentioned", rows.len()), "\u{f0c1}", refs_focused),
         &rows,
         app,
         inner,
         app.ref_highlight,
-        app.pane == crate::app::Pane::Refs,
+        refs_focused,
     );
     let mut state = std::mem::take(&mut app.refs_state);
     let sel = app
         .ref_highlight
-        .and_then(|n| rows.iter().position(|r| *r == Some(n)))
+        .and_then(|n| rows.iter().position(|r| r.number() == Some(n)))
         .map(|p| p + 1);
     state.select(sel);
     f.render_stateful_widget(list, area, &mut state);
@@ -771,6 +873,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
+                .border_type(if main_focused { BorderType::Double } else { BorderType::Plain })
                 .border_style(Style::new().bg(ink()).fg(if main_focused { amber() } else { muted() }))
                 .style(Style::new().bg(ink())),
         );
@@ -965,15 +1068,34 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             })
             .collect();
         let active = app.board_col == i;
+        let color = crate::theme::column_color(name);
+        let icon = crate::theme::column_icon(name);
+        let mut head = vec![];
+        if icon.is_empty() {
+            head.push(Span::styled(
+                format!(" {name} "),
+                Style::new().bg(ink()).fg(color).bold(),
+            ));
+        } else {
+            head.push(Span::styled(
+                format!(" {icon} "),
+                Style::new().bg(ink()).fg(color).bold(),
+            ));
+            head.push(Span::styled(
+                format!("{name} "),
+                Style::new().bg(ink()).fg(color).bold(),
+            ));
+        }
+        head.push(Span::styled(
+            format!("({})", cards.len()),
+            Style::new().bg(ink()).fg(muted()),
+        ));
         let list = List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::new().bg(ink()).fg(if active { amber() } else { muted() }))
                 .style(base())
-                .title(Line::from(vec![
-                    Span::styled(format!(" {} ", name), Style::new().bg(ink()).fg(crate::theme::column_color(name)).bold()),
-                    Span::styled(format!("({})", cards.len()), Style::new().bg(ink()).fg(muted())),
-                ])),
+                .title(Line::from(head)),
         );
         let state = &mut app.board_states[i];
         state.select(if active { Some(app.board_row) } else { None });
@@ -1063,7 +1185,13 @@ fn board_card(
         ]);
     }
     let status = c.status.clone().unwrap_or_else(|| "No status".to_string());
-    let mut meta = format!("{} · {}", status, card_kind(c));
+    let icon = crate::theme::column_icon(&status);
+    let status_label = if icon.is_empty() {
+        status.clone()
+    } else {
+        format!("{icon} {status}")
+    };
+    let mut meta = format!("{} · {}", status_label, card_kind(c));
     if let Some(login) = card_assignee(c) {
         meta.push_str(&format!(" · @{login}"));
     }
@@ -1361,37 +1489,118 @@ mod render_smoke {
     }
 
     #[test]
-    fn jk_walks_issues_then_prs() {
+    fn jk_stays_in_the_focused_pane() {
+        use crate::app::Pane;
         let mut app = loaded_app();
-        assert_eq!(app.pane, crate::app::Pane::Left);
+        // A second issue to walk between.
+        let mut extra = sample(5);
+        extra.body = String::new();
+        app.data.insert(5, extra);
+        app.statuses.insert(5, vec![]);
+        app.visited.push(5);
+        app.show_issue(7);
+        assert_eq!(app.pane, Pane::Issues);
+        // j never crosses into PRs: it walks issues only.
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.current, Some(5));
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.current, Some(5));
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.current, Some(7));
+        // The PRs pane walks PRs only, starting from the first PR even
+        // when the selection sits on an issue.
+        app.pane = Pane::PRs;
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.current, Some(9));
         handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.current, Some(9));
     }
 
     #[test]
-    fn tab_toggles_sidebar_and_refs_skipping_body() {
+    fn tab_cycles_issues_prs_refs() {
         use crate::app::Pane;
         let mut app = loaded_app();
-        assert_eq!(app.pane, Pane::Left);
-        // No refs yet: Tab stays on the sidebar.
+        assert_eq!(app.pane, Pane::Issues);
+        // No refs yet: Tab alternates the two sidebar lists.
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Left);
-        // With mentions, Tab alternates sidebar and Refs; the body keeps
+        assert_eq!(app.pane, Pane::PRs);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::Issues);
+        // With mentions, Refs joins the cycle after PRs; the body keeps
         // its dedicated keys so it never takes Tab focus.
         app.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
         app.show_issue(7);
         handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::PRs);
+        handle_key(&mut app, key(KeyCode::Tab));
         assert_eq!(app.pane, Pane::Refs);
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Left);
+        assert_eq!(app.pane, Pane::Issues);
         // From the body (mouse), Tab returns to the sidebar.
         app.pane = Pane::Main;
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Left);
+        assert_eq!(app.pane, Pane::Issues);
+    }
+
+    /// Foreground color of the first cell spelling `needle` on buffer row
+    /// `y`, if the row spells it.
+    fn title_fg(buf: &ratatui::buffer::Buffer, y: u16, needle: &str) -> Option<ratatui::style::Color> {
+        let want: Vec<char> = needle.chars().collect();
+        let w = buf.area.width;
+        for x in 0..w {
+            let mut ok = !want.is_empty();
+            for (i, ch) in want.iter().enumerate() {
+                let xi = x as usize + i;
+                if xi >= w as usize || buf[(xi as u16, y)].symbol() != ch.to_string() {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                return Some(buf[(x, y)].fg);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn pane_focus_drives_border_title_and_marker() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        assert_eq!(app.pane, Pane::Issues);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        // Focused pane: thick double border, amber title, row marker.
+        assert_eq!(buf[(40, 0)].symbol(), "═", "active pane has the thick border");
+        assert_eq!(title_fg(&buf, 0, "Issues"), Some(crate::theme::amber()));
+        let pr_top = app.side_pr_area.y;
+        assert_eq!(title_fg(&buf, pr_top, "Pull requests"), Some(crate::theme::muted()));
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("█"), "focused pane marks its row");
+        let marker = buf.content().iter().find(|c| c.symbol() == "█").expect("marker cell");
+        assert_eq!(marker.bg, crate::theme::code_bg(), "marked row carries the shade");
+        // Tab away: marker and color go quiet, border thins, cursor stays.
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::PRs);
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.issue_state.selected(), Some(1), "cursor kept while blurred");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        assert_eq!(buf[(40, 0)].symbol(), "─", "inactive pane thins its border");
+        assert_eq!(title_fg(&buf, 0, "Issues"), Some(crate::theme::muted()));
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(!text.contains("█"), "blurred panes drop the marker");
+        // Tab back: everything returns on the same row.
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::Issues);
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        assert_eq!(buf[(40, 0)].symbol(), "═");
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("█"), "marker returns with focus");
+        assert_eq!(app.current, Some(7));
     }
 
     #[test]
@@ -1433,8 +1642,9 @@ mod render_smoke {
         assert_eq!((ip, iv, ir), (vec![], vec![7], vec![42]));
         let (pp, pv, pr) = app.pane_groups(true, false);
         assert_eq!((pp, pv, pr), (vec![9], vec![], vec![]));
-        assert_eq!(app.issue_rows(), vec![Some(7), None, Some(42)]);
-        assert_eq!(app.pr_rows(), vec![Some(9)]);
+        use crate::model::SideRow::{Divider, Item};
+        assert_eq!(app.issue_rows(), vec![Item(7), Divider("recent"), Item(42)]);
+        assert_eq!(app.pr_rows(), vec![Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("Issues"));
         assert!(text.contains("Pull requests"));
@@ -1520,7 +1730,7 @@ mod render_smoke {
             handle_key(&mut app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()));
         }
         assert!(app.issue_rows().is_empty());
-        assert_eq!(app.pr_rows(), vec![Some(9)]);
+        assert_eq!(app.pr_rows(), vec![crate::model::SideRow::Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("zebra"));
         handle_key(&mut app, key(KeyCode::Enter));
@@ -1552,7 +1762,8 @@ mod render_smoke {
         app.data.insert(20, merged);
         app.statuses.insert(20, vec![]);
         app.recent.push(20);
-        assert_eq!(app.pr_rows(), vec![Some(9), None, Some(20)]);
+        use crate::model::SideRow::{Divider, Item};
+        assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent"), Item(20)]);
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(app.filter_open);
         let text = frame_text(&mut app);
@@ -1560,7 +1771,7 @@ mod render_smoke {
         assert!(text.contains("query"));
         handle_key(&mut app, key(KeyCode::Char('m')));
         assert!(!app.show_merged_prs);
-        assert_eq!(app.pr_rows(), vec![Some(9)]);
+        assert_eq!(app.pr_rows(), vec![Item(9)]);
         // Requested rows ignore the toggle.
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(!app.filter_open);
@@ -1789,7 +2000,7 @@ mod render_smoke {
         assert!(text.contains('\u{f040}'), "modified icon");
         assert!(!text.contains("-old"), "hunks hidden while folded");
         assert!(!text.contains("binary or large file"), "note hidden while folded");
-        // Space unfolds the file under the cursor.
+        // Space unfolds the file under the active line.
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert!(app.expanded_files.contains(&(9, "src/a.rs".to_string())));
         let open = frame_text(&mut app);
@@ -1797,14 +2008,22 @@ mod render_smoke {
         assert!(open.contains("@@ -1"), "{open}");
         assert!(open.contains("  -old"), "hunks indent under their file");
         assert!(open.contains("+new"), "{open}");
+        // Down walks line by line: header, hunk, deletion, addition, then
+        // the second file's blank, rule, and header rows.
+        for _ in 0..6 {
+            handle_key(&mut app, key(KeyCode::Down));
+        }
+        assert_eq!(app.diff_cursor, 0, "still resolving file 0 until render");
+        let _ = frame_text(&mut app);
+        assert_eq!(app.diff_cursor, 1, "landed on the second header");
+        assert!(app.expanded_files.contains(&(9, "img.png".to_string())), "landed-on collapsed file opens");
         // Unfolding the second file shows its binary note.
-        handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.diff_cursor, 1);
-        handle_key(&mut app, key(KeyCode::Char(' ')));
         let both = frame_text(&mut app);
         assert!(both.contains("binary or large file"), "{both}");
-        // Clicking the first header folds it back.
-        handle_key(&mut app, key(KeyCode::Up));
+        // Up walks back to the first header; clicking it folds it back.
+        for _ in 0..6 {
+            handle_key(&mut app, key(KeyCode::Up));
+        }
         let row = app.body_rows.iter().position(|l| l.starts_with("▾ ")).unwrap();
         let (bx, by) = (app.body_area.x, app.body_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), bx + 1, by + row as u16));
@@ -1813,7 +2032,7 @@ mod render_smoke {
     }
 
     #[test]
-    fn arrows_walk_diff_files() {
+    fn arrows_walk_diff_lines() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
         app.data.insert(9, diff_pr(9));
@@ -1825,18 +2044,66 @@ mod render_smoke {
         ]);
         app.set_tab(Tab::Diff);
         let _ = frame_text(&mut app);
-        let h1 = app.diff_headers[1];
+        // The cursor anchors to the first header without expanding it.
+        let h0 = app.diff_headers[0];
+        assert_eq!(app.diff_line, Some(h0));
+        assert!(app.expanded_files.is_empty());
+        // Down steps one row at a time and never touches the selection.
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.diff_cursor, 1);
-        assert_eq!(app.scroll, h1 as u16);
+        assert_eq!(app.diff_line, Some(h0 + 1));
         assert_eq!(app.current, Some(9), "selection untouched");
+        // Walking onto the second header and rendering resolves the file
+        // and unfolds it: two blank/rule rows then the header.
+        handle_key(&mut app, key(KeyCode::Down));
+        handle_key(&mut app, key(KeyCode::Down));
+        let _ = frame_text(&mut app);
+        assert_eq!(app.diff_cursor, 1);
+        assert!(app.expanded_files.contains(&(9, "src/b.rs".to_string())));
+        // Up steps back a single row.
+        let back = app.diff_line.unwrap();
         handle_key(&mut app, key(KeyCode::Up));
-        assert_eq!(app.diff_cursor, 0);
-        // j/k stays with the side panes: on the sidebar it moves selection.
+        assert_eq!(app.diff_line, Some(back - 1));
+        // j/k stays with the side panes: in Issues it walks issues only.
         app.show_issue(7);
+        app.pane = crate::app::Pane::Issues;
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.diff_cursor, 0);
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn diff_active_line_highlights_and_yanks() {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        ]);
+        app.set_tab(Tab::Diff);
+        let _ = frame_text(&mut app);
+        // Unfold, then step onto the deletion line.
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        let _ = frame_text(&mut app);
+        let h0 = app.diff_headers[0];
+        handle_key(&mut app, key(KeyCode::Down));
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.diff_line, Some(h0 + 2));
+        let _ = frame_text(&mut app);
+        // The active line yanks with its file and PR identity.
+        assert_eq!(
+            app.yank_text().unwrap(),
+            "#9 Fix the thing — src/a.rs: \"-old\" — https://github.com/o/r/issues/9"
+        );
+        // The active row paints amber across the body width.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let vis = h0 + 2;
+        let cell = &buf[(app.body_area.x + 1, app.body_area.y + vis as u16)];
+        assert_eq!(cell.bg, crate::theme::amber(), "active line highlighted");
     }
 
     #[test]
@@ -1857,6 +2124,8 @@ mod render_smoke {
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), bx + 1, by + row as u16));
         assert_eq!(app.pane, Pane::Main, "click takes body focus");
         assert_eq!(app.diff_cursor, 0);
+        // The click parks the line; render resolves the file and expands it.
+        let _ = frame_text(&mut app);
         assert!(app.expanded_files.contains(&(9, "src/a.rs".to_string())));
         // The expanded header renders with the accent background.
         let backend = TestBackend::new(120, 40);
@@ -1998,7 +2267,7 @@ mod render_smoke {
         app.pin_order = vec![7];
         app.pinned = [7].into_iter().collect();
         app.recent = vec![7, 9];
-        assert!(app.issue_rows().contains(&Some(7)));
+        assert!(app.issue_rows().iter().any(|r| r.number() == Some(7)));
         let text = frame_text(&mut app);
         assert!(text.contains('\u{f08d}'), "{text}");
     }
@@ -2038,6 +2307,64 @@ mod render_smoke {
         app.notify("hello toast".to_string());
         let text = frame_text(&mut app);
         assert!(text.contains("hello toast"), "{text}");
+        assert!(text.contains("tab pane"), "footer keeps the hints");
+    }
+
+    #[test]
+    fn yank_text_covers_issue_diff_and_refs() {
+        use crate::app::Pane;
+        use crate::model::DiffFile;
+        // Issue identity.
+        let app = loaded_app();
+        assert_eq!(
+            app.yank_text().unwrap(),
+            "#7 Fix the thing — https://github.com/o/r/issues/7"
+        );
+        // Diff file context follows the file cursor, folded by default.
+        let mut app = loaded_app();
+        app.show_issue(9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        ]);
+        app.set_tab(crate::app::Tab::Diff);
+        assert_eq!(
+            app.yank_text().unwrap(),
+            "#9 Fix the thing — src/a.rs (modified +1 -1) — https://github.com/o/r/issues/9"
+        );
+        // Expanded files add the hunk header for agents.
+        app.expanded_files.insert((9, "src/a.rs".to_string()));
+        assert!(app.yank_text().unwrap().contains("@@ -1 +1 @@"), "{}", app.yank_text().unwrap());
+        // Refs context names the raw body line and the ticket.
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "intro\nsee #9 here\n".to_string();
+        app.ref_numbers = vec![9];
+        app.pane = Pane::Refs;
+        app.ref_highlight = Some(9);
+        let text = app.yank_text().unwrap();
+        assert!(text.contains("#7 refs #9 (body line 2)"), "{text}");
+        assert!(text.contains("https://github.com/o/r/issues/9"), "{text}");
+        // No selection to yank.
+        let mut app = loaded_app();
+        app.pane = Pane::Refs;
+        app.ref_highlight = None;
+        assert!(app.yank_text().is_none());
+    }
+
+    #[test]
+    fn yank_key_and_empty_state_toast() {
+        // `y` reaches `yank`: an empty viewer explains instead of copying.
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        handle_key(&mut app, key(KeyCode::Char('y')));
+        assert_eq!(app.message, "view an issue first");
+        // A long yank toast still renders with the footer hints intact.
+        let mut app = loaded_app();
+        app.notify(format!(
+            "yanked {}",
+            crate::core::toast_snippet("#7 refs #9 (body line 2): \"see #9 here\" — https://github.com/o/r/issues/9", 80)
+        ));
+        let text = frame_text(&mut app);
+        assert!(text.contains("yanked #7"), "{text}");
         assert!(text.contains("tab pane"), "footer keeps the hints");
     }
 
