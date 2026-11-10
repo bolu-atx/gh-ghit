@@ -115,6 +115,10 @@ pub(crate) struct App {
     pub(crate) quit: bool,
     pub(crate) body_area: Rect,
     pub(crate) body_rows: Vec<String>,
+    /// Title/label block rendered above the content tabs. Clicks here
+    /// resolve issue refs and URLs with the same mapping as the body.
+    pub(crate) header_area: Rect,
+    pub(crate) header_rows: Vec<String>,
     /// Scroll offset `body_rows` was captured at; selections add to this.
     pub(crate) body_base: u16,
     pub(crate) board_loading: bool,
@@ -222,6 +226,8 @@ impl App {
             quit: false,
             body_area: Rect::default(),
             body_rows: Vec::new(),
+            header_area: Rect::default(),
+            header_rows: vec![],
             body_base: 0,
             side_issue_area: Rect::default(),
             side_pr_area: Rect::default(),

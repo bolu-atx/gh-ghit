@@ -388,20 +388,26 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 });
                 return;
             }
-            if in_rect(app.body_area, m.column, m.row) {
+            // The title/label block above the tabs resolves refs and URLs
+            // exactly like body lines; only the body folds diff files.
+            let in_body = in_rect(app.body_area, m.column, m.row);
+            let in_header = !in_body && in_rect(app.header_area, m.column, m.row);
+            if in_body || in_header {
                 app.focus = Focus::Main;
                 app.pane = Pane::Main;
-                let row = (m.row - app.body_area.y) as usize;
-                if app.tab == Tab::Diff {
+                let area = if in_body { app.body_area } else { app.header_area };
+                let row = (m.row - area.y) as usize;
+                if in_body && app.tab == Tab::Diff {
                     if let Some(fi) = app.diff_headers.iter().position(|&r| r == row) {
                         app.diff_cursor = fi;
                         app.toggle_diff_file();
                         return;
                     }
                 }
-                if let Some(line) = app.body_rows.get(row) {
+                let rows = if in_body { app.body_rows.clone() } else { app.header_rows.clone() };
+                if let Some(line) = rows.get(row) {
                     let repo = app.repo_key();
-                    let rel_x = (m.column - app.body_area.x) as usize;
+                    let rel_x = (m.column - area.x) as usize;
                     let links = crate::model::links_in_line(line, repo.as_deref());
                     match crate::model::nearest_link(line, &links, rel_x) {
                         Some(crate::model::LinkTarget::Issue(n)) => {

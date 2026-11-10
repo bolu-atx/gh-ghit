@@ -53,9 +53,11 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     };
 
     // The footer always keeps the shortcut hints; notifications float as a
-    // top-right toast instead of covering them.
+    // top-right toast instead of covering them. Labels are shortened to
+    // bare keys where the key is mnemonic, but no hint is dropped, and the
+    // line stays within the 120-column budget — so it carries no icons.
     let footer_line = Line::from(Span::styled(
-        "tab pane · j/k move · ↑↓ scroll · 1/2/3 tab · b board · : cmd · / find · n/N next · f filter · o open · r refresh · p pin · e refs · t theme · w age · q quit",
+        "tab pane · j/k · ↑↓ · 1/2/3 · b board · : cmd · / find · n/N · f filter · o · r · p · e refs · t theme · w · q",
         Style::new().fg(muted()),
     ));
     f.render_widget(Paragraph::new(footer_line), root[1]);
@@ -92,9 +94,11 @@ fn render_toast(f: &mut ratatui::Frame, area: Rect, app: &App) {
         .style(base());
     let inner = block.inner(toast);
     f.render_widget(block, toast);
+    // Nerd Font Font Awesome fa-exclamation-triangle keeps the marker's
+    // warning role; the message text stays beside it.
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("! ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("\u{f071} ", Style::new().bg(ink()).fg(amber()).bold()),
             Span::styled(text, Style::new().bg(ink()).fg(amber())),
         ]))
         .style(base()),
@@ -113,7 +117,8 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(muted()))
         .style(base())
-        .title(Span::styled(" Filter ", Style::new().bg(ink()).fg(amber()).bold()));
+        // Nerd Font Font Awesome fa-filter.
+        .title(Span::styled(" \u{f0b0} Filter ", Style::new().bg(ink()).fg(amber()).bold()));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let window_mark = |hours: u64| {
@@ -124,7 +129,9 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         }
     };
     let toggle = |on: bool, label: &str, key: &str| {
-        let box_glyph = if on { "[x]" } else { "[ ]" };
+        // Nerd Font Font Awesome fa-check-square / fa-square-o. Checked
+        // stays paper, unchecked stays muted; the key hint is unchanged.
+        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
         let style = if on {
             Style::new().bg(ink()).fg(paper())
         } else {
@@ -152,7 +159,9 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     lines.push(Line::from(qline));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("window ", Style::new().bg(ink()).fg(muted())),
+        // Nerd Font Font Awesome fa-clock-o. The query row keeps its plain
+        // "query " label so the edit-cursor column math below stays exact.
+        Span::styled("\u{f017} window ", Style::new().bg(ink()).fg(muted())),
         window_mark(1),
         Span::styled("1h (1)  ", Style::new().bg(ink()).fg(paper())),
         window_mark(24),
@@ -266,7 +275,9 @@ fn section_list(
             }
             None => (String::new(), String::new()),
         };
-        let pin = if app.pinned.contains(n) { "◆ " } else { "" };
+        // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
+        // cells as the marker it replaces, so sidebar hit-testing is untouched.
+        let pin = if app.pinned.contains(n) { "\u{f08d} " } else { "" };
         let data = app.data.get(n);
         let num_style = Style::new()
             .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
@@ -305,7 +316,7 @@ fn section_list(
 
 /// Styled header for the body pane: title plus the color-coded meta line.
 /// Each segment carries its semantic role; colors stay consistent by construction.
-fn header_lines<'a>(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Line<'a>> {
+fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Line<'static>> {
     use crate::theme::{amber, ink, muted, paper, teal};
     use model::MetaKind;
     let title = Line::from(vec![
@@ -380,9 +391,13 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
     let split = app.diff_split && width >= 40;
     let cursor = app.diff_cursor.min(files.len().saturating_sub(1).max(0));
     let cursor_name = files.get(cursor).map(|f| f.filename.as_str()).unwrap_or("");
+    // Nerd Font Font Awesome fa-file-text reuses the per-file vocabulary;
+    // the status words keep their own icons and stay spelled out. The `❯`
+    // separator drops its dots so the icon nets zero width and the summary
+    // wraps exactly as before.
     let mut lines = vec![Line::from(Span::styled(
         format!(
-            "{} · {} (s: {}) · ↑↓ file, space fold · ❯ {}",
+            "\u{f15c} {} · {} (s: {}) · ↑↓ file, space fold ❯ {}",
             model::diff_summary(files),
             if split { "split" } else { "unified" },
             if split { "unified" } else { "split" },
@@ -534,11 +549,16 @@ fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-fn section_title<'a>(name: &str, detail: &str) -> Line<'a> {
+/// Pane header: one decorative Nerd Font glyph (muted) plus the text label
+/// (amber), so a terminal without the font degrades to tofu plus readable
+/// text. Glyph sources are Font Awesome codepoints from the Nerd Fonts
+/// cheatsheet, all long-stable single-cell icons.
+fn section_title<'a>(name: &str, detail: &str, icon: &str) -> Line<'a> {
     use crate::theme::{amber, muted};
-    let name_span = Span::styled(format!(" {name} "), Style::new().fg(amber()).bold());
+    let icon_span = Span::styled(format!(" {icon} "), Style::new().fg(muted()));
+    let name_span = Span::styled(format!("{name} "), Style::new().fg(amber()).bold());
     let detail_span = Span::styled(detail.to_string(), Style::new().fg(muted()));
-    Line::from(vec![name_span, detail_span])
+    Line::from(vec![icon_span, name_span, detail_span])
 }
 
 /// Position of `current` in display-row order, +1 for the top spacer.
@@ -563,7 +583,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
     let left_focused = app.pane == crate::app::Pane::Left;
     let il = section_list(
-        section_title("Issues", &key),
+        // Nerd Font Font Awesome fa-exclamation-circle.
+        section_title("Issues", &key, "\u{f06a}"),
         &issue_rows,
         app,
         inner(panes[0]),
@@ -575,7 +596,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(il, panes[0], &mut istate);
     app.issue_state = istate;
     let pl = section_list(
-        section_title("Pull requests", &app.recent_detail()),
+        // Nerd Font Font Awesome fa-code-fork.
+        section_title("Pull requests", &app.recent_detail(), "\u{f126}"),
         &pr_rows,
         app,
         inner(panes[1]),
@@ -597,7 +619,8 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
     let list = section_list(
-        section_title("Refs", &format!("{} mentioned", rows.len())),
+        // Nerd Font Font Awesome fa-link.
+        section_title("Refs", &format!("{} mentioned", rows.len()), "\u{f0c1}"),
         &rows,
         app,
         inner,
@@ -614,12 +637,98 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.refs_state = state;
 }
 
+/// Greedy word-wrap of styled lines to `width` cells. Words longer than
+/// the width hard-split; single spaces rejoin the words. Blank lines pass
+/// through so paragraph breaks survive. Lets the title/label block above
+/// the tabs claim exactly the rows it needs at any window width.
+fn wrap_lines<'a>(lines: Vec<Line<'a>>, width: usize) -> Vec<Line<'a>> {
+    let width = width.max(1);
+    let mut out: Vec<Line<'a>> = vec![];
+    for line in lines {
+        let mut words: Vec<(String, Style)> = vec![];
+        for span in &line.spans {
+            for chunk in span.content.split(' ') {
+                if chunk.is_empty() {
+                    continue;
+                }
+                if chunk.chars().count() <= width {
+                    words.push((chunk.to_string(), span.style));
+                    continue;
+                }
+                // Hard-split an overlong word so nothing clips.
+                let mut rest = chunk;
+                while !rest.is_empty() {
+                    let take: String = rest.chars().take(width).collect();
+                    words.push((take.clone(), span.style));
+                    rest = &rest[take.len()..];
+                }
+            }
+        }
+        let mut cur: Vec<Span<'a>> = vec![];
+        let mut cur_w = 0;
+        for (word, style) in words {
+            let w = word.chars().count();
+            if cur_w == 0 {
+                cur.push(Span::styled(word, style));
+                cur_w = w;
+            } else if cur_w + 1 + w <= width {
+                cur.push(Span::styled(" ".to_string(), style));
+                cur.push(Span::styled(word, style));
+                cur_w += 1 + w;
+            } else {
+                out.push(Line::from(std::mem::take(&mut cur)));
+                cur.push(Span::styled(word, style));
+                cur_w = w;
+            }
+        }
+        out.push(Line::from(cur));
+    }
+    out
+}
+
+/// Light up every line that mentions issue `n`, for refs-row selection.
+fn highlight_mentions(lines: &mut [Line<'_>], n: u64, repo: Option<&str>) {
+    use crate::theme::{amber, ink};
+    for line in lines.iter_mut() {
+        let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let mentions = model::links_in_line(&plain, repo)
+            .into_iter()
+            .any(|(_, t)| t == model::LinkTarget::Issue(n));
+        if mentions {
+            for span in line.spans.iter_mut() {
+                span.style = span.style.patch(Style::new().bg(amber()).fg(ink()));
+            }
+        }
+    }
+}
+
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, paper, base};
+    let repo = app.repo_key().unwrap_or_default();
+    // The title/label block lives above the tabs so long titles wrap in
+    // place instead of overflowing the masthead. Its height is measured
+    // first (same inner width as the body) so the rows below just fit.
+    let inner_w = (area.width as usize).saturating_sub(5);
+    let mut header: Vec<Line> = match app.current.and_then(|n| app.data.get(&n)) {
+        Some(d) => {
+            let st = app.statuses.get(&d.number).cloned().unwrap_or_default();
+            header_lines(d, &st)
+        }
+        None => vec![],
+    };
+    if let (Some(n), crate::app::Tab::Body) = (app.ref_highlight, app.tab) {
+        highlight_mentions(&mut header, n, app.repo_key().as_deref());
+    }
+    let header = wrap_lines(header, inner_w);
+    app.header_rows = header
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(header.len() as u16),
             Constraint::Length(1),
             Constraint::Length(2),
             Constraint::Min(1),
@@ -627,19 +736,21 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         ])
         .split(area);
 
-    let repo = app.repo_key().unwrap_or_default();
-    // rows[0] masthead, rows[1] breathing room, rows[2] tabs, rows[3] pane, rows[4] bar.
-    app.tabs_area = rows[2];
-    app.bar_area = rows[4];
+    // rows[0] masthead, rows[1] title/labels, rows[2] breathing room,
+    // rows[3] tabs, rows[4] pane, rows[5] bar.
+    app.tabs_area = rows[3];
+    app.bar_area = rows[5];
+    // Nerd Font Font Awesome fa-git brands the wordmark; repo and number
+    // stay plain text so identifiers scan without a patched font.
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => Line::from(vec![
-            Span::styled("ghit ", Style::new().fg(amber()).bold()),
+            Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
             Span::styled(format!("{repo}  "), Style::new().fg(muted())),
             Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
             Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
         ]),
         None => Line::from(vec![
-            Span::styled("ghit ", Style::new().fg(amber()).bold()),
+            Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
             Span::styled(repo, Style::new().fg(muted())),
         ]),
     };
@@ -663,50 +774,43 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .border_style(Style::new().bg(ink()).fg(if main_focused { amber() } else { muted() }))
                 .style(Style::new().bg(ink())),
         );
-    f.render_widget(tabs, rows[2]);
+    f.render_widget(tabs, rows[3]);
+
+    // Title/labels render above the tabs with the body's gutter, so the
+    // title starts where the body text starts.
+    let hgutter = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
+        .split(rows[1]);
+    app.header_area = hgutter[1];
+    f.render_widget(Paragraph::new(header).style(base()), hgutter[1]);
 
     let owned_body: String;
     let owned_comments: String;
     let mut text = match app.current.and_then(|n| app.data.get(&n)) {
-        Some(d) => {
-            let st = app.statuses.get(&d.number).cloned().unwrap_or_default();
-            match app.tab {
-                Tab::Body => {
-                    let mut lines = header_lines(d, &st);
-                    lines.push(Line::from(""));
-                    owned_body = model::body_md(d);
-                    lines.extend(crate::theme::render_markdown(&owned_body));
-                    ratatui::text::Text::from(lines)
-                }
-                Tab::Comments => {
-                    owned_comments = model::build_comments_md(d);
-                    crate::theme::render_markdown(&owned_comments)
-                }
-                Tab::Diff => {
-                    let width = (rows[3].width as usize).saturating_sub(5);
-                    diff_text(app, d, width)
-                }
+        Some(d) => match app.tab {
+            Tab::Body => {
+                owned_body = model::body_md(d);
+                crate::theme::render_markdown(&owned_body)
             }
-        }
+            Tab::Comments => {
+                owned_comments = model::build_comments_md(d);
+                crate::theme::render_markdown(&owned_comments)
+            }
+            Tab::Diff => {
+                let width = (rows[4].width as usize).saturating_sub(5);
+                diff_text(app, d, width)
+            }
+        },
         None => crate::theme::render_markdown(
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or search titles with `/`.",
         ),
     };
     // A refs-row selection lights up the mentioning line instead of opening
-    // the issue. Body tab only: the mentions come from the body markdown.
+    // the issue. Body tab only: the mentions come from the body markdown
+    // (and the header above the tabs).
     if let (Some(n), crate::app::Tab::Body) = (app.ref_highlight, app.tab) {
-        let repo = app.repo_key();
-        for line in text.lines.iter_mut() {
-            let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            let mentions = model::links_in_line(&plain, repo.as_deref())
-                .into_iter()
-                .any(|(_, t)| t == model::LinkTarget::Issue(n));
-            if mentions {
-                for span in line.spans.iter_mut() {
-                    span.style = span.style.patch(Style::new().bg(amber()).fg(ink()));
-                }
-            }
-        }
+        highlight_mentions(&mut text.lines, n, app.repo_key().as_deref());
     }
     let pane = Paragraph::new(text)
         .style(base())
@@ -716,7 +820,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let gutter = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
-        .split(rows[3]);
+        .split(rows[4]);
     app.body_area = gutter[1];
     f.render_widget(pane, gutter[1]);
 
@@ -727,7 +831,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .border_style(
             Style::new().bg(ink()).fg(if app.focus == crate::app::Focus::Main { muted() } else { amber() }),
         );
-    render_bar(f, rows[4], bar_block, app);
+    render_bar(f, rows[5], bar_block, app);
 }
 
 /// Command bar: prompt, input or hint, theme pill. Cursor math lives here
@@ -802,15 +906,23 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, base};
     let popup = centered(area, 92, 92);
     f.render_widget(Clear, popup);
+    // Nerd Font Font Awesome fa-columns; the board name keeps its label.
+    // Column headers stay icon-free: their vocabularies are user-defined
+    // and already color-coded, so glyphs would add noise, not signal.
     let title = match &app.board {
-        Some(b) => format!(" {} ", b.title),
-        None => " Fetching board … ".to_string(),
+        Some(b) => Line::from(vec![
+            Span::styled(" \u{f0db} ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(format!("{} ", b.title), Style::new().bg(ink()).fg(amber()).bold()),
+        ]),
+        None => Line::from(vec![
+            Span::styled(" \u{f0db} Fetching board … ", Style::new().bg(ink()).fg(amber()).bold()),
+        ]),
     };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(muted()))
         .style(base())
-        .title(Span::styled(title, Style::new().bg(ink()).fg(amber()).bold()));
+        .title(title);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let chunks = Layout::default()
@@ -955,6 +1067,8 @@ fn board_card(
     if let Some(login) = card_assignee(c) {
         meta.push_str(&format!(" · @{login}"));
     }
+    // No icon here: expanded date lines already fill the 34-cell column
+    // inner width, so any glyph would push the comment count off-screen.
     let dates = match detail {
         Some(d) => format!("{} → {} · {}", d.created, d.updated, comment_word(d.comments)),
         None => "…".to_string(),
@@ -1761,6 +1875,161 @@ mod render_smoke {
         assert!(text.contains('\u{f15c}'), "{text}");
         assert!(text.contains('\u{f086}'), "{text}");
         assert!(text.contains('\u{f121}'), "{text}");
+    }
+
+    #[test]
+    fn tab_click_zones_match_wider_labels() {
+        // Glyph plus two spaces plus label: Body spans rel 0..7, Comments
+        // rel 9..20, the rest is Diff. Clicks on the boundaries prove it.
+        let mut app = loaded_app();
+        let _ = frame_text(&mut app);
+        let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 8, y));
+        assert_eq!(app.tab, Tab::Body);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 9, y));
+        assert_eq!(app.tab, Tab::Comments);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 22, y));
+        assert_eq!(app.tab, Tab::Diff);
+    }
+
+    #[test]
+    fn section_headers_show_nerd_icons() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
+        app.show_issue(7);
+        let text = frame_text(&mut app);
+        // Font Awesome: fa-exclamation-circle, fa-code-fork, fa-link.
+        assert!(text.contains('\u{f06a}'), "issues: {text}");
+        assert!(text.contains('\u{f126}'), "pull requests: {text}");
+        assert!(text.contains('\u{f0c1}'), "refs: {text}");
+        assert!(text.contains("Issues"));
+        assert!(text.contains("Pull requests"));
+        assert!(text.contains("Refs"));
+    }
+
+    #[test]
+    fn masthead_wordmark_shows_git_icon() {
+        let mut app = loaded_app();
+        let text = frame_text(&mut app);
+        assert!(text.contains('\u{f1d3}'), "{text}");
+        assert!(text.contains("ghit"));
+        assert!(text.contains("#7"));
+    }
+
+    #[test]
+    fn issue_header_renders_above_tabs_not_in_body() {
+        let mut app = loaded_app();
+        let _ = frame_text(&mut app);
+        assert!(!app.header_rows.is_empty());
+        assert!(app.header_rows.iter().any(|l| l.contains("#7")));
+        assert!(app.header_area.y + app.header_area.height <= app.tabs_area.y);
+        // The title/label block left the scrollable body: meta text like
+        // the state and assignees no longer appear in body rows.
+        assert!(!app.body_rows.iter().any(|l| l.contains("assignees:")), "{:?}", app.body_rows);
+        assert!(!app.body_rows.iter().any(|l| l.contains("OPEN")), "{:?}", app.body_rows);
+    }
+
+    #[test]
+    fn header_ref_click_navigates() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().title = "Fix #9 regression".to_string();
+        let _ = frame_text(&mut app);
+        let row = app.header_rows.iter().find(|l| l.contains("#9")).expect("title row").clone();
+        let (hx, hy) = (app.header_area.x, app.header_area.y);
+        let col = hx + row.find("#9").expect("ref col") as u16;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, hy));
+        assert_eq!(app.current, Some(9));
+    }
+
+    #[test]
+    fn narrow_header_wraps_without_clipping_labels() {
+        use crate::model::Label;
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.labels = vec![Label { name: "modernization".to_string() }, Label { name: "new-modernization".to_string() }];
+        let backend = TestBackend::new(70, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let text: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("modernization"), "{text}");
+        assert!(text.contains("new-modernization"), "{text}");
+        // The long URL hard-splits across wrapped rows; both halves render.
+        assert!(text.contains("https://github.com/o/"), "{text}");
+        assert!(text.contains("r/issues/7"), "{text}");
+        // One logical meta line became several wrapped rows.
+        assert!(app.header_rows.len() > 3, "{:?}", app.header_rows);
+    }
+
+    #[test]
+    fn filter_dialog_shows_nerd_icons() {
+        let mut app = loaded_app();
+        app.filter_open = true;
+        let text = frame_text(&mut app);
+        // Font Awesome: fa-filter title, fa-clock-o window row. All four
+        // toggles default on, so the checked box renders.
+        assert!(text.contains('\u{f0b0}'), "title: {text}");
+        assert!(text.contains('\u{f017}'), "window: {text}");
+        assert!(text.contains('\u{f14a}'), "checked: {text}");
+        app.show_closed_issues = false;
+        let text = frame_text(&mut app);
+        assert!(text.contains('\u{f096}'), "unchecked: {text}");
+    }
+
+    #[test]
+    fn toast_marker_uses_warning_icon() {
+        let mut app = loaded_app();
+        app.notify("hello toast".to_string());
+        let text = frame_text(&mut app);
+        assert!(text.contains('\u{f071}'), "{text}");
+        assert!(text.contains("hello toast"));
+    }
+
+    #[test]
+    fn board_title_shows_columns_icon() {
+        let mut app = board_app(1);
+        let text = frame_text(&mut app);
+        assert!(text.contains('\u{f0db}'), "{text}");
+        assert!(text.contains("Roadmap"));
+    }
+
+    #[test]
+    fn pinned_row_uses_tack_icon() {
+        let mut app = loaded_app();
+        app.pin_order = vec![7];
+        app.pinned = [7].into_iter().collect();
+        app.recent = vec![7, 9];
+        assert!(app.issue_rows().contains(&Some(7)));
+        let text = frame_text(&mut app);
+        assert!(text.contains('\u{f08d}'), "{text}");
+    }
+
+    #[test]
+    fn diff_summary_shows_file_icon() {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+            DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
+        ]);
+        app.set_tab(Tab::Diff);
+        let text = frame_text(&mut app);
+        assert!(text.contains("\u{f15c} 2 files"), "{text}");
+    }
+
+    #[test]
+    fn footer_hints_fit_120_columns() {
+        let mut app = loaded_app();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let line: String = (0..120).map(|x| buf[(x, 39)].symbol().to_string()).collect();
+        let line = line.trim_end();
+        assert!(line.contains("tab pane"), "{line}");
+        assert!(line.chars().count() <= 120, "width {}: {line}", line.chars().count());
     }
 
     #[test]
