@@ -18,6 +18,7 @@ crossterm = "0.29"
 regex = "1"
 open = "5"
 tui-markdown = "0.3"
+ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
 tempfile = "3"
