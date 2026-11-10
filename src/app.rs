@@ -332,7 +332,7 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.board_rx = Some(rx);
         std::thread::spawn(move || {
-            let _ = tx.send(crate::gh::fetch_board(&owner));
+            let _ = tx.send(board_via_gh(&owner));
         });
     }
 
@@ -348,6 +348,13 @@ impl App {
             })
             .collect();
     }
+}
+
+/// Board fetch while `gh::fetch_board` is deprecated. Single call site by
+/// design: remove with the GraphQL board port.
+#[allow(deprecated)]
+fn board_via_gh(owner: &str) -> Result<BoardData, String> {
+    crate::gh::fetch_board(owner)
 }
 
 /// The board modal is up, whether still fetching or fully loaded.

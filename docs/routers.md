@@ -7,7 +7,7 @@ one verification pass.
 
 | Task | Layer | Verify with |
 | ---- | ----- | ----------- |
-| Fetching, caching, pins | `github.rs` facade (`api.rs`, `gh.rs`, `cache.rs`) | `cargo test` (unit) |
+| Fetching, caching, pins | `github.rs` over `api.rs` + `cache.rs` (`gh.rs` board-only, deprecated) | `cargo test` (unit) |
 | Text transforms, ref parsing | `model.rs` | `cargo test` (unit) |
 | Business rules (bar, selection, cursor, pins) | `core.rs` | `cargo test` (unit) |
 | CLI args | `cli.rs` | `cargo test` (unit) |

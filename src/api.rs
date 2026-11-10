@@ -14,6 +14,14 @@ pub struct Row {
 pub fn token() -> Option<&'static str> {
     static TOKEN: OnceLock<Option<String>> = OnceLock::new();
     TOKEN.get_or_init(|| {
+        for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
+            if let Ok(t) = std::env::var(var) {
+                let t = t.trim().to_owned();
+                if !t.is_empty() {
+                    return Some(t);
+                }
+            }
+        }
         let out = std::process::Command::new("gh").args(["auth", "token"]).output().ok()?;
         if !out.status.success() { return None; }
         let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();

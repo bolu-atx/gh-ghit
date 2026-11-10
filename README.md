@@ -16,7 +16,7 @@ Strictly the TUI — the old throwaway `gh-issue.bash` viewer did not make the t
 
 ## Requirements
 
-- [`gh`](https://cli.github.com) authenticated (`gh auth login`)
+- A GitHub token: `GH_TOKEN` (or `GITHUB_TOKEN`), or [`gh`](https://cli.github.com) authenticated (`gh auth login`)
 - A terminal
 
 ## Install

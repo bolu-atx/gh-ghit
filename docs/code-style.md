@@ -5,8 +5,9 @@ in spirit. Fix the code, never silence the lint.
 
 ## Shape of the code
 
-- Small functions with one job: fetch behind the `github.rs` facade
-  (`api.rs`/`gh.rs`/`cache.rs`), pure domain transforms in `model.rs`,
+- Small functions with one job: fetch over HTTPS behind the `github.rs`
+  facade (`api.rs`/`cache.rs`; `gh.rs` is deprecated board-only),
+  pure domain transforms in `model.rs`,
   pure business rules in `core.rs`, state and the event loop in `app.rs`,
   input mapping in `input.rs`, rendering as `render_*` functions in `ui.rs`.
 - Layer discipline: `ui`/`input` never import `api`/`gh`/`cache`;

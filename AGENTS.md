@@ -30,7 +30,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/github.rs` | Data-access facade over `api`/`gh`/`cache`; UI layers never import those directly |
 | `src/api.rs` | Token-backed GraphQL/REST calls |
 | `src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
-| `src/gh.rs` | `gh` subprocess calls (issue/PR view, GraphQL project status, project board) |
+| `src/gh.rs` | DEPRECATED `gh` subprocess backend — board only, pending GraphQL port; do not add callers |
 | `src/input.rs` | Key/mouse mapping into `App` calls; reads `ui` hit areas, never draws |
 | `src/ui.rs` | All rendering + frame tests; reads `App`, never fetches |
 | `src/theme.rs` | Palettes (ayu mirage, ayu dark), `GhitSheet` markdown stylesheet, `cycle()` |
