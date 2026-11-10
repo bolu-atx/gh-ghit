@@ -10,9 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: sudo apt-get update && sudo apt-get install -y tmux xvfb xclip
       - run: cargo build
-      - run: bash scripts/e2e/run.sh
+      # xvfb-run provides the X server xclip needs, so yank really copies
+      # and the toasts assert on content instead of "copy failed".
+      - run: xvfb-run -a bash scripts/e2e/run.sh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4

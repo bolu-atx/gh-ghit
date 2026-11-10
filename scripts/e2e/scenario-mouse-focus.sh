@@ -5,6 +5,7 @@ source "$(dirname "$0")/lib.sh"
 e2e_start
 e2e_wait "unifie" 60 || fail "pr rows never landed"
 e2e_wait "move title" 60 || fail "pr data never landed"
+e2e_wait "─ (requested|recent) ─" 60 || fail "labeled divider never rendered"
 e2e_shot mouse-boot
 R=$(grep -n "Pull requests" "$E2E_FRAMES/mouse-boot.txt" | head -1 | cut -d: -f1)
 [ -n "$R" ] || fail "no pr pane row"
