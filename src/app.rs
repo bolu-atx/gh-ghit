@@ -49,6 +49,16 @@ pub(crate) enum Focus {
     Bar,
 }
 
+/// Which pane `j`/`k` act on. Tab cycles Left → Main → Refs, skipping Refs
+/// while it is hidden. Text input (`Focus::Bar`), the board, and the filter
+/// dialog keep their own keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pane {
+    Left,
+    Main,
+    Refs,
+}
+
 /// What a filter-dialog query commit asks the caller to fetch.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum QueryAction {
@@ -80,6 +90,7 @@ pub(crate) struct App {
     pub(crate) current: Option<u64>,
     pub(crate) tab: Tab,
     pub(crate) focus: Focus,
+    pub(crate) pane: Pane,
     pub(crate) bar: String,
     /// `/` search text. Persists after commit so matches stay highlighted;
     /// `searching` is true only while editing it in the bar.
@@ -104,6 +115,8 @@ pub(crate) struct App {
     pub(crate) quit: bool,
     pub(crate) body_area: Rect,
     pub(crate) body_rows: Vec<String>,
+    /// Scroll offset `body_rows` was captured at; selections add to this.
+    pub(crate) body_base: u16,
     pub(crate) board_loading: bool,
     pub(crate) board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
     pub(crate) board_states: Vec<ListState>,
@@ -114,6 +127,11 @@ pub(crate) struct App {
     pub(crate) detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
     pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
     pub(crate) diffs: HashMap<u64, Vec<model::DiffFile>>,
+    pub(crate) diff_cursor: usize,
+    /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
+    pub(crate) expanded_files: HashSet<(u64, String)>,
+    /// Visible buffer rows of the diff file headers, in file order.
+    pub(crate) diff_headers: Vec<usize>,
     pub(crate) diff_pending: HashSet<u64>,
     pub(crate) diff_tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) diff_rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
@@ -124,6 +142,14 @@ pub(crate) struct App {
     pub(crate) side_pr_area: Rect,
     pub(crate) side_issue_rows: Vec<Option<u64>>,
     pub(crate) side_pr_rows: Vec<Option<u64>>,
+    /// Related issues mentioned in the current body. Hidden when empty.
+    pub(crate) show_refs: bool,
+    pub(crate) ref_numbers: Vec<u64>,
+    /// Click-selected refs row: highlights its source line instead of opening it.
+    pub(crate) ref_highlight: Option<u64>,
+    pub(crate) refs_area: Rect,
+    pub(crate) ref_rows: Vec<Option<u64>>,
+    pub(crate) refs_state: ListState,
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
@@ -155,6 +181,7 @@ impl App {
             current: None,
             tab: Tab::Body,
             focus: Focus::Main,
+            pane: Pane::Left,
             bar: String::new(),
             search: String::new(),
             searching: false,
@@ -185,6 +212,9 @@ impl App {
             detail_tx,
             detail_rx,
             diffs: HashMap::new(),
+            diff_cursor: 0,
+            expanded_files: HashSet::new(),
+            diff_headers: vec![],
             diff_pending: HashSet::new(),
             diff_tx,
             diff_rx,
@@ -192,10 +222,17 @@ impl App {
             quit: false,
             body_area: Rect::default(),
             body_rows: Vec::new(),
+            body_base: 0,
             side_issue_area: Rect::default(),
             side_pr_area: Rect::default(),
             side_issue_rows: vec![],
             side_pr_rows: vec![],
+            show_refs: true,
+            ref_numbers: vec![],
+            ref_highlight: None,
+            refs_area: Rect::default(),
+            ref_rows: vec![],
+            refs_state: ListState::default(),
             tabs_area: Rect::default(),
             bar_area: Rect::default(),
             board_cells: Vec::new(),
@@ -476,8 +513,108 @@ impl App {
         if self.partial.contains(&n) { self.load_issue(n, false); }
         self.current = Some(n);
         self.scroll = 0;
+        self.diff_cursor = 0;
+        self.ref_highlight = None;
         self.sync_selection();
         self.load_diff(n, false);
+        self.refresh_refs();
+    }
+
+    /// Select a refs row: highlight where it is mentioned in the body
+    /// instead of opening it. Clicking the same row again clears it.
+    /// The refs pane never takes focus: Tab keeps cycling Body/Comments/Diff.
+    pub(crate) fn select_ref(&mut self, n: u64) {
+        if self.ref_highlight == Some(n) {
+            self.ref_highlight = None;
+            return;
+        }
+        self.ref_highlight = Some(n);
+        // Scroll the body pane so the first mentioning row sits at the top.
+        // `body_rows` is the visible slice taken at `body_base`.
+        let repo = self.repo_key();
+        if let Some(row) = self.body_rows.iter().position(|line| {
+            model::links_in_line(line, repo.as_deref())
+                .iter()
+                .any(|(_, t)| *t == model::LinkTarget::Issue(n))
+        }) {
+            self.scroll = self.body_base.saturating_add(row as u16);
+        }
+    }
+
+    /// Fold/unfold the file under the diff cursor. No-op without loaded files.
+    /// Folding acts on the body, so it takes body focus with it.
+    pub(crate) fn toggle_diff_file(&mut self) {
+        let Some(n) = self.current else { return };
+        self.pane = Pane::Main;
+        let Some(files) = self.diffs.get(&n) else { return };
+        let count = files.len().min(crate::ui::MAX_DIFF_FILES);
+        if count == 0 {
+            return;
+        }
+        self.diff_cursor = self.diff_cursor.min(count - 1);
+        let key = (n, files[self.diff_cursor].filename.clone());
+        if !self.expanded_files.remove(&key) {
+            self.expanded_files.insert(key);
+        }
+    }
+
+    /// The right refs pane shows only when toggled on and non-empty.
+    pub(crate) fn refs_visible(&self) -> bool {
+        self.show_refs && !self.ref_numbers.is_empty()
+    }
+
+    /// Display rows for the refs pane, one `Some` per mentioned number.
+    pub(crate) fn refs_rows(&self) -> Vec<Option<u64>> {
+        self.ref_numbers.iter().copied().map(Some).collect()
+    }
+
+    /// Flip the right refs pane, keeping the current issue in place.
+    pub(crate) fn toggle_refs(&mut self) {
+        self.show_refs = !self.show_refs;
+        if !self.show_refs && self.pane == Pane::Refs {
+            self.pane = Pane::Main;
+        }
+        self.notify(if self.show_refs { "refs: shown".to_string() } else { "refs: hidden".to_string() });
+    }
+
+    /// Tab toggles the sidebar and Refs: the body keeps its dedicated keys
+    /// (arrows scroll, 1/2/3 switch tabs) so it never needs focus.
+    pub(crate) fn cycle_pane(&mut self) {
+        self.pane = match self.pane {
+            Pane::Left if self.refs_visible() => Pane::Refs,
+            _ => Pane::Left,
+        };
+    }
+
+    /// Recompute refs from the current body and queue background fetches
+    /// for mentioned rows we have never loaded. Never changes `current`.
+    pub(crate) fn refresh_refs(&mut self) {
+        let Some(n) = self.current else {
+            self.ref_numbers.clear();
+            return;
+        };
+        let Some(d) = self.data.get(&n) else {
+            self.ref_numbers.clear();
+            return;
+        };
+        let repo = self.repo_key();
+        let nums: Vec<u64> = model::referenced_numbers(&d.body, repo.as_deref())
+            .into_iter()
+            .filter(|m| *m != n)
+            .collect();
+        self.ref_numbers = nums;
+        let tx = self.issue_tx.clone();
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        for m in self.ref_numbers.clone() {
+            if self.data.contains_key(&m) || !self.issue_pending.insert(m) {
+                continue;
+            }
+            let tx = tx.clone();
+            let repo = repo.clone();
+            rt().spawn(async move {
+                let _ = tx.send((m, github::fetch_number(&repo, m, false).await));
+            });
+        }
     }
 
     /// Switch tabs, resetting scroll. Selecting Diff on a PR starts its
@@ -625,6 +762,8 @@ impl App {
     }
 
     /// Snapshot the visible body text so clicks can land on `#123` refs.
+    /// `body_base` records the scroll offset the snapshot was taken at, so
+    /// selections map visible rows back without accumulating across clicks.
     pub(crate) fn capture_body_rows(&mut self, buf: &ratatui::buffer::Buffer) {
         let area = self.body_area;
         self.body_rows = (0..area.height)
@@ -635,6 +774,7 @@ impl App {
                     .collect::<String>()
             })
             .collect();
+        self.body_base = self.scroll;
     }
 }
 
@@ -851,6 +991,9 @@ pub(crate) fn poll_issues(app: &mut App) {
                 app.partial.remove(&number);
                 app.data.insert(number, data);
                 app.statuses.insert(number, statuses);
+                if app.current == Some(number) {
+                    app.refresh_refs();
+                }
                 if app.requested == Some(number) {
                     app.show_issue(number);
                     app.bar.clear();

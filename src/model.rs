@@ -156,6 +156,41 @@ fn ref_url_re() -> &'static Regex {
     })
 }
 
+/// Cap on related-issue rows pulled out of one body.
+pub const MAX_REFS: usize = 20;
+
+/// Issue/PR numbers mentioned in a raw body, in first-seen order, deduped.
+/// Same-repo `github.com` URLs count; cross-repo URLs and code spans do not.
+pub fn referenced_numbers(body: &str, repo: Option<&str>) -> Vec<u64> {
+    use std::collections::HashSet;
+    let mut out: Vec<u64> = vec![];
+    let mut seen: HashSet<u64> = HashSet::new();
+    // Split off fenced/inline code first so `` `#123` `` stays plain text.
+    let code = code_re();
+    let mut last = 0;
+    let mut plain: Vec<&str> = vec![];
+    for m in code.find_iter(body) {
+        plain.push(&body[last..m.start()]);
+        last = m.end();
+    }
+    plain.push(&body[last..]);
+    for seg in plain {
+        for line in seg.lines() {
+            for (_, target) in links_in_line(line, repo) {
+                if let LinkTarget::Issue(n) = target {
+                    if seen.insert(n) {
+                        out.push(n);
+                        if out.len() >= MAX_REFS {
+                            return out;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Something clickable on a visible line, in textual order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkTarget {
@@ -604,6 +639,20 @@ mod tests {
         assert_eq!(nums(line, Some("o/r")), vec![12]);
         assert_eq!(nums(line, Some("O/R")), vec![12]);
         assert_eq!(nums(line, None), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn referenced_numbers_dedups_orders_and_skips_code() {
+        let body = "blocked by #2 and (#3), see #2 again\n`#9` ignored\n```\n#10 ignored\n```\nhttps://github.com/o/r/pull/4 and https://github.com/x/y/issues/5";
+        assert_eq!(referenced_numbers(body, Some("o/r")), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn referenced_numbers_caps_at_max_refs() {
+        let body = (1..=30).map(|n| format!("#{n}")).collect::<Vec<_>>().join(" ");
+        let refs = referenced_numbers(&body, Some("o/r"));
+        assert_eq!(refs.len(), MAX_REFS);
+        assert_eq!(refs[0], 1);
     }
 
     #[test]

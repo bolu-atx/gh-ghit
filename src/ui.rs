@@ -15,33 +15,49 @@ use crate::app::{App, Tab};
 use crate::model::{self, IssueData};
 
 pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
-    use crate::theme::{amber, ink, muted};
+    use crate::theme::{ink, muted};
     f.render_widget(Block::default().style(Style::new().bg(ink())), f.area());
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(f.area());
 
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(44), Constraint::Min(1)])
-        .split(root[0]);
-
-    render_sidebar(f, cols[0], app);
-    render_main(f, cols[1], app);
-    app.capture_body_rows(f.buffer_mut());
-
-    let footer_line = if app.message_visible() {
-        Line::from(vec![
-            Span::styled("! ", Style::new().fg(amber()).bold()),
-            Span::styled(app.message.clone(), Style::new().fg(amber())),
-        ])
+    if app.refs_visible() {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(44), Constraint::Min(1), Constraint::Length(36)])
+            .split(root[0]);
+        render_sidebar(f, cols[0], app);
+        render_main(f, cols[1], app);
+        render_refs(f, cols[2], app);
     } else {
-        Line::from(Span::styled(
-            "j/k move · ↑↓ scroll · 1/2/3 tab · b board · : cmd · / find · n/N next · f filter · o open · r refresh · p pin · t theme · w age · q quit",
-            Style::new().fg(muted()),
-        ))
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(44), Constraint::Min(1)])
+            .split(root[0]);
+        render_sidebar(f, cols[0], app);
+        render_main(f, cols[1], app);
+    }
+    app.capture_body_rows(f.buffer_mut());
+    // Visible rows of the diff file headers, in file order, for click and
+    // scroll-follow mapping. Only the Diff tab renders `▸ `/`▾ ` markers.
+    app.diff_headers = if app.tab == crate::app::Tab::Diff {
+        app.body_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.starts_with("▸ ") || l.starts_with("▾ "))
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        vec![]
     };
+
+    // The footer always keeps the shortcut hints; notifications float as a
+    // top-right toast instead of covering them.
+    let footer_line = Line::from(Span::styled(
+        "tab pane · j/k move · ↑↓ scroll · 1/2/3 tab · b board · : cmd · / find · n/N next · f filter · o open · r refresh · p pin · e refs · t theme · w age · q quit",
+        Style::new().fg(muted()),
+    ));
     f.render_widget(Paragraph::new(footer_line), root[1]);
 
     if crate::app::board_open(app) {
@@ -53,6 +69,37 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_filter(f, f.area(), app);
     }
+
+    if app.message_visible() {
+        render_toast(f, f.area(), app);
+    }
+}
+
+/// Transient notification floating top-right so the footer hints stay put.
+fn render_toast(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, base, ink};
+    let inner_w = (area.width as usize).saturating_sub(8).max(10);
+    let mut text = app.message.clone();
+    if text.chars().count() > inner_w {
+        text = format!("{}…", text.chars().take(inner_w.saturating_sub(1)).collect::<String>());
+    }
+    let w = (text.chars().count() as u16 + 4).max(10);
+    let toast = Rect::new(area.width.saturating_sub(w + 1), 1, w, 3);
+    f.render_widget(Clear, toast);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(amber()))
+        .style(base());
+    let inner = block.inner(toast);
+    f.render_widget(block, toast);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("! ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled(text, Style::new().bg(ink()).fg(amber())),
+        ]))
+        .style(base()),
+        inner,
+    );
 }
 
 /// Filter dialog (`f`): recent window, open/closed toggles, and a GitHub
@@ -187,6 +234,8 @@ fn section_list(
     rows: &[Option<u64>],
     app: &App,
     inner_width: usize,
+    mark: Option<u64>,
+    focused: bool,
 ) -> List<'static> {
     use crate::theme::{amber, ink, muted, paper, state_color};
     let query = app.search.clone();
@@ -200,7 +249,7 @@ fn section_list(
             ))));
             continue;
         };
-        let sel = app.current == Some(*n);
+        let sel = app.current == Some(*n) || mark == Some(*n);
         let marker = if sel { "▌ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
@@ -242,11 +291,12 @@ fn section_list(
             Line::from(""),
         ]));
     }
+    let border = if focused { amber() } else { muted() };
     List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::new().bg(ink()).fg(muted()))
+                .border_style(Style::new().bg(ink()).fg(border))
                 .title(title)
                 .style(Style::new().bg(ink())),
         )
@@ -295,14 +345,14 @@ fn header_lines<'a>(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec
 
 /// First 50 files render; the rest collapse to a one-line note so a
 /// huge PR cannot flood the pane.
-const MAX_DIFF_FILES: usize = 50;
+pub(crate) const MAX_DIFF_FILES: usize = 50;
 
-/// Diff tab body: file headers plus hunks, unified or side-by-side.
+/// Diff tab body: one ruled section per file, folded by default.
 /// Issues get a short note, PRs without data yet get a loading line.
 /// `width` is the pane content width; narrow panes fall back to unified
 /// lines because two columns would fit nothing.
 fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'static> {
-    use crate::theme::{green, ink, muted, paper, red};
+    use crate::theme::{amber, green, ink, muted, paper, red};
     use model::DiffKind;
     if !d.is_pr {
         return ratatui::text::Text::from(Line::from(Span::styled(
@@ -328,32 +378,78 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         )));
     }
     let split = app.diff_split && width >= 40;
+    let cursor = app.diff_cursor.min(files.len().saturating_sub(1).max(0));
+    let cursor_name = files.get(cursor).map(|f| f.filename.as_str()).unwrap_or("");
     let mut lines = vec![Line::from(Span::styled(
         format!(
-            "{} · {} (s: {})",
+            "{} · {} (s: {}) · ↑↓ file, space fold · ❯ {}",
             model::diff_summary(files),
             if split { "split" } else { "unified" },
             if split { "unified" } else { "split" },
+            cursor_name,
         ),
         Style::new().bg(ink()).fg(muted()),
     ))];
-    for f in files.iter().take(MAX_DIFF_FILES) {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
+    let cursor_here = app.pane == crate::app::Pane::Main;
+    let rule = Span::styled("─".repeat(width.max(8)), Style::new().bg(ink()).fg(muted()));
+    // Hunk rows sit two cells in so they read as belonging to the section.
+    let dent = || Span::styled("  ", Style::new().bg(ink()));
+    // Nerd Font status glyphs; the word stays so a missing font degrades
+    // to tofu plus readable text.
+    let status_icon = |status: &str| match status {
+        "added" => "\u{f067} ",
+        "removed" => "\u{f068} ",
+        "modified" | "changed" => "\u{f040} ",
+        "renamed" | "copied" => "\u{f0c5} ",
+        "unchanged" => "\u{f00c} ",
+        _ => "",
+    };
+    for (fi, f) in files.iter().take(MAX_DIFF_FILES).enumerate() {
+        let expanded = app.expanded_files.contains(&(d.number, f.filename.clone()));
+        let at_cursor = cursor_here && cursor == fi;
+        let mut head = Line::from(vec![
+            Span::styled(
+                if expanded { "▾ " } else { "▸ " }.to_string(),
+                Style::new().bg(ink()).fg(if at_cursor { amber() } else { muted() }).bold(),
+            ),
+            Span::styled("\u{f15c} ", Style::new().bg(ink()).fg(paper())),
             Span::styled(f.filename.clone(), Style::new().bg(ink()).fg(paper()).bold()),
-            Span::styled(format!("  {}  ", f.status), Style::new().bg(ink()).fg(muted())),
+            Span::styled(
+                format!("  {}{}  ", status_icon(&f.status), f.status),
+                Style::new().bg(ink()).fg(muted()),
+            ),
             Span::styled(format!("+{} ", f.additions), Style::new().bg(ink()).fg(green())),
-            Span::styled(format!("-{}", f.deletions), Style::new().bg(ink()).fg(red())),
-        ]));
+            Span::styled(
+                format!("-{} · {} changed", f.deletions, f.additions + f.deletions),
+                Style::new().bg(ink()).fg(red()),
+            ),
+        ]);
+        if at_cursor {
+            for span in head.spans.iter_mut() {
+                span.style = span.style.patch(Style::new().bg(amber()).fg(ink()));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(rule.clone()));
+        lines.push(head);
+        if !expanded {
+            continue;
+        }
         if model::diff_lines(&f.patch).is_empty() {
-            lines.push(Line::from(Span::styled(
-                "(binary or large file, no patch)",
-                Style::new().bg(ink()).fg(muted()).italic(),
-            )));
+            lines.push(Line::from(vec![
+                dent(),
+                Span::styled(
+                    "(binary or large file, no patch)",
+                    Style::new().bg(ink()).fg(muted()).italic(),
+                ),
+            ]));
             continue;
         }
         if split {
-            lines.extend(split_file_lines(&f.patch, width));
+            lines.extend(split_file_lines(&f.patch, width.saturating_sub(2)).into_iter().map(|mut l| {
+                l.spans.insert(0, dent());
+                l
+            }));
         } else {
             for (kind, text) in model::diff_lines(&f.patch) {
                 let style = match kind {
@@ -362,7 +458,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
                     DiffKind::Del => Style::new().bg(ink()).fg(red()),
                     DiffKind::Context => Style::new().bg(ink()).fg(paper()),
                 };
-                lines.push(Line::from(Span::styled(text, style)));
+                lines.push(Line::from(vec![dent(), Span::styled(text, style)]));
             }
         }
     }
@@ -465,11 +561,14 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.side_issue_rows = issue_rows.clone();
     app.side_pr_rows = pr_rows.clone();
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
+    let left_focused = app.pane == crate::app::Pane::Left;
     let il = section_list(
         section_title("Issues", &key),
         &issue_rows,
         app,
         inner(panes[0]),
+        None,
+        left_focused,
     );
     let mut istate = std::mem::take(&mut app.issue_state);
     istate.select(selected_index(&issue_rows, app.current));
@@ -480,11 +579,39 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         &pr_rows,
         app,
         inner(panes[1]),
+        None,
+        left_focused,
     );
     let mut pstate = std::mem::take(&mut app.pr_state);
     pstate.select(selected_index(&pr_rows, app.current));
     f.render_stateful_widget(pl, panes[1], &mut pstate);
     app.pr_state = pstate;
+}
+
+/// Right pane: issues/PRs mentioned in the current body, with the same row
+/// look as the left sidebar. Renders only when `refs_visible`; the caller
+/// hides the column otherwise so the main pane keeps its width.
+fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    let rows = app.refs_rows();
+    app.refs_area = area;
+    app.ref_rows = rows.clone();
+    let inner = (area.width as usize).saturating_sub(2);
+    let list = section_list(
+        section_title("Refs", &format!("{} mentioned", rows.len())),
+        &rows,
+        app,
+        inner,
+        app.ref_highlight,
+        app.pane == crate::app::Pane::Refs,
+    );
+    let mut state = std::mem::take(&mut app.refs_state);
+    let sel = app
+        .ref_highlight
+        .and_then(|n| rows.iter().position(|r| *r == Some(n)))
+        .map(|p| p + 1);
+    state.select(sel);
+    f.render_stateful_widget(list, area, &mut state);
+    app.refs_state = state;
 }
 
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
@@ -518,7 +645,10 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
-    let tabs = Tabs::new(vec!["Body", "Comments", "Diff"])
+    let main_focused = app.pane == crate::app::Pane::Main;
+    // Nerd Font glyphs: file-text, comments, code. Labels stay so a
+    // missing font degrades to a tofu box plus readable text.
+    let tabs = Tabs::new(vec!["\u{f15c}  Body", "\u{f086}  Comments", "\u{f121}  Diff"])
         .select(match app.tab {
             Tab::Body => 0,
             Tab::Comments => 1,
@@ -530,14 +660,14 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
-                .border_style(Style::new().bg(ink()).fg(muted()))
+                .border_style(Style::new().bg(ink()).fg(if main_focused { amber() } else { muted() }))
                 .style(Style::new().bg(ink())),
         );
     f.render_widget(tabs, rows[2]);
 
     let owned_body: String;
     let owned_comments: String;
-    let text = match app.current.and_then(|n| app.data.get(&n)) {
+    let mut text = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => {
             let st = app.statuses.get(&d.number).cloned().unwrap_or_default();
             match app.tab {
@@ -562,6 +692,22 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or search titles with `/`.",
         ),
     };
+    // A refs-row selection lights up the mentioning line instead of opening
+    // the issue. Body tab only: the mentions come from the body markdown.
+    if let (Some(n), crate::app::Tab::Body) = (app.ref_highlight, app.tab) {
+        let repo = app.repo_key();
+        for line in text.lines.iter_mut() {
+            let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            let mentions = model::links_in_line(&plain, repo.as_deref())
+                .into_iter()
+                .any(|(_, t)| t == model::LinkTarget::Issue(n));
+            if mentions {
+                for span in line.spans.iter_mut() {
+                    span.style = span.style.patch(Style::new().bg(amber()).fg(ink()));
+                }
+            }
+        }
+    }
     let pane = Paragraph::new(text)
         .style(base())
         .wrap(Wrap { trim: false })
@@ -1103,12 +1249,64 @@ mod render_smoke {
     #[test]
     fn jk_walks_issues_then_prs() {
         let mut app = loaded_app();
+        assert_eq!(app.pane, crate::app::Pane::Left);
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.current, Some(9));
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.current, Some(9));
         handle_key(&mut app, key(KeyCode::Char('k')));
         assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn tab_toggles_sidebar_and_refs_skipping_body() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        assert_eq!(app.pane, Pane::Left);
+        // No refs yet: Tab stays on the sidebar.
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::Left);
+        // With mentions, Tab alternates sidebar and Refs; the body keeps
+        // its dedicated keys so it never takes Tab focus.
+        app.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
+        app.show_issue(7);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::Refs);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::Left);
+        // From the body (mouse), Tab returns to the sidebar.
+        app.pane = Pane::Main;
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.pane, Pane::Left);
+    }
+
+    #[test]
+    fn jk_in_main_scrolls_instead_of_moving_selection() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        app.pane = Pane::Main;
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.scroll, 3);
+        assert_eq!(app.current, Some(7));
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.scroll, 0);
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn jk_in_refs_moves_highlight_instead_of_opening() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "see #9 then #12".to_string();
+        app.show_issue(7);
+        app.pane = Pane::Refs;
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.ref_highlight, Some(9));
+        assert_eq!(app.current, Some(7));
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.ref_highlight, Some(12));
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.ref_highlight, Some(9));
     }
 
     #[test]
@@ -1126,6 +1324,60 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("Issues"));
         assert!(text.contains("Pull requests"));
+    }
+
+    #[test]
+    fn refs_pane_lists_mentioned_rows_and_toggles() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+        app.show_issue(7);
+        assert_eq!(app.ref_numbers, vec![9]);
+        assert!(app.refs_visible());
+        let text = frame_text(&mut app);
+        assert!(text.contains("Refs"), "{text}");
+        handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(!app.show_refs);
+        assert!(!app.refs_visible());
+        let hidden = frame_text(&mut app);
+        assert!(!hidden.contains("Refs"), "{hidden}");
+        // Recompute on arrival: a fresh body fetch repopulates the pane.
+        handle_key(&mut app, key(KeyCode::Char('e')));
+        let mut d = sample(7);
+        d.body = "see #9".to_string();
+        app.issue_tx.send((7, Ok((d, vec![])))).unwrap();
+        crate::app::poll_issues(&mut app);
+        assert_eq!(app.ref_numbers, vec![9]);
+    }
+
+    #[test]
+    fn mouse_click_on_refs_row_highlights_source_instead_of_opening() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "intro\n\nblocked by #9, see details".to_string();
+        app.show_issue(7);
+        let _ = frame_text(&mut app); // records hit areas
+        // +2 skips the border and the breathing-room spacer row.
+        let (x, y) = (app.refs_area.x + 2, app.refs_area.y + 2);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(7), "stays on the issue");
+        assert_eq!(app.ref_highlight, Some(9));
+        // Scrolled so the mentioning row sits at the top.
+        let row = app.body_rows.iter().position(|l| l.contains("#9")).unwrap();
+        assert_eq!(app.scroll, row as u16);
+        // Clicking the same row again clears the highlight.
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.ref_highlight, None);
+        // Switching issues clears it too.
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.ref_highlight, Some(9));
+        // The mentioning line renders highlighted at the top of the pane.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let cell = &buf[(app.body_area.x + 1, app.body_area.y)];
+        assert_eq!(cell.bg, crate::theme::amber(), "source line highlighted");
+        app.show_issue(9);
+        assert_eq!(app.ref_highlight, None);
     }
 
     #[test]
@@ -1256,7 +1508,7 @@ mod render_smoke {
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
         handle_mouse(
             &mut app,
-            click(MouseEventKind::Down(MouseButton::Left), tx + 8, y),
+            click(MouseEventKind::Down(MouseButton::Left), tx + 12, y),
         );
         assert_eq!(app.tab, Tab::Comments);
         handle_mouse(
@@ -1400,7 +1652,7 @@ mod render_smoke {
     }
 
     #[test]
-    fn diff_tab_shows_files_and_hunks() {
+    fn diff_tab_folds_files_by_default() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
         app.data.insert(9, diff_pr(9));
@@ -1413,12 +1665,111 @@ mod render_smoke {
         app.set_tab(Tab::Diff);
         let text = frame_text(&mut app);
         assert!(text.contains("Diff"), "{text}");
-        assert!(text.contains("1 file") || text.contains("2 files"), "{text}");
+        assert!(text.contains("2 files"), "{text}");
         assert!(text.contains("src/a.rs"), "{text}");
-        assert!(text.contains("@@ -1"), "{text}");
-        assert!(text.contains("-old"), "{text}");
-        assert!(text.contains("+new"), "{text}");
-        assert!(text.contains("binary or large file"), "{text}");
+        assert!(text.contains("▸"), "folded by default");
+        assert!(text.contains("2 changed"), "{text}");
+        assert!(text.contains("──"), "ruled sections");
+        assert!(text.contains("❯ src/a.rs"), "summary names the cursor file");
+        assert!(text.contains('\u{f15c}'), "file icon");
+        assert!(text.contains('\u{f040}'), "modified icon");
+        assert!(!text.contains("-old"), "hunks hidden while folded");
+        assert!(!text.contains("binary or large file"), "note hidden while folded");
+        // Space unfolds the file under the cursor.
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.expanded_files.contains(&(9, "src/a.rs".to_string())));
+        let open = frame_text(&mut app);
+        assert!(open.contains("▾"), "{open}");
+        assert!(open.contains("@@ -1"), "{open}");
+        assert!(open.contains("  -old"), "hunks indent under their file");
+        assert!(open.contains("+new"), "{open}");
+        // Unfolding the second file shows its binary note.
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.diff_cursor, 1);
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        let both = frame_text(&mut app);
+        assert!(both.contains("binary or large file"), "{both}");
+        // Clicking the first header folds it back.
+        handle_key(&mut app, key(KeyCode::Up));
+        let row = app.body_rows.iter().position(|l| l.starts_with("▾ ")).unwrap();
+        let (bx, by) = (app.body_area.x, app.body_area.y);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), bx + 1, by + row as u16));
+        assert!(!app.expanded_files.contains(&(9, "src/a.rs".to_string())));
+        assert_eq!(app.diff_cursor, 0);
+    }
+
+    #[test]
+    fn arrows_walk_diff_files() {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+            DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 2, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
+        ]);
+        app.set_tab(Tab::Diff);
+        let _ = frame_text(&mut app);
+        let h1 = app.diff_headers[1];
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.diff_cursor, 1);
+        assert_eq!(app.scroll, h1 as u16);
+        assert_eq!(app.current, Some(9), "selection untouched");
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.diff_cursor, 0);
+        // j/k stays with the side panes: on the sidebar it moves selection.
+        app.show_issue(7);
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.diff_cursor, 0);
+        assert_eq!(app.current, Some(9));
+    }
+
+    #[test]
+    fn mouse_click_highlights_the_row_it_expands() {
+        use crate::app::Pane;
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        ]);
+        app.set_tab(Tab::Diff);
+        let _ = frame_text(&mut app);
+        let row = app.body_rows.iter().position(|l| l.starts_with("▸ ")).unwrap();
+        let (bx, by) = (app.body_area.x, app.body_area.y);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), bx + 1, by + row as u16));
+        assert_eq!(app.pane, Pane::Main, "click takes body focus");
+        assert_eq!(app.diff_cursor, 0);
+        assert!(app.expanded_files.contains(&(9, "src/a.rs".to_string())));
+        // The expanded header renders with the accent background.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let hrow = app.diff_headers[0];
+        let cell = &buf[(app.body_area.x + 1, app.body_area.y + hrow as u16)];
+        assert_eq!(cell.bg, crate::theme::amber(), "expanded row highlighted");
+    }
+
+    #[test]
+    fn content_tabs_show_nerd_icons() {
+        let mut app = loaded_app();
+        let text = frame_text(&mut app);
+        assert!(text.contains('\u{f15c}'), "{text}");
+        assert!(text.contains('\u{f086}'), "{text}");
+        assert!(text.contains('\u{f121}'), "{text}");
+    }
+
+    #[test]
+    fn toast_floats_top_right_leaving_footer_hints() {
+        let mut app = loaded_app();
+        app.notify("hello toast".to_string());
+        let text = frame_text(&mut app);
+        assert!(text.contains("hello toast"), "{text}");
+        assert!(text.contains("tab pane"), "footer keeps the hints");
     }
 
     #[test]
@@ -1456,16 +1807,14 @@ mod render_smoke {
     }
 
     #[test]
-    fn keys_and_tab_cycle_through_diff() {
+    fn number_keys_switch_content_tabs() {
         let mut app = loaded_app();
         handle_key(&mut app, key(KeyCode::Char('3')));
         assert_eq!(app.tab, Tab::Diff);
-        handle_key(&mut app, key(KeyCode::Tab));
+        handle_key(&mut app, key(KeyCode::Char('1')));
         assert_eq!(app.tab, Tab::Body);
-        handle_key(&mut app, key(KeyCode::Tab));
+        handle_key(&mut app, key(KeyCode::Char('2')));
         assert_eq!(app.tab, Tab::Comments);
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.tab, Tab::Diff);
     }
 
     #[test]
@@ -1473,7 +1822,7 @@ mod render_smoke {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
-        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 18, y));
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 24, y));
         assert_eq!(app.tab, Tab::Diff);
     }
 
@@ -1486,6 +1835,7 @@ mod render_smoke {
         app.diffs.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
+        app.expanded_files.insert((9, "src/a.rs".to_string()));
         app.set_tab(Tab::Diff);
         app
     }
