@@ -64,7 +64,7 @@ fn require_token() -> Result<&'static str, String> {
 
 /// Fetch one issue/PR plus its project statuses. Failures are strings for
 /// the status line, never panics.
-pub fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle, String> {
+pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
     let raw = repo.to_lowercase().replace('/', "__");
@@ -78,31 +78,31 @@ pub fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle,
             return Ok((data, statuses));
         }
     }
-    let (data, statuses) = api::issue(repo, number, token)?;
+    let (data, statuses) = api::issue(repo, number, token).await?;
     cache::cache_put(&iname, &data);
     cache::cache_put(&sname, &statuses);
     Ok((data, statuses))
 }
 
 /// Recent rows: open + windowed merged PRs, open + windowed closed issues.
-pub fn fetch_recent_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
+pub async fn fetch_recent_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::sections(repo, hours, token)
+    api::sections(repo, hours, token).await
 }
 
 /// Server-side issue/PR search scoped to the repo.
-pub fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, String> {
+pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::search(repo, query, token)
+    api::search(repo, query, token).await
 }
 
 /// Per-card detail: dates plus comment count.
-pub fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
+pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::issue(repo, number, token).map(|(d, _)| model::BoardDetail::from_issue(&d))
+    api::issue(repo, number, token).await.map(|(d, _)| model::BoardDetail::from_issue(&d))
 }
 
 #[cfg(test)]
@@ -125,13 +125,13 @@ mod tests {
         assert_eq!(parse_remote_url("https://github.com/o"), None);
     }
 
-    #[test]
-    fn fetches_fail_before_the_network_without_a_repo() {
+    #[tokio::test]
+    async fn fetches_fail_before_the_network_without_a_repo() {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
-        assert!(fetch_number("", 1, false).is_err());
-        assert!(fetch_recent_sections("", 24).is_err());
-        assert!(search_repo("", "bug").is_err());
-        assert!(fetch_board_detail("", 1).is_err());
+        assert!(fetch_number("", 1, false).await.is_err());
+        assert!(fetch_recent_sections("", 24).await.is_err());
+        assert!(search_repo("", "bug").await.is_err());
+        assert!(fetch_board_detail("", 1).await.is_err());
     }
 }

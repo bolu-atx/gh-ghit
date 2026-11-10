@@ -2,11 +2,13 @@
 //!
 //! `App` owns the data (issues, pins, board, channels) and coordinates
 //! fetching through `github`. It never draws (`ui`) and never parses input
-//! (`input`); pure rules live in `core`. Network work runs on threads and
-//! lands via channels polled once per frame, so the loop never blocks.
+//! (`input`); pure rules live in `core`. Network work runs on one shared
+//! tokio runtime and lands via channels polled once per frame, so the loop
+//! never blocks.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
@@ -19,6 +21,20 @@ use ratatui::widgets::ListState;
 
 use crate::{api, cache, core, github, model};
 use crate::model::{BoardData, IssueData};
+
+/// The one executor for all background fetches. Tasks are cheap, so callers
+/// spawn one per request and let the runtime schedule them; only the board
+/// fan-out additionally caps concurrency (see `kick_off_details`). Built
+/// lazily so tests that never fetch pay nothing, and never dropped.
+fn rt() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime")
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
@@ -225,8 +241,8 @@ impl App {
         let hours = self.merged_window_hours;
         let (tx, rx) = std::sync::mpsc::channel();
         self.section_rx = Some(rx);
-        std::thread::spawn(move || {
-            let _ = tx.send(github::fetch_recent_sections(&repo, hours));
+        rt().spawn(async move {
+            let _ = tx.send(github::fetch_recent_sections(&repo, hours).await);
         });
     }
 
@@ -251,8 +267,8 @@ impl App {
         self.notify(format!("searching: {query}"));
         let (tx, rx) = std::sync::mpsc::channel();
         self.section_rx = Some(rx);
-        std::thread::spawn(move || {
-            let _ = tx.send(github::search_repo(&repo, &query));
+        rt().spawn(async move {
+            let _ = tx.send(github::search_repo(&repo, &query).await);
         });
     }
 
@@ -288,8 +304,8 @@ impl App {
         if !self.issue_pending.insert(number) { return; }
         let tx = self.issue_tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        std::thread::spawn(move || {
-            let _ = tx.send((number, github::fetch_number(&repo, number, force)));
+        rt().spawn(async move {
+            let _ = tx.send((number, github::fetch_number(&repo, number, force).await));
         });
     }
 
@@ -546,7 +562,8 @@ impl App {
         self.board_row = 0;
         let (tx, rx) = std::sync::mpsc::channel();
         self.board_rx = Some(rx);
-        std::thread::spawn(move || {
+        // `gh` subprocesses block: keep them off the async workers.
+        rt().spawn_blocking(move || {
             let _ = tx.send(board_via_gh(&owner));
         });
     }
@@ -598,9 +615,11 @@ pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
 
 /// Fetch dates and comment counts for every card, in the background.
 /// Cards fill in progressively; warm issue cache hits skip the network.
+/// Tasks are cheap, so one spawns per card, but only a few run at once.
 fn kick_off_details(app: &mut App) {
     let Some(board) = &app.board else { return };
     let tx = app.detail_tx.clone();
+    let live = Arc::new(tokio::sync::Semaphore::new(8));
     for item in &board.items {
         let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else {
             continue;
@@ -614,8 +633,10 @@ fn kick_off_details(app: &mut App) {
         }
         app.detail_pending.insert(n);
         let tx = tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send((n, github::fetch_board_detail(&repo, n)));
+        let live = live.clone();
+        rt().spawn(async move {
+            let _permit = live.acquire_owned().await;
+            let _ = tx.send((n, github::fetch_board_detail(&repo, n).await));
         });
     }
 }
@@ -668,7 +689,8 @@ pub(crate) fn run(app: &mut App, numbers: &[u64]) -> Result<(), String> {
     let repo = app.repo_flag.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     app.bootstrap_rx = Some(rx);
-    std::thread::spawn(move || {
+    // `git` and `gh` subprocesses block: keep them off the async workers.
+    rt().spawn_blocking(move || {
         let mut worker = App::new(repo);
         worker.resolve_repo();
         let _ = crate::api::token();
