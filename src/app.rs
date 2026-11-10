@@ -49,12 +49,14 @@ pub(crate) enum Focus {
     Bar,
 }
 
-/// Which pane `j`/`k` act on. Tab cycles Left → Main → Refs, skipping Refs
-/// while it is hidden. Text input (`Focus::Bar`), the board, and the filter
-/// dialog keep their own keys.
+/// Which pane `j`/`k` act on. Tab cycles Issues → PRs → Refs, skipping
+/// Refs while it is hidden. Text input (`Focus::Bar`), the board, and the
+/// filter dialog keep their own keys. The body keeps its dedicated keys
+/// (arrows move the diff line, 1/2/3 switch tabs) so it never takes Tab focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Pane {
-    Left,
+    Issues,
+    PRs,
     Main,
     Refs,
 }
@@ -132,6 +134,19 @@ pub(crate) struct App {
     pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
     pub(crate) diffs: HashMap<u64, Vec<model::DiffFile>>,
     pub(crate) diff_cursor: usize,
+    /// Active diff line as an absolute body-buffer row. `None` until the
+    /// next render anchors it to the first file header. Steps one row at a
+    /// time so wrapped rows just work; render resolves the owning file and
+    /// auto-expands collapsed files from the fresh capture.
+    pub(crate) diff_line: Option<usize>,
+    /// Set when input moved the line cursor: render then resolves the file
+    /// and expands a landed-on collapsed file. Stays false for the lazy
+    /// init anchor so opening a Diff never unfolds the first file.
+    pub(crate) diff_touched: bool,
+    /// Owning file per visible body row, parallel to `body_rows` and only
+    /// meaningful on the Diff tab. Rows before the first header map to
+    /// `None`; blank/rule rows inherit the previous header's file.
+    pub(crate) diff_row_files: Vec<Option<usize>>,
     /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
     pub(crate) expanded_files: HashSet<(u64, String)>,
     /// Visible buffer rows of the diff file headers, in file order.
@@ -144,15 +159,15 @@ pub(crate) struct App {
     // display order per pane, `None` marking a divider slot.
     pub(crate) side_issue_area: Rect,
     pub(crate) side_pr_area: Rect,
-    pub(crate) side_issue_rows: Vec<Option<u64>>,
-    pub(crate) side_pr_rows: Vec<Option<u64>>,
+    pub(crate) side_issue_rows: Vec<model::SideRow>,
+    pub(crate) side_pr_rows: Vec<model::SideRow>,
     /// Related issues mentioned in the current body. Hidden when empty.
     pub(crate) show_refs: bool,
     pub(crate) ref_numbers: Vec<u64>,
     /// Click-selected refs row: highlights its source line instead of opening it.
     pub(crate) ref_highlight: Option<u64>,
     pub(crate) refs_area: Rect,
-    pub(crate) ref_rows: Vec<Option<u64>>,
+    pub(crate) ref_rows: Vec<model::SideRow>,
     pub(crate) refs_state: ListState,
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
@@ -185,7 +200,7 @@ impl App {
             current: None,
             tab: Tab::Body,
             focus: Focus::Main,
-            pane: Pane::Left,
+            pane: Pane::Issues,
             bar: String::new(),
             search: String::new(),
             searching: false,
@@ -217,6 +232,9 @@ impl App {
             detail_rx,
             diffs: HashMap::new(),
             diff_cursor: 0,
+            diff_line: None,
+            diff_touched: false,
+            diff_row_files: vec![],
             expanded_files: HashSet::new(),
             diff_headers: vec![],
             diff_pending: HashSet::new(),
@@ -420,23 +438,28 @@ impl App {
         (pinned, requested, recent)
     }
 
-    /// Display rows for the Issues pane, `None` marking divider slots.
-    pub(crate) fn issue_rows(&self) -> Vec<Option<u64>> {
+    /// Display rows for the Issues pane, dividers marking group slots.
+    pub(crate) fn issue_rows(&self) -> Vec<model::SideRow> {
         let (p, v, r) = self.pane_groups(false, self.searching);
         core::pane_order(&p, &v, &r)
     }
 
-    /// Display rows for the Pull requests pane, `None` marking dividers.
-    pub(crate) fn pr_rows(&self) -> Vec<Option<u64>> {
+    /// Display rows for the Pull requests pane, dividers marking groups.
+    pub(crate) fn pr_rows(&self) -> Vec<model::SideRow> {
         let (p, v, r) = self.pane_groups(true, self.searching);
         core::pane_order(&p, &v, &r)
     }
 
-    /// Flat j/k order: issues pane, then PRs pane.
-    pub(crate) fn flat_numbers(&self) -> Vec<u64> {
-        let (ip, iv, ir) = self.pane_groups(false, false);
-        let (pp, pv, pr) = self.pane_groups(true, false);
-        ip.into_iter().chain(iv).chain(ir).chain(pp).chain(pv).chain(pr).collect()
+    /// Scoped j/k order for the Issues pane: pinned, requested, recent.
+    pub(crate) fn issue_numbers(&self) -> Vec<u64> {
+        let (p, v, r) = self.pane_groups(false, false);
+        p.into_iter().chain(v).chain(r).collect()
+    }
+
+    /// Scoped j/k order for the PRs pane: pinned, requested, recent.
+    pub(crate) fn pr_numbers(&self) -> Vec<u64> {
+        let (p, v, r) = self.pane_groups(true, false);
+        p.into_iter().chain(v).chain(r).collect()
     }
 
     /// Flat order limited to `/` search hits, for Enter / n / N jumps.
@@ -492,9 +515,9 @@ impl App {
     }
 
     /// Position of `current` in display rows, +1 for the top spacer row.
-    fn selected_index(rows: &[Option<u64>], current: Option<u64>) -> Option<usize> {
+    fn selected_index(rows: &[model::SideRow], current: Option<u64>) -> Option<usize> {
         current
-            .and_then(|n| rows.iter().position(|r| *r == Some(n)))
+            .and_then(|n| rows.iter().position(|r| r.number() == Some(n)))
             .map(|p| p + 1)
     }
 
@@ -502,11 +525,11 @@ impl App {
         let issue_rows = self.issue_rows();
         let pr_rows = self.pr_rows();
         match self.current {
-            Some(n) if issue_rows.contains(&Some(n)) => {
+            Some(n) if issue_rows.iter().any(|r| r.number() == Some(n)) => {
                 self.issue_state.select(Self::selected_index(&issue_rows, self.current));
                 self.pr_state.select(None);
             }
-            Some(n) if pr_rows.contains(&Some(n)) => {
+            Some(n) if pr_rows.iter().any(|r| r.number() == Some(n)) => {
                 self.issue_state.select(None);
                 self.pr_state.select(Self::selected_index(&pr_rows, self.current));
             }
@@ -520,6 +543,8 @@ impl App {
         self.current = Some(n);
         self.scroll = 0;
         self.diff_cursor = 0;
+        self.diff_line = None;
+        self.diff_touched = false;
         self.ref_highlight = None;
         self.sync_selection();
         self.load_diff(n, false);
@@ -528,7 +553,7 @@ impl App {
 
     /// Select a refs row: highlight where it is mentioned in the body
     /// instead of opening it. Clicking the same row again clears it.
-    /// The refs pane never takes focus: Tab keeps cycling Body/Comments/Diff.
+    /// Tab cycles Issues → PRs → Refs, so the pane keeps focus until then.
     pub(crate) fn select_ref(&mut self, n: u64) {
         if self.ref_highlight == Some(n) {
             self.ref_highlight = None;
@@ -547,8 +572,11 @@ impl App {
         }
     }
 
-    /// Fold/unfold the file under the diff cursor. No-op without loaded files.
-    /// Folding acts on the body, so it takes body focus with it.
+    /// Fold/unfold the file under the active diff line. No-op without
+    /// loaded files. Folding acts on the body, so it takes body focus
+    /// with it. Collapsing re-anchors the line cursor to the file header
+    /// (the header row itself never moves); expanding leaves the cursor
+    /// where it is because new rows only appear below the header.
     pub(crate) fn toggle_diff_file(&mut self) {
         let Some(n) = self.current else { return };
         self.pane = Pane::Main;
@@ -557,10 +585,38 @@ impl App {
         if count == 0 {
             return;
         }
-        self.diff_cursor = self.diff_cursor.min(count - 1);
-        let key = (n, files[self.diff_cursor].filename.clone());
+        let fi = self.diff_file_at_cursor().unwrap_or(self.diff_cursor).min(count - 1);
+        self.diff_cursor = fi;
+        self.diff_touched = false;
+        let key = (n, files[fi].filename.clone());
         if !self.expanded_files.remove(&key) {
             self.expanded_files.insert(key);
+        } else {
+            self.anchor_cursor_to_header(fi);
+        }
+    }
+
+    /// Owning file of the active diff line from the last render capture.
+    /// `None` when the cursor is unset, stale, or on a pre-header row.
+    pub(crate) fn diff_file_at_cursor(&self) -> Option<usize> {
+        let abs = self.diff_line?;
+        let vis = abs.checked_sub(self.body_base as usize)?;
+        self.diff_row_files.get(vis).copied().flatten()
+    }
+
+    /// Move the line cursor to file `fi`'s header when it is on screen.
+    /// Used after collapsing: rows below the header vanish, so a cursor
+    /// inside the old content would point at the wrong region.
+    fn anchor_cursor_to_header(&mut self, fi: usize) {
+        let base = self.body_base as usize;
+        let found = match self.current.and_then(|n| self.diffs.get(&n)) {
+            Some(files) => self.body_rows.iter().enumerate().find_map(|(vis, line)| {
+                (model::header_file_index(line, files) == Some(fi)).then_some(vis)
+            }),
+            None => return,
+        };
+        if let Some(vis) = found {
+            self.diff_line = Some(base + vis);
         }
     }
 
@@ -569,9 +625,11 @@ impl App {
         self.show_refs && !self.ref_numbers.is_empty()
     }
 
-    /// Display rows for the refs pane, one `Some` per mentioned number.
-    pub(crate) fn refs_rows(&self) -> Vec<Option<u64>> {
-        self.ref_numbers.iter().copied().map(Some).collect()
+    /// Display rows for the refs pane, one item per mentioned number.
+    /// The refs list never has dividers, but it shares the row type so
+    /// hit-testing and rendering stay uniform.
+    pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
+        self.ref_numbers.iter().copied().map(model::SideRow::Item).collect()
     }
 
     /// Flip the right refs pane, keeping the current issue in place.
@@ -583,12 +641,13 @@ impl App {
         self.notify(if self.show_refs { "refs: shown".to_string() } else { "refs: hidden".to_string() });
     }
 
-    /// Tab toggles the sidebar and Refs: the body keeps its dedicated keys
-    /// (arrows scroll, 1/2/3 switch tabs) so it never needs focus.
+    /// Tab cycles Issues → PRs → Refs, skipping Refs while it is hidden.
+    /// The body keeps its dedicated keys so it never takes Tab focus.
     pub(crate) fn cycle_pane(&mut self) {
         self.pane = match self.pane {
-            Pane::Left if self.refs_visible() => Pane::Refs,
-            _ => Pane::Left,
+            Pane::Issues => Pane::PRs,
+            Pane::PRs if self.refs_visible() => Pane::Refs,
+            _ => Pane::Issues,
         };
     }
 
@@ -628,6 +687,8 @@ impl App {
     pub(crate) fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
         self.scroll = 0;
+        self.diff_line = None;
+        self.diff_touched = false;
         if tab == Tab::Diff {
             if let Some(n) = self.current {
                 self.load_diff(n, false);
@@ -639,6 +700,8 @@ impl App {
     /// back at the top so the new layout starts visible.
     pub(crate) fn toggle_diff_split(&mut self) {
         self.diff_split = !self.diff_split;
+        self.diff_line = None;
+        self.diff_touched = false;
         self.scroll = 0;
         self.notify(if self.diff_split { "diff: split".to_string() } else { "diff: unified".to_string() });
     }
@@ -719,6 +782,107 @@ impl App {
             open::that(format!("https://github.com/issues/{n}")).ok();
         }
         self.notify(format!("opened #{n} in browser"));
+    }
+
+    /// Full yank text for the current context, without side effects.
+    /// Refs highlight wins, then the Diff file cursor, else the current
+    /// issue/PR. `None` means `yank` should explain instead of copying.
+    pub(crate) fn yank_text(&self) -> Option<String> {
+        let current = self.current?;
+        let d = self.data.get(&current)?;
+        let repo = self.repo_key();
+        if self.pane == Pane::Refs {
+            let t = self.ref_highlight?;
+            let target = self.data.get(&t);
+            if let Some(text) = core::yank_ref_text(
+                current,
+                t,
+                &d.body,
+                repo.as_deref(),
+                target.map(|x| x.title.as_str()),
+                target.map(|x| x.url.as_str()),
+            ) {
+                return Some(text);
+            }
+            if let Some(td) = target {
+                return Some(core::yank_issue_text(t, &td.title, &td.url));
+            }
+            return Some(format!("#{t}"));
+        }
+        if self.tab == Tab::Diff && d.is_pr {
+            let files = self.diffs.get(&current)?;
+            if files.is_empty() {
+                return None;
+            }
+            // A patch content row under the active line yanks that line;
+            // headers, blanks, and rules fall back to the file summary.
+            if let Some(abs) = self.diff_line {
+                let vis = abs.saturating_sub(self.body_base as usize);
+                if let (Some(line), Some(fi)) =
+                    (self.body_rows.get(vis), self.diff_file_at_cursor())
+                {
+                    let is_header = line.starts_with("▸ ") || line.starts_with("▾ ");
+                    let trimmed = line.trim();
+                    let is_meta = trimmed.is_empty()
+                        || trimmed.chars().all(|c| c == '─')
+                        || trimmed.starts_with("… and");
+                    if !is_header && !is_meta {
+                        if let Some(file) = files.get(fi) {
+                            return Some(core::yank_diff_line_text(
+                                current,
+                                &d.title,
+                                &d.url,
+                                &file.filename,
+                                line,
+                            ));
+                        }
+                    }
+                }
+            }
+            let file = &files[self.diff_cursor.min(files.len() - 1)];
+            let expanded = self.expanded_files.contains(&(current, file.filename.clone()));
+            let hunk = if expanded {
+                core::first_hunk(&file.patch)
+            } else {
+                None
+            };
+            return Some(core::yank_diff_text(
+                current,
+                &d.title,
+                &d.url,
+                &file.filename,
+                &file.status,
+                file.additions,
+                file.deletions,
+                hunk.as_deref(),
+            ));
+        }
+        Some(core::yank_issue_text(current, &d.title, &d.url))
+    }
+
+    /// Copy the context yank to the clipboard. Every path toasts: success
+    /// shows the yanked text trimmed to fit, failures name the reason.
+    pub(crate) fn yank(&mut self) {
+        match self.yank_text() {
+            Some(text) => {
+                if crate::clipboard::copy(&text) {
+                    self.notify(format!("yanked {}", core::toast_snippet(&text, 80)));
+                } else {
+                    self.notify("copy failed".to_string());
+                }
+            }
+            None => {
+                if self.current.is_none() {
+                    self.notify("view an issue first".to_string());
+                } else if self.pane == Pane::Refs {
+                    self.notify("no ref selected".to_string());
+                } else if self.tab == Tab::Diff {
+                    self.notify("no diff loaded yet".to_string());
+                } else {
+                    self.notify("nothing to yank".to_string());
+                }
+            }
+        }
     }
 
     pub(crate) fn submit_bar(&mut self) {

@@ -146,6 +146,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Char('r') => app.refresh_current(),
         KeyCode::Char('p') => app.toggle_pin(),
+        KeyCode::Char('y') => app.yank(),
         KeyCode::Char('e') => app.toggle_refs(),
         KeyCode::Char('s') if app.tab == Tab::Diff => app.toggle_diff_split(),
         KeyCode::Char(' ') if app.tab == Tab::Diff => app.toggle_diff_file(),
@@ -167,49 +168,88 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 }
 
-/// j/k walks the issues pane then the PRs pane as one flat list.
-fn move_selection(app: &mut App, delta: isize) {
-    let order = app.flat_numbers();
+/// j/k walks one sidebar list: issues or PRs, never crossing over.
+fn move_in_list(app: &mut App, order: Vec<u64>, delta: isize) {
     if let Some(n) = core::next_in_order(&order, app.current, delta) {
         app.show_issue(n);
     }
 }
 
-/// j/k act on the focused side pane: the sidebar walks selection and refs
-/// moves the source highlight. The body scrolls instead; the Diff tab moves
-/// its file cursor with the arrow keys.
+/// j/k act on the focused side pane: each sidebar list walks only itself
+/// and refs moves the source highlight. The body scrolls instead; the Diff
+/// tab moves its line cursor with the arrow keys.
 fn pane_down(app: &mut App, delta: isize) {
-    if app.pane == Pane::Refs {
-        let next = core::next_in_order(&app.ref_numbers, app.ref_highlight, delta);
-        if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
-            app.select_ref(n);
-        }
-        return;
-    }
     match app.pane {
-        Pane::Left => move_selection(app, delta),
-        _ => {
+        Pane::Issues => move_in_list(app, app.issue_numbers(), delta),
+        Pane::PRs => move_in_list(app, app.pr_numbers(), delta),
+        Pane::Refs => {
+            let next = core::next_in_order(&app.ref_numbers, app.ref_highlight, delta);
+            if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
+                app.select_ref(n);
+            }
+        }
+        Pane::Main => {
             app.scroll = app.scroll.saturating_add_signed(delta as i16 * 3);
         }
     }
 }
 
-/// Up/Down in the Diff tab walks folded files and scrolls the cursor into view.
+/// Up/Down in the Diff tab steps the active line one body row at a time so
+/// wrapped rows just work. The cursor never leaves the viewport: at the
+/// edge the view scrolls with it. Render resolves the owning file and
+/// auto-expands a landed-on collapsed file from the fresh capture, so this
+/// only moves the cursor and flags it touched.
 fn move_diff_cursor(app: &mut App, delta: isize) {
-    let count = app
-        .current
-        .and_then(|n| app.diffs.get(&n))
-        .map(|files| files.len().min(crate::ui::MAX_DIFF_FILES))
-        .unwrap_or(0);
-    if count == 0 {
+    if app.tab != Tab::Diff {
         return;
     }
-    let next = (app.diff_cursor as isize + delta).clamp(0, count as isize - 1) as usize;
-    app.diff_cursor = next;
-    // `diff_headers` is the visible slice taken at `body_base`.
-    if let Some(row) = app.diff_headers.get(next) {
-        app.scroll = app.body_base.saturating_add(*row as u16);
+    let height = app.body_area.height as usize;
+    if height == 0 {
+        return;
     }
+    let base = app.body_base as usize;
+    let scroll = app.scroll as usize;
+    let mut abs = match app.diff_line {
+        Some(a) => a.clamp(scroll, scroll + height.saturating_sub(1)),
+        None => {
+            // Anchor to the first header when no cursor yet; render fills
+            // in the file without expanding it.
+            if let Some(&h) = app.diff_headers.first() {
+                base + h
+            } else {
+                return;
+            }
+        }
+    };
+    if delta > 0 {
+        let vis = abs.saturating_sub(base);
+        let rows = &app.body_rows;
+        if vis + 1 < rows.len() {
+            // A blank target with only blanks below is past the content.
+            let target_blank = rows[vis + 1].trim().is_empty();
+            let rest_blank = rows.get(vis + 2..).map(|r| r.iter().all(|l| l.trim().is_empty())).unwrap_or(true);
+            if target_blank && rest_blank {
+                return;
+            }
+            abs += 1;
+        } else {
+            app.scroll = app.scroll.saturating_add(1);
+            abs += 1;
+        }
+    } else if delta < 0 {
+        if abs > scroll {
+            abs -= 1;
+        } else if scroll > 0 {
+            app.scroll -= 1;
+            abs -= 1;
+        } else {
+            return;
+        }
+    } else {
+        return;
+    }
+    app.diff_line = Some(abs);
+    app.diff_touched = true;
 }
 
 /// n/N jumps between `/` search hits, wrapping at the ends.
@@ -287,17 +327,17 @@ fn in_rect(area: Rect, x: u16, y: u16) -> bool {
     area.contains(ratatui::layout::Position::new(x, y))
 }
 
-/// Sidebar rows are 3 lines each (`Some`) with 1-line dividers (`None`),
+/// Sidebar rows are 3 lines each (`Item`) with 1-line labeled dividers,
 /// below a 1-line border plus a 1-line spacer. Dividers never hit.
-fn sidebar_hit(area: Rect, rows: &[Option<u64>], x: u16, y: u16) -> Option<u64> {
+fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], x: u16, y: u16) -> Option<u64> {
     if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
     let mut rel = (y - area.y - 2) as usize;
     for row in rows {
-        let h = if row.is_some() { 3 } else { 1 };
+        let h = if row.number().is_some() { 3 } else { 1 };
         if rel < h {
-            return *row;
+            return row.number();
         }
         rel -= h;
     }
@@ -356,11 +396,16 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
             let issue_rows = app.side_issue_rows.clone();
             let pr_rows = app.side_pr_rows.clone();
-            if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, m.column, m.row)
-                .or_else(|| sidebar_hit(app.side_pr_area, &pr_rows, m.column, m.row))
-            {
+            if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, m.column, m.row) {
                 app.focus = Focus::Main;
-                app.pane = Pane::Left;
+                app.pane = Pane::Issues;
+                app.ensure_visited(n);
+                app.show_issue(n);
+                return;
+            }
+            if let Some(n) = sidebar_hit(app.side_pr_area, &pr_rows, m.column, m.row) {
+                app.focus = Focus::Main;
+                app.pane = Pane::PRs;
                 app.ensure_visited(n);
                 app.show_issue(n);
                 return;
@@ -398,9 +443,30 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 let area = if in_body { app.body_area } else { app.header_area };
                 let row = (m.row - area.y) as usize;
                 if in_body && app.tab == Tab::Diff {
-                    if let Some(fi) = app.diff_headers.iter().position(|&r| r == row) {
-                        app.diff_cursor = fi;
-                        app.toggle_diff_file();
+                    // Clicking parks the active line there; render resolves
+                    // the file and expands a collapsed header. Clicking an
+                    // expanded header folds it back instead. Other rows fall
+                    // through to link resolution below so refs still open.
+                    let abs = app.body_base as usize + row;
+                    app.diff_line = Some(abs);
+                    app.diff_touched = true;
+                    let is_header = app.diff_headers.iter().any(|&r| r == row);
+                    if is_header {
+                        if let Some(f) = app.diff_row_files.get(row).copied().flatten() {
+                            app.diff_cursor = f;
+                            let expanded = app.current.and_then(|n| {
+                                app.diffs.get(&n).and_then(|fs| {
+                                    fs.get(f).map(|file| {
+                                        app.expanded_files.contains(&(n, file.filename.clone()))
+                                    })
+                                })
+                            });
+                            if expanded == Some(true) {
+                                app.diff_touched = false;
+                                app.toggle_diff_file();
+                                return;
+                            }
+                        }
                         return;
                     }
                 }
