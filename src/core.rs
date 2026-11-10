@@ -106,16 +106,6 @@ pub fn window_label(hours: u64) -> String {
     }
 }
 
-/// Pin-first ordering: pinned numbers in pin order, then everything else in
-/// existing order. Members missing from both lists are dropped; non-members
-/// in the pin order are ignored.
-pub fn apply_pin_order(list: &[u64], pin_order: &[u64], pinned: &HashSet<u64>) -> Vec<u64> {
-    let pins: Vec<u64> =
-        pin_order.iter().filter(|n| list.contains(n)).copied().collect();
-    let rest: Vec<u64> = list.iter().filter(|n| !pinned.contains(n)).copied().collect();
-    [pins, rest].concat()
-}
-
 /// Toggle `n` in the pin list, returning the new list.
 pub fn toggle_pin(pins: &[u64], n: u64) -> Vec<u64> {
     let mut out = pins.to_vec();
@@ -123,6 +113,86 @@ pub fn toggle_pin(pins: &[u64], n: u64) -> Vec<u64> {
         out.retain(|x| *x != n);
     } else {
         out.push(n);
+    }
+    out
+}
+
+/// Split the sidebar into pinned | requested | recent. Pins win: a number in
+/// the pin order shows only in the pinned group, and a requested number
+/// never repeats in recent.
+pub fn section_split(
+    pin_order: &[u64],
+    visited: &[u64],
+    recent: &[u64],
+    pinned: &HashSet<u64>,
+) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    let pin_set: HashSet<u64> = pin_order.iter().copied().collect();
+    let pinned_sec: Vec<u64> = pin_order.to_vec();
+    let visited_sec: Vec<u64> = visited
+        .iter()
+        .filter(|n| !pin_set.contains(n) && !pinned.contains(n))
+        .copied()
+        .collect();
+    let seen: HashSet<u64> = pin_set.union(pinned).copied().collect::<HashSet<_>>()
+        .union(&visited_sec.iter().copied().collect::<HashSet<_>>())
+        .copied()
+        .collect();
+    let recent_sec: Vec<u64> = recent.iter().filter(|n| !seen.contains(n)).copied().collect();
+    (pinned_sec, visited_sec, recent_sec)
+}
+
+/// Display rows for one pane (Issues or PRs): pinned, then requested, then
+/// recent, with a `None` divider slot between non-empty groups. Empty groups
+/// leave no divider behind.
+pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<Option<u64>> {
+    let mut out: Vec<Option<u64>> = vec![];
+    for group in [pinned, requested, recent] {
+        if group.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(None);
+        }
+        out.extend(group.iter().copied().map(Some));
+    }
+    out
+}
+
+/// True when `query` matches the row: a case-insensitive title substring,
+/// or a digit substring of the number (`#` prefix optional).
+pub fn matches_search(number: u64, title: &str, query: &str) -> bool {
+    let q = query.trim().trim_start_matches('#').to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    if number.to_string().contains(&q) {
+        return true;
+    }
+    title.to_lowercase().contains(&q)
+}
+
+/// Byte ranges of every case-insensitive non-overlapping hit of `query` in
+/// `text`, for highlight rendering. Empty query matches nothing.
+pub fn match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
+    let q = query.trim().trim_start_matches('#');
+    if q.is_empty() {
+        return vec![];
+    }
+    let lower = text.to_lowercase();
+    let needle = q.to_lowercase();
+    let mut out = vec![];
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find(&needle) {
+        let start = from + rel;
+        let end = start + needle.len();
+        // Lowercasing is ASCII-safe for our titles; guard the slice anyway.
+        if text.get(start..end).is_some() {
+            out.push((start, end));
+        }
+        from = end;
+        if from >= lower.len() {
+            break;
+        }
     }
     out
 }
@@ -178,11 +248,42 @@ mod tests {
     }
 
     #[test]
-    fn pins_order_first_and_toggle() {
-        let pinned: HashSet<u64> = [9].into_iter().collect();
-        assert_eq!(apply_pin_order(&[7, 9], &[9], &pinned), vec![9, 7]);
-        assert_eq!(apply_pin_order(&[7], &[9], &pinned), vec![7]);
+    fn pins_toggle() {
         assert_eq!(toggle_pin(&[7], 9), vec![7, 9]);
         assert_eq!(toggle_pin(&[7, 9], 9), vec![7]);
+    }
+
+    #[test]
+    fn sections_split_and_dedup() {
+        let pinned: HashSet<u64> = [9].into_iter().collect();
+        let (p, v, r) = section_split(&[9], &[9, 7], &[7, 5], &pinned);
+        assert_eq!(p, vec![9]);
+        assert_eq!(v, vec![7]);
+        assert_eq!(r, vec![5]);
+    }
+
+    #[test]
+    fn pane_order_dividers_between_groups_only() {
+        assert_eq!(pane_order(&[9], &[7], &[5]), vec![Some(9), None, Some(7), None, Some(5)]);
+        assert_eq!(pane_order(&[], &[7], &[]), vec![Some(7)]);
+        assert_eq!(pane_order(&[], &[], &[]), Vec::<Option<u64>>::new());
+        assert_eq!(pane_order(&[9], &[], &[5]), vec![Some(9), None, Some(5)]);
+    }
+
+    #[test]
+    fn search_matches_title_or_number() {
+        assert!(matches_search(123, "Fix login", "fix"));
+        assert!(matches_search(123, "Fix login", "FIX"));
+        assert!(matches_search(123, "Fix login", "#23"));
+        assert!(matches_search(123, "Fix login", "12"));
+        assert!(!matches_search(123, "Fix login", "zzz"));
+        assert!(matches_search(123, "Fix login", ""));
+    }
+
+    #[test]
+    fn search_ranges_find_all_hits() {
+        assert_eq!(match_ranges("Fix the thing", "th"), vec![(4, 6), (8, 10)]);
+        assert_eq!(match_ranges("Fix the thing", ""), Vec::new());
+        assert_eq!(match_ranges("abc", "z"), Vec::new());
     }
 }

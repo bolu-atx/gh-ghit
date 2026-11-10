@@ -84,11 +84,18 @@ pub fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle,
     Ok((data, statuses))
 }
 
-/// Open PRs plus PRs merged inside `hours`, as full rows.
-pub fn fetch_pr_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
+/// Recent rows: open + windowed merged PRs, open + windowed closed issues.
+pub fn fetch_recent_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
     api::sections(repo, hours, token)
+}
+
+/// Server-side issue/PR search scoped to the repo.
+pub fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::search(repo, query, token)
 }
 
 /// Per-card detail: dates plus comment count.
@@ -123,7 +130,8 @@ mod tests {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
         assert!(fetch_number("", 1, false).is_err());
-        assert!(fetch_pr_sections("", 24).is_err());
+        assert!(fetch_recent_sections("", 24).is_err());
+        assert!(search_repo("", "bug").is_err());
         assert!(fetch_board_detail("", 1).is_err());
     }
 }
