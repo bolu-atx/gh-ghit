@@ -1,4 +1,4 @@
-use crate::model::{Author, BoardDetail, DiffFile, IssueData, Label};
+use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
@@ -242,7 +242,35 @@ pub async fn pull_files(repo: &str, number: u64, bearer: &str) -> Result<Vec<Dif
     Ok(out)
 }
 
-pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Statuses), String> {
+async fn fetch_comment_pages(client: &reqwest::Client, base: &str, repo: &str, number: u64, bearer: &str, count: u64) -> Result<Vec<Comment>, String> {
+    let mut pages = Vec::new();
+    let total = count.div_ceil(100);
+    // Bound the number of simultaneous requests for unusually large threads.
+    for first in (1..=total).step_by(8) {
+        let mut tasks = tokio::task::JoinSet::new();
+        for page in first..=(first + 7).min(total) {
+            let client = client.clone();
+            let url = format!("{base}/repos/{repo}/issues/{number}/comments?per_page=100&page={page}");
+            let bearer = bearer.to_owned();
+            tasks.spawn(async move {
+                let value = get(&client, &url, &bearer).await?;
+                let items = value.as_array().ok_or("bad comments payload")?;
+                let comments = items.iter().map(|c| Comment {
+                    author: Author { login: c.pointer("/user/login").and_then(Value::as_str).unwrap_or("").to_owned() },
+                    body: c["body"].as_str().unwrap_or("").to_owned(),
+                    created_at: c["created_at"].as_str().unwrap_or("").to_owned(),
+                }).collect();
+                Ok::<_, String>((page as usize, comments))
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            pages.push(result.map_err(|e| format!("comment fetch failed: {e}"))??);
+        }
+    }
+    Ok(model::merge_comment_pages(pages))
+}
+
+pub async fn issue(repo: &str, number: u64, bearer: &str, cached_comments: Option<Vec<Comment>>) -> Result<(IssueData, Statuses), String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
     let client = client();
@@ -254,15 +282,10 @@ pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, 
     if v["body"].is_null() { v["body"] = json!(""); }
     if is_pr && !v["pull_request"]["merged_at"].is_null() { v["state"] = json!("MERGED"); }
     else if let Some(state) = v["state"].as_str() { v["state"] = json!(state.to_uppercase()); }
-    let mut comments = Vec::new();
-    let mut page = 1;
-    loop {
-        let items = get(&client, &format!("{base}/repos/{repo}/issues/{number}/comments?per_page=100&page={page}"), bearer).await?;
-        let items = items.as_array().ok_or("bad comments payload")?;
-        for c in items { comments.push(json!({"author": c.get("user").filter(|u| !u.is_null()).cloned().unwrap_or(json!({})), "body": c["body"].as_str().unwrap_or(""), "createdAt": c["created_at"]})); }
-        if items.len() < 100 { break; }
-        page += 1;
-    }
+    let comments = match cached_comments {
+        Some(comments) => comments,
+        None => fetch_comment_pages(&client, &base, repo, number, bearer, v["comments"].as_u64().ok_or("missing comment count")?).await?,
+    };
     v["comments"] = json!(comments);
     v["isPr"] = json!(is_pr);
     let data = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;

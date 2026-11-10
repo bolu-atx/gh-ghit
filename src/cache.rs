@@ -41,6 +41,11 @@ pub fn cache_put<T: serde::Serialize>(name: &str, data: &T) {
     let _ = std::fs::write(p, serde_json::to_string(&payload).unwrap_or_default());
 }
 
+pub fn comment_cache_name(repo: &str, number: u64) -> String {
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    format!("comments-{}-{}-{number}", host.to_lowercase().replace('/', "__"), repo.to_lowercase().replace('/', "__"))
+}
+
 pub fn cache_drop(name: &str) {
     let _ = std::fs::remove_file(cache_path(name));
 }
