@@ -57,6 +57,14 @@ Key patterns:
 - Mouse is real SGR: `tmux send-keys -l $'\x1b[<0;x;ym'` (press) and
   `$'\x1b[<3;x;my'` (release), 1-based cells.
 
+## Planning
+
+We plan in milestones and issues — see [docs/planning.md](docs/planning.md).
+Milestone = epic, issue = coarse story, labels = subject
+(`feature`, `bugfix`, `docs`, `chore`). PRs open with `Closes #N`.
+Templates live in `.github/ISSUE_TEMPLATE/story.md` and
+`.github/pull_request_template.md`. Browse the plan with ghit itself.
+
 ## Commits and releases
 
 - Title style: `feat: …`, `fix: …`, `docs: …`, `refactor: …`.
