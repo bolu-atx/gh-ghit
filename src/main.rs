@@ -3,6 +3,7 @@
 //! Punch in an issue number, read the ticket. `o` opens it in GitHub.
 //! Usage: `ghit [numbers...] [-R owner/repo]`
 
+mod api;
 mod cache;
 mod gh;
 mod model;
@@ -77,6 +78,14 @@ enum Focus {
 struct App {
     repo_flag: Option<String>,
     repo_slug: Option<String>,
+    bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    initial_numbers: Vec<u64>,
+    section_rx: Option<std::sync::mpsc::Receiver<Result<Vec<api::Row>, String>>>,
+    partial: HashSet<u64>,
+    issue_tx: std::sync::mpsc::Sender<(u64, Result<(IssueData, Vec<(String, Option<String>)>), String>)>,
+    issue_rx: std::sync::mpsc::Receiver<(u64, Result<(IssueData, Vec<(String, Option<String>)>), String>)>,
+    issue_pending: HashSet<u64>,
+    requested: Option<u64>,
     data: HashMap<u64, IssueData>,
     statuses: HashMap<u64, Vec<(String, Option<String>)>>,
     issues: Vec<u64>,
@@ -126,9 +135,15 @@ enum ActiveList {
 impl App {
     fn new(repo_flag: Option<String>) -> Self {
         let (detail_tx, detail_rx) = std::sync::mpsc::channel();
+        let (issue_tx, issue_rx) = std::sync::mpsc::channel();
         Self {
             repo_flag,
             repo_slug: None,
+            bootstrap_rx: None,
+            initial_numbers: vec![],
+            section_rx: None,
+            partial: HashSet::new(),
+            issue_tx, issue_rx, issue_pending: HashSet::new(), requested: None,
             data: HashMap::new(),
             statuses: HashMap::new(),
             issues: vec![],
@@ -223,6 +238,18 @@ impl App {
         let iname = format!("issue-{tag}-{number}");
         let sname = format!("status-{tag}-{number}");
 
+        if let Some(token) = api::token().filter(|_| !repo.is_empty()) {
+            if !force {
+                if let (Some(data), Some(statuses)) = (cache::cache_get(&iname), cache::cache_get(&sname)) {
+                    return Ok((data, statuses));
+                }
+            }
+            let (data, statuses) = api::issue(&repo, number, token)?;
+            cache::cache_put(&iname, &data);
+            cache::cache_put(&sname, &statuses);
+            return Ok((data, statuses));
+        }
+
         let data: IssueData = if !force {
             match cache::cache_get::<IssueData>(&iname) {
                 Some(d) => d,
@@ -270,17 +297,24 @@ impl App {
     /// Pull open PRs plus PRs merged inside the window into the section.
     /// Offline or out of a repo this is a no-op: clicked rows still list.
     fn merge_pr_sections(&mut self) {
-        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
-            return;
-        };
-        let mut nums = gh::gh_open_prs(&repo);
-        nums.extend(gh::gh_recently_merged_prs(&repo, self.merged_window_hours));
-        for n in nums {
-            if self.prs.contains(&n) || self.issues.contains(&n) {
-                continue;
-            }
-            self.load_issue(n, false);
-        }
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
+        let hours = self.merged_window_hours;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.section_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = if let Some(token) = api::token() {
+                api::sections(&repo, hours, token)
+            } else {
+                let mut numbers = gh::gh_open_prs(&repo);
+                numbers.extend(gh::gh_recently_merged_prs(&repo, hours));
+                let mut worker = App::new(Some(repo));
+                Ok(numbers.into_iter().filter_map(|n| worker.fetch_all(n, false).ok()).map(|(issue, statuses)| {
+                    let detail = model::BoardDetail::from_issue(&issue);
+                    api::Row { issue, statuses, detail, complete: true }
+                }).collect())
+            };
+            let _ = tx.send(result);
+        });
     }
 
     fn window_label(&self) -> String {
@@ -292,28 +326,22 @@ impl App {
     }
 
     fn load_issue(&mut self, number: u64, force: bool) {
-        if !force && self.data.contains_key(&number) {
-            let is_pr = self.data.get(&number).map(|d| d.is_pr).unwrap_or(false);
+        self.requested = Some(number);
+        if !force && self.data.contains_key(&number) && !self.partial.contains(&number) {
+            let is_pr = self.data[&number].is_pr;
             self.ensure_listed(number, is_pr);
             self.show_issue(number);
             self.bar.clear();
             self.focus = Focus::Main;
             return;
         }
-        match self.fetch_all(number, force) {
-            Ok((data, statuses)) => {
-                let n = data.number;
-                let is_pr = data.is_pr;
-                self.data.insert(n, data);
-                self.statuses.insert(n, statuses);
-                self.ensure_listed(n, is_pr);
-                self.show_issue(n);
-                self.bar.clear();
-                self.focus = Focus::Main;
-                self.message.clear();
-            }
-            Err(e) => self.notify(e),
-        }
+        if !self.issue_pending.insert(number) { return; }
+        let tx = self.issue_tx.clone();
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone());
+        std::thread::spawn(move || {
+            let mut worker = App::new(repo);
+            let _ = tx.send((number, worker.fetch_all(number, force)));
+        });
     }
 
     fn sort_section(&mut self, sec: &str) {
@@ -324,6 +352,8 @@ impl App {
     }
 
     fn show_issue(&mut self, n: u64) {
+        self.requested = Some(n);
+        if self.partial.contains(&n) { self.load_issue(n, false); }
         self.current = Some(n);
         self.scroll = 0;
         if let Some(d) = self.data.get(&n) {
@@ -453,26 +483,17 @@ fn run_tui(app: &mut App, numbers: &[u64]) -> Result<(), String> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
 
-    app.resolve_repo();
-    if let Some(key) = app.repo_key() {
-        let mut pins = cache::load_pins(&key);
-        pins.retain(|n| !numbers.contains(n));
-        let mut initial: Vec<u64> = pins.clone();
-        initial.extend(numbers.iter().copied());
-        app.pinned = pins.iter().copied().collect();
-        app.pin_order = pins;
-        for n in initial {
-            app.load_issue(n, false);
-        }
-        app.merge_pr_sections();
-    } else {
-        for &n in numbers {
-            app.load_issue(n, false);
-        }
-    }
-    if app.current.is_none() {
-        app.focus = Focus::Bar;
-    }
+    app.initial_numbers = numbers.to_vec();
+    app.focus = Focus::Bar;
+    let repo = app.repo_flag.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.bootstrap_rx = Some(rx);
+    std::thread::spawn(move || {
+        let mut worker = App::new(repo);
+        worker.resolve_repo();
+        let _ = api::token();
+        let _ = tx.send(worker.repo_slug);
+    });
 
     let result = event_loop(&mut terminal, app);
 
@@ -499,10 +520,78 @@ fn event_loop(
                 _ => {}
             };
         }
+        poll_bootstrap(app);
+        poll_sections(app);
+        poll_issues(app);
         poll_board(app);
         poll_details(app);
         if app.quit {
             return Ok(());
+        }
+    }
+}
+
+fn poll_bootstrap(app: &mut App) {
+    let Some(result) = app.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+    app.bootstrap_rx = None;
+    app.repo_slug = result;
+    let numbers = std::mem::take(&mut app.initial_numbers);
+    if let Some(key) = app.repo_key() {
+        let mut pins = cache::load_pins(&key);
+        pins.retain(|n| !numbers.contains(n));
+        app.pinned = pins.iter().copied().collect();
+        app.pin_order = pins.clone();
+        for n in pins.into_iter().chain(numbers) { app.load_issue(n, false); }
+        app.merge_pr_sections();
+    } else {
+        for n in numbers { app.load_issue(n, false); }
+    }
+}
+
+fn poll_sections(app: &mut App) {
+    let Some(result) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+    app.section_rx = None;
+    match result {
+        Ok(rows) => {
+            let mut last = None;
+            for row in rows {
+                let n = row.issue.number;
+                if !app.data.contains_key(&n) {
+                    if !row.complete { app.partial.insert(n); }
+                    app.data.insert(n, row.issue);
+                    app.statuses.insert(n, row.statuses);
+                    app.board_details.insert(n, row.detail);
+                    app.ensure_listed(n, true);
+                    last = Some(n);
+                }
+            }
+            if app.current.is_none() && app.requested.is_none() {
+                if let Some(n) = last { app.load_issue(n, false); }
+            }
+        },
+        Err(e) => app.notify(e),
+    }
+}
+
+fn poll_issues(app: &mut App) {
+    let ready: Vec<_> = app.issue_rx.try_iter().collect();
+    for (number, result) in ready {
+        app.issue_pending.remove(&number);
+        match result {
+            Ok((data, statuses)) => {
+                let is_pr = data.is_pr;
+                app.partial.remove(&number);
+                app.data.insert(number, data);
+                app.statuses.insert(number, statuses);
+                app.ensure_listed(number, is_pr);
+                if app.requested == Some(number) {
+                    app.show_issue(number);
+                    app.bar.clear();
+                    app.focus = Focus::Main;
+                    app.message.clear();
+                }
+            }
+            Err(e) => app.notify(e),
         }
     }
 }
@@ -803,7 +892,11 @@ fn kick_off_details(app: &mut App) {
         app.detail_pending.insert(n);
         let tx = tx.clone();
         std::thread::spawn(move || {
-            let res = gh::gh_issue_json(&repo, n).map(|d| model::BoardDetail::from_issue(&d));
+            let res = if let Some(token) = api::token() {
+                api::issue(&repo, n, token).map(|(d, _)| model::BoardDetail::from_issue(&d))
+            } else {
+                gh::gh_issue_json(&repo, n).map(|d| model::BoardDetail::from_issue(&d))
+            };
             let _ = tx.send((n, res));
         });
     }
@@ -1782,6 +1875,21 @@ mod render_smoke {
         assert!(text.contains("#7"), "issue number");
         assert!(text.contains("Body"), "tab label");
         assert!(text.contains("hello"), "markdown body");
+    }
+
+    #[test]
+    fn background_section_rows_render_without_changing_selection() {
+        let mut app = loaded_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.section_rx = Some(rx);
+        let mut issue = sample(42);
+        issue.is_pr = true;
+        issue.title = "background pull request".to_string();
+        tx.send(Ok(vec![api::Row { issue, statuses: vec![], detail: model::BoardDetail::default(), complete: false }])).unwrap();
+        poll_sections(&mut app);
+        assert_eq!(app.current, Some(7));
+        assert!(app.partial.contains(&42));
+        assert!(frame_text(&mut app).contains("background pull request"));
     }
 
     #[test]
