@@ -63,7 +63,8 @@ fn require_token() -> Result<&'static str, String> {
 }
 
 /// Fetch one issue/PR plus its project statuses. Failures are strings for
-/// the status line, never panics.
+/// the status line, never panics. File-cache access runs on the blocking
+/// pool so async workers never touch the disk.
 pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
@@ -72,15 +73,27 @@ pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueB
     let sname = format!("status-{raw}-{number}");
 
     if !force {
-        if let (Some(data), Some(statuses)) =
-            (cache::cache_get(&iname), cache::cache_get(&sname))
-        {
-            return Ok((data, statuses));
+        let iname_c = iname.clone();
+        let sname_c = sname.clone();
+        let hit: Option<IssueBundle> = tokio::task::spawn_blocking(move || {
+            match (cache::cache_get(&iname_c), cache::cache_get(&sname_c)) {
+                (Some(data), Some(statuses)) => Some((data, statuses)),
+                _ => None,
+            }
+        })
+        .await
+        .map_err(|e| format!("cache read failed: {e}"))?;
+        if let Some(bundle) = hit {
+            return Ok(bundle);
         }
     }
     let (data, statuses) = api::issue(repo, number, token).await?;
-    cache::cache_put(&iname, &data);
-    cache::cache_put(&sname, &statuses);
+    let (data_c, statuses_c) = (data.clone(), statuses.clone());
+    let _ = tokio::task::spawn_blocking(move || {
+        cache::cache_put(&iname, &data_c);
+        cache::cache_put(&sname, &statuses_c);
+    })
+    .await;
     Ok((data, statuses))
 }
 
