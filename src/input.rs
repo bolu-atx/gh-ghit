@@ -93,8 +93,9 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
         KeyCode::Char('q') => app.quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
-        KeyCode::Char('1') => app.tab = Tab::Body,
-        KeyCode::Char('2') => app.tab = Tab::Comments,
+        KeyCode::Char('1') => app.set_tab(Tab::Body),
+        KeyCode::Char('2') => app.set_tab(Tab::Comments),
+        KeyCode::Char('3') => app.set_tab(Tab::Diff),
         KeyCode::Char('t') => {
             app.notify(format!("theme: {}", crate::theme::cycle()));
         }
@@ -137,6 +138,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Char('r') => app.refresh_current(),
         KeyCode::Char('p') => app.toggle_pin(),
+        KeyCode::Char('s') if app.tab == Tab::Diff => app.toggle_diff_split(),
         KeyCode::Char('w') => {
             app.merged_window_hours = core::cycle_window(app.merged_window_hours);
             app.refetch_recent();
@@ -148,7 +150,11 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.search.clear();
         }
         KeyCode::Tab => {
-            app.tab = if app.tab == Tab::Body { Tab::Comments } else { Tab::Body };
+            app.set_tab(match app.tab {
+                Tab::Body => Tab::Comments,
+                Tab::Comments => Tab::Diff,
+                Tab::Diff => Tab::Body,
+            });
         }
         _ => {}
     }
@@ -315,12 +321,16 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if in_rect(app.tabs_area, m.column, m.row) {
-                // "Body" is 4 wide, then the divider: left half body, right half comments.
-                app.tab = if m.column.saturating_sub(app.tabs_area.x) < 6 {
+                // Tabs are "Body  Comments  Diff": Body ends at 6,
+                // Comments ends at 16, the rest is Diff.
+                let rel = m.column.saturating_sub(app.tabs_area.x);
+                app.set_tab(if rel < 6 {
                     Tab::Body
-                } else {
+                } else if rel < 16 {
                     Tab::Comments
-                };
+                } else {
+                    Tab::Diff
+                });
                 return;
             }
             if in_rect(app.body_area, m.column, m.row) {

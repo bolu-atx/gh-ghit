@@ -118,6 +118,31 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
     api::issue(repo, number, token).await.map(|(d, _)| model::BoardDetail::from_issue(&d))
 }
 
+/// Changed files for one PR, cached like single issues.
+pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<model::DiffFile>, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    let raw = repo.to_lowercase().replace('/', "__");
+    let name = format!("diff-{raw}-{number}");
+    if !force {
+        let name_c = name.clone();
+        let hit: Option<Vec<model::DiffFile>> =
+            tokio::task::spawn_blocking(move || cache::cache_get(&name_c))
+                .await
+                .map_err(|e| format!("cache read failed: {e}"))?;
+        if let Some(files) = hit {
+            return Ok(files);
+        }
+    }
+    let files = api::pull_files(repo, number, token).await?;
+    let (name_c, files_c) = (name, files.clone());
+    let _ = tokio::task::spawn_blocking(move || {
+        cache::cache_put(&name_c, &files_c);
+    })
+    .await;
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +171,6 @@ mod tests {
         assert!(fetch_recent_sections("", 24).await.is_err());
         assert!(search_repo("", "bug").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
+        assert!(fetch_diff("", 1, false).await.is_err());
     }
 }

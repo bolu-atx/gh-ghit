@@ -40,6 +40,7 @@ fn rt() -> &'static tokio::runtime::Runtime {
 pub(crate) enum Tab {
     Body,
     Comments,
+    Diff,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -112,6 +113,11 @@ pub(crate) struct App {
     pub(crate) detail_pending: HashSet<u64>,
     pub(crate) detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
     pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
+    pub(crate) diffs: HashMap<u64, Vec<model::DiffFile>>,
+    pub(crate) diff_pending: HashSet<u64>,
+    pub(crate) diff_tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
+    pub(crate) diff_rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
+    pub(crate) diff_split: bool,
     // Last-rendered hit areas for mouse clicks. The row maps hold the
     // display order per pane, `None` marking a divider slot.
     pub(crate) side_issue_area: Rect,
@@ -131,6 +137,7 @@ impl App {
     pub(crate) fn new(repo_flag: Option<String>) -> Self {
         let (detail_tx, detail_rx) = std::sync::mpsc::channel();
         let (issue_tx, issue_rx) = std::sync::mpsc::channel();
+        let (diff_tx, diff_rx) = std::sync::mpsc::channel();
         Self {
             repo_flag,
             repo_slug: None,
@@ -177,6 +184,11 @@ impl App {
             detail_pending: HashSet::new(),
             detail_tx,
             detail_rx,
+            diffs: HashMap::new(),
+            diff_pending: HashSet::new(),
+            diff_tx,
+            diff_rx,
+            diff_split: false,
             quit: false,
             body_area: Rect::default(),
             body_rows: Vec::new(),
@@ -285,6 +297,8 @@ impl App {
                 self.data.remove(&n);
                 self.statuses.remove(&n);
                 self.board_details.remove(&n);
+                self.diffs.remove(&n);
+                self.diff_pending.remove(&n);
             }
         }
     }
@@ -463,6 +477,47 @@ impl App {
         self.current = Some(n);
         self.scroll = 0;
         self.sync_selection();
+        self.load_diff(n, false);
+    }
+
+    /// Switch tabs, resetting scroll. Selecting Diff on a PR starts its
+    /// background fetch so the pane fills in without blocking.
+    pub(crate) fn set_tab(&mut self, tab: Tab) {
+        self.tab = tab;
+        self.scroll = 0;
+        if tab == Tab::Diff {
+            if let Some(n) = self.current {
+                self.load_diff(n, false);
+            }
+        }
+    }
+
+    /// Flip the Diff tab between unified and side-by-side rendering,
+    /// back at the top so the new layout starts visible.
+    pub(crate) fn toggle_diff_split(&mut self) {
+        self.diff_split = !self.diff_split;
+        self.scroll = 0;
+        self.notify(if self.diff_split { "diff: split".to_string() } else { "diff: unified".to_string() });
+    }
+
+    /// Queue a diff fetch for PR `number`. No-op for issues, cached rows,
+    /// and rows already in flight.
+    pub(crate) fn load_diff(&mut self, number: u64, force: bool) {
+        let Some(d) = self.data.get(&number) else { return };
+        if !d.is_pr {
+            return;
+        }
+        if !force && self.diffs.contains_key(&number) {
+            return;
+        }
+        if !self.diff_pending.insert(number) {
+            return;
+        }
+        let tx = self.diff_tx.clone();
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        rt().spawn(async move {
+            let _ = tx.send((number, github::fetch_diff(&repo, number, force).await));
+        });
     }
 
     pub(crate) fn toggle_pin(&mut self) {
@@ -499,6 +554,7 @@ impl App {
             cache::cache_drop(&format!("board-{}", owner.to_lowercase()));
         }
         self.load_issue(n, true);
+        self.load_diff(n, true);
         // A search listing refreshes from the server; a window listing
         // re-appends (idempotent through the contains checks in polling).
         if self.query_active.trim().is_empty() {
@@ -725,6 +781,7 @@ fn event_loop(
         poll_bootstrap(app);
         poll_sections(app);
         poll_issues(app);
+        poll_diffs(app);
         poll_board(app);
         poll_details(app);
         if app.quit {
@@ -800,6 +857,19 @@ pub(crate) fn poll_issues(app: &mut App) {
                     app.focus = Focus::Main;
                     app.message.clear();
                 }
+            }
+            Err(e) => app.notify(e),
+        }
+    }
+}
+
+pub(crate) fn poll_diffs(app: &mut App) {
+    let ready: Vec<_> = app.diff_rx.try_iter().collect();
+    for (number, result) in ready {
+        app.diff_pending.remove(&number);
+        match result {
+            Ok(files) => {
+                app.diffs.insert(number, files);
             }
             Err(e) => app.notify(e),
         }
