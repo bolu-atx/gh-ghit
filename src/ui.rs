@@ -1100,10 +1100,22 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let state = &mut app.board_states[i];
         state.select(if active { Some(app.board_row) } else { None });
         f.render_stateful_widget(list, *a, state);
+        let col_inner = Block::default().borders(Borders::ALL).inner(*a);
+        if cards.is_empty() {
+            // An empty lane keeps its width and says so, instead of
+            // reading as a broken fetch.
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "  no cards",
+                    Style::new().bg(ink()).fg(muted()),
+                )))
+                .style(base()),
+                col_inner,
+            );
+        }
         // Map visible cards back to click areas using the widget's scroll
         // offset. Cards have variable height, so walk line offsets.
         let offset = app.board_states[i].offset();
-        let col_inner = Block::default().borders(Borders::ALL).inner(*a);
         let mut y = col_inner.y;
         for (ri, _) in cards.iter().enumerate().skip(offset) {
             let h = card_height(app.board_expanded == Some((i, ri)));
@@ -1338,6 +1350,33 @@ mod render_smoke {
         // The swimlane carries the status; collapsed cards don't repeat it.
         // (The column header "Todo (n)" is not indented like a card line.)
         assert!(!text.contains("    Todo"), "status leaks into collapsed card");
+    }
+
+    #[test]
+    fn board_headers_show_card_counts() {
+        let mut app = board_app(2);
+        let board = app.board.as_mut().expect("board");
+        board.order.push("Done".to_string());
+        board.items.push(BoardItem {
+            title: "Card 2".to_string(),
+            number: Some(102),
+            status: Some("Done".to_string()),
+            labels: vec![Label { name: "x".to_string() }],
+            repo: Some("o/r".to_string()),
+            content: serde_json::json!({ "type": "Issue" }),
+        });
+        let text = frame_text(&mut app);
+        assert!(text.contains("Todo (2)"), "todo count missing: {text}");
+        assert!(text.contains("Done (1)"), "done count missing: {text}");
+    }
+
+    #[test]
+    fn board_empty_column_shows_empty_state() {
+        let mut app = board_app(1);
+        app.board.as_mut().expect("board").order.push("Done".to_string());
+        let text = frame_text(&mut app);
+        assert!(text.contains("Done (0)"), "zero count missing: {text}");
+        assert!(text.contains("no cards"), "empty label missing: {text}");
     }
 
     #[test]
