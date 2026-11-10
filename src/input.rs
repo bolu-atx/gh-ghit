@@ -6,7 +6,7 @@
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{App, Focus, Tab, board_move, board_open, board_selected_number};
+use crate::app::{App, Focus, Pane, Tab, board_move, board_open, board_selected_number};
 use crate::core;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
@@ -104,13 +104,21 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.filter_open = true;
             app.query_edit = false;
         }
-        KeyCode::Char('j') => move_selection(app, 1),
-        KeyCode::Char('k') => move_selection(app, -1),
+        KeyCode::Char('j') => pane_down(app, 1),
+        KeyCode::Char('k') => pane_down(app, -1),
         KeyCode::Down => {
-            app.scroll = app.scroll.saturating_add(3);
+            if app.tab == Tab::Diff {
+                move_diff_cursor(app, 1);
+            } else {
+                app.scroll = app.scroll.saturating_add(3);
+            }
         }
         KeyCode::Up => {
-            app.scroll = app.scroll.saturating_sub(3);
+            if app.tab == Tab::Diff {
+                move_diff_cursor(app, -1);
+            } else {
+                app.scroll = app.scroll.saturating_sub(3);
+            }
         }
         KeyCode::PageDown => {
             app.scroll = app.scroll.saturating_add(12);
@@ -138,7 +146,9 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Char('r') => app.refresh_current(),
         KeyCode::Char('p') => app.toggle_pin(),
+        KeyCode::Char('e') => app.toggle_refs(),
         KeyCode::Char('s') if app.tab == Tab::Diff => app.toggle_diff_split(),
+        KeyCode::Char(' ') if app.tab == Tab::Diff => app.toggle_diff_file(),
         KeyCode::Char('w') => {
             app.merged_window_hours = core::cycle_window(app.merged_window_hours);
             app.refetch_recent();
@@ -148,13 +158,10 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.bar.clear();
             app.searching = false;
             app.search.clear();
+            app.ref_highlight = None;
         }
         KeyCode::Tab => {
-            app.set_tab(match app.tab {
-                Tab::Body => Tab::Comments,
-                Tab::Comments => Tab::Diff,
-                Tab::Diff => Tab::Body,
-            });
+            app.cycle_pane();
         }
         _ => {}
     }
@@ -165,6 +172,43 @@ fn move_selection(app: &mut App, delta: isize) {
     let order = app.flat_numbers();
     if let Some(n) = core::next_in_order(&order, app.current, delta) {
         app.show_issue(n);
+    }
+}
+
+/// j/k act on the focused side pane: the sidebar walks selection and refs
+/// moves the source highlight. The body scrolls instead; the Diff tab moves
+/// its file cursor with the arrow keys.
+fn pane_down(app: &mut App, delta: isize) {
+    if app.pane == Pane::Refs {
+        let next = core::next_in_order(&app.ref_numbers, app.ref_highlight, delta);
+        if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
+            app.select_ref(n);
+        }
+        return;
+    }
+    match app.pane {
+        Pane::Left => move_selection(app, delta),
+        _ => {
+            app.scroll = app.scroll.saturating_add_signed(delta as i16 * 3);
+        }
+    }
+}
+
+/// Up/Down in the Diff tab walks folded files and scrolls the cursor into view.
+fn move_diff_cursor(app: &mut App, delta: isize) {
+    let count = app
+        .current
+        .and_then(|n| app.diffs.get(&n))
+        .map(|files| files.len().min(crate::ui::MAX_DIFF_FILES))
+        .unwrap_or(0);
+    if count == 0 {
+        return;
+    }
+    let next = (app.diff_cursor as isize + delta).clamp(0, count as isize - 1) as usize;
+    app.diff_cursor = next;
+    // `diff_headers` is the visible slice taken at `body_base`.
+    if let Some(row) = app.diff_headers.get(next) {
+        app.scroll = app.body_base.saturating_add(*row as u16);
     }
 }
 
@@ -316,17 +360,28 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 .or_else(|| sidebar_hit(app.side_pr_area, &pr_rows, m.column, m.row))
             {
                 app.focus = Focus::Main;
+                app.pane = Pane::Left;
                 app.ensure_visited(n);
                 app.show_issue(n);
                 return;
             }
+            // Refs rows never navigate: selecting one highlights its source
+            // line in the body instead.
+            let ref_rows = app.ref_rows.clone();
+            if let Some(n) = sidebar_hit(app.refs_area, &ref_rows, m.column, m.row) {
+                app.focus = Focus::Main;
+                app.pane = Pane::Refs;
+                app.select_ref(n);
+                return;
+            }
             if in_rect(app.tabs_area, m.column, m.row) {
-                // Tabs are "Body  Comments  Diff": Body ends at 6,
-                // Comments ends at 16, the rest is Diff.
+                // Tabs are icon + "Body  Comments  Diff": Body ends at 7,
+                // Comments ends at 20, the rest is Diff.
+                app.pane = Pane::Main;
                 let rel = m.column.saturating_sub(app.tabs_area.x);
-                app.set_tab(if rel < 6 {
+                app.set_tab(if rel < 9 {
                     Tab::Body
-                } else if rel < 16 {
+                } else if rel < 22 {
                     Tab::Comments
                 } else {
                     Tab::Diff
@@ -335,7 +390,15 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
             if in_rect(app.body_area, m.column, m.row) {
                 app.focus = Focus::Main;
+                app.pane = Pane::Main;
                 let row = (m.row - app.body_area.y) as usize;
+                if app.tab == Tab::Diff {
+                    if let Some(fi) = app.diff_headers.iter().position(|&r| r == row) {
+                        app.diff_cursor = fi;
+                        app.toggle_diff_file();
+                        return;
+                    }
+                }
                 if let Some(line) = app.body_rows.get(row) {
                     let repo = app.repo_key();
                     let rel_x = (m.column - app.body_area.x) as usize;
