@@ -1,9 +1,10 @@
-//! ghit themes: ayu mirage, ayu dark, and GitHub light.
+//! ghit themes: system (terminal ANSI), ayu mirage, ayu dark, GitHub light.
 //!
 //! One accent color per theme. Selection is a marker
 //! plus bold type, never a full-width color block. The active palette is
 //! global so every widget and the markdown stylesheet stay in sync; `t`
-//! cycles it at runtime.
+//! cycles it at runtime. The choice persists in the data dir so restarts
+//! keep the last theme.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ratatui::style::{Color, Style};
@@ -59,7 +60,23 @@ pub const LIGHT: Palette = Palette {
     violet: Color::Rgb(0x82, 0x50, 0xDF),
 };
 
-pub const THEMES: &[(&str, Palette)] = &[("mirage", MIRAGE), ("ayu dark", DARK), ("github light", LIGHT)];
+/// System theme: no hardcoded colors. Backgrounds and body text stay on
+/// the terminal default (`Reset`); accents use the six ANSI colors so any
+/// terminal scheme (dark or light) keeps working.
+pub const SYSTEM: Palette = Palette {
+    ink: Color::Reset,
+    code_bg: Color::Reset,
+    paper: Color::Reset,
+    amber: Color::Yellow,
+    teal: Color::Cyan,
+    muted: Color::DarkGray,
+    red: Color::Red,
+    green: Color::Green,
+    violet: Color::Magenta,
+};
+
+pub const THEMES: &[(&str, Palette)] =
+    &[("system", SYSTEM), ("mirage", MIRAGE), ("ayu dark", DARK), ("github light", LIGHT)];
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
@@ -67,10 +84,26 @@ fn active_idx() -> usize {
     ACTIVE.load(Ordering::Relaxed) % THEMES.len()
 }
 
-/// Switch to the next theme, returning its name for the status line.
+/// Select a theme by name, persisting it. False when the name is unknown.
+pub fn set(name: &str) -> bool {
+    let Some(idx) = THEMES.iter().position(|(n, _)| *n == name) else { return false };
+    ACTIVE.store(idx, Ordering::Relaxed);
+    crate::cache::save_theme(name);
+    true
+}
+
+/// Restore the persisted theme, if any. Runs once at startup.
+pub fn init() {
+    if let Some(saved) = crate::cache::load_theme() {
+        set(&saved);
+    }
+}
+
+/// Switch to the next theme, persisting it; returns its name for the status line.
 pub fn cycle() -> &'static str {
     let next = (active_idx() + 1) % THEMES.len();
     ACTIVE.store(next, Ordering::Relaxed);
+    crate::cache::save_theme(THEMES[next].0);
     THEMES[next].0
 }
 
@@ -203,50 +236,109 @@ mod tests {
     use super::*;
     use ratatui::style::Modifier;
 
+    /// Point XDG at a temp dir so `set`/`cycle` persistence never touches
+    /// real data. Returns the guard plus saved var to restore.
+    fn temp_data() -> (std::sync::MutexGuard<'static, ()>, Option<String>, tempfile::TempDir) {
+        let guard = crate::cache::test_env_lock().lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let saved = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        (guard, saved, dir)
+    }
+
+    fn restore(saved: Option<String>, _guard: std::sync::MutexGuard<'static, ()>) {
+        match saved {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+
     #[test]
     fn headings_glow_amber() {
-        ACTIVE.store(0, Ordering::Relaxed);
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        ACTIVE.store(1, Ordering::Relaxed);
         let sheet = GhitSheet;
         assert_eq!(sheet.heading(1).fg, Some(amber()));
         assert!(sheet.heading(1).add_modifier.contains(Modifier::BOLD));
         assert_eq!(sheet.link().fg, Some(teal()));
         assert_eq!(sheet.code().bg, Some(code_bg()));
+        ACTIVE.store(0, Ordering::Relaxed);
     }
 
     #[test]
     fn columns_have_colors() {
-        ACTIVE.store(0, Ordering::Relaxed);
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        ACTIVE.store(1, Ordering::Relaxed);
         assert_eq!(column_color("Todo"), muted());
         assert_eq!(column_color("In Progress"), amber());
         assert_eq!(column_color("Blocked"), red());
         assert_eq!(column_color("In Review"), teal());
         assert_eq!(column_color("Done"), green());
         assert_eq!(column_color("Something Else"), muted());
+        ACTIVE.store(0, Ordering::Relaxed);
     }
 
     #[test]
     fn states_have_colors() {
-        ACTIVE.store(0, Ordering::Relaxed);
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        ACTIVE.store(1, Ordering::Relaxed);
         assert_eq!(state_color("OPEN"), green());
         assert_eq!(state_color("CLOSED"), red());
         assert_eq!(state_color("MERGED"), violet());
         assert_eq!(state_color("WHATEVER"), muted());
+        ACTIVE.store(0, Ordering::Relaxed);
     }
 
     #[test]
     fn toggle_cycles_all_themes() {
+        let (guard, saved, _dir) = temp_data();
         ACTIVE.store(0, Ordering::Relaxed);
-        assert_eq!(name(), "mirage");
+        assert_eq!(name(), "system");
+        assert_eq!(cycle(), "mirage");
         assert_eq!(cycle(), "ayu dark");
         assert_eq!(cycle(), "github light");
         assert_eq!(name(), "github light");
-        assert_eq!(cycle(), "mirage");
+        assert_eq!(cycle(), "system");
+        ACTIVE.store(0, Ordering::Relaxed);
+        restore(saved, guard);
+    }
+
+    #[test]
+    fn system_theme_uses_terminal_colors() {
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        ACTIVE.store(0, Ordering::Relaxed);
+        assert_eq!(ink(), Color::Reset);
+        assert_eq!(paper(), Color::Reset);
+        assert_eq!(code_bg(), Color::Reset);
+        assert_eq!(amber(), Color::Yellow);
+        assert_eq!(teal(), Color::Cyan);
+        assert_eq!(red(), Color::Red);
+        assert_eq!(green(), Color::Green);
+        assert_eq!(violet(), Color::Magenta);
         ACTIVE.store(0, Ordering::Relaxed);
     }
 
     #[test]
+    fn set_persists_and_init_restores() {
+        let (guard, saved, _dir) = temp_data();
+        assert!(set("ayu dark"));
+        assert_eq!(name(), "ayu dark");
+        // Simulate a restart: reset in-memory, then init from disk.
+        ACTIVE.store(0, Ordering::Relaxed);
+        init();
+        assert_eq!(name(), "ayu dark");
+        assert!(!set("nope"));
+        assert_eq!(name(), "ayu dark");
+        ACTIVE.store(0, Ordering::Relaxed);
+        restore(saved, guard);
+    }
+
+    #[test]
     fn themed_markdown_has_lines() {
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        ACTIVE.store(0, Ordering::Relaxed);
         let text = render_markdown("# hi\n\n- a\n- b\n");
         assert!(text.height() > 3);
+        ACTIVE.store(0, Ordering::Relaxed);
     }
 }

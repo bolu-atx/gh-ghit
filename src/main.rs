@@ -24,6 +24,7 @@ use clap::Parser;
 
 fn main() {
     let args = cli::Args::parse();
+    theme::init();
     let numbers = args.issue_numbers();
     let mut app = app::App::new(args.repo.clone());
     if let Err(e) = app::run(&mut app, &numbers) {

@@ -49,6 +49,25 @@ fn pin_path(repo: &str) -> PathBuf {
     base_dir().join(format!("pinned-{}.txt", repo.replace('/', "__")))
 }
 
+fn theme_path() -> PathBuf {
+    base_dir().join("theme")
+}
+
+/// Last-selected theme name, plain text. `None` means never chosen.
+pub fn load_theme() -> Option<String> {
+    let raw = std::fs::read_to_string(theme_path()).ok()?;
+    let name = raw.trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+pub fn save_theme(name: &str) {
+    let d = base_dir();
+    if std::fs::create_dir_all(&d).is_err() {
+        return;
+    }
+    let _ = std::fs::write(theme_path(), format!("{name}\n"));
+}
+
 pub fn load_pins(repo: &str) -> Vec<u64> {
     std::fs::read_to_string(pin_path(repo))
         .unwrap_or_default()
@@ -66,19 +85,21 @@ pub fn save_pins(repo: &str, numbers: &[u64]) {
     let _ = std::fs::write(pin_path(repo), body);
 }
 
+/// Serializes tests that mutate `XDG_DATA_HOME`. Shared with `theme`
+/// tests so parallel runners never steal each other's data dir.
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     #[test]
     fn pins_roundtrip() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = test_env_lock().lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
@@ -92,7 +113,7 @@ mod tests {
 
     #[test]
     fn cache_roundtrip_and_expiry() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = test_env_lock().lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
