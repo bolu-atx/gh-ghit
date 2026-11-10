@@ -1,0 +1,17 @@
+name: e2e
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  tmux-drive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: cargo build
+      - run: bash scripts/e2e/run.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
