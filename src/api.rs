@@ -33,6 +33,7 @@ const PR_FIELDS: &str = r#"
  number title state author { login } labels(first: 100) { nodes { name } }
  assignees(first: 100) { nodes { login } } createdAt updatedAt url body
  comments(first: 1) { totalCount } mergedAt
+ reviewThreads(first: 50) { nodes { id path line isResolved comments(first: 20) { nodes { id author { login } body } } } }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
@@ -82,7 +83,7 @@ fn parse_rows(value: &Value, now: chrono::DateTime<chrono::Utc>, hours: u64) -> 
             let created = string("createdAt");
             let updated = string("updatedAt");
             let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], is_pr }, statuses, detail, complete: false });
+            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), is_pr }, statuses, detail, complete: false });
         }
     }
     Ok(rows)
@@ -174,6 +175,7 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             url: string("html_url"),
             body: string("body"),
             comments: vec![],
+            review_threads: vec![],
             is_pr,
         },
         statuses: vec![],
@@ -265,16 +267,21 @@ pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, 
     }
     v["comments"] = json!(comments);
     v["isPr"] = json!(is_pr);
-    let data = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
+    let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
-    let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
+    let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id author { login } body } } } }" } else { "" };
+    let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ {threads_field} projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
     // Project statuses stay best-effort: a failed lookup yields none,
     // same as before, instead of failing the whole issue fetch.
-    let statuses = post_json(&client, &url, bearer, &json!({"query":query,"variables":{"owner":owner,"repo":name,"num":number}})).await.ok()
-        .and_then(|v| v.pointer(&format!("/data/repository/{field}/projectItems/nodes")).and_then(Value::as_array).cloned()).unwrap_or_default()
-        .iter().map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
+    let response = post_json(&client, &url, bearer, &json!({"query":query,"variables":{"owner":owner,"repo":name,"num":number}})).await;
+    let node = response.as_ref().ok().and_then(|v| v.pointer(&format!("/data/repository/{field}")));
+    if let (true, Some(node)) = (is_pr, node) {
+        data.review_threads = crate::model::parse_review_threads(node);
+    }
+    let statuses = node.and_then(|n| n.pointer("/projectItems/nodes")).and_then(Value::as_array).into_iter().flatten()
+        .map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
     Ok((data, statuses))
 }
 
@@ -290,7 +297,12 @@ mod tests {
     fn parses_rows_and_filters_merged_window() {
         let v = json!({"data":{"repository":{"open":{"nodes":[{"number":1,"title":"one","state":"OPEN","labels":{"nodes":[{"name":"bug"}]},"comments":{"totalCount":3},"projectItems":{"nodes":[{"project":{"title":"P"},"status":{"name":"Todo"}}]}}]},"merged":{"nodes":[{"number":2,"mergedAt":"2026-11-10T11:30:00Z"},{"number":3,"mergedAt":"2026-11-09T10:00:00Z"}]},"openIssues":{"nodes":[{"number":7,"title":"seven","state":"OPEN"}]},"closedIssues":{"nodes":[{"number":8,"title":"eight","state":"CLOSED","updatedAt":"2026-11-10T11:00:00Z"},{"number":9,"title":"nine","state":"CLOSED","updatedAt":"2026-11-09T10:00:00Z"}]}}}});
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let mut v = v;
+        v["data"]["repository"]["open"]["nodes"][0]["reviewThreads"] = json!({"nodes":[{"id":"thread-id","path":"src/a.rs","line":12,"isResolved":false,"comments":{"nodes":[{"id":"comment-id","author":{"login":"reviewer"},"body":"Please fix"}]}},{"id":"bad"}]});
         let rows = parse_rows(&v, now, 1).unwrap();
+        assert_eq!(rows[0].issue.review_threads.len(), 1);
+        assert_eq!(rows[0].issue.review_threads[0].id, "thread-id");
+        assert_eq!(rows[0].issue.review_threads[0].comments[0].id, "comment-id");
         assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 7, 8]);
         assert_eq!(rows[0].issue.labels[0].name, "bug");
         assert_eq!(rows[0].statuses[0].1.as_deref(), Some("Todo"));

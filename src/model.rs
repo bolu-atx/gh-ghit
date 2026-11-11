@@ -25,6 +25,39 @@ pub struct Comment {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewComment {
+    pub id: String,
+    #[serde(default)]
+    pub author: Option<Author>,
+    #[serde(default)]
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThread {
+    pub id: String,
+    pub path: String,
+    pub line: Option<u64>,
+    pub is_resolved: bool,
+    pub comments: Vec<ReviewComment>,
+}
+
+pub fn parse_review_threads(value: &serde_json::Value) -> Vec<ReviewThread> {
+    let nodes = value.pointer("/reviewThreads/nodes").and_then(serde_json::Value::as_array);
+    let mut threads = Vec::new();
+    for node in nodes.into_iter().flatten() {
+        if !node.is_object() { continue; }
+        let mut thread = node.clone();
+        thread["comments"] = node.pointer("/comments/nodes").cloned().unwrap_or_else(|| serde_json::json!([]));
+        if let Ok(thread) = serde_json::from_value::<ReviewThread>(thread) { threads.push(thread); }
+    }
+    threads.sort_by_key(|thread| thread.is_resolved);
+    threads
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueData {
@@ -51,6 +84,8 @@ pub struct IssueData {
     pub comments: Vec<Comment>,
     #[serde(default)]
     pub is_pr: bool,
+    #[serde(default)]
+    pub review_threads: Vec<ReviewThread>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -612,6 +647,21 @@ pub fn sidebar_lines(
 mod tests {
     use super::*;
 
+    #[test]
+    fn parses_review_threads_in_unresolved_first_order() {
+        let input = serde_json::json!({"reviewThreads":{"nodes":[
+            {"id":"t1","path":"a.rs","line":null,"isResolved":true,"comments":{"nodes":[{"id":"c1","author":{"login":"ada"},"body":"done"}]}},
+            {"id":"t2","path":"b.rs","line":42,"isResolved":false,"comments":{"nodes":[{"id":"c2","author":{"login":"bob"},"body":"**fix**"}]}},
+            {"id":"bad"}, null
+        ]}});
+        let threads = parse_review_threads(&input);
+        assert_eq!(threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["t2", "t1"]);
+        assert_eq!((&*threads[0].path, threads[0].line, threads[0].is_resolved), ("b.rs", Some(42), false));
+        assert_eq!((&*threads[0].comments[0].id, &*threads[0].comments[0].author.as_ref().unwrap().login, &*threads[0].comments[0].body), ("c2", "bob", "**fix**"));
+        assert_eq!(threads[1].line, None);
+        assert!(threads[1].is_resolved);
+    }
+
     fn sample_issue() -> IssueData {
         IssueData {
             number: 1,
@@ -625,6 +675,7 @@ mod tests {
             url: "https://github.com/o/r/issues/1".to_string(),
             body: "see (#1) and #2".to_string(),
             comments: vec![],
+            review_threads: vec![],
             is_pr: false,
         }
     }
