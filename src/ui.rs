@@ -364,6 +364,24 @@ pub(crate) fn expanded_row_height(d: &IssueData, inner_width: usize) -> usize {
     expanded_row_lines(d, inner_width).len()
 }
 
+/// Compact CI glyph for a PR row or header: the head-commit rollup in
+/// its theme color, or `None` when the PR runs no checks (or the state
+/// is unknown). Issues never carry a rollup, so they render nothing.
+fn check_span(d: &IssueData) -> Option<Span<'static>> {
+    if !d.is_pr {
+        return None;
+    }
+    let checks = d.checks?;
+    let glyph = crate::theme::check_glyph(&checks);
+    if glyph.is_empty() {
+        return None;
+    }
+    Some(Span::styled(
+        format!(" {glyph}"),
+        Style::new().fg(crate::theme::check_color(&checks)).bold(),
+    ))
+}
+
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
 /// thin divider row between non-empty groups. Everything is owned, so the
 /// returned list outlives the `&App` borrow and the caller can persist its
@@ -441,6 +459,13 @@ fn section_list(
         ];
         first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
         first.extend(highlighted_spans(title_text, &query, title_style));
+        // PR head-commit CI rollup: one glyph, no text, so hit-testing
+        // and row height are untouched.
+        if let Some(d) = data {
+            if let Some(check) = check_span(d) {
+                first.push(check);
+            }
+        }
         // Second line: labels · relative updated · project status. Empty
         // segments collapse; the status keeps the board color and glyph.
         let status_color = crate::theme::column_color(&status);
@@ -492,11 +517,18 @@ fn section_list(
 fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Line<'static>> {
     use crate::theme::{amber, ink, muted, paper, teal};
     use model::MetaKind;
-    let title = Line::from(vec![
+    let mut title = vec![
         Span::styled("■ ", Style::new().bg(ink()).fg(muted())),
         Span::styled(format!("#{} ", d.number), Style::new().bg(ink()).fg(muted())),
         Span::styled(model::slug(&d.title, 60), Style::new().bg(ink()).fg(paper()).bold()),
-    ]);
+    ];
+    // PR head-commit CI rollup beside the title, same glyph as the rows.
+    if let Some(check) = check_span(d) {
+        let mut span = check;
+        span.style = span.style.bg(ink());
+        title.push(span);
+    }
+    let title = Line::from(title);
     let mut lines = vec![title];
     let mut current: Vec<Span<'static>> = Vec::new();
     for (kind, text) in model::meta_spans(d, statuses) {
@@ -1742,6 +1774,7 @@ mod render_smoke {
             comments: vec![],
             review_threads: vec![],
             paired: vec![],
+            checks: None,
             is_pr: false,
         }
     }
@@ -2327,6 +2360,121 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('/')));
         let text = frame_text(&mut app);
         assert!(text.contains("sort updated ↓"), "sort hint: {text}");
+    }
+
+    /// Text of the PRs sidebar only, mirroring `sidebar_text`.
+    fn pr_sidebar_text(app: &mut App) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        let area = app.side_pr_area;
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    fn check_pr(number: u64, checks: Option<crate::model::CheckState>) -> IssueData {
+        let mut d = sample(number);
+        d.is_pr = true;
+        d.checks = checks;
+        d
+    }
+
+    fn check_app(number: u64, checks: Option<crate::model::CheckState>) -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.data.insert(number, check_pr(number, checks));
+        app.statuses.insert(number, vec![]);
+        app.visited.push(number);
+        app.show_issue(number);
+        app
+    }
+
+    #[test]
+    fn pr_rows_show_check_rollup_glyph_per_state() {
+        use crate::model::CheckState;
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for (n, checks) in [
+            (21, Some(CheckState::Pass)),
+            (22, Some(CheckState::Fail)),
+            (23, Some(CheckState::Pending)),
+        ] {
+            app.data.insert(n, check_pr(n, checks));
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        app.show_issue(21);
+        let text = pr_sidebar_text(&mut app);
+        assert!(text.contains("\u{f00c}"), "pass glyph: {text}");
+        assert!(text.contains("\u{f00d}"), "fail glyph: {text}");
+        assert!(text.contains("\u{f017}"), "pending glyph, never pass: {text}");
+    }
+
+    #[test]
+    fn pr_row_without_checks_shows_no_glyph() {
+        use crate::model::CheckState;
+        // No rollup, or an unknown future state, renders nothing.
+        for checks in [None, Some(CheckState::Unknown)] {
+            let mut app = check_app(21, checks);
+            let text = pr_sidebar_text(&mut app);
+            assert!(
+                !text.contains("\u{f00c}") && !text.contains("\u{f00d}") && !text.contains("\u{f017}"),
+                "{checks:?} renders no glyph: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn pr_header_shows_check_rollup_glyph_per_state() {
+        use crate::model::CheckState;
+        for (checks, glyph) in [
+            (Some(CheckState::Pass), "\u{f00c}"),
+            (Some(CheckState::Fail), "\u{f00d}"),
+            (Some(CheckState::Pending), "\u{f017}"),
+        ] {
+            // The header line itself carries the glyph …
+            let d = check_pr(9, checks);
+            let header: String = super::header_lines(&d, &[])
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+                .collect::<Vec<_>>()
+                .join("");
+            assert!(header.contains(glyph), "{checks:?} glyph in header: {header}");
+            // … and the full frame renders it.
+            let mut app = check_app(9, checks);
+            assert!(frame_text(&mut app).contains(glyph), "{checks:?} glyph in frame");
+        }
+        // No rollup, an unknown state, or a non-PR renders no header glyph.
+        for checks in [None, Some(CheckState::Unknown)] {
+            let d = check_pr(9, checks);
+            let header: String = super::header_lines(&d, &[])
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+                .collect::<Vec<_>>()
+                .join("");
+            assert!(
+                !header.contains("\u{f00c}") && !header.contains("\u{f00d}") && !header.contains("\u{f017}"),
+                "{checks:?} header stays clean: {header}"
+            );
+        }
+        let mut issue = sample(7);
+        issue.checks = Some(CheckState::Pass);
+        let header: String = super::header_lines(&issue, &[])
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            !header.contains("\u{f00c}"),
+            "issues never render the rollup: {header}"
+        );
     }
 
     #[test]

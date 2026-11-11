@@ -159,6 +159,30 @@ pub fn state_color(state: &str) -> Color {
     }
 }
 
+/// Compact CI rollup color for a PR head commit: pass reads green, fail
+/// reads red, pending reads amber. Unknown states stay quiet.
+pub fn check_color(state: &crate::model::CheckState) -> Color {
+    use crate::model::CheckState;
+    match state {
+        CheckState::Pass => green(),
+        CheckState::Fail => red(),
+        CheckState::Pending => amber(),
+        CheckState::Unknown => muted(),
+    }
+}
+
+/// Compact CI rollup glyph, in the same Nerd Font vocabulary as the
+/// column icons. Empty for unknown states, which render nothing.
+pub fn check_glyph(state: &crate::model::CheckState) -> &'static str {
+    use crate::model::CheckState;
+    match state {
+        CheckState::Pass => "\u{f00c}",
+        CheckState::Fail => "\u{f00d}",
+        CheckState::Pending => "\u{f017}",
+        CheckState::Unknown => "",
+    }
+}
+
 /// Swimlane header color, matched by keyword so custom board
 /// vocabularies ("In progress", "In Progress", …) still resolve.
 pub fn column_color(name: &str) -> Color {
@@ -313,6 +337,21 @@ mod tests {
         assert_eq!(column_icon("Todo · In Progress"), "\u{f017}");
         assert_eq!(column_icon("Something Else"), "");
         assert_eq!(column_icon("—"), "");
+    }
+
+    #[test]
+    fn checks_have_colors_and_glyphs() {
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        ACTIVE.store(1, Ordering::Relaxed);
+        use crate::model::CheckState;
+        assert_eq!(check_color(&CheckState::Pass), green());
+        assert_eq!(check_color(&CheckState::Fail), red());
+        assert_eq!(check_color(&CheckState::Pending), amber());
+        assert_eq!(check_glyph(&CheckState::Pass), "\u{f00c}");
+        assert_eq!(check_glyph(&CheckState::Fail), "\u{f00d}");
+        assert_eq!(check_glyph(&CheckState::Pending), "\u{f017}");
+        assert_eq!(check_glyph(&CheckState::Unknown), "");
+        ACTIVE.store(0, Ordering::Relaxed);
     }
 
     #[test]

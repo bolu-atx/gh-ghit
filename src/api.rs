@@ -37,6 +37,7 @@ const PR_FIELDS: &str = r#"
  number title state author { login } labels(first: 100) { nodes { name } }
  assignees(first: 100) { nodes { login } } createdAt updatedAt url body
  comments(first: 1) { totalCount } mergedAt
+ commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
  reviewThreads(first: 50) { nodes { id path line isResolved comments(first: 20) { nodes { id author { login } body } } } }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
@@ -101,7 +102,7 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
             let created = string("createdAt");
             let updated = string("updatedAt");
             let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), paired: vec![], is_pr }, statuses, detail, complete: false });
+            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), paired: vec![], checks: crate::model::parse_check_state(n), is_pr }, statuses, detail, complete: false });
             }
         }
     }
@@ -283,6 +284,7 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             comments: vec![],
             review_threads: vec![],
             paired: vec![],
+            checks: None,
             is_pr,
         },
         statuses: vec![],
@@ -755,7 +757,31 @@ mod tests {
     #[test]
     fn query_has_both_sections_and_metadata() {
         let q = query();
-        for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter"] { assert!(q.contains(field)); }
+        for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter", "commits(last: 1)", "statusCheckRollup"] { assert!(q.contains(field)); }
+    }
+    #[test]
+    fn parses_check_rollup_per_state() {
+        use crate::model::CheckState;
+        let pr = |n: u64, state: Option<&str>| {
+            let commits = match state {
+                Some(s) => json!({"nodes": [{"commit": {"statusCheckRollup": {"state": s}}}]}),
+                None => json!({"nodes": []}),
+            };
+            json!({"number": n, "title": "pr", "state": "OPEN", "commits": commits})
+        };
+        let v = json!({"data": {"repository": {
+            "open": {"nodes": [pr(1, Some("SUCCESS")), pr(2, Some("FAILURE")), pr(3, Some("PENDING")), pr(4, None)]},
+            "merged": {"nodes": []},
+            "openIssues": {"nodes": [{"number": 7, "title": "seven", "state": "OPEN"}]},
+            "closedIssues": {"nodes": []}}}});
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let rows = parse_rows(&[v], now, 24).unwrap();
+        let checks = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap().issue.checks;
+        assert_eq!(checks(1), Some(CheckState::Pass));
+        assert_eq!(checks(2), Some(CheckState::Fail));
+        assert_eq!(checks(3), Some(CheckState::Pending));
+        assert_eq!(checks(4), None);
+        assert_eq!(checks(7), None);
     }
     #[test]
     fn parses_rows_and_filters_merged_window() {
