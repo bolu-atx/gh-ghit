@@ -142,14 +142,18 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('h') => {
             if graph_focused(app) {
                 app.graph_move(-1);
-            } else if app.pane == Pane::Main {
+            } else {
+                // The Main pane is mouse-gated (Tab never lands on it),
+                // so neighbor-step works from every pane: nothing else
+                // claims h/l outside Graph, and bar/board/filter return
+                // before this match.
                 app.step_issue(-1);
             }
         }
         KeyCode::Char('l') => {
             if graph_focused(app) {
                 app.graph_move(1);
-            } else if app.pane == Pane::Main {
+            } else {
                 app.step_issue(1);
             }
         }
@@ -1031,16 +1035,20 @@ mod tests {
     }
 
     #[test]
-    fn hl_stays_dead_off_the_main_pane() {
+    fn hl_steps_from_every_pane() {
+        // The Main pane is mouse-gated (Tab never lands on it), so the
+        // neighbor step works from every pane: nothing else claims h/l
+        // outside Graph.
         let mut app = step_app();
-        for pane in [Pane::Issues, Pane::PRs, Pane::Refs] {
+        for pane in [Pane::Main, Pane::Issues, Pane::PRs, Pane::Refs] {
             app.pane = pane;
             app.message.clear();
-            handle_key(&mut app, plain_key(KeyCode::Char('h')));
             handle_key(&mut app, plain_key(KeyCode::Char('l')));
-            assert_eq!(app.current, Some(7), "side panes keep h/l: {pane:?}");
-            assert_eq!(app.step_pending, None);
-            assert!(app.message.is_empty(), "no toast off the main pane");
+            assert_eq!(app.current, Some(8), "l steps from {pane:?}");
+            assert_eq!(app.step_pending, None, "cached steps never linger");
+            handle_key(&mut app, plain_key(KeyCode::Char('h')));
+            assert_eq!(app.current, Some(7), "h steps back from {pane:?}");
+            assert!(app.message.is_empty(), "no toast on a live neighbor");
         }
     }
 
