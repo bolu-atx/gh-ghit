@@ -83,5 +83,13 @@ One subject label per issue. Workflow labels (`duplicate`,
 - File one issue per story you discover, straight onto the board
   (`-p 'ghit dev'`); link ordering with `blocked-by` only when
   landing order truly matters.
+- Track status on the board: mark the story `In Progress` when work
+  starts. When the PR opens, add the PR to the board as well (`gh pr
+  create` takes no `-p` flag, so follow with `gh project item-add 1
+  --owner bolu-atx --url <pr-url>`) and move both to `In Review`.
+- Coordinator dispatch: the coordinator owns the cards end to end.
+  State the issue number and the board commands in each worker
+  prompt; a fresh worker never knows the board. Single session:
+  move the cards yourself at the two moments above.
 - Never press `o` during verification (it opens a browser).
   End every tmux live drive with `q` and kill the session.

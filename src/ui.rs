@@ -350,6 +350,7 @@ pub(crate) fn expanded_row_height(d: &IssueData, inner_width: usize) -> usize {
 /// `ListState` back into `App` for scroll continuity.
 fn section_list(
     title: Line<'static>,
+    footer: Line<'static>,
     rows: &[crate::model::SideRow],
     app: &App,
     inner_width: usize,
@@ -456,6 +457,7 @@ fn section_list(
                 .border_type(if focused { BorderType::Double } else { BorderType::Plain })
                 .border_style(Style::new().bg(ink()).fg(border))
                 .title(title)
+                .title_bottom(footer)
                 .style(Style::new().bg(ink())),
         )
         .highlight_style(if focused {
@@ -809,6 +811,14 @@ fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line
     Line::from(vec![icon_span, name_span, detail_span])
 }
 
+/// Bottom border label for a list pane: per-group counts in the same
+/// muted voice as the title subtitle. Overlong footers clip at the
+/// border; callers order counts before context so counts survive.
+fn footer_line(text: &str) -> Line<'static> {
+    use crate::theme::muted;
+    Line::from(Span::styled(text.to_string(), Style::new().fg(muted())))
+}
+
 /// Position of `current` in display-row order, +1 for the top spacer.
 fn selected_index(rows: &[model::SideRow], current: Option<u64>) -> Option<usize> {
     current
@@ -823,7 +833,6 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
     let issue_rows = app.issue_rows();
     let pr_rows = app.pr_rows();
-    let key = app.repo_key().unwrap_or_default();
     app.side_issue_area = panes[0];
     app.side_pr_area = panes[1];
     app.side_issue_rows = issue_rows.clone();
@@ -833,7 +842,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let issues_focused = app.pane == crate::app::Pane::Issues;
     let il = section_list(
         // Nerd Font Font Awesome fa-exclamation-circle.
-        section_title("Issues", &key, "\u{f06a}", issues_focused),
+        section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused),
+        footer_line(&app.side_footer(false)),
         &issue_rows,
         app,
         inner(panes[0]),
@@ -848,7 +858,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let prs_focused = app.pane == crate::app::Pane::PRs;
     let pl = section_list(
         // Nerd Font Font Awesome fa-code-fork.
-        section_title("Pull requests", &app.recent_detail(), "\u{f126}", prs_focused),
+        section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused),
+        footer_line(&app.side_footer(true)),
         &pr_rows,
         app,
         inner(panes[1]),
@@ -871,14 +882,10 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
     let refs_focused = app.pane == crate::app::Pane::Refs;
-    let detail = if app.ref_paired.is_empty() {
-        format!("{} mentioned", app.ref_numbers.len())
-    } else {
-        format!("{} mentioned · {} paired", app.ref_numbers.len(), app.ref_paired.len())
-    };
     let list = section_list(
         // Nerd Font Font Awesome fa-link.
-        section_title("Refs", &detail, "\u{f0c1}", refs_focused),
+        section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
+        footer_line(&app.refs_footer()),
         &rows,
         app,
         inner,
@@ -1215,6 +1222,10 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         Some(b) => Line::from(vec![
             Span::styled(" \u{f0db} ", Style::new().bg(ink()).fg(muted())),
             Span::styled(format!("{} ", b.title), Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled(
+                format!("{} cards", b.items.len()),
+                Style::new().bg(ink()).fg(muted()),
+            ),
         ]),
         None => Line::from(vec![
             Span::styled(" \u{f0db} Fetching board … ", Style::new().bg(ink()).fg(amber()).bold()),
@@ -1957,6 +1968,56 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("Issues"));
         assert!(text.contains("Pull requests"));
+    }
+
+    #[test]
+    fn pane_titles_carry_count_and_sort_with_group_footers() {
+        let mut app = loaded_app();
+        // loaded_app files one issue and one PR under requested.
+        assert_eq!(app.side_subtitle(false), "1 · default");
+        assert_eq!(app.side_subtitle(true), "1 · default");
+        assert_eq!(app.side_footer(false), "pinned (0) · requested (1) · recent (0)");
+        assert_eq!(
+            app.side_footer(true),
+            "pinned (0) · requested (1) · recent (0) · open + merged ≤24h"
+        );
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 · default"), "count plus sort in subtitle: {text}");
+        assert!(
+            text.contains("pinned (0) · requested (1) · recent (0)"),
+            "group counts in footer: {text}"
+        );
+        // Sort state rides the subtitle; reverse flips the arrow.
+        app.sort = crate::core::SideSort::Updated;
+        app.sort_desc = true;
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 · updated ↓"), "sort indicator: {text}");
+        app.toggle_sort_dir();
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 · updated ↑"), "reverse indicator: {text}");
+        // An active search query moves to the PR footer, not the title.
+        app.query_active = "is:open".to_string();
+        assert!(app.side_footer(true).contains("\"is:open\""), "query in footer");
+        assert!(!app.side_subtitle(true).contains("is:open"), "query out of title");
+    }
+
+    #[test]
+    fn refs_pane_shares_title_and_footer_shape() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "see #9".to_string();
+        app.show_issue(7);
+        assert!(app.refs_visible());
+        assert_eq!(app.refs_subtitle(), "1 mentioned");
+        assert_eq!(app.refs_footer(), "mentioned (1) · paired (0)");
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 mentioned"), "refs subtitle: {text}");
+        assert!(text.contains("mentioned (1) · paired (0)"), "refs footer: {text}");
+    }
+
+    #[test]
+    fn board_title_carries_card_count() {
+        let mut app = board_app(2);
+        assert!(frame_text(&mut app).contains("2 cards"), "board subtitle");
     }
 
     #[test]
