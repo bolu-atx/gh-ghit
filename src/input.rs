@@ -563,16 +563,24 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             let issue_rows = app.side_issue_rows.clone();
             let pr_rows = app.side_pr_rows.clone();
             if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, app, m.column, m.row) {
+                if app.focus == Focus::Main && app.pane == Pane::Issues
+                    && app.current == Some(n) && app.effective(&issue_rows) == Some(n)
+                {
+                    app.ensure_visited(n);
+                }
                 app.focus = Focus::Main;
                 app.pane = Pane::Issues;
-                app.ensure_visited(n);
                 app.show_issue(n);
                 return;
             }
             if let Some(n) = sidebar_hit(app.side_pr_area, &pr_rows, app, m.column, m.row) {
+                if app.focus == Focus::Main && app.pane == Pane::PRs
+                    && app.current == Some(n) && app.effective(&pr_rows) == Some(n)
+                {
+                    app.ensure_visited(n);
+                }
                 app.focus = Focus::Main;
                 app.pane = Pane::PRs;
-                app.ensure_visited(n);
                 app.show_issue(n);
                 return;
             }
@@ -761,6 +769,47 @@ mod tests {
 
     fn wheel(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
         MouseEvent { kind, column: x, row: y, modifiers: KeyModifiers::empty() }
+    }
+
+    #[test]
+    fn sidebar_click_focuses_recent_before_opening() {
+        for (is_pr, pane) in [(false, Pane::Issues), (true, Pane::PRs)] {
+            let mut app = App::new(Some("o/r".to_string()));
+            app.repo_slug = Some("o/r".to_string());
+            let mut recent = sample(9);
+            recent.is_pr = is_pr;
+            app.data.insert(7, sample(7));
+            app.data.insert(9, recent);
+            app.statuses.insert(7, vec![]);
+            app.statuses.insert(9, vec![]);
+            app.ensure_visited(7);
+            app.ensure_recent(9);
+            app.show_issue(7);
+            let area = Rect::new(0, 0, 30, 20);
+            let rows = if is_pr { app.pr_rows() } else { app.issue_rows() };
+            let row_index = rows.iter().position(|row| row.number() == Some(9)).unwrap();
+            let y = area.y + 2 + rows[..row_index].iter()
+                .map(|row| if row.number().is_some() { 3 } else { 1 }).sum::<u16>();
+            if is_pr {
+                app.side_pr_area = area;
+                app.side_pr_rows = rows.clone();
+            } else {
+                app.side_issue_area = area;
+                app.side_issue_rows = rows.clone();
+            }
+            let click = wheel(MouseEventKind::Down(MouseButton::Left), 5, y);
+
+            handle_mouse(&mut app, click);
+            assert_eq!(app.pane, pane);
+            assert_eq!(app.current, Some(9));
+            assert!(!app.visited.contains(&9));
+            assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);
+
+            handle_mouse(&mut app, click);
+            assert!(app.visited.contains(&9));
+            assert_eq!(app.current, Some(9));
+            assert_eq!(app.side_counts(is_pr), (0, 1 + usize::from(!is_pr), 0));
+        }
     }
 
     #[test]
