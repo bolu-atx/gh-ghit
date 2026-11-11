@@ -16,7 +16,12 @@ jobs:
       - uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: tmux xvfb xclip
-          version: "1.0"
+          # Bumped after 1.0 saved a cache missing xclip (mirror DNS
+          # failure during install); the old key is orphaned.
+          version: "1.1"
+      # Fail fast if setup left us without the tools: a broken cache
+      # must never again surface as failed yank scenarios.
+      - run: command -v tmux && command -v xvfb-run && command -v xclip
       - run: cargo build
       # xvfb-run provides the X server xclip needs, so yank really copies
       # and the toasts assert on content instead of "copy failed".
