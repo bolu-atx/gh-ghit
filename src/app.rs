@@ -13,6 +13,19 @@ use std::time::{Duration, Instant};
 const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const RECENT_REFRESH_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Auto-refresh cadence, overridable for deterministic runs: the e2e
+/// harness stretches it past any scenario lifetime so each scenario
+/// issues exactly one sections fetch per boot instead of hammering
+/// the API every 5s. Zero or garbage falls back to the default.
+fn auto_refresh_interval_default() -> Duration {
+    std::env::var("GHIT_AUTO_REFRESH_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(RECENT_REFRESH_INTERVAL)
+}
+
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
@@ -275,7 +288,7 @@ impl App {
             initial_numbers: vec![],
             section_rx: None,
             last_sections_fetch: Instant::now(),
-            auto_refresh_interval: RECENT_REFRESH_INTERVAL,
+            auto_refresh_interval: auto_refresh_interval_default(),
             section_auto_refresh: false,
             section_progress: None,
             partial: HashSet::new(),
@@ -1618,7 +1631,7 @@ fn kick_off_details(app: &mut App) {
     });
 }
 
-fn poll_details(app: &mut App) {
+pub(crate) fn poll_details(app: &mut App) {
     let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.detail_rx.try_iter().collect();
     for (n, res) in ready {
         app.detail_pending.remove(&n);
@@ -1651,7 +1664,7 @@ pub(crate) fn poll_compose(app: &mut App) {
     }
 }
 
-fn poll_board(app: &mut App) {
+pub(crate) fn poll_board(app: &mut App) {
     if !app.board_loading {
         return;
     }
@@ -1676,14 +1689,9 @@ fn poll_board(app: &mut App) {
 // TUI runner
 // ---------------------------------------------------------------------------
 
-pub(crate) fn run(app: &mut App, numbers: &[u64]) -> Result<(), String> {
-    enable_raw_mode().map_err(|e| e.to_string())?;
-    let mut stdout = std::io::stdout();
-    stdout.execute(EnterAlternateScreen).map_err(|e| e.to_string())?;
-    stdout.execute(EnableMouseCapture).map_err(|e| e.to_string())?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
-
+/// Shared startup: file the requested numbers and resolve the repo
+/// off the async workers. Both the terminal and drive loops call this.
+pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     app.initial_numbers = numbers.to_vec();
     app.focus = Focus::Bar;
     let repo = app.repo_flag.clone();
@@ -1696,6 +1704,31 @@ pub(crate) fn run(app: &mut App, numbers: &[u64]) -> Result<(), String> {
         let _ = crate::api::token();
         let _ = tx.send(worker.repo_slug);
     });
+}
+
+/// Every background lander, once per loop pass. The terminal and drive
+/// loops share this so both pick up fetches the same way.
+pub(crate) fn poll_all(app: &mut App) {
+    poll_bootstrap(app);
+    poll_sections(app);
+    app.auto_refresh_recent(Instant::now());
+    poll_issues(app);
+    poll_diffs(app);
+    poll_graphs(app);
+    poll_board(app);
+    poll_details(app);
+    poll_compose(app);
+}
+
+pub(crate) fn run(app: &mut App, numbers: &[u64]) -> Result<(), String> {
+    enable_raw_mode().map_err(|e| e.to_string())?;
+    let mut stdout = std::io::stdout();
+    stdout.execute(EnterAlternateScreen).map_err(|e| e.to_string())?;
+    stdout.execute(EnableMouseCapture).map_err(|e| e.to_string())?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
+
+    bootstrap(app, numbers);
 
     let result = event_loop(&mut terminal, app);
 
@@ -1725,15 +1758,7 @@ fn event_loop(
                 _ => {}
             };
         }
-        poll_bootstrap(app);
-        poll_sections(app);
-        app.auto_refresh_recent(Instant::now());
-        poll_issues(app);
-        poll_diffs(app);
-        poll_graphs(app);
-        poll_board(app);
-        poll_details(app);
-        poll_compose(app);
+        poll_all(app);
         if app.quit {
             return Ok(());
         }
@@ -1773,7 +1798,7 @@ pub(crate) fn poll_sections(app: &mut App) {
             let auto = std::mem::take(&mut app.section_auto_refresh);
             if auto {
                 app.auto_refresh_interval = if result.is_ok() {
-                    RECENT_REFRESH_INTERVAL
+                    auto_refresh_interval_default()
                 } else {
                     (app.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
                 };
@@ -2089,6 +2114,20 @@ mod tests {
         assert!(!app.issue_progress.contains_key(&9), "terminal result clears progress");
         assert!(!app.issue_pending.contains(&9));
         assert!(app.data.contains_key(&9));
+    }
+
+    #[test]
+    fn auto_refresh_interval_env_override() {
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
+        assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL);
+        std::env::set_var("GHIT_AUTO_REFRESH_SECS", "3600");
+        assert_eq!(auto_refresh_interval_default(), Duration::from_secs(3600));
+        for bad in ["0", "nope", ""] {
+            std::env::set_var("GHIT_AUTO_REFRESH_SECS", bad);
+            assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL, "reject {bad}");
+        }
+        std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
     }
 
     #[test]

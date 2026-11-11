@@ -27,38 +27,42 @@ Cross-layer changes (e.g. a new data field shown in the UI) go data-first:
 
 ## Live drive procedure
 
-Isolated state, fixed geometry, scripted input:
+Isolated state, fixed geometry, scripted input over the drive socket —
+no tmux, no TTY:
 
 ```bash
-tmux kill-session -t ghit-e2e 2>/dev/null
-tmux new-session -d -s ghit-e2e -x 200 -y 50 \
-  "XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123"
+XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit \
+  --drive /tmp/ghit.sock -R owner/repo 123 &
+mkfifo /tmp/ghit.cmd && exec {CMD}<>/tmp/ghit.cmd
+python3 scripts/e2e/drive.py --sock /tmp/ghit.sock \
+  --cmd /tmp/ghit.cmd --pane /tmp/ghit-pane.txt &
 sleep 8   # first fetch
 ```
 
 Drive one control per step and capture after each:
 
 ```bash
-tmux send-keys -t ghit-e2e j k Down Up 1 2 PageDown PageUp b
-tmux capture-pane -t ghit-e2e -p | sed -n '1,12p'
+printf '%s\n' '{"type":"key","key":"j"}' >&$CMD
+printf '%s\n' '{"type":"key","key":"2"}' >&$CMD
+sed -n '1,12p' /tmp/ghit-pane.txt
 ```
 
-Mouse is real SGR (1-based cells, press + release):
+Mouse is the same 1-based cells as SGR, press + release:
 
 ```bash
-tmux send-keys -t ghit-e2e -l $'\x1b[<0;70;25M'
-tmux send-keys -t ghit-e2e -l $'\x1b[<3;70;25m'
+printf '%s\n' '{"type":"mouse","kind":"down-left","column":70,"row":25}' >&$CMD
+printf '%s\n' '{"type":"mouse","kind":"up-left","column":70,"row":25}' >&$CMD
 ```
 
 Rules: never press `o` (opens a browser). Refresh (`r`) and pins (`p`)
-are safe under the isolated `XDG_DATA_HOME`. End every session with `q`
-and `tmux kill-session -t ghit-e2e`.
+are safe under the isolated `XDG_DATA_HOME`. End every session with
+`{"type":"quit"}`, then kill the app and remove the socket.
 
 ## Visual taste gate
 
 Layout, theme, or new modal changes only.
 
-Workers check structure with `frame_text` + `capture-pane -p`.
+Workers check structure with `frame_text` + the drive pane file.
 That text strips style, so it cannot judge looks.
 
 Coordinator judges looks: one PNG each of the loaded issue and the
@@ -75,10 +79,13 @@ scripted input plus expected pane rows. Visible means new or
 changed controls, flows, or layout. Optimization, config,
 refactor, and data-layer work with no visible change needs no
 scenario. The coordinator picks it from the touched control,
-records the exact `send-keys` / `capture-pane` lines, and requires
-the matching `render_smoke` frame test for UI changes, using the
-template in [verification.md](verification.md). No scenario for a
-visible change, no sign-off.
+records the exact drive-protocol lines sent plus the pane rows they
+produce (`scripts/e2e/lib.sh` maps the old `send-keys` names to
+protocol lines; assertions grep the latest frame file exactly like
+they used to grep `capture-pane -p`), and requires the matching
+`render_smoke` frame test for UI changes, using the template in
+[verification.md](verification.md). No scenario for a visible
+change, no sign-off.
 
 ## Architecture review
 
