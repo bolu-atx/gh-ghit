@@ -101,7 +101,7 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
             let created = string("createdAt");
             let updated = string("updatedAt");
             let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), is_pr }, statuses, detail, complete: false });
+            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), paired: vec![], is_pr }, statuses, detail, complete: false });
             }
         }
     }
@@ -282,6 +282,7 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             body: string("body"),
             comments: vec![],
             review_threads: vec![],
+            paired: vec![],
             is_pr,
         },
         statuses: vec![],
@@ -425,12 +426,22 @@ pub async fn issue(
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
     let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id author { login } body } } } }" } else { "" };
-    let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ {threads_field} projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
+    // Will-close counterparts: an issue lists its closing PRs, a PR lists
+    // the issues it will close. Never body mentions.
+    let paired_field = if is_pr {
+        "closingIssuesReferences(first: 5) { nodes { number state } }"
+    } else {
+        "closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number state } }"
+    };
+    let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ {threads_field} {paired_field} projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
     // Project statuses stay best-effort: a failed lookup yields none,
     // same as before, instead of failing the whole issue fetch.
     let response = post_json(&client, &url, bearer, &json!({"query":query,"variables":{"owner":owner,"repo":name,"num":number}})).await;
     let node = response.as_ref().ok().and_then(|v| v.pointer(&format!("/data/repository/{field}")));
+    if let Some(node) = node {
+        data.paired = crate::model::paired_refs(node, is_pr);
+    }
     if let (true, Some(node)) = (is_pr, node) {
         data.review_threads = crate::model::parse_review_threads(node);
     }

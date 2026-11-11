@@ -718,6 +718,7 @@ mod tests {
             comments: vec![],
             is_pr: false,
             review_threads: vec![],
+            paired: vec![],
         }
     }
 
