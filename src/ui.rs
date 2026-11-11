@@ -519,24 +519,14 @@ fn section_list(
         })
 }
 
-/// Styled header for the body pane: title plus the color-coded meta line.
-/// Each segment carries its semantic role; colors stay consistent by construction.
+/// Styled header for the body pane: the color-coded meta lines. The
+/// `#N title` line lives only in the masthead (`render_main`), so it is
+/// not repeated here. Each segment carries its semantic role; colors stay
+/// consistent by construction.
 fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Line<'static>> {
     use crate::theme::{amber, ink, muted, paper, teal};
     use model::MetaKind;
-    let mut title = vec![
-        Span::styled("■ ", Style::new().bg(ink()).fg(muted())),
-        Span::styled(format!("#{} ", d.number), Style::new().bg(ink()).fg(muted())),
-        Span::styled(model::slug(&d.title, 60), Style::new().bg(ink()).fg(paper()).bold()),
-    ];
-    // PR head-commit CI rollup beside the title, same glyph as the rows.
-    if let Some(check) = check_span(d) {
-        let mut span = check;
-        span.style = span.style.bg(ink());
-        title.push(span);
-    }
-    let title = Line::from(title);
-    let mut lines = vec![title];
+    let mut lines: Vec<Line<'static>> = Vec::new();
     let mut current: Vec<Span<'static>> = Vec::new();
     for (kind, text) in model::meta_spans(d, statuses) {
         let style = match kind {
@@ -1077,7 +1067,7 @@ fn paired_line(d: &IssueData) -> Option<Line<'static>> {
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, paper, base};
     let repo = app.repo_key().unwrap_or_default();
-    // The title/label block lives above the tabs so long titles wrap in
+    // The meta/label block lives above the tabs so long titles wrap in
     // place instead of overflowing the masthead. Its height is measured
     // first (same inner width as the body) so the rows below just fit.
     let inner_w = (area.width as usize).saturating_sub(5);
@@ -1116,18 +1106,26 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         ])
         .split(area);
 
-    // rows[0] masthead, rows[1] title/labels, rows[2] breathing room,
+    // rows[0] masthead, rows[1] meta/labels, rows[2] breathing room,
     // rows[3] tabs, rows[4] pane.
     app.tabs_area = rows[3];
     // Nerd Font Font Awesome fa-git brands the wordmark; repo and number
-    // stay plain text so identifiers scan without a patched font.
+    // stay plain text so identifiers scan without a patched font. The PR
+    // head-commit CI glyph rides the masthead title, the single title
+    // source now that the header block starts at the meta lines.
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
-        Some(d) => Line::from(vec![
-            Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
-            Span::styled(format!("{repo}  "), Style::new().fg(muted())),
-            Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
-            Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
-        ]),
+        Some(d) => {
+            let mut spans = vec![
+                Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
+                Span::styled(format!("{repo}  "), Style::new().fg(muted())),
+                Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
+                Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
+            ];
+            if let Some(check) = check_span(d) {
+                spans.push(check);
+            }
+            Line::from(spans)
+        }
         None => Line::from(vec![
             Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
             Span::styled(repo, Style::new().fg(muted())),
@@ -1161,8 +1159,8 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         );
     f.render_widget(tabs, rows[3]);
 
-    // Title/labels render above the tabs with the body's gutter, so the
-    // title starts where the body text starts.
+    // Meta/labels render above the tabs with the body's gutter, so the
+    // header starts where the body text starts.
     let hgutter = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
@@ -1234,8 +1232,10 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         f.set_cursor_position((area.x + (2 + text.len() as u16).min(area.width.saturating_sub(1)), area.y));
         return;
     }
-    let hint = "? for shortcuts";
-    let hint_width = hint.len() as u16;
+    // Version-only brand: no commit-SHA wiring exists, and a build.rs
+    // just for the SHA would over-engineer the bar.
+    let hint = format!("? for shortcuts · ghit v{}", env!("CARGO_PKG_VERSION"));
+    let hint_width = hint.chars().count() as u16;
     let left_width = area.width.saturating_sub(hint_width + 1);
     let mut segments: Vec<(String, bool)> = Vec::new();
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
@@ -2562,28 +2562,31 @@ mod render_smoke {
         }
     }
 
+    /// Masthead row only (first row of the main pane), so masthead
+    /// assertions cannot pass off sidebar rows as the title source.
+    fn masthead_text(app: &mut App) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        let buf = terminal.backend().buffer();
+        (44..120).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
     #[test]
-    fn pr_header_shows_check_rollup_glyph_per_state() {
+    fn pr_masthead_shows_check_rollup_glyph_per_state() {
         use crate::model::CheckState;
         for (checks, glyph) in [
             (Some(CheckState::Pass), "\u{f00c}"),
             (Some(CheckState::Fail), "\u{f00d}"),
             (Some(CheckState::Pending), "\u{f017}"),
         ] {
-            // The header line itself carries the glyph …
-            let d = check_pr(9, checks);
-            let header: String = super::header_lines(&d, &[])
-                .iter()
-                .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
-                .collect::<Vec<_>>()
-                .join("");
-            assert!(header.contains(glyph), "{checks:?} glyph in header: {header}");
-            // … and the full frame renders it.
+            // The masthead title carries the glyph now that the header
+            // block starts at the meta lines …
             let mut app = check_app(9, checks);
-            assert!(frame_text(&mut app).contains(glyph), "{checks:?} glyph in frame");
-        }
-        // No rollup, an unknown state, or a non-PR renders no header glyph.
-        for checks in [None, Some(CheckState::Unknown)] {
+            let mast = masthead_text(&mut app);
+            assert!(mast.contains(glyph), "{checks:?} glyph in masthead: {mast}");
+            assert!(mast.contains("#9"), "masthead keeps the number: {mast}");
+            // … and the header block itself stays clean.
             let d = check_pr(9, checks);
             let header: String = super::header_lines(&d, &[])
                 .iter()
@@ -2593,6 +2596,17 @@ mod render_smoke {
             assert!(
                 !header.contains("\u{f00c}") && !header.contains("\u{f00d}") && !header.contains("\u{f017}"),
                 "{checks:?} header stays clean: {header}"
+            );
+            // … and the full frame renders it.
+            assert!(frame_text(&mut app).contains(glyph), "{checks:?} glyph in frame");
+        }
+        // No rollup, an unknown state, or a non-PR renders no masthead glyph.
+        for checks in [None, Some(CheckState::Unknown)] {
+            let mut app = check_app(9, checks);
+            let mast = masthead_text(&mut app);
+            assert!(
+                !mast.contains("\u{f00c}") && !mast.contains("\u{f00d}") && !mast.contains("\u{f017}"),
+                "{checks:?} masthead stays clean: {mast}"
             );
         }
         let mut issue = sample(7);
@@ -2744,6 +2758,24 @@ mod render_smoke {
         assert!(text.contains("#7"), "issue number");
         assert!(text.contains("Body"), "tab label");
         assert!(text.contains("hello"), "markdown body");
+    }
+
+    #[test]
+    fn main_pane_keeps_a_single_title_line_with_footer_brand() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().title = "Quasar title nine".to_string();
+        let text = frame_text(&mut app);
+        // Masthead plus the one sidebar row; the header block starts at
+        // the meta lines and no longer repeats the title.
+        assert_eq!(text.matches("Quasar title nine").count(), 2, "single main-pane title: {text}");
+        assert!(
+            !app.header_rows.iter().any(|l| l.contains("Quasar title nine")),
+            "header starts at meta: {:?}",
+            app.header_rows
+        );
+        let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
+        assert!(text.contains(&brand), "footer brand: {text}");
+        assert!(text.contains("? for shortcuts"), "hint survives: {text}");
     }
 
     #[test]
@@ -3158,24 +3190,30 @@ mod render_smoke {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
         assert!(!app.header_rows.is_empty());
-        assert!(app.header_rows.iter().any(|l| l.contains("#7")));
+        // The header block starts at the meta lines: state and author
+        // render there, while the `#N title` lives only in the masthead.
+        assert!(app.header_rows.iter().any(|l| l.contains("OPEN")));
+        assert!(!app.header_rows.iter().any(|l| l.contains("#7")));
         assert!(app.header_area.y + app.header_area.height <= app.tabs_area.y);
-        // The title/label block left the scrollable body: meta text like
+        // The meta/label block left the scrollable body: meta text like
         // the state and assignees no longer appear in body rows.
         assert!(!app.body_rows.iter().any(|l| l.contains("assignees:")), "{:?}", app.body_rows);
         assert!(!app.body_rows.iter().any(|l| l.contains("OPEN")), "{:?}", app.body_rows);
     }
 
     #[test]
-    fn header_ref_click_navigates() {
+    fn header_url_click_opens() {
+        // The title left the header block, so header clicks resolve
+        // through the meta lines now: the issue URL line opens its link.
+        // (The test `open_url` stub notifies instead of opening a browser.)
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().title = "Fix #9 regression".to_string();
+        app.data.get_mut(&7).unwrap().url = "https://example.com/note".to_string();
         let _ = frame_text(&mut app);
-        let row = app.header_rows.iter().find(|l| l.contains("#9")).expect("title row").clone();
-        let (hx, hy) = (app.header_area.x, app.header_area.y);
-        let col = hx + row.find("#9").expect("ref col") as u16;
-        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, hy));
-        assert_eq!(app.current, Some(9));
+        let idx = app.header_rows.iter().position(|l| l.contains("example.com")).expect("url row");
+        let col = app.header_area.x + app.header_rows[idx].find("example.com").expect("url col") as u16;
+        let row_y = app.header_area.y + idx as u16;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, row_y));
+        assert!(app.message.contains("opened https://example.com/note"), "{}", app.message);
     }
 
     #[test]
@@ -3264,7 +3302,9 @@ mod render_smoke {
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("o/r"), "{line}");
         assert!(line.contains("ghit demo (Todo)"), "{line}");
-        assert!(line.ends_with("? for shortcuts"), "{line}");
+        assert!(line.contains("? for shortcuts"), "{line}");
+        let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
+        assert!(line.ends_with(brand.as_str()), "{line}");
     }
 
     #[test]
@@ -3288,7 +3328,9 @@ mod render_smoke {
         assert_eq!(text.matches("hello status").count(), 1);
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("hello status"), "{line}");
-        assert!(line.ends_with("? for shortcuts"), "{line}");
+        assert!(line.contains("? for shortcuts"), "{line}");
+        let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
+        assert!(line.ends_with(brand.as_str()), "{line}");
     }
 
     #[test]

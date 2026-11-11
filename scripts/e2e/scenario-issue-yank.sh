@@ -4,7 +4,7 @@ source "$(dirname "$0")/lib.sh"
 e2e_start
 e2e_wait "Precompiled" 60 || fail "issue data never landed"
 e2e_bar 9
-e2e_wait "■ #9 " 20 || fail "show #9"
+e2e_wait "/issues/9" 20 || fail "show #9"
 [ "$(e2e_markers)" -eq 1 ] || fail "marker count $(e2e_markers)"
 e2e_key y
 e2e_shot issue-yank
