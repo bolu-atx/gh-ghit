@@ -58,10 +58,46 @@ pub fn parse_review_threads(value: &serde_json::Value) -> Vec<ReviewThread> {
     threads
 }
 
+/// Parse the will-close connection of one issue or PR payload. Issues
+/// carry closing PRs under `closedByPullRequestsReferences`; PRs carry
+/// closing issues under `closingIssuesReferences`. Missing or malformed
+/// nodes yield an empty list.
+pub fn paired_refs(value: &serde_json::Value, is_pr: bool) -> Vec<PairedRef> {
+    let field = if is_pr {
+        "closingIssuesReferences"
+    } else {
+        "closedByPullRequestsReferences"
+    };
+    let nodes = value
+        .pointer(&format!("/{field}/nodes"))
+        .and_then(serde_json::Value::as_array);
+    let mut out = Vec::new();
+    for node in nodes.into_iter().flatten() {
+        let Some(number) = node.get("number").and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
+        out.push(PairedRef {
+            number,
+            state: node.get("state").and_then(serde_json::Value::as_str).unwrap_or("").to_owned(),
+        });
+    }
+    out
+}
+
 /// Merge independently fetched pages in page order.
 pub fn merge_comment_pages(mut pages: Vec<(usize, Vec<Comment>)>) -> Vec<Comment> {
     pages.sort_by_key(|(page, _)| *page);
     pages.into_iter().flat_map(|(_, comments)| comments).collect()
+}
+
+/// A will-close counterpart of an issue or PR: closing PRs for an issue,
+/// closing issues for a PR. `state` is the GraphQL state (`OPEN`,
+/// `MERGED`, `CLOSED`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairedRef {
+    pub number: u64,
+    #[serde(default)]
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +128,10 @@ pub struct IssueData {
     pub is_pr: bool,
     #[serde(default)]
     pub review_threads: Vec<ReviewThread>,
+    /// Will-close counterparts, not body mentions. Defaulted so old file
+    /// caches without the field still parse.
+    #[serde(default)]
+    pub paired: Vec<PairedRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -743,6 +783,41 @@ mod tests {
         assert!(threads[1].is_resolved);
     }
 
+    #[test]
+    fn paired_refs_parse_both_directions() {
+        let issue = serde_json::json!({"closedByPullRequestsReferences":{"nodes":[
+            {"number": 44, "state": "MERGED"}, {"number": 45, "state": "OPEN"}, null
+        ]}});
+        assert_eq!(
+            paired_refs(&issue, false),
+            vec![
+                PairedRef { number: 44, state: "MERGED".to_string() },
+                PairedRef { number: 45, state: "OPEN".to_string() },
+            ]
+        );
+        let pr = serde_json::json!({"closingIssuesReferences":{"nodes":[
+            {"number": 59, "state": "OPEN"}
+        ]}});
+        assert_eq!(
+            paired_refs(&pr, true),
+            vec![PairedRef { number: 59, state: "OPEN".to_string() }]
+        );
+        assert!(paired_refs(&serde_json::json!({}), true).is_empty());
+    }
+
+    #[test]
+    fn old_cached_issue_without_paired_still_parses() {
+        let old = serde_json::json!({
+            "number": 7, "title": "cached", "state": "OPEN",
+            "author": {"login": "bo"}, "labels": [], "assignees": [],
+            "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
+            "url": "https://github.com/o/r/issues/7", "body": "",
+            "comments": [], "isPr": false, "reviewThreads": []
+        });
+        let data: IssueData = serde_json::from_value(old).expect("old cache parses");
+        assert!(data.paired.is_empty());
+    }
+
     fn sample_issue() -> IssueData {
         IssueData {
             number: 1,
@@ -757,6 +832,7 @@ mod tests {
             body: "see (#1) and #2".to_string(),
             comments: vec![],
             review_threads: vec![],
+            paired: vec![],
             is_pr: false,
         }
     }

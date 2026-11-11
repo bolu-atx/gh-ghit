@@ -138,6 +138,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Enter => {
             if graph_focused(app) {
                 app.open_graph_selection();
+            } else if app.pane == Pane::Refs {
+                app.open_selected_ref();
             }
         }
         KeyCode::Down => {
@@ -235,7 +237,7 @@ fn pane_down(app: &mut App, delta: isize) {
         Pane::Issues => move_in_list(app, app.issue_numbers(), delta),
         Pane::PRs => move_in_list(app, app.pr_numbers(), delta),
         Pane::Refs => {
-            let next = core::next_in_order(&app.ref_numbers, app.ref_highlight, delta);
+            let next = core::next_in_order(&app.ref_order(), app.ref_highlight, delta);
             if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
                 app.select_ref(n);
             }
@@ -477,13 +479,18 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 app.show_issue(n);
                 return;
             }
-            // Refs rows never navigate: selecting one highlights its source
-            // line in the body instead.
+            // Mention rows only highlight their source line; paired rows
+            // open their counterpart like sidebar rows.
             let ref_rows = app.ref_rows.clone();
             if let Some(n) = sidebar_hit(app.refs_area, &ref_rows, app, m.column, m.row) {
                 app.focus = Focus::Main;
                 app.pane = Pane::Refs;
-                app.select_ref(n);
+                if app.ref_paired.contains(&n) {
+                    app.ensure_visited(n);
+                    app.show_issue(n);
+                } else {
+                    app.select_ref(n);
+                }
                 return;
             }
             if in_rect(app.tabs_area, m.column, m.row) {
@@ -591,6 +598,7 @@ mod tests {
             body: String::new(),
             comments: vec![],
             review_threads: vec![],
+            paired: vec![],
             is_pr: false,
         }
     }

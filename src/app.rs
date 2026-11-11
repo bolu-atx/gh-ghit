@@ -176,6 +176,10 @@ pub(crate) struct App {
     /// Related issues mentioned in the current body. Hidden when empty.
     pub(crate) show_refs: bool,
     pub(crate) ref_numbers: Vec<u64>,
+    /// Will-close counterparts of the current issue/PR, listed under a
+    /// `Paired` divider. Kept disjoint from `ref_numbers` so a row has one
+    /// behavior: paired rows open, mention rows only highlight.
+    pub(crate) ref_paired: Vec<u64>,
     /// Click-selected refs row: highlights its source line instead of opening it.
     pub(crate) ref_highlight: Option<u64>,
     pub(crate) refs_area: Rect,
@@ -275,6 +279,7 @@ impl App {
             side_pr_rows: vec![],
             show_refs: true,
             ref_numbers: vec![],
+            ref_paired: vec![],
             ref_highlight: None,
             refs_area: Rect::default(),
             ref_rows: vec![],
@@ -432,6 +437,7 @@ impl App {
                 self.current = None;
                 self.requested = None;
                 self.ref_numbers.clear();
+                self.ref_paired.clear();
                 self.scroll = 0;
                 self.sync_selection();
             }
@@ -752,14 +758,34 @@ impl App {
 
     /// The right refs pane shows only when toggled on and non-empty.
     pub(crate) fn refs_visible(&self) -> bool {
-        self.show_refs && !self.ref_numbers.is_empty()
+        self.show_refs && !(self.ref_numbers.is_empty() && self.ref_paired.is_empty())
     }
 
-    /// Display rows for the refs pane, one item per mentioned number.
-    /// The refs list never has dividers, but it shares the row type so
-    /// hit-testing and rendering stay uniform.
+    /// Display rows for the refs pane: mentioned numbers, then a `Paired`
+    /// divider with the will-close counterparts. Empty sections collapse.
     pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
-        self.ref_numbers.iter().copied().map(model::SideRow::Item).collect()
+        let mut rows: Vec<model::SideRow> = self.ref_numbers.iter().copied().map(model::SideRow::Item).collect();
+        if !self.ref_paired.is_empty() {
+            rows.push(model::SideRow::Divider("Paired"));
+            rows.extend(self.ref_paired.iter().copied().map(model::SideRow::Item));
+        }
+        rows
+    }
+
+    /// j/k order for the refs pane, skipping the divider.
+    pub(crate) fn ref_order(&self) -> Vec<u64> {
+        self.ref_numbers.iter().chain(self.ref_paired.iter()).copied().collect()
+    }
+
+    /// Enter on a refs row: paired rows open like sidebar rows; mention
+    /// rows stay highlight-only, so they are a no-op here.
+    pub(crate) fn open_selected_ref(&mut self) {
+        let Some(n) = self.ref_highlight else { return };
+        if !self.ref_paired.contains(&n) {
+            return;
+        }
+        self.ensure_visited(n);
+        self.show_issue(n);
     }
 
     /// Flip the right refs pane, keeping the current issue in place.
@@ -781,26 +807,33 @@ impl App {
         };
     }
 
-    /// Recompute refs from the current body and queue background fetches
-    /// for mentioned rows we have never loaded. Never changes `current`.
+    /// Recompute refs from the current body and pairs, then queue
+    /// background fetches for rows we have never loaded. Never changes
+    /// `current`.
     pub(crate) fn refresh_refs(&mut self) {
         let Some(n) = self.current else {
             self.ref_numbers.clear();
+            self.ref_paired.clear();
             return;
         };
         let Some(d) = self.data.get(&n) else {
             self.ref_numbers.clear();
+            self.ref_paired.clear();
             return;
         };
+        // Pairs win over mentions so each row has one behavior: the
+        // pairing survives, and Enter on it opens the counterpart.
+        let paired: Vec<u64> = d.paired.iter().map(|p| p.number).filter(|m| *m != n).collect();
         let repo = self.repo_key();
         let nums: Vec<u64> = model::referenced_numbers(&d.body, repo.as_deref())
             .into_iter()
-            .filter(|m| *m != n)
+            .filter(|m| *m != n && !paired.contains(m))
             .collect();
         self.ref_numbers = nums;
+        self.ref_paired = paired;
         let tx = self.issue_tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        for m in self.ref_numbers.clone() {
+        for m in self.ref_order() {
             if self.data.contains_key(&m) || !self.issue_pending.insert(m) {
                 continue;
             }
@@ -1406,7 +1439,7 @@ pub(crate) fn poll_graphs(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Author, Label};
+    use crate::model::Author;
 
     fn issue(number: u64, updated: &str) -> IssueData {
         IssueData {
@@ -1422,6 +1455,7 @@ mod tests {
             body: String::new(),
             comments: vec![],
             review_threads: vec![],
+            paired: vec![],
             is_pr: false,
         }
     }

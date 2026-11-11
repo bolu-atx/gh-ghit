@@ -870,9 +870,14 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
     let refs_focused = app.pane == crate::app::Pane::Refs;
+    let detail = if app.ref_paired.is_empty() {
+        format!("{} mentioned", app.ref_numbers.len())
+    } else {
+        format!("{} mentioned · {} paired", app.ref_numbers.len(), app.ref_paired.len())
+    };
     let list = section_list(
         // Nerd Font Font Awesome fa-link.
-        section_title("Refs", &format!("{} mentioned", rows.len()), "\u{f0c1}", refs_focused),
+        section_title("Refs", &detail, "\u{f0c1}", refs_focused),
         &rows,
         app,
         inner,
@@ -955,6 +960,27 @@ fn highlight_mentions(lines: &mut [Line<'_>], n: u64, repo: Option<&str>) {
     }
 }
 
+/// Display-only line under the Details header meta: the will-close
+/// counterparts with their state chips. Empty pairs collapse the line.
+fn paired_line(d: &IssueData) -> Option<Line<'static>> {
+    use crate::theme::{ink, muted, state_color};
+    if d.paired.is_empty() {
+        return None;
+    }
+    let mut spans = vec![Span::styled("Paired  ", Style::new().bg(ink()).fg(muted()).bold())];
+    for (i, pair) in d.paired.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+        }
+        let color = state_color(&pair.state);
+        spans.push(Span::styled(format!("#{}", pair.number), Style::new().bg(ink()).fg(color).bold()));
+        if !pair.state.is_empty() {
+            spans.push(Span::styled(format!(" {}", pair.state), Style::new().bg(ink()).fg(color)));
+        }
+    }
+    Some(Line::from(spans))
+}
+
 fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, paper, base};
     let repo = app.repo_key().unwrap_or_default();
@@ -973,10 +999,19 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         highlight_mentions(&mut header, n, app.repo_key().as_deref());
     }
     let header = wrap_lines(header, inner_w);
+    // The paired line is display-only: it renders with the header block but
+    // stays out of `header_rows`, so clicks never navigate from it.
+    let paired = match (app.tab, app.current.and_then(|n| app.data.get(&n))) {
+        (crate::app::Tab::Details, Some(d)) => paired_line(d)
+            .map(|line| wrap_lines(vec![line], inner_w))
+            .unwrap_or_default(),
+        _ => vec![],
+    };
     app.header_rows = header
         .iter()
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
         .collect();
+    let header: Vec<Line> = header.into_iter().chain(paired).collect();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1448,7 +1483,7 @@ mod render_smoke {
     use crate::input::{handle_key, handle_mouse};
     use crate::model::{
         Author, BoardData, BoardDetail, BoardItem, GraphData, GraphEdgeKind, GraphLinkedPr,
-        GraphNode, IssueData, Label,
+        GraphNode, IssueData, Label, PairedRef,
     };
     use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Terminal;
@@ -1588,6 +1623,7 @@ mod render_smoke {
             body: "# hello\n\n- a\n- b\n".to_string(),
             comments: vec![],
             review_threads: vec![],
+            paired: vec![],
             is_pr: false,
         }
     }
@@ -1834,6 +1870,58 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("Issues"));
         assert!(text.contains("Pull requests"));
+    }
+
+    #[test]
+    fn details_header_shows_display_only_paired_line() {
+        let mut app = loaded_app();
+        let text = frame_text(&mut app);
+        assert!(!text.contains("Paired"), "no line without pairs: {text}");
+        app.data.get_mut(&7).unwrap().paired =
+            vec![PairedRef { number: 9, state: "MERGED".to_string() }];
+        app.show_issue(7);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Paired"), "{text}");
+        assert!(text.contains("#9 MERGED"), "{text}");
+        // Display-only: the line renders with the header but never takes
+        // part in header click resolution.
+        assert!(!app.header_rows.iter().any(|l| l.contains("Paired")), "{:?}", app.header_rows);
+    }
+
+    #[test]
+    fn refs_pane_lists_paired_rows_and_enter_opens() {
+        use crate::app::Pane;
+        use crate::model::SideRow::{Divider, Item};
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.body = String::new();
+        d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
+        app.show_issue(7);
+        assert!(app.refs_visible());
+        assert_eq!(app.refs_rows(), vec![Divider("Paired"), Item(9)]);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Paired"), "{text}");
+        app.pane = Pane::Refs;
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.ref_highlight, Some(9));
+        assert_eq!(app.current, Some(7), "j only moves the highlight");
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.current, Some(9), "Enter opens the paired counterpart");
+    }
+
+    #[test]
+    fn paired_refs_row_click_opens_instead_of_highlighting() {
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.body = String::new();
+        d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
+        app.show_issue(7);
+        let _ = frame_text(&mut app); // records hit areas
+        // Divider sits on the first list row; the paired item below it.
+        let (x, y) = (app.refs_area.x + 2, app.refs_area.y + 3);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(9));
+        assert_eq!(app.ref_highlight, None);
     }
 
     #[test]
