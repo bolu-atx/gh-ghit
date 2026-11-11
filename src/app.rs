@@ -115,6 +115,10 @@ pub(crate) struct App {
     /// the terminal result lands.
     pub(crate) issue_progress: HashMap<u64, (usize, usize)>,
     pub(crate) requested: Option<u64>,
+    /// h/l neighbor-step fetch awaiting its result. While set, a 404 for
+    /// that number toasts "no #N" instead of the raw error; any other
+    /// error keeps the existing error path. Cleared on landing.
+    pub(crate) step_pending: Option<u64>,
     pub(crate) data: HashMap<u64, IssueData>,
     pub(crate) statuses: HashMap<u64, Vec<(String, Option<String>)>>,
     /// Numbers the user explicitly asked for or clicked, in first-seen
@@ -226,9 +230,11 @@ pub(crate) struct App {
     pub(crate) ref_paired: Vec<u64>,
     /// Click-selected refs row: highlights its source line instead of opening it.
     pub(crate) ref_highlight: Option<u64>,
-    /// Wheel-selected sidebar row: highlight-only, never a visit.
-    /// Click/Enter/j/k promote it to `current` and clear it; while it
-    /// moves, `current`, body scroll, and the other panes stay untouched.
+    /// Wheel-selected sidebar row: transient preview, never a visit and
+    /// never the active highlight. Click/Enter/j/k/h/l promote it to
+    /// `current` and clear it; the highlight always follows `current`
+    /// through `sync_selection`. While it moves, `current`, body scroll,
+    /// and the other panes stay untouched.
     pub(crate) hover: Option<u64>,
     pub(crate) refs_area: Rect,
     pub(crate) ref_rows: Vec<model::SideRow>,
@@ -264,7 +270,7 @@ impl App {
             section_rx: None,
             section_progress: None,
             partial: HashSet::new(),
-            issue_tx, issue_rx, issue_pending: HashSet::new(), issue_progress: HashMap::new(), requested: None,
+            issue_tx, issue_rx, issue_pending: HashSet::new(), issue_progress: HashMap::new(), requested: None, step_pending: None,
             data: HashMap::new(),
             statuses: HashMap::new(),
             visited: vec![],
@@ -776,14 +782,14 @@ impl App {
         )
     }
 
-    /// Row the sidebar lists track: the wheel hover while it names a
-    /// visible row, else `current`. Lets the wheel scroll the hovered
-    /// pane without visiting: `current`, body scroll, and the other
-    /// panes stay untouched.
+    /// Row the sidebar lists track: `current` while it names a visible
+    /// row. `current` is the single active item; both sidebar selections
+    /// derive from it. The wheel hover never outranks it — hover stays a
+    /// transient preview (j/k continue from it, a commit promotes it) and
+    /// can never present as the active highlight.
     pub(crate) fn effective(&self, rows: &[model::SideRow]) -> Option<u64> {
-        self.hover
+        self.current
             .filter(|n| rows.iter().any(|r| r.number() == Some(*n)))
-            .or(self.current)
     }
 
     /// Position of `current` in display rows, +1 for the top spacer row.
@@ -813,6 +819,9 @@ impl App {
         self.requested = Some(n);
         if self.partial.contains(&n) { self.load_issue(n, false); }
         self.current = Some(n);
+        if self.step_pending == Some(n) {
+            self.step_pending = None;
+        }
         self.scroll = 0;
         self.diff_cursor = 0;
         self.diff_line = None;
@@ -855,6 +864,27 @@ impl App {
         };
         self.history = core::history_push(&self.history, self.current, next);
         self.file_visited(next);
+        self.load_issue(next, false);
+    }
+
+    /// Step to the neighboring issue (`h`/`l` on the Main pane): the
+    /// explicit-visit path (`ensure_visited` + `load_issue`), the same
+    /// call sequence as board Enter and body-link clicks. Below #1 there
+    /// is nothing to fetch, so it toasts immediately; past the top end
+    /// the fetch 404s and `poll_issues` toasts instead. Either way
+    /// `current` only moves on a real landing.
+    pub(crate) fn step_issue(&mut self, delta: isize) {
+        let Some(cur) = self.current else {
+            self.notify("view an issue first".to_string());
+            return;
+        };
+        let next = cur.saturating_add_signed(delta as i64);
+        if next < 1 {
+            self.notify(format!("no #{next}"));
+            return;
+        }
+        self.step_pending = Some(next);
+        self.ensure_visited(next);
         self.load_issue(next, false);
     }
 
@@ -1746,6 +1776,12 @@ pub(crate) fn poll_issues(app: &mut App) {
             github::IssueEvent::Done(result) => {
                 app.issue_progress.remove(&number);
                 app.issue_pending.remove(&number);
+                // An h/l step owns this number until it lands: remember
+                // before clearing so a 404 still toasts below.
+                let stepped = app.step_pending == Some(number);
+                if stepped {
+                    app.step_pending = None;
+                }
                 match result {
                     Ok((data, statuses)) => {
                         // Completing the full fetch never files the row:
@@ -1767,7 +1803,19 @@ pub(crate) fn poll_issues(app: &mut App) {
                             app.message.clear();
                         }
                     }
-                    Err(e) => app.notify(e),
+                    Err(e) => {
+                        // A stepped-to number that truly does not exist
+                        // toasts "no #N" instead of the raw fetch error.
+                        // reqwest folds the status into the error text, so
+                        // a 404 substring marks absence; any other error
+                        // keeps the existing error path unchanged and never
+                        // claims "no more".
+                        if stepped && e.contains("404") {
+                            app.notify(format!("no #{number}"));
+                        } else {
+                            app.notify(e);
+                        }
+                    }
                 }
             }
         }
@@ -2168,5 +2216,115 @@ mod tests {
         assert!(!c.sending);
         assert_eq!(c.body, "looks good");
         assert_eq!(app.message, "token scopes deny comments");
+    }
+
+    #[test]
+    fn selection_tracks_current_not_hover() {
+        let mut app = sidebar_app(&[7, 9, 11]);
+        // Click/Enter/j/k/h/l all funnel through `show_issue`.
+        app.show_issue(9);
+        assert_eq!(app.current, Some(9));
+        assert_eq!(app.issue_state.selected(), Some(2));
+        assert_eq!(app.pr_state.selected(), None);
+        // A wheel hover never moves the tracked row.
+        app.hover = Some(11);
+        assert_eq!(app.effective(&app.issue_rows()), Some(9));
+        // Committing from the hover lands on it and clears it.
+        app.ensure_visited(11);
+        app.load_issue(11, false);
+        assert_eq!(app.current, Some(11));
+        assert_eq!(app.hover, None, "a commit clears the hover");
+        assert_eq!(app.issue_state.selected(), Some(3));
+        assert_eq!(app.pr_state.selected(), None);
+    }
+
+    #[test]
+    fn step_issue_walks_cached_neighbors() {
+        let mut app = sidebar_app(&[589, 590, 591]);
+        app.show_issue(590);
+        app.step_issue(1);
+        assert_eq!(app.current, Some(591), "l opens #591");
+        assert_eq!(app.hover, None);
+        assert_eq!(app.step_pending, None, "cached landing clears the step");
+        assert!(app.visited.contains(&591), "explicit visit files the row");
+        assert_eq!(app.issue_state.selected(), Some(3));
+        app.step_issue(-1);
+        assert_eq!(app.current, Some(590), "h opens #590");
+        assert_eq!(app.issue_state.selected(), Some(2));
+        app.step_issue(-1);
+        assert_eq!(app.current, Some(589), "h opens #589");
+        assert_eq!(app.issue_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn step_issue_without_current_toasts() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.step_issue(1);
+        assert_eq!(app.message, "view an issue first");
+        assert!(app.issue_pending.is_empty(), "no fetch without an issue");
+        assert_eq!(app.step_pending, None);
+    }
+
+    #[test]
+    fn step_issue_below_one_toasts_without_fetch() {
+        let mut app = sidebar_app(&[1, 2]);
+        app.show_issue(1);
+        app.step_issue(-1);
+        assert_eq!(app.message, "no #0");
+        assert_eq!(app.current, Some(1), "nothing moves");
+        assert!(app.issue_pending.is_empty(), "h on #1 issues no fetch");
+        assert_eq!(app.requested, Some(1));
+        assert_eq!(app.step_pending, None);
+    }
+
+    #[test]
+    fn step_issue_records_pending_until_the_fetch_lands() {
+        let mut app = sidebar_app(&[590]);
+        app.show_issue(590);
+        app.step_issue(1);
+        assert_eq!(app.current, Some(590), "current waits for the fetch");
+        assert_eq!(app.requested, Some(591));
+        assert_eq!(app.step_pending, Some(591));
+        assert!(app.issue_pending.contains(&591), "neighbor fetch in flight");
+        assert!(app.visited.contains(&591), "explicit visit files the row");
+        // The landing clears the step and moves the highlight.
+        let fresh = issue(591, "2026-01-06T00:00:00Z");
+        app.issue_tx.send((591, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        poll_issues(&mut app);
+        assert_eq!(app.current, Some(591));
+        assert_eq!(app.step_pending, None);
+        assert_eq!(app.issue_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn step_404_toasts_no_number_and_stays_put() {
+        let mut app = sidebar_app(&[590]);
+        app.show_issue(590);
+        app.step_pending = Some(589);
+        app.requested = Some(589);
+        app.issue_tx
+            .send((589, github::IssueEvent::Done(Err(
+                "GitHub request failed: HTTP status client error (404 Not Found) for url (https://api.github.com/repos/o/r/issues/589)".to_string(),
+            ))))
+            .unwrap();
+        poll_issues(&mut app);
+        assert_eq!(app.message, "no #589");
+        assert_eq!(app.current, Some(590), "nothing moves past the end");
+        assert_eq!(app.step_pending, None);
+    }
+
+    #[test]
+    fn step_other_error_keeps_the_existing_error_path() {
+        let mut app = sidebar_app(&[590]);
+        app.show_issue(590);
+        app.step_pending = Some(591);
+        app.requested = Some(591);
+        let raw = "GitHub request failed: error sending request for url (https://api.github.com/repos/o/r/issues/591)".to_string();
+        app.issue_tx.send((591, github::IssueEvent::Done(Err(raw.clone())))).unwrap();
+        poll_issues(&mut app);
+        assert_eq!(app.message, raw, "network errors pass through unchanged");
+        assert_eq!(app.current, Some(590), "nothing moves on error");
+        assert_eq!(app.step_pending, None);
     }
 }

@@ -142,11 +142,15 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('h') => {
             if graph_focused(app) {
                 app.graph_move(-1);
+            } else if app.pane == Pane::Main {
+                app.step_issue(-1);
             }
         }
         KeyCode::Char('l') => {
             if graph_focused(app) {
                 app.graph_move(1);
+            } else if app.pane == Pane::Main {
+                app.step_issue(1);
             }
         }
         KeyCode::Enter => {
@@ -999,5 +1003,80 @@ mod tests {
         handle_key(&mut app, ctrl_key(KeyCode::Char('c')));
         assert!(!app.quit);
         assert!(app.compose_open(), "draft survives");
+    }
+
+    fn step_app() -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for n in [7u64, 8] {
+            app.data.insert(n, sample(n));
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        app.show_issue(7);
+        app.pane = Pane::Main;
+        app
+    }
+
+    #[test]
+    fn hl_steps_between_neighbors_on_main() {
+        let mut app = step_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('l')));
+        assert_eq!(app.current, Some(8), "l opens the next issue");
+        assert_eq!(app.issue_state.selected(), Some(2));
+        handle_key(&mut app, plain_key(KeyCode::Char('h')));
+        assert_eq!(app.current, Some(7), "h opens the previous issue");
+        assert_eq!(app.issue_state.selected(), Some(1));
+        assert_eq!(app.step_pending, None, "cached steps never linger");
+    }
+
+    #[test]
+    fn hl_stays_dead_off_the_main_pane() {
+        let mut app = step_app();
+        for pane in [Pane::Issues, Pane::PRs, Pane::Refs] {
+            app.pane = pane;
+            app.message.clear();
+            handle_key(&mut app, plain_key(KeyCode::Char('h')));
+            handle_key(&mut app, plain_key(KeyCode::Char('l')));
+            assert_eq!(app.current, Some(7), "side panes keep h/l: {pane:?}");
+            assert_eq!(app.step_pending, None);
+            assert!(app.message.is_empty(), "no toast off the main pane");
+        }
+    }
+
+    #[test]
+    fn hl_on_main_without_an_issue_toasts() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.pane = Pane::Main;
+        handle_key(&mut app, plain_key(KeyCode::Char('h')));
+        assert_eq!(app.message, "view an issue first");
+        assert!(app.issue_pending.is_empty(), "no fetch without an issue");
+    }
+
+    #[test]
+    fn bar_filter_and_board_keep_their_h_and_l() {
+        let mut app = step_app();
+        // The command bar types the keys as text.
+        app.focus = crate::app::Focus::Bar;
+        handle_key(&mut app, plain_key(KeyCode::Char('h')));
+        handle_key(&mut app, plain_key(KeyCode::Char('l')));
+        assert_eq!(app.bar, "hl");
+        assert_eq!(app.current, Some(7));
+        // The filter dialog swallows them.
+        app.focus = crate::app::Focus::Main;
+        app.filter_open = true;
+        handle_key(&mut app, plain_key(KeyCode::Char('h')));
+        handle_key(&mut app, plain_key(KeyCode::Char('l')));
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.step_pending, None);
+        // The board modal moves columns instead of stepping issues.
+        app.filter_open = false;
+        app.board_loading = true;
+        handle_key(&mut app, plain_key(KeyCode::Char('h')));
+        handle_key(&mut app, plain_key(KeyCode::Char('l')));
+        assert_eq!(app.current, Some(7), "board keeps h/l");
+        assert_eq!(app.step_pending, None);
+        assert!(app.board_loading, "board stays open");
     }
 }
