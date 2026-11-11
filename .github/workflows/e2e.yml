@@ -4,30 +4,21 @@ on:
   push:
     branches: [main]
 jobs:
-  tmux-drive:
+  socket-drive:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # Cache the apt debs so a flaky Ubuntu mirror (DNS blips seen
-      # twice on #72) can't fail setup: cache hits install with no
-      # network, misses fall back to apt once and repopulate it.
-      - uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: tmux xvfb xclip
-          # Bumped after 1.0 saved a cache missing xclip (mirror DNS
-          # failure during install); the old key is orphaned.
-          version: "1.1"
-      # Fail fast if setup left us without the tools: a broken cache
-      # must never again surface as failed yank scenarios.
-      - run: command -v tmux && command -v xvfb-run && command -v xclip
+      - run: command -v python3 && python3 --version
       - run: cargo build
-      # xvfb-run provides the X server xclip needs, so yank really copies
-      # and the toasts assert on content instead of "copy failed".
-      - run: xvfb-run -a bash scripts/e2e/run.sh
+      # Drive mode boots headless on a Unix socket: no terminal, no X,
+      # no tmux, no clipboard tools. Yank scenarios copy through a shim
+      # (see scripts/e2e/run.sh) so the toasts assert on content.
+      - run: bash scripts/e2e/run.sh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          E2E_FAKE_CLIPBOARD: 1
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
