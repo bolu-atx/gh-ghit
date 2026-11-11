@@ -36,10 +36,8 @@ fn rt() -> &'static tokio::runtime::Runtime {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
-    Body,
-    Comments,
-    Diff,
-    Graph,
+    Details,
+    Visual,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -213,7 +211,7 @@ impl App {
             pinned: HashSet::new(),
             pin_order: vec![],
             current: None,
-            tab: Tab::Body,
+            tab: Tab::Details,
             focus: Focus::Main,
             pane: Pane::Issues,
             bar: String::new(),
@@ -661,7 +659,7 @@ impl App {
         self.graph_cursor = 0;
         self.sync_selection();
         self.load_diff(n, false);
-        if self.tab == Tab::Graph {
+        if self.visual_graph() {
             self.load_graph(n, false);
         }
         self.refresh_refs();
@@ -814,6 +812,14 @@ impl App {
         }
     }
 
+    pub(crate) fn visual_diff(&self) -> bool {
+        self.tab == Tab::Visual && self.current.and_then(|n| self.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Diff)
+    }
+
+    pub(crate) fn visual_graph(&self) -> bool {
+        self.tab == Tab::Visual && self.current.and_then(|n| self.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Graph)
+    }
+
     /// Switch tabs, resetting scroll. Selecting Diff on a PR or Graph on
     /// any issue starts its background fetch so the pane fills in without
     /// blocking; first visit fetches, later visits reuse the cache.
@@ -822,12 +828,12 @@ impl App {
         self.scroll = 0;
         self.diff_line = None;
         self.diff_touched = false;
-        if tab == Tab::Diff {
+        if self.visual_diff() {
             if let Some(n) = self.current {
                 self.load_diff(n, false);
             }
         }
-        if tab == Tab::Graph {
+        if self.visual_graph() {
             if let Some(n) = self.current {
                 self.load_graph(n, false);
             }
@@ -886,7 +892,7 @@ impl App {
     pub(crate) fn graph_order_numbers(&self) -> Vec<u64> {
         let Some(n) = self.current else { return vec![] };
         let Some(data) = self.graphs.get(&n) else { return vec![] };
-        model::graph_order(data).into_iter().map(|i| data.nodes[i].number).collect()
+        model::graph_order(data).into_iter().take(8).map(|i| data.nodes[i].number).collect()
     }
 
     /// Move the graph cursor, clamped at the ends. No-op without a graph.
@@ -990,7 +996,7 @@ impl App {
             }
             return Some(format!("#{t}"));
         }
-        if self.tab == Tab::Diff && d.is_pr {
+        if self.tab == Tab::Visual && d.is_pr {
             let files = self.diffs.get(&current)?;
             if files.is_empty() {
                 return None;
@@ -1057,7 +1063,7 @@ impl App {
                     self.notify("view an issue first".to_string());
                 } else if self.pane == Pane::Refs {
                     self.notify("no ref selected".to_string());
-                } else if self.tab == Tab::Diff {
+                } else if self.tab == Tab::Visual {
                     self.notify("no diff loaded yet".to_string());
                 } else {
                     self.notify("nothing to yank".to_string());
@@ -1353,6 +1359,8 @@ pub(crate) fn poll_issues(app: &mut App) {
                 app.statuses.insert(number, statuses);
                 if app.current == Some(number) {
                     app.refresh_refs();
+                    if app.visual_graph() { app.load_graph(number, false); }
+                    if app.visual_diff() { app.load_diff(number, false); }
                 }
                 if app.requested == Some(number) {
                     app.show_issue(number);
