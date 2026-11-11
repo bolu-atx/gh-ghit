@@ -139,6 +139,31 @@ pub async fn sections(repo: &str, hours: u64, bearer: &str) -> Result<Vec<Row>, 
     parse_rows(&value, chrono::Utc::now(), hours)
 }
 
+/// Fetch details for the actual board cards, including cards outside the sections window.
+pub async fn board_details(cards: &[(String, u64)], bearer: &str) -> Result<Vec<Option<BoardDetail>>, String> {
+    let mut fields = String::new();
+    for (i, (repo, number)) in cards.iter().enumerate() {
+        let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
+        fields.push_str(&format!("c{i}: repository(owner: {}, name: {}) {{ issueOrPullRequest(number: {number}) {{ ... on Issue {{ createdAt updatedAt comments {{ totalCount }} }} ... on PullRequest {{ createdAt updatedAt comments {{ totalCount }} }} }} }} ", json!(owner), json!(name)));
+    }
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
+    let value = post_json(&client(), &url, bearer, &json!({"query": format!("query {{ {fields} }}")})).await?;
+    parse_board_details(&value, cards.len())
+}
+
+fn parse_board_details(value: &Value, count: usize) -> Result<Vec<Option<BoardDetail>>, String> {
+    let data = value.get("data").filter(|v| v.is_object())
+        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
+    Ok((0..count).map(|i| {
+        let node = data.pointer(&format!("/c{i}/issueOrPullRequest"))?;
+        let created = node.get("createdAt")?.as_str()?.get(..10)?.to_owned();
+        let updated = node.get("updatedAt")?.as_str()?.get(..10)?.to_owned();
+        let comments = node.pointer("/comments/totalCount")?.as_u64()? as usize;
+        Some(BoardDetail { created, updated, comments })
+    }).collect())
+}
+
 /// One GitHub issue-search hit as a sidebar row. Search items carry no
 /// project or merged info, so statuses stay empty and the row is partial:
 /// opening it runs the full fetch.
@@ -281,6 +306,16 @@ pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parses_board_batch_and_marks_missing_cards_for_fallback() {
+        let value = json!({"data": {"c0": {"issueOrPullRequest": {"createdAt": "2026-01-02T03:04:05Z", "updatedAt": "2026-02-03T04:05:06Z", "comments": {"totalCount": 7}}}, "c1": null, "c2": {"issueOrPullRequest": {"createdAt": "2026-01-02T03:04:05Z"}}}});
+        let details = parse_board_details(&value, 3).unwrap();
+        let detail = details[0].as_ref().unwrap();
+        assert_eq!((&*detail.created, &*detail.updated, detail.comments), ("2026-01-02", "2026-02-03", 7));
+        assert!(details[1].is_none());
+        assert!(details[2].is_none());
+        assert!(parse_board_details(&json!({"errors": [{"message": "denied"}]}), 1).is_err());
+    }
     #[test]
     fn query_has_both_sections_and_metadata() {
         let q = query();

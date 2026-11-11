@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
@@ -23,8 +22,7 @@ use crate::{api, cache, core, github, model};
 use crate::model::{BoardData, IssueData};
 
 /// The one executor for all background fetches. Tasks are cheap, so callers
-/// spawn one per request and let the runtime schedule them; only the board
-/// fan-out additionally caps concurrency (see `kick_off_details`). Built
+/// spawn tasks per request and let the runtime schedule them. Built
 /// lazily so tests that never fetch pay nothing, and never dropped.
 fn rt() -> &'static tokio::runtime::Runtime {
     static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
@@ -979,40 +977,48 @@ pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
     cols.get(app.board_col)?.1.get(app.board_row)?.number
 }
 
-/// Fetch dates and comment counts for every card, in the background.
-/// Cards fill in progressively; warm issue cache hits skip the network.
-/// Tasks are cheap, so one spawns per card, but only a few run at once.
+/// Fetch missing board card details together without blocking the event loop.
 fn kick_off_details(app: &mut App) {
     let Some(board) = &app.board else { return };
-    let tx = app.detail_tx.clone();
-    let live = Arc::new(tokio::sync::Semaphore::new(8));
+    let mut cards = Vec::new();
     for item in &board.items {
-        let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else {
-            continue;
-        };
-        if app.board_details.contains_key(&n) || app.detail_pending.contains(&n) {
-            continue;
-        }
+        let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else { continue };
+        if app.board_details.contains_key(&n) || app.detail_pending.contains(&n) { continue; }
         if let Some(d) = app.data.get(&n) {
             app.board_details.insert(n, model::BoardDetail::from_issue(d));
             continue;
         }
         app.detail_pending.insert(n);
-        let tx = tx.clone();
-        let live = live.clone();
-        rt().spawn(async move {
-            let _permit = live.acquire_owned().await;
-            let _ = tx.send((n, github::fetch_board_detail(&repo, n).await));
-        });
+        cards.push((repo, n));
     }
+    if cards.is_empty() { return; }
+    let tx = app.detail_tx.clone();
+    rt().spawn(async move {
+        match github::fetch_board_details(&cards).await {
+            Ok(details) => {
+                let mut missing = Vec::new();
+                for ((repo, n), detail) in cards.into_iter().zip(details) {
+                    match detail {
+                        Some(detail) => { let _ = tx.send((n, Ok(detail))); }
+                        None => missing.push((repo, n)),
+                    }
+                }
+                for (repo, n) in missing {
+                    let _ = tx.send((n, github::fetch_board_detail(&repo, n).await));
+                }
+            }
+            Err(e) => for (_, n) in cards { let _ = tx.send((n, Err(e.clone()))); },
+        }
+    });
 }
 
 fn poll_details(app: &mut App) {
     let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.detail_rx.try_iter().collect();
     for (n, res) in ready {
         app.detail_pending.remove(&n);
-        if let Ok(d) = res {
-            app.board_details.insert(n, d);
+        match res {
+            Ok(d) => { app.board_details.insert(n, d); }
+            Err(e) => app.notify(e),
         }
     }
 }
