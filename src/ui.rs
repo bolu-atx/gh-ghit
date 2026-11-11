@@ -15,7 +15,7 @@ use crate::app::{App, Tab};
 use crate::model::{self, IssueData};
 
 pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
-    use crate::theme::{ink, muted};
+    use crate::theme::ink;
     f.render_widget(Block::default().style(Style::new().bg(ink())), f.area());
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -119,58 +119,44 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         app.diff_row_files = vec![];
     }
 
-    // The footer always keeps the shortcut hints; notifications float as a
-    // top-right toast instead of covering them. Labels are shortened to
-    // bare keys where the key is mnemonic, but no hint is dropped, and the
-    // line stays within the 120-column budget — so it carries no icons.
-    let footer_line = Line::from(Span::styled(
-        "tab panes · j/k · ↑↓ · 1/2/3/4 · b · : cmd · / find · n/N · f filter · o · r · p · e refs · y yank · t theme · w · q",
-        Style::new().fg(muted()),
-    ));
-    f.render_widget(Paragraph::new(footer_line), root[1]);
+    app.bar_area = root[1];
+    render_bar(f, root[1], app);
 
     if crate::app::board_open(app) {
         dim_background(f, 0.35);
         render_board(f, f.area(), app);
     }
-
     if app.filter_open {
         dim_background(f, 0.35);
         render_filter(f, f.area(), app);
     }
-
-    if app.message_visible() {
-        render_toast(f, f.area(), app);
+    if app.shortcuts_open {
+        dim_background(f, 0.35);
+        render_shortcuts(f, f.area());
     }
 }
 
-/// Transient notification floating top-right so the footer hints stay put.
-fn render_toast(f: &mut ratatui::Frame, area: Rect, app: &App) {
-    use crate::theme::{amber, base, ink};
-    let inner_w = (area.width as usize).saturating_sub(8).max(10);
-    let mut text = app.message.clone();
-    if text.chars().count() > inner_w {
-        text = format!("{}…", text.chars().take(inner_w.saturating_sub(1)).collect::<String>());
-    }
-    let w = (text.chars().count() as u16 + 4).max(10);
-    let toast = Rect::new(area.width.saturating_sub(w + 1), 1, w, 3);
-    f.render_widget(Clear, toast);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(amber()))
-        .style(base());
-    let inner = block.inner(toast);
-    f.render_widget(block, toast);
-    // Nerd Font Font Awesome fa-exclamation-triangle keeps the marker's
-    // warning role; the message text stays beside it.
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("\u{f071} ", Style::new().bg(ink()).fg(amber()).bold()),
-            Span::styled(text, Style::new().bg(ink()).fg(amber())),
-        ]))
-        .style(base()),
-        inner,
-    );
+fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
+    use crate::theme::{base, ink, muted, paper};
+    let width = area.width.min(76);
+    let height = area.height.min(18);
+    let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
+    f.render_widget(Clear, popup);
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base()).title(" Shortcuts ");
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let lines = [
+        "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
+        "  1/2/3 body/comments/diff · e refs · n/N search matches", "",
+        "Actions", "  : command · / find · f filter · b board · w window",
+        "  o open · r refresh · p pin · y yank · t theme · q quit", "",
+        "Board", "  h/l columns · j/k cards · space expand · enter open", "",
+        "Diff", "  ↑/↓ lines · space expand · s split", "",
+        "Esc / ? / q close",
+    ];
+    f.render_widget(Paragraph::new(lines.join("\n")).style(Style::new().bg(ink()).fg(paper())), inner);
 }
 
 /// Filter dialog (`f`): recent window, open/closed toggles, and a GitHub
@@ -301,6 +287,61 @@ fn highlighted_spans(text: String, query: &str, base: Style) -> Vec<Span<'static
     spans
 }
 
+/// Detail lines an expanded sidebar row adds below its summary: the full
+/// title wrapped to the pane width, every label, author and state, and the
+/// created/updated dates. Indented like the summary line.
+fn expanded_row_lines(d: &IssueData, inner_width: usize) -> Vec<Line<'static>> {
+    use crate::theme::{amber, muted, paper, state_color};
+    const INDENT: &str = "    ";
+    let width = inner_width.saturating_sub(INDENT.len()).max(8);
+    let indent = |lines: Vec<Line<'static>>| -> Vec<Line<'static>> {
+        lines
+            .into_iter()
+            .map(|line| {
+                let mut spans = vec![Span::styled(INDENT, Style::new())];
+                spans.extend(line.spans);
+                Line::from(spans)
+            })
+            .collect()
+    };
+    let mut out = indent(wrap_lines(
+        vec![Line::from(Span::styled(d.title.clone(), Style::new().fg(paper())))],
+        width,
+    ));
+    let (labels, label_style) = if d.labels.is_empty() {
+        ("no labels".to_string(), Style::new().fg(muted()))
+    } else {
+        let names = d.labels.iter().map(|l| format!("● {}", l.name)).collect::<Vec<_>>().join("  ");
+        (names, Style::new().fg(amber()))
+    };
+    out.extend(indent(wrap_lines(
+        vec![Line::from(Span::styled(labels, label_style))],
+        width,
+    )));
+    out.push(Line::from(vec![
+        Span::styled(INDENT, Style::new()),
+        Span::styled(format!("by {} · ", d.author.login), Style::new().fg(paper())),
+        Span::styled(d.state.clone(), Style::new().fg(state_color(&d.state)).bold()),
+    ]));
+    let created = d.created_at.get(..10).unwrap_or(&d.created_at);
+    let updated = d.updated_at.get(..10).unwrap_or(&d.updated_at);
+    out.push(Line::from(vec![
+        Span::styled(INDENT, Style::new()),
+        Span::styled(format!("created {created}"), Style::new().fg(muted())),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled(INDENT, Style::new()),
+        Span::styled(format!("updated {updated}"), Style::new().fg(muted())),
+    ]));
+    out
+}
+
+/// Rows the detail block of an expanded row occupies at `inner_width`.
+/// Shares `expanded_row_lines` so hit-testing and rendering agree.
+pub(crate) fn expanded_row_height(d: &IssueData, inner_width: usize) -> usize {
+    expanded_row_lines(d, inner_width).len()
+}
+
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
 /// thin divider row between non-empty groups. Everything is owned, so the
 /// returned list outlives the `&App` borrow and the caller can persist its
@@ -370,15 +411,21 @@ fn section_list(
         first.extend(highlighted_spans(title_text, &query, title_style));
         // Project status in the board color with the board glyph.
         let seg_color = crate::theme::column_color(&seg);
-        items.push(ListItem::new(vec![
+        let mut lines = vec![
             Line::from(first),
             Line::from(vec![
                 Span::raw("    "),
                 Span::styled(body, Style::new().fg(muted())),
                 Span::styled(seg, Style::new().fg(seg_color)),
             ]),
-            Line::from(""),
-        ]));
+        ];
+        if app.expanded_rows.contains(n) {
+            if let Some(d) = data {
+                lines.extend(expanded_row_lines(d, inner_width));
+            }
+        }
+        lines.push(Line::from(""));
+        items.push(ListItem::new(lines));
     }
     let border = if focused { amber() } else { muted() };
     List::new(items)
@@ -934,14 +981,12 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Constraint::Length(1),
             Constraint::Length(2),
             Constraint::Min(1),
-            Constraint::Length(3),
         ])
         .split(area);
 
     // rows[0] masthead, rows[1] title/labels, rows[2] breathing room,
-    // rows[3] tabs, rows[4] pane, rows[5] bar.
+    // rows[3] tabs, rows[4] pane.
     app.tabs_area = rows[3];
-    app.bar_area = rows[5];
     // Nerd Font Font Awesome fa-git brands the wordmark; repo and number
     // stay plain text so identifiers scan without a patched font.
     let mast = match app.current.and_then(|n| app.data.get(&n)) {
@@ -1029,53 +1074,47 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.body_area = gutter[1];
     f.render_widget(pane, gutter[1]);
 
-    let bar_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .style(base())
-        .border_style(
-            Style::new().bg(ink()).fg(if app.focus == crate::app::Focus::Main { muted() } else { amber() }),
-        );
-    render_bar(f, rows[5], bar_block, app);
 }
 
-/// Command bar: prompt, input or hint, theme pill. Cursor math lives here
-/// because `Frame::set_cursor_position` takes absolute cells. In search
-/// mode the prompt is `/` and the text is the live title/# filter.
-fn render_bar(f: &mut ratatui::Frame, area: Rect, bar_block: Block<'_>, app: &App) {
-    use crate::theme::{amber, ink, muted, paper, base};
-    let inner = bar_block.inner(area);
-    f.render_widget(bar_block, area);
-    let mut spans = vec![Span::styled(
-        if app.searching { "/ " } else { "❯ " },
-        Style::new().bg(ink()).fg(amber()).bold(),
-    )];
-    let text = if app.searching { &app.search } else { &app.bar };
-    if text.is_empty() {
-        spans.push(Span::styled(
-            if app.searching { "search title or #n …" } else { "type #123, o, q …" },
-            Style::new().bg(ink()).fg(muted()).italic(),
-        ));
-    } else {
-        spans.push(Span::styled(text.clone(), Style::new().bg(ink()).fg(paper())));
-    }
-    // Theme pill pinned right, like a status chip.
-    let pill = format!(" {} ", crate::theme::name());
-    let shown = if app.searching { &app.search } else { &app.bar };
-    let used = 2 + shown.chars().count().max(19) + pill.chars().count() + 2;
-    let fill = (inner.width as usize).saturating_sub(used);
-    if fill >= 1 {
-        spans.push(Span::raw(" ".repeat(fill)));
-        spans.push(Span::styled(
-            pill,
-            Style::new().bg(amber()).fg(ink()).bold(),
-        ));
-    }
-    f.render_widget(Paragraph::new(Line::from(spans)).style(base()), inner);
+fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, base, ink, muted, paper};
     if app.focus == crate::app::Focus::Bar {
-        let len = if app.searching { app.search.len() } else { app.bar.len() };
-        let x = if len == 0 { inner.x + 2 } else { inner.x + 2 + len as u16 };
-        f.set_cursor_position((x, inner.y));
+        let text = if app.searching { &app.search } else { &app.bar };
+        let prompt = if app.searching { "/ " } else { "❯ " };
+        let shown = if text.is_empty() {
+            if app.searching { "search title or #n …" } else { "type #123, o, q …" }
+        } else { text };
+        f.render_widget(Paragraph::new(Line::from(vec![
+            Span::styled(prompt, Style::new().fg(amber()).bold()),
+            Span::styled(shown, Style::new().fg(if text.is_empty() { muted() } else { paper() })),
+        ])).style(base()), area);
+        f.set_cursor_position((area.x + (2 + text.len() as u16).min(area.width.saturating_sub(1)), area.y));
+        return;
+    }
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
+        segments.push((format!("\u{f1d3} {repo}"), false));
+    }
+    if let Some(statuses) = app.current.and_then(|n| app.statuses.get(&n)) {
+        for (title, status) in statuses.iter().filter(|(title, _)| !title.is_empty()) {
+            let suffix = status.as_ref().filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default();
+            segments.push((format!("\u{f0db} {title}{suffix}"), false));
+        }
+    }
+    if app.message_visible() && !app.message.is_empty() {
+        segments.push((format!("\u{f071} {}", app.message), true));
+    }
+    let mut spans = Vec::new();
+    for (i, (text, accent)) in segments.into_iter().enumerate() {
+        if i > 0 { spans.push(Span::styled(" · ", Style::new().fg(muted()))); }
+        spans.push(Span::styled(text, Style::new().fg(if accent { amber() } else { paper() })));
+    }
+    let hint = "? for shortcuts";
+    let hint_width = hint.len() as u16;
+    let left_width = area.width.saturating_sub(hint_width + 1);
+    f.render_widget(Paragraph::new(Line::from(spans)).style(base()), Rect::new(area.x, area.y, left_width, area.height));
+    if area.width >= hint_width {
+        f.render_widget(Paragraph::new(hint).style(Style::new().bg(ink()).fg(muted())), Rect::new(area.x + area.width - hint_width, area.y, hint_width, area.height));
     }
 }
 
@@ -1971,6 +2010,36 @@ mod render_smoke {
     }
 
     #[test]
+    fn space_expands_sidebar_row_detail_and_collapse_restores_it() {
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.title = "Fix the thing that keeps breaking tailmarker".to_string();
+        d.labels = ["bug", "ui", "docs", "chore", "ci-pipeline"]
+            .iter()
+            .map(|name| Label { name: name.to_string() })
+            .collect();
+        app.show_issue(7);
+        let collapsed = sidebar_text(&mut app);
+        assert!(collapsed.contains("#7 Fix the thing"), "{collapsed}");
+        assert!(!collapsed.contains("tailmarker"), "collapsed title is a slug");
+        assert!(!collapsed.contains("ci-pipeline"), "summary label chips overflow");
+
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        let expanded = sidebar_text(&mut app);
+        assert!(expanded.contains("tailmarker"), "full title wraps in: {expanded}");
+        assert!(expanded.contains("● bug"), "every label: {expanded}");
+        assert!(expanded.contains("ci-pipeline"), "every label: {expanded}");
+        assert!(expanded.contains("by bo · OPEN"), "author and state: {expanded}");
+        assert!(expanded.contains("created 2026-01-02"), "created date: {expanded}");
+        assert!(expanded.contains("updated 2026-01-05"), "updated date: {expanded}");
+        // Only the selected row's number expands.
+        assert_eq!(expanded.matches("created 2026-01-02").count(), 1);
+
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert_eq!(sidebar_text(&mut app), collapsed, "collapse restores the row");
+    }
+
+    #[test]
     fn mouse_click_switches_tabs() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
@@ -2072,6 +2141,24 @@ mod render_smoke {
             .iter()
             .map(|c| c.symbol())
             .collect()
+    }
+
+    /// Text of the Issues sidebar only, so main-pane text cannot satisfy
+    /// or break row-render assertions.
+    fn sidebar_text(app: &mut App) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        let area = app.side_issue_area;
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
     }
 
     #[test]
@@ -2440,25 +2527,51 @@ mod render_smoke {
     }
 
     #[test]
-    fn footer_hints_fit_120_columns() {
+    fn status_bar_shows_repo_project_and_pinned_hint() {
         let mut app = loaded_app();
-        let backend = TestBackend::new(120, 40);
-        let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
-        let buf = terminal.backend().buffer().clone();
-        let line: String = (0..120).map(|x| buf[(x, 39)].symbol().to_string()).collect();
-        let line = line.trim_end();
-        assert!(line.contains("tab pane"), "{line}");
-        assert!(line.chars().count() <= 120, "width {}: {line}", line.chars().count());
+        app.statuses.insert(7, vec![("ghit demo".into(), Some("Todo".into()))]);
+        let text = frame_text(&mut app);
+        let line: String = text.chars().skip(120 * 39).take(120).collect();
+        assert!(line.contains("o/r"), "{line}");
+        assert!(line.contains("ghit demo (Todo)"), "{line}");
+        assert!(line.ends_with("? for shortcuts"), "{line}");
     }
 
     #[test]
-    fn toast_floats_top_right_leaving_footer_hints() {
+    fn focused_input_replaces_status_and_positions_cursor() {
         let mut app = loaded_app();
-        app.notify("hello toast".to_string());
+        app.focus = crate::app::Focus::Bar;
+        app.bar = "123".into();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let line: String = (0..120).map(|x| terminal.backend().buffer()[(x, 39)].symbol()).collect();
+        assert!(line.starts_with("❯ 123"), "{line}");
+        assert!(!line.contains("? for shortcuts"), "{line}");
+        assert_eq!(terminal.get_cursor_position().unwrap(), (5, 39).into());
+    }
+
+    #[test]
+    fn visible_message_appears_only_in_status_bar() {
+        let mut app = loaded_app();
+        app.notify("hello status".into());
         let text = frame_text(&mut app);
-        assert!(text.contains("hello toast"), "{text}");
-        assert!(text.contains("tab pane"), "footer keeps the hints");
+        assert_eq!(text.matches("hello status").count(), 1);
+        let line: String = text.chars().skip(120 * 39).take(120).collect();
+        assert!(line.contains("hello status"), "{line}");
+        assert!(line.ends_with("? for shortcuts"), "{line}");
+    }
+
+    #[test]
+    fn shortcuts_modal_opens_and_each_close_key_dismisses_it() {
+        for close in [KeyCode::Esc, KeyCode::Char('?'), KeyCode::Char('q')] {
+            let mut app = loaded_app();
+            handle_key(&mut app, key(KeyCode::Char('?')));
+            assert!(frame_text(&mut app).contains("Navigation"));
+            handle_key(&mut app, key(close));
+            assert!(!app.shortcuts_open);
+            assert!(!app.quit);
+            assert!(!frame_text(&mut app).contains("Navigation"));
+        }
     }
 
     #[test]
@@ -2516,7 +2629,7 @@ mod render_smoke {
         ));
         let text = frame_text(&mut app);
         assert!(text.contains("yanked #7"), "{text}");
-        assert!(text.contains("tab pane"), "footer keeps the hints");
+        assert!(text.contains("? for shortcuts"), "status keeps the hint");
     }
 
     #[test]
