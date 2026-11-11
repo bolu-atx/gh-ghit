@@ -79,3 +79,16 @@ records the exact `send-keys` / `capture-pane` lines, and requires
 the matching `render_smoke` frame test for UI changes, using the
 template in [verification.md](verification.md). No scenario for a
 visible change, no sign-off.
+
+## Architecture review
+
+The coordinator runs one review at milestone close or every 5th
+merged story PR, whichever comes first.
+
+A read-only reviewer gets the diff range plus what the work was,
+and judges structure only: layer table still true, core still pure,
+third copies lifted, one-caller helpers inlined. Findings become a
+`chore` issue on the board — ranked lift/change/delete items, or a
+recorded no-change verdict. Procedure and template:
+[verification.md](verification.md). The next milestone opens after
+the issue is filed.
