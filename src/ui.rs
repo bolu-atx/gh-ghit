@@ -2753,7 +2753,7 @@ mod render_smoke {
         let mut issue = sample(42);
         issue.is_pr = true;
         issue.title = "background pull request".to_string();
-        tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::api::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false }]))).unwrap();
+        tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::api::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false, window_at: None }]))).unwrap();
         poll_sections(&mut app);
         assert_eq!(app.current, Some(7));
         assert!(app.partial.contains(&42));
