@@ -418,10 +418,12 @@ fn section_list(
             ))));
             continue;
         };
-        // The selection marker only renders on the focused pane. The
-        // ListState cursor underneath is untouched, so tabbing away and
-        // back restores the exact row and scroll position.
-        let sel = focused && (app.current == Some(*n) || mark == Some(*n));
+        // The selection marker renders on the focused pane, plus the
+        // wheel hover wherever it sits: hovering is highlight-only, so
+        // the pane shows the cursor without visiting. The ListState
+        // cursor underneath is untouched, so tabbing away and back
+        // restores the exact row and scroll position.
+        let sel = (focused && (app.current == Some(*n) || mark == Some(*n))) || app.hover == Some(*n);
         let marker = if sel { "█ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
@@ -908,7 +910,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         now,
     );
     let mut istate = std::mem::take(&mut app.issue_state);
-    istate.select(selected_index(&issue_rows, app.current));
+    istate.select(selected_index(&issue_rows, app.effective(&issue_rows)));
     f.render_stateful_widget(il, panes[0], &mut istate);
     app.issue_state = istate;
     let prs_focused = app.pane == crate::app::Pane::PRs;
@@ -924,7 +926,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         now,
     );
     let mut pstate = std::mem::take(&mut app.pr_state);
-    pstate.select(selected_index(&pr_rows, app.current));
+    pstate.select(selected_index(&pr_rows, app.effective(&pr_rows)));
     f.render_stateful_widget(pl, panes[1], &mut pstate);
     app.pr_state = pstate;
 }
@@ -2266,6 +2268,25 @@ mod render_smoke {
         app.show_issue(30);
         let _ = frame_text(&mut app);
         assert!(app.issue_state.offset() > 0, "pane scrolled");
+    }
+
+    #[test]
+    fn wheel_over_sidebar_hovers_without_visiting() {
+        let mut app = loaded_app();
+        // A second issue row so the wheel has somewhere to go.
+        let d = sample(8);
+        app.data.insert(8, d);
+        app.statuses.insert(8, vec![]);
+        app.visited.push(8);
+        let _ = frame_text(&mut app); // records hit areas
+        let (x, y) = (app.side_issue_area.x + 2, app.side_issue_area.y + 2);
+        handle_mouse(&mut app, click(MouseEventKind::ScrollDown, x, y));
+        assert_eq!(app.hover, Some(8));
+        assert_eq!(app.current, Some(7), "wheel never visits");
+        let _ = frame_text(&mut app); // viewport follows the hover
+        assert_eq!(app.issue_state.selected(), Some(2), "hovered row tracked");
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.scroll, 0, "body scroll untouched");
     }
 
     #[test]
