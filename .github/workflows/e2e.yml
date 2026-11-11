@@ -10,7 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y tmux xvfb xclip
+      # Cache the apt debs so a flaky Ubuntu mirror (DNS blips seen
+      # twice on #72) can't fail setup: cache hits install with no
+      # network, misses fall back to apt once and repopulate it.
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: tmux xvfb xclip
+          version: "1.0"
       - run: cargo build
       # xvfb-run provides the X server xclip needs, so yank really copies
       # and the toasts assert on content instead of "copy failed".
