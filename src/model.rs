@@ -184,10 +184,13 @@ pub struct BoardItem {
 }
 
 /// Per-card detail fetched in the background: dates plus comment count.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BoardDetail {
+    #[serde(default)]
     pub created: String,
+    #[serde(default)]
     pub updated: String,
+    #[serde(default)]
     pub comments: usize,
 }
 
