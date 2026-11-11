@@ -10,6 +10,13 @@ use crate::app::{App, Focus, Pane, Tab, board_move, board_open, board_selected_n
 use crate::core;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    if app.shortcuts_open {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+            app.shortcuts_open = false;
+        }
+        return;
+    }
+
     // Board modal captures everything.
     if board_open(app) {
         match key.code {
@@ -91,6 +98,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 
     match key.code {
+        KeyCode::Char('?') => app.shortcuts_open = true,
         KeyCode::Char('q') => app.quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
         KeyCode::Char('1') => app.set_tab(Tab::Body),
@@ -345,6 +353,7 @@ fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], x: u16, y: u16) -> Op
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
+    if app.shortcuts_open { return; }
     if board_open(app) {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
