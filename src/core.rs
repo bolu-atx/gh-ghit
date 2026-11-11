@@ -159,9 +159,11 @@ pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<crat
     out
 }
 
-/// True when `query` matches the row: a case-insensitive title substring,
-/// or a digit substring of the number (`#` prefix optional).
-pub fn matches_search(number: u64, title: &str, query: &str) -> bool {
+/// True when `query` matches the row: a case-insensitive substring of
+/// the title, a label name, or the author login, or a digit substring of
+/// the number (`#` prefix optional). Empty query matches every row, so a
+/// cleared `/` filter restores the full sidebar.
+pub fn matches_search(number: u64, title: &str, labels: &[&str], author: &str, query: &str) -> bool {
     let q = query.trim().trim_start_matches('#').to_lowercase();
     if q.is_empty() {
         return true;
@@ -169,7 +171,13 @@ pub fn matches_search(number: u64, title: &str, query: &str) -> bool {
     if number.to_string().contains(&q) {
         return true;
     }
-    title.to_lowercase().contains(&q)
+    if title.to_lowercase().contains(&q) {
+        return true;
+    }
+    if author.to_lowercase().contains(&q) {
+        return true;
+    }
+    labels.iter().any(|l| l.to_lowercase().contains(&q))
 }
 
 /// Collapse whitespace runs to single spaces so yanked text pastes as one
@@ -374,12 +382,43 @@ mod tests {
 
     #[test]
     fn search_matches_title_or_number() {
-        assert!(matches_search(123, "Fix login", "fix"));
-        assert!(matches_search(123, "Fix login", "FIX"));
-        assert!(matches_search(123, "Fix login", "#23"));
-        assert!(matches_search(123, "Fix login", "12"));
-        assert!(!matches_search(123, "Fix login", "zzz"));
-        assert!(matches_search(123, "Fix login", ""));
+        assert!(matches_search(123, "Fix login", &[], "alice", "fix"));
+        assert!(matches_search(123, "Fix login", &[], "alice", "FIX"));
+        assert!(matches_search(123, "Fix login", &[], "alice", "#23"));
+        assert!(matches_search(123, "Fix login", &[], "alice", "12"));
+        assert!(!matches_search(123, "Fix login", &[], "alice", "zzz"));
+        assert!(matches_search(123, "Fix login", &[], "alice", ""));
+    }
+
+    #[test]
+    fn search_matches_label_name() {
+        let labels = ["bug", "needs-triage"];
+        assert!(matches_search(123, "Fix login", &labels, "alice", "bug"));
+        assert!(matches_search(123, "Fix login", &labels, "alice", "BUG"));
+        assert!(matches_search(123, "Fix login", &labels, "alice", "triage"));
+        assert!(!matches_search(123, "Fix login", &labels, "alice", "feature"));
+        assert!(!matches_search(123, "Fix login", &[], "alice", "bug"));
+    }
+
+    #[test]
+    fn search_matches_author_login() {
+        assert!(matches_search(123, "Fix login", &[], "octocat", "octo"));
+        assert!(matches_search(123, "Fix login", &[], "octocat", "OCTOCAT"));
+        assert!(!matches_search(123, "Fix login", &[], "octocat", "monalisa"));
+        assert!(!matches_search(123, "Fix login", &[], "", "octo"));
+    }
+
+    #[test]
+    fn search_empty_query_matches_all() {
+        assert!(matches_search(7, "Anything", &["bug"], "alice", ""));
+        assert!(matches_search(7, "Anything", &["bug"], "alice", "   "));
+        assert!(matches_search(7, "Anything", &[], "", ""));
+    }
+
+    #[test]
+    fn search_no_match_on_unrelated_query() {
+        assert!(!matches_search(123, "Fix login", &["bug"], "alice", "zzz"));
+        assert!(!matches_search(123, "Fix login", &["bug"], "alice", "999"));
     }
 
     #[test]

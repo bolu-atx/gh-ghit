@@ -214,7 +214,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let mut qline = vec![
         Span::styled("query ", Style::new().bg(ink()).fg(muted())),
         Span::styled(
-            if query_text.is_empty() { "github search, e to edit …".to_string() } else { query_text.clone() },
+            if query_text.is_empty() { "server github search, e to edit …".to_string() } else { query_text.clone() },
             Style::new().bg(ink()).fg(if query_text.is_empty() { muted() } else { paper() }),
         ),
     ];
@@ -906,7 +906,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             }
         },
         None => crate::theme::render_markdown(
-            "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or search titles with `/`.",
+            "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
         ),
     };
     // A refs-row selection lights up the mentioning line instead of opening
@@ -939,7 +939,8 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
 /// Command bar: prompt, input or hint, theme pill. Cursor math lives here
 /// because `Frame::set_cursor_position` takes absolute cells. In search
-/// mode the prompt is `/` and the text is the live title/# filter.
+/// mode the prompt is `/` and the text is the live client-side filter over
+/// loaded rows (title, #n, label, author).
 fn render_bar(f: &mut ratatui::Frame, area: Rect, bar_block: Block<'_>, app: &App) {
     use crate::theme::{amber, ink, muted, paper, base};
     let inner = bar_block.inner(area);
@@ -951,7 +952,7 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, bar_block: Block<'_>, app: &Ap
     let text = if app.searching { &app.search } else { &app.bar };
     if text.is_empty() {
         spans.push(Span::styled(
-            if app.searching { "search title or #n …" } else { "type #123, o, q …" },
+            if app.searching { "instant filter loaded: title, #n, label, author …" } else { "type #123, o, q …" },
             Style::new().bg(ink()).fg(muted()).italic(),
         ));
     } else {
