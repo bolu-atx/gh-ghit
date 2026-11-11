@@ -572,6 +572,36 @@ pub fn thread_patch_row(thread: &ReviewThread, file: &DiffFile) -> Option<usize>
     patch_new_lines(&file.patch).iter().position(|n| *n == Some(line))
 }
 
+/// New-side line for a cursor sitting on a rendered unified-diff section.
+///
+/// `section` holds the visible buffer rows of one file starting just below
+/// its header, `cursor` is the index into `section` of the active row, and
+/// `patch` is the file's raw unified patch. Returns the new-side line of
+/// the nearest Add/Context row at or above the cursor, or `None` when the
+/// cursor sits above the first commentable row (hunk headers, leading
+/// deletions, binary notes). Rendered rows carry a two-cell dent that is
+/// stripped before comparing; blank, rule, and review-thread rows never
+/// match a patch row and are skipped, as are wrapped continuations (a
+/// truncated first fragment still prefixes its patch row).
+pub fn line_target_at_cursor(section: &[String], cursor: usize, patch: &str) -> Option<u64> {
+    let rows: Vec<(DiffKind, String)> = diff_lines(patch);
+    let numbers = patch_new_lines(patch);
+    let mut target: Option<u64> = None;
+    let mut next = 0;
+    for row in section.iter().take(cursor + 1) {
+        let Some((_, text)) = rows.get(next) else { break };
+        let trimmed = row.trim_end();
+        let stripped = trimmed.strip_prefix("  ").unwrap_or(trimmed);
+        if !stripped.is_empty() && (stripped == text || text.starts_with(stripped)) {
+            if let Some(n) = numbers.get(next).copied().flatten() {
+                target = Some(n);
+            }
+            next += 1;
+        }
+    }
+    target
+}
+
 #[cfg(test)]
 mod content_polish_tests {
     use super::*;
@@ -589,6 +619,28 @@ mod content_polish_tests {
         assert_eq!(thread_patch_row(&thread, &file), None);
         thread.line = Some(4); thread.path = "b".into();
         assert_eq!(thread_patch_row(&thread, &file), None);
+    }
+    #[test]
+    fn cursor_maps_rendered_rows_to_new_side_lines() {
+        // Patch rows render with a two-cell dent, exactly as `ui` emits.
+        let patch = "@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n+more\n tail";
+        let section: Vec<String> = ["  @@ -1,3 +1,3 @@", "   ctx", "  -old", "  +new", "  +more", "   tail"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(line_target_at_cursor(&section, 0, patch), None, "hunk header has no line");
+        assert_eq!(line_target_at_cursor(&section, 1, patch), Some(1));
+        assert_eq!(line_target_at_cursor(&section, 2, patch), Some(1), "deletion keeps the line above");
+        assert_eq!(line_target_at_cursor(&section, 3, patch), Some(2));
+        assert_eq!(line_target_at_cursor(&section, 5, patch), Some(4));
+    }
+    #[test]
+    fn cursor_skips_thread_and_blank_rows() {
+        let patch = "@@ -1,2 +1,2 @@\n a\n+b";
+        // Inline review threads, blanks, and wrapped continuations never
+        // match a patch row, so the target stays on the last real row.
+        let section: Vec<String> = ["  @@ -1,2 +1,2 @@", "   a", "      \u{f075} line 2 · unresolved", "      reviewer", "", "  +b"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(line_target_at_cursor(&section, 4, patch), Some(1));
+        assert_eq!(line_target_at_cursor(&section, 5, patch), Some(2));
     }
 }
 

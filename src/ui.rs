@@ -134,6 +134,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_shortcuts(f, f.area());
     }
+    if app.compose_open() {
+        dim_background(f, 0.35);
+        render_compose(f, f.area(), app);
+    }
 }
 
 fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
@@ -152,7 +156,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "  1/2 details/visual · e refs · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
         "Actions", "  : command · / find · f filter · b board · w window",
-        "  o open · r refresh · p pin · y yank · t theme · q quit",
+        "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open", "",
         "Diff", "  ↑/↓ lines · space expand · s split", "",
@@ -1464,6 +1468,76 @@ fn card_assignee(c: &model::BoardItem) -> Option<String> {
     }).map(str::to_string).next()
 }
 
+/// Comment compose modal (`c`): textarea over a rendered markdown
+/// preview through the shared `GhitSheet` stylesheet. The draft shows a
+/// `▌` cursor marker; while the background submit runs, the title reads
+/// Sending and editing locks. Footer names the keys; resolving threads
+/// is out of scope and never offered here.
+fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, ink, muted, base, paper};
+    let Some(c) = app.compose.as_ref() else { return };
+    let popup = centered(area, 80, 76);
+    f.render_widget(Clear, popup);
+    let head = if c.sending { " Sending… " } else { " Compose " };
+    let title = Line::from(vec![
+        Span::styled(head, Style::new().bg(ink()).fg(amber()).bold()),
+        Span::styled(format!("{} ", c.target.title(c.number)), Style::new().bg(ink()).fg(paper())),
+    ]);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base())
+        .title(title);
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(45), Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+    // Draft with a visible cursor marker at the char index.
+    let cursor = c.cursor.min(c.body.chars().count());
+    let mut draft = String::with_capacity(c.body.len() + 3);
+    for (i, ch) in c.body.chars().enumerate() {
+        if i == cursor {
+            draft.push('▌');
+        }
+        draft.push(ch);
+    }
+    if cursor == c.body.chars().count() {
+        draft.push('▌');
+    }
+    let draft_text = if c.body.trim().is_empty() {
+        Paragraph::new(Span::styled("write a comment…", Style::new().bg(ink()).fg(muted()).italic()))
+    } else {
+        Paragraph::new(draft).style(Style::new().bg(ink()).fg(paper()))
+    };
+    f.render_widget(
+        draft_text.block(Block::default().borders(Borders::BOTTOM).border_style(Style::new().bg(ink()).fg(muted())).title(Span::styled(" draft ", Style::new().bg(ink()).fg(muted())))),
+        chunks[0],
+    );
+    let preview = if c.body.trim().is_empty() {
+        ratatui::text::Text::from(Line::from(Span::styled("(nothing to preview)", Style::new().bg(ink()).fg(muted()).italic())))
+    } else {
+        crate::theme::render_markdown(&c.body)
+            .lines
+            .into_iter()
+            .map(|line| Line::from(line.spans.into_iter().map(|s| Span::styled(s.content.into_owned(), s.style)).collect::<Vec<_>>()))
+            .collect::<Vec<_>>()
+            .into()
+    };
+    f.render_widget(
+        Paragraph::new(preview).style(base()).block(Block::default().title(Span::styled(" preview ", Style::new().bg(ink()).fg(muted())))),
+        chunks[1],
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            if c.sending { "sending… esc closes, the send still lands" } else { "type to write · ctrl-s send · esc discard" },
+            Style::new().bg(ink()).fg(muted()),
+        ))),
+        chunks[2],
+    );
+}
+
 /// Placeholder columns shown while the network fetch is in flight.
 fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
     use crate::theme::{ink, muted, base};
@@ -2475,6 +2549,65 @@ mod render_smoke {
         let mut d = sample(number);
         d.is_pr = true;
         d
+    }
+
+    #[test]
+    fn compose_modal_shows_thread_target_and_preview() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('c')));
+        assert!(app.compose_open());
+        for ch in "# hi".chars() {
+            handle_key(&mut app, key(KeyCode::Char(ch)));
+        }
+        let text = frame_text(&mut app);
+        assert!(text.contains("Compose"), "{text}");
+        assert!(text.contains("thread #7"), "{text}");
+        assert!(text.contains("hi"), "draft plus preview: {text}");
+        assert!(text.contains("preview"), "{text}");
+        assert!(text.contains("ctrl-s send · esc discard"), "{text}");
+    }
+
+    #[test]
+    fn compose_on_diff_line_targets_file_and_line() {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        ]);
+        app.expanded_files.insert((9, "a.rs".into()));
+        app.set_tab(Tab::Visual);
+        let _ = frame_text(&mut app);
+        // Header, hunk, deletion, then the addition the comment lands on.
+        for _ in 0..3 {
+            handle_key(&mut app, key(KeyCode::Down));
+        }
+        handle_key(&mut app, key(KeyCode::Char('c')));
+        assert_eq!(
+            app.compose.as_ref().map(|c| c.target.clone()),
+            Some(crate::app::ComposeTarget::Line { path: "a.rs".to_string(), line: 1 }),
+        );
+        let text = frame_text(&mut app);
+        assert!(text.contains("a.rs:1"), "{text}");
+    }
+
+    #[test]
+    fn compose_modal_shows_reply_target_and_discards() {
+        let mut app = loaded_app();
+        app.compose = Some(crate::app::ComposeState {
+            number: 7,
+            target: crate::app::ComposeTarget::Reply { thread_id: "t".into() },
+            body: "reply".into(),
+            cursor: 5,
+            sending: false,
+        });
+        let text = frame_text(&mut app);
+        assert!(text.contains("Reply"), "{text}");
+        assert!(text.contains("reply"), "{text}");
+        handle_key(&mut app, key(KeyCode::Esc));
+        assert!(!app.compose_open());
     }
 
     #[test]

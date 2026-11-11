@@ -231,6 +231,30 @@ pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<mode
     Ok(files)
 }
 
+/// Post a thread comment on an issue/PR. Failures are strings for the
+/// status line, never panics; auth and repo resolve first so misuse
+/// never reaches the network.
+pub async fn post_thread_comment(repo: &str, number: u64, body: &str) -> Result<(), String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::add_comment(repo, number, body, token).await
+}
+
+/// Post a single-shot line comment on a PR file. Same error contract
+/// as `post_thread_comment`.
+pub async fn post_line_comment(repo: &str, number: u64, body: &str, path: &str, line: u64) -> Result<(), String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::add_review_thread(repo, number, body, path, line, token).await
+}
+
+/// Reply inside an existing review thread. Phase 4 of #31: wired but
+/// untargeted until #11 gives the cursor a thread to point at.
+pub async fn post_thread_reply(thread_id: &str, body: &str) -> Result<(), String> {
+    let token = require_token()?;
+    api::add_thread_reply(thread_id, body, token).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
