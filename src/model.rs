@@ -100,6 +100,35 @@ pub struct PairedRef {
     pub state: String,
 }
 
+/// Rollup CI check state of a PR's head commit, read from
+/// `statusCheckRollup` on the sections query. `None` on the row means
+/// the PR runs no checks, so the UI shows nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckState {
+    Pass,
+    Fail,
+    Pending,
+    /// Unknown future states parse here so new GraphQL values never fail
+    /// the row; the UI treats it like no checks.
+    #[default]
+    Unknown,
+}
+
+/// Parse the head-commit rollup of one sections-query PR node. Missing
+/// commits or a missing/null rollup yield `None`; an unrecognized state
+/// yields `Unknown`, never an error.
+pub fn parse_check_state(value: &serde_json::Value) -> Option<CheckState> {
+    let state = value
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
+        .and_then(serde_json::Value::as_str)?;
+    match state {
+        "SUCCESS" => Some(CheckState::Pass),
+        "FAILURE" | "ERROR" => Some(CheckState::Fail),
+        "PENDING" | "EXPECTED" => Some(CheckState::Pending),
+        _ => Some(CheckState::Unknown),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueData {
@@ -132,6 +161,10 @@ pub struct IssueData {
     /// caches without the field still parse.
     #[serde(default)]
     pub paired: Vec<PairedRef>,
+    /// Head-commit CI rollup for PRs (`None` = no checks). Defaulted so
+    /// old file caches without the field still parse.
+    #[serde(default)]
+    pub checks: Option<CheckState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -806,6 +839,24 @@ mod tests {
     }
 
     #[test]
+    fn check_rollup_parses_pass_fail_pending_and_absent() {
+        use CheckState::{Fail, Pass, Pending};
+        let node = |state: &str| serde_json::json!({"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":state}}}]}});
+        assert_eq!(parse_check_state(&node("SUCCESS")), Some(Pass));
+        assert_eq!(parse_check_state(&node("FAILURE")), Some(Fail));
+        assert_eq!(parse_check_state(&node("ERROR")), Some(Fail));
+        assert_eq!(parse_check_state(&node("PENDING")), Some(Pending));
+        assert_eq!(parse_check_state(&node("EXPECTED")), Some(Pending));
+        // Missing commits, empty nodes, or a null rollup mean no checks.
+        assert_eq!(parse_check_state(&serde_json::json!({})), None);
+        assert_eq!(parse_check_state(&serde_json::json!({"commits":{"nodes":[]}})), None);
+        assert_eq!(parse_check_state(&serde_json::json!({"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}})), None);
+        assert_eq!(parse_check_state(&serde_json::json!({"commits":{"nodes":[{"commit":{}}]}})), None);
+        // Unknown future states never fail the row.
+        assert_eq!(parse_check_state(&node("QUEUED")), Some(CheckState::Unknown));
+    }
+
+    #[test]
     fn old_cached_issue_without_paired_still_parses() {
         let old = serde_json::json!({
             "number": 7, "title": "cached", "state": "OPEN",
@@ -816,6 +867,7 @@ mod tests {
         });
         let data: IssueData = serde_json::from_value(old).expect("old cache parses");
         assert!(data.paired.is_empty());
+        assert!(data.checks.is_none());
     }
 
     fn sample_issue() -> IssueData {
@@ -833,6 +885,7 @@ mod tests {
             comments: vec![],
             review_threads: vec![],
             paired: vec![],
+            checks: None,
             is_pr: false,
         }
     }

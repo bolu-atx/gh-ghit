@@ -1607,6 +1607,7 @@ mod tests {
             comments: vec![],
             review_threads: vec![],
             paired: vec![],
+            checks: None,
             is_pr: false,
         }
     }
