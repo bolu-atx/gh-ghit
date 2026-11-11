@@ -8,7 +8,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const RECENT_REFRESH_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
@@ -104,6 +107,9 @@ pub(crate) struct App {
     pub(crate) bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
     pub(crate) initial_numbers: Vec<u64>,
     pub(crate) section_rx: Option<std::sync::mpsc::Receiver<github::SectionEvent>>,
+    last_sections_fetch: Instant,
+    auto_refresh_interval: Duration,
+    section_auto_refresh: bool,
     /// Section page progress: rows fetched vs the row cap, while pages
     /// remain. Cleared when the terminal result lands.
     pub(crate) section_progress: Option<(usize, usize)>,
@@ -262,6 +268,9 @@ impl App {
             bootstrap_rx: None,
             initial_numbers: vec![],
             section_rx: None,
+            last_sections_fetch: Instant::now(),
+            auto_refresh_interval: RECENT_REFRESH_INTERVAL,
+            section_auto_refresh: false,
             section_progress: None,
             partial: HashSet::new(),
             issue_tx, issue_rx, issue_pending: HashSet::new(), issue_progress: HashMap::new(), requested: None,
@@ -433,6 +442,8 @@ impl App {
     /// Offline or out of a repo this is a no-op: clicked rows still list.
     pub(crate) fn merge_recent_sections(&mut self) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
+        self.last_sections_fetch = Instant::now();
+        self.section_auto_refresh = false;
         let hours = self.merged_window_hours;
         let (tx, rx) = std::sync::mpsc::channel();
         self.section_rx = Some(rx);
@@ -440,6 +451,23 @@ impl App {
             let result = github::fetch_recent_sections(&repo, hours, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });
+    }
+
+    fn auto_refresh_recent(&mut self, now: Instant) {
+        if now.duration_since(self.last_sections_fetch) < self.auto_refresh_interval
+            || self.section_rx.is_some()
+            || board_open(self)
+            || self.compose.is_some()
+            || self.filter_open
+            || self.shortcuts_open
+            || self.focus == Focus::Bar
+        {
+            return;
+        }
+        self.merge_recent_sections();
+        if self.section_rx.is_some() {
+            self.section_auto_refresh = true;
+        }
     }
 
     /// Window change: drop unopened background rows and refetch from
@@ -459,6 +487,8 @@ impl App {
             self.notify("search needs a repo: use -R or run inside one".to_string());
             return;
         };
+        self.last_sections_fetch = Instant::now();
+        self.section_auto_refresh = false;
         self.section_replace = true;
         self.notify(format!("searching: {query}"));
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1667,6 +1697,7 @@ fn event_loop(
         }
         poll_bootstrap(app);
         poll_sections(app);
+        app.auto_refresh_recent(Instant::now());
         poll_issues(app);
         poll_diffs(app);
         poll_graphs(app);
@@ -1709,6 +1740,14 @@ pub(crate) fn poll_sections(app: &mut App) {
         github::SectionEvent::Done(result) => {
             app.section_rx = None;
             app.section_progress = None;
+            let auto = std::mem::take(&mut app.section_auto_refresh);
+            if auto {
+                app.auto_refresh_interval = if result.is_ok() {
+                    RECENT_REFRESH_INTERVAL
+                } else {
+                    (app.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
+                };
+            }
             if std::mem::take(&mut app.section_replace) {
                 app.drop_unvisited_background();
             }
@@ -1726,11 +1765,11 @@ pub(crate) fn poll_sections(app: &mut App) {
                             last = Some(n);
                         }
                     }
-                    if app.current.is_none() && app.requested.is_none() {
+                    if !auto && app.current.is_none() && app.requested.is_none() {
                         if let Some(n) = last { app.load_issue(n, false); }
                     }
                 },
-                Err(e) => app.notify(e),
+                Err(e) => { if !auto { app.notify(e); } },
             }
         }
     }
@@ -1965,6 +2004,81 @@ mod tests {
         assert!(!app.issue_progress.contains_key(&9), "terminal result clears progress");
         assert!(!app.issue_pending.contains(&9));
         assert!(app.data.contains_key(&9));
+    }
+
+    #[test]
+    fn auto_refresh_fires_at_interval() {
+        let mut app = sidebar_app(&[7]);
+        let start = app.last_sections_fetch;
+        app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL - Duration::from_millis(1));
+        assert!(app.section_rx.is_none());
+        app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+        assert!(app.section_rx.is_some());
+        assert!(app.section_auto_refresh);
+    }
+
+    #[test]
+    fn auto_refresh_guards_each_active_view() {
+        for guard in 0..7 {
+            let mut app = sidebar_app(&[7]);
+            let (_tx, rx) = std::sync::mpsc::channel();
+            match guard {
+                0 => app.section_rx = Some(rx),
+                1 => app.board_loading = true,
+                2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![] }),
+                3 => app.compose = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false }),
+                4 => app.filter_open = true,
+                5 => app.shortcuts_open = true,
+                6 => app.focus = Focus::Bar,
+                _ => unreachable!(),
+            }
+            let start = app.last_sections_fetch;
+            app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+            assert_eq!(app.last_sections_fetch, start, "guard {guard}");
+            assert!(!app.section_auto_refresh, "guard {guard}");
+        }
+    }
+
+    #[test]
+    fn auto_refresh_failure_backs_off_and_success_resets() {
+        let mut app = sidebar_app(&[7]);
+        for expected in [10, 20, 40, 60, 60] {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.section_rx = Some(rx);
+            app.section_auto_refresh = true;
+            tx.send(github::SectionEvent::Done(Err("offline".into()))).unwrap();
+            poll_sections(&mut app);
+            assert_eq!(app.auto_refresh_interval, Duration::from_secs(expected));
+        }
+        let start = app.last_sections_fetch;
+        app.auto_refresh_recent(start + Duration::from_secs(59));
+        assert!(app.section_rx.is_none());
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.section_rx = Some(rx);
+        app.section_auto_refresh = true;
+        tx.send(github::SectionEvent::Done(Ok(vec![]))).unwrap();
+        poll_sections(&mut app);
+        assert_eq!(app.auto_refresh_interval, RECENT_REFRESH_INTERVAL);
+    }
+
+    #[test]
+    fn auto_refresh_landing_preserves_view() {
+        for current in [Some(7), None] {
+            let mut app = sidebar_app(&[7]);
+            app.current = current;
+            app.scroll = 12;
+            app.hover = Some(7);
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.section_rx = Some(rx);
+            app.section_auto_refresh = true;
+            let row = crate::api::Row { issue: issue(9, "2026-01-06T00:00:00Z"), statuses: vec![], detail: model::BoardDetail::default(), complete: true, window_at: None };
+            tx.send(github::SectionEvent::Done(Ok(vec![row]))).unwrap();
+            poll_sections(&mut app);
+            assert!(app.recent.contains(&9));
+            assert_eq!(app.current, current);
+            assert_eq!(app.scroll, 12);
+            assert_eq!(app.hover, Some(7));
+        }
     }
 
     #[test]
