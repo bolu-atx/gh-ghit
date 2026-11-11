@@ -522,7 +522,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
             Style::new().bg(ink()).fg(muted()),
         )));
     };
-    if files.is_empty() {
+    if files.is_empty() && d.review_threads.is_empty() {
         return ratatui::text::Text::from(Line::from(Span::styled(
             "No changed files.",
             Style::new().bg(ink()).fg(muted()),
@@ -587,6 +587,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         lines.push(Line::from(""));
         lines.push(Line::from(rule.clone()));
         lines.push(head);
+        append_review_threads(&mut lines, d, &f.filename);
         if !expanded {
             continue;
         }
@@ -617,6 +618,19 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
             }
         }
     }
+    let mut extra_paths = Vec::new();
+    for thread in &d.review_threads {
+        if !files.iter().take(MAX_DIFF_FILES).any(|file| file.filename == thread.path)
+            && !extra_paths.contains(&thread.path) {
+            extra_paths.push(thread.path.clone());
+        }
+    }
+    for path in extra_paths {
+        lines.push(Line::from(""));
+        lines.push(Line::from(rule.clone()));
+        lines.push(Line::from(Span::styled(format!("  \u{f15c} {path}"), Style::new().bg(ink()).fg(paper()).bold())));
+        append_review_threads(&mut lines, d, &path);
+    }
     if files.len() > MAX_DIFF_FILES {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -625,6 +639,23 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         )));
     }
     ratatui::text::Text::from(lines)
+}
+
+fn append_review_threads(lines: &mut Vec<Line<'static>>, d: &IssueData, path: &str) {
+    for thread in d.review_threads.iter().filter(|thread| thread.path == path) {
+        let line = thread.line.map(|n| format!("line {n}")).unwrap_or_else(|| "line unavailable".to_string());
+        let state = if thread.is_resolved { "resolved" } else { "unresolved" };
+        lines.push(Line::from(Span::styled(format!("  {line} · {state}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::muted()).bold())));
+        for comment in &thread.comments {
+            let author = comment.author.as_ref().map(|a| a.login.as_str()).unwrap_or("unknown");
+            lines.push(Line::from(Span::styled(format!("  {author}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::paper()).bold())));
+            let body = crate::theme::render_markdown(&comment.body);
+            lines.extend(body.lines.into_iter().map(|mut line| {
+                line.spans.insert(0, Span::raw("  "));
+                Line::from(line.spans.into_iter().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>())
+            }));
+        }
+    }
 }
 
 /// Fit `s` into exactly `w` cells: truncate, then pad with spaces.
@@ -1480,6 +1511,7 @@ mod render_smoke {
             url: format!("https://github.com/o/r/issues/{number}"),
             body: "# hello\n\n- a\n- b\n".to_string(),
             comments: vec![],
+            review_threads: vec![],
             is_pr: false,
         }
     }
@@ -2100,6 +2132,34 @@ mod render_smoke {
         let mut d = sample(number);
         d.is_pr = true;
         d
+    }
+
+    #[test]
+    fn diff_groups_review_threads_by_file() {
+        use crate::model::{DiffFile, parse_review_threads};
+        let mut app = loaded_app();
+        let mut pr = diff_pr(9);
+        pr.review_threads = parse_review_threads(&serde_json::json!({"reviewThreads":{"nodes":[
+            {"id":"t1","path":"src/a.rs","line":3,"isResolved":true,"comments":{"nodes":[{"id":"c1","author":{"login":"ada"},"body":"resolved body"}]}},
+            {"id":"t2","path":"src/a.rs","line":7,"isResolved":false,"comments":{"nodes":[{"id":"c2","author":{"login":"bob"},"body":"**open body**"}]}},
+            {"id":"t3","path":"src/b.rs","line":null,"isResolved":false,"comments":{"nodes":[{"id":"c3","author":{"login":"cam"},"body":"other body"}]}}
+        ]}}));
+        app.data.insert(9, pr);
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), ..Default::default() },
+            DiffFile { filename: "src/b.rs".into(), ..Default::default() },
+        ]);
+        app.set_tab(Tab::Diff);
+        let text = frame_text(&mut app);
+        let a = text.find("▸ ").unwrap();
+        let open = text.find("line 7 · unresolved").unwrap();
+        let resolved = text.find("line 3 · resolved").unwrap();
+        let b = text.find("src/b.rs").unwrap();
+        assert!(a < open && open < resolved && resolved < b, "{text}");
+        assert!(text.contains("bob") && text.contains("open body") && text.contains("ada") && text.contains("resolved body"), "{text}");
+        assert!(text.contains("line unavailable · unresolved") && text.contains("other body"), "{text}");
     }
 
     #[test]

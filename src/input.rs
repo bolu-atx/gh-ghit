@@ -555,6 +555,7 @@ mod tests {
             url: format!("https://github.com/o/r/issues/{number}"),
             body: String::new(),
             comments: vec![],
+            review_threads: vec![],
             is_pr: false,
         }
     }
