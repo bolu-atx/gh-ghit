@@ -720,6 +720,106 @@ fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
+/// Graph tab body: the dependency star around the current issue, center
+/// first then one section per relation. The cursor row carries the amber
+/// marker; nodes that block nothing render gray/dim.
+fn graph_text(app: &App, d: &IssueData) -> ratatui::text::Text<'static> {
+    use crate::theme::{ink, muted};
+    let dim = || Style::new().bg(ink()).fg(muted());
+    let Some(data) = app.graphs.get(&d.number) else {
+        let note = if app.graph_pending.contains(&d.number) {
+            "Fetching graph …"
+        } else {
+            "No graph loaded yet."
+        };
+        return ratatui::text::Text::from(Line::from(Span::styled(note, dim())));
+    };
+    let mut lines = vec![];
+    let related = data.nodes.len().saturating_sub(1);
+    let mut head = format!("{related} related · 1–2 hops");
+    if data.truncated {
+        head.push_str(&format!(" · showing {}", model::MAX_GRAPH_NODES));
+    }
+    if data.from_references {
+        head.push_str(" · refs-derived (blocking fields unavailable)");
+    }
+    lines.push(Line::from(Span::styled(head, dim())));
+    lines.push(Line::from(""));
+    let order = model::graph_order(data);
+    let cursor_number =
+        order.get(app.graph_cursor).and_then(|&i| data.nodes.get(i)).map(|n| n.number);
+    if let Some(center) = data.nodes.iter().find(|n| n.number == data.center) {
+        lines.push(graph_node_line(data, center, Some(center.number) == cursor_number));
+        lines.push(Line::from(""));
+    }
+    if order.len() <= 1 {
+        lines.push(Line::from(Span::styled("No related issues or PRs.", dim())));
+        return ratatui::text::Text::from(lines);
+    }
+    for (kind, group) in model::graph_sections(data) {
+        lines.push(Line::from(Span::styled(
+            format!("▸ {} ({})", model::graph_edge_label(kind), group.len()),
+            Style::new().bg(ink()).fg(muted()).bold(),
+        )));
+        for idx in group {
+            if let Some(node) = data.nodes.get(idx) {
+                lines.push(graph_node_line(data, node, Some(node.number) == cursor_number));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+    ratatui::text::Text::from(lines)
+}
+
+/// One graph row: `#num` plus slug title, status, up to N label chips,
+/// linked PR `#`s. Nodes that block nothing render gray/dim; the cursor
+/// row carries the amber sidebar marker.
+fn graph_node_line(data: &model::GraphData, node: &model::GraphNode, selected: bool) -> Line<'static> {
+    use crate::theme::{amber, ink, muted, paper, teal};
+    let dim = Style::new().bg(ink()).fg(muted());
+    // Nerd Font Font Awesome fa-share-alt brands the tab; rows reuse the
+    // sidebar marker vocabulary instead.
+    let marker = if selected { "█ " } else { "  " };
+    let mut spans = vec![Span::styled(
+        marker,
+        if selected { Style::new().bg(ink()).fg(amber()).bold() } else { dim },
+    )];
+    if model::graph_blocks_something(data, node.number) {
+        spans.push(Span::styled(
+            format!("#{} {}", node.number, model::slug(&node.title, 40)),
+            Style::new().bg(ink()).fg(paper()).bold(),
+        ));
+        spans.push(Span::styled(
+            format!(" {}", node.state),
+            Style::new().bg(ink()).fg(crate::theme::state_color(&node.state)).bold(),
+        ));
+        let chips: Vec<String> =
+            node.labels.iter().take(model::MAX_GRAPH_LABELS).map(|l| format!("● {}", l.name)).collect();
+        if !chips.is_empty() {
+            spans.push(Span::styled(format!(" {}", chips.join("  ")), Style::new().bg(ink()).fg(amber())));
+        }
+        if node.labels.len() > model::MAX_GRAPH_LABELS {
+            spans.push(Span::styled(format!(" +{}", node.labels.len() - model::MAX_GRAPH_LABELS), dim));
+        }
+        for pr in &node.linked_prs {
+            spans.push(Span::styled(format!(" #{}", pr.number), Style::new().bg(ink()).fg(teal())));
+        }
+        if let Some(st) = node.project_status.as_deref() {
+            spans.push(Span::styled(
+                format!(" · {st}"),
+                Style::new().bg(ink()).fg(crate::theme::column_color(st)),
+            ));
+        }
+        if node.is_pr {
+            spans.push(Span::styled(" PR", dim));
+        }
+    } else {
+        spans.push(Span::styled(format!("#{} {}", node.number, model::slug(&node.title, 40)), dim));
+        spans.push(Span::styled(format!(" {}", node.state), dim));
+    }
+    Line::from(spans)
+}
+
 /// Pane header: one decorative Nerd Font glyph (muted) plus the text label
 /// (amber), so a terminal without the font degrades to tofu plus readable
 /// text. Glyph sources are Font Awesome codepoints from the Nerd Fonts
@@ -937,11 +1037,12 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let main_focused = app.pane == crate::app::Pane::Main;
     // Nerd Font glyphs: file-text, comments, code. Labels stay so a
     // missing font degrades to a tofu box plus readable text.
-    let tabs = Tabs::new(vec!["\u{f15c}  Body", "\u{f086}  Comments", "\u{f121}  Diff"])
+    let tabs = Tabs::new(vec!["\u{f15c}  Body", "\u{f086}  Comments", "\u{f121}  Diff", "\u{f542}  Graph"])
         .select(match app.tab {
             Tab::Body => 0,
             Tab::Comments => 1,
             Tab::Diff => 2,
+            Tab::Graph => 3,
         })
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
@@ -980,6 +1081,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 let width = (rows[4].width as usize).saturating_sub(5);
                 diff_text(app, d, width)
             }
+            Tab::Graph => graph_text(app, d),
         },
         None => crate::theme::render_markdown(
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
@@ -1373,7 +1475,10 @@ mod render_smoke {
     use super::render;
     use crate::app::{App, Tab, board_move, poll_sections};
     use crate::input::{handle_key, handle_mouse};
-    use crate::model::{Author, BoardData, BoardDetail, BoardItem, IssueData, Label};
+    use crate::model::{
+        Author, BoardData, BoardDetail, BoardItem, GraphData, GraphEdgeKind, GraphLinkedPr,
+        GraphNode, IssueData, Label,
+    };
     use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2330,12 +2435,15 @@ mod render_smoke {
         assert!(text.contains('\u{f15c}'), "{text}");
         assert!(text.contains('\u{f086}'), "{text}");
         assert!(text.contains('\u{f121}'), "{text}");
+        assert!(text.contains('\u{f542}'), "{text}");
+        assert!(text.contains("Graph"), "{text}");
     }
 
     #[test]
     fn tab_click_zones_match_wider_labels() {
         // Glyph plus two spaces plus label: Body spans rel 0..7, Comments
-        // rel 9..20, the rest is Diff. Clicks on the boundaries prove it.
+        // rel 9..20, Diff rel 22..29, Graph rel 31..39. Dividers map to
+        // the tab on their left. Clicks on the boundaries prove it.
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
@@ -2345,6 +2453,10 @@ mod render_smoke {
         assert_eq!(app.tab, Tab::Comments);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 22, y));
         assert_eq!(app.tab, Tab::Diff);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 30, y));
+        assert_eq!(app.tab, Tab::Diff);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 31, y));
+        assert_eq!(app.tab, Tab::Graph);
     }
 
     #[test]
@@ -2678,5 +2790,153 @@ mod render_smoke {
         app.set_tab(Tab::Body);
         handle_key(&mut app, key(KeyCode::Char('s')));
         assert!(!app.diff_split, "s outside Diff does nothing");
+    }
+
+    fn graph_node(number: u64, title: &str, state: &str) -> GraphNode {
+        GraphNode {
+            number,
+            title: title.to_string(),
+            state: state.to_string(),
+            is_pr: false,
+            labels: vec![Label { name: "bug".to_string() }],
+            project_status: None,
+            linked_prs: vec![],
+        }
+    }
+
+    fn graph_app() -> App {
+        let mut app = loaded_app();
+        let mut blocker = graph_node(11, "Upstream blocker", "OPEN");
+        blocker.project_status = Some("Todo".to_string());
+        blocker.linked_prs = vec![GraphLinkedPr { number: 44, state: "MERGED".to_string() }];
+        let center = GraphNode {
+            number: 7,
+            title: "Fix the thing".to_string(),
+            state: "OPEN".to_string(),
+            is_pr: false,
+            labels: vec![],
+            project_status: None,
+            linked_prs: vec![],
+        };
+        let data: GraphData = crate::model::build_graph(
+            center,
+            vec![
+                (graph_node(9, "Blocked work", "OPEN"), GraphEdgeKind::Blocks),
+                (blocker, GraphEdgeKind::BlockedBy),
+                (graph_node(10, "Plain ref", "CLOSED"), GraphEdgeKind::ReferencedBy),
+            ],
+        );
+        app.graphs.insert(7, data);
+        app
+    }
+
+    #[test]
+    fn graph_tab_shows_skeleton_while_pending() {
+        let mut app = loaded_app();
+        app.tab = Tab::Graph;
+        app.graph_pending.insert(7);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Graph"), "tab label: {text}");
+        assert!(text.contains("Fetching graph"), "skeleton: {text}");
+    }
+
+    #[test]
+    fn graph_tab_renders_sections_labels_and_prs() {
+        let mut app = graph_app();
+        app.set_tab(Tab::Graph);
+        let text = frame_text(&mut app);
+        assert!(text.contains("3 related"), "{text}");
+        assert!(text.contains("Blocks"), "{text}");
+        assert!(text.contains("Blocked by"), "{text}");
+        assert!(text.contains("Referenced by"), "{text}");
+        assert!(text.contains("#9"), "{text}");
+        assert!(text.contains("#11"), "{text}");
+        assert!(text.contains("#10"), "{text}");
+        assert!(text.contains("● bug"), "label chips: {text}");
+        assert!(text.contains("#44"), "linked PR: {text}");
+        assert!(text.contains("Todo"), "project status: {text}");
+        assert!(text.contains("█"), "cursor marker: {text}");
+    }
+
+    #[test]
+    fn graph_rows_dim_nodes_that_block_nothing() {
+        let app = graph_app();
+        let data = app.graphs.get(&7).unwrap();
+        let bright = data.nodes.iter().find(|n| n.number == 11).unwrap();
+        let line = super::graph_node_line(data, bright, false);
+        assert!(
+            line.spans.iter().any(|s| s.style.fg == Some(crate::theme::paper())),
+            "blocker keeps full color"
+        );
+        let dim_node = data.nodes.iter().find(|n| n.number == 10).unwrap();
+        let line = super::graph_node_line(data, dim_node, false);
+        assert!(
+            !line.spans.iter().any(|s| s.style.fg == Some(crate::theme::paper())),
+            "plain ref renders gray"
+        );
+    }
+
+    #[test]
+    fn four_opens_graph_and_keys_stay_tab_scoped() {
+        let mut app = graph_app();
+        app.pane = crate::app::Pane::Main;
+        // j on Body scrolls; the graph cursor never moves.
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.graph_cursor, 0);
+        assert!(app.scroll > 0);
+        // `4` opens the tab; arrows/hjkl move between nodes.
+        handle_key(&mut app, key(KeyCode::Char('4')));
+        assert_eq!(app.tab, Tab::Graph);
+        let scroll = app.scroll;
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.graph_cursor, 1);
+        assert_eq!(app.scroll, scroll, "graph takes the arrows, not scroll");
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.graph_cursor, 2);
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.graph_cursor, 1);
+        handle_key(&mut app, key(KeyCode::Char('h')));
+        assert_eq!(app.graph_cursor, 0);
+        handle_key(&mut app, key(KeyCode::Char('l')));
+        assert_eq!(app.graph_cursor, 1);
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.graph_cursor, 0);
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.graph_cursor, 0, "clamped at the top");
+    }
+
+    #[test]
+    fn graph_enter_opens_selected_issue_per_issue() {
+        use crate::model::DiffFile;
+        let mut app = graph_app();
+        app.pane = crate::app::Pane::Main;
+        // Switching issues on the Graph tab refetches per issue: cache #9's
+        // graph and diff so the open stays synchronous with no fetch.
+        app.graphs.insert(9, crate::model::build_graph(graph_node(9, "Blocked work", "OPEN"), vec![]));
+        app.diffs.insert(9, Vec::<DiffFile>::new());
+        handle_key(&mut app, key(KeyCode::Char('4')));
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.graph_cursor, 1);
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.current, Some(9));
+        assert_eq!(app.graph_cursor, 0, "issue switch resets the cursor");
+        assert!(app.graphs.contains_key(&9), "per-issue graph");
+        // Tab switch away and back keeps the graph and the cursor.
+        handle_key(&mut app, key(KeyCode::Char('1')));
+        assert_eq!(app.tab, Tab::Body);
+        handle_key(&mut app, key(KeyCode::Char('4')));
+        assert_eq!(app.tab, Tab::Graph);
+        assert!(app.graphs.contains_key(&9));
+    }
+
+    #[test]
+    fn graph_fetch_lands_without_touching_selection() {
+        use crate::app::poll_graphs;
+        let mut app = loaded_app();
+        app.graph_tx.send((7, Ok(crate::model::build_graph(graph_node(7, "seven", "OPEN"), vec![])))).unwrap();
+        poll_graphs(&mut app);
+        assert!(!app.graph_pending.contains(&7));
+        assert!(app.graphs.contains_key(&7));
+        assert_eq!(app.current, Some(7));
     }
 }

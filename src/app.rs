@@ -39,6 +39,7 @@ pub(crate) enum Tab {
     Body,
     Comments,
     Diff,
+    Graph,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -158,6 +159,13 @@ pub(crate) struct App {
     pub(crate) diff_tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) diff_rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) diff_split: bool,
+    pub(crate) graphs: HashMap<u64, model::GraphData>,
+    pub(crate) graph_pending: HashSet<u64>,
+    pub(crate) graph_tx: std::sync::mpsc::Sender<(u64, Result<model::GraphData, String>)>,
+    pub(crate) graph_rx: std::sync::mpsc::Receiver<(u64, Result<model::GraphData, String>)>,
+    /// Cursor into `graph_order_numbers` for the current issue. Reset on
+    /// issue switch; tab switches keep it so going back restores place.
+    pub(crate) graph_cursor: usize,
     // Last-rendered hit areas for mouse clicks. The row maps hold the
     // display order per pane, `None` marking a divider slot.
     pub(crate) side_issue_area: Rect,
@@ -186,6 +194,7 @@ impl App {
         let (detail_tx, detail_rx) = std::sync::mpsc::channel();
         let (issue_tx, issue_rx) = std::sync::mpsc::channel();
         let (diff_tx, diff_rx) = std::sync::mpsc::channel();
+        let (graph_tx, graph_rx) = std::sync::mpsc::channel();
         Self {
             repo_flag,
             repo_slug: None,
@@ -246,6 +255,11 @@ impl App {
             diff_tx,
             diff_rx,
             diff_split: false,
+            graphs: HashMap::new(),
+            graph_pending: HashSet::new(),
+            graph_tx,
+            graph_rx,
+            graph_cursor: 0,
             quit: false,
             body_area: Rect::default(),
             body_rows: Vec::new(),
@@ -365,6 +379,8 @@ impl App {
                 self.board_details.remove(&n);
                 self.diffs.remove(&n);
                 self.diff_pending.remove(&n);
+                self.graphs.remove(&n);
+                self.graph_pending.remove(&n);
             }
         }
     }
@@ -563,8 +579,12 @@ impl App {
         self.diff_line = None;
         self.diff_touched = false;
         self.ref_highlight = None;
+        self.graph_cursor = 0;
         self.sync_selection();
         self.load_diff(n, false);
+        if self.tab == Tab::Graph {
+            self.load_graph(n, false);
+        }
         self.refresh_refs();
     }
 
@@ -715,8 +735,9 @@ impl App {
         }
     }
 
-    /// Switch tabs, resetting scroll. Selecting Diff on a PR starts its
-    /// background fetch so the pane fills in without blocking.
+    /// Switch tabs, resetting scroll. Selecting Diff on a PR or Graph on
+    /// any issue starts its background fetch so the pane fills in without
+    /// blocking; first visit fetches, later visits reuse the cache.
     pub(crate) fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
         self.scroll = 0;
@@ -725,6 +746,11 @@ impl App {
         if tab == Tab::Diff {
             if let Some(n) = self.current {
                 self.load_diff(n, false);
+            }
+        }
+        if tab == Tab::Graph {
+            if let Some(n) = self.current {
+                self.load_graph(n, false);
             }
         }
     }
@@ -757,6 +783,48 @@ impl App {
         rt().spawn(async move {
             let _ = tx.send((number, github::fetch_diff(&repo, number, force).await));
         });
+    }
+
+    /// Queue a graph fetch for `number`. No-op for cached rows and rows
+    /// already in flight. One cache entry per issue, so switching issues
+    /// refetches per issue and the tab shows a skeleton meanwhile.
+    pub(crate) fn load_graph(&mut self, number: u64, force: bool) {
+        if !force && self.graphs.contains_key(&number) {
+            return;
+        }
+        if !self.graph_pending.insert(number) {
+            return;
+        }
+        let tx = self.graph_tx.clone();
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        rt().spawn(async move {
+            let _ = tx.send((number, github::fetch_graph(&repo, number, force).await));
+        });
+    }
+
+    /// Flat navigation order for the graph tab: the center first, then
+    /// neighbors section by section. Empty without a loaded graph.
+    pub(crate) fn graph_order_numbers(&self) -> Vec<u64> {
+        let Some(n) = self.current else { return vec![] };
+        let Some(data) = self.graphs.get(&n) else { return vec![] };
+        model::graph_order(data).into_iter().map(|i| data.nodes[i].number).collect()
+    }
+
+    /// Move the graph cursor, clamped at the ends. No-op without a graph.
+    pub(crate) fn graph_move(&mut self, delta: isize) {
+        let order = self.graph_order_numbers();
+        if let Some(next) = core::graph_select(order.len(), Some(self.graph_cursor), delta) {
+            self.graph_cursor = next;
+        }
+    }
+
+    /// Open the graph node under the cursor in the viewer.
+    pub(crate) fn open_graph_selection(&mut self) {
+        let order = self.graph_order_numbers();
+        if let Some(&n) = order.get(self.graph_cursor) {
+            self.ensure_visited(n);
+            self.load_issue(n, false);
+        }
     }
 
     pub(crate) fn toggle_pin(&mut self) {
@@ -794,6 +862,7 @@ impl App {
         }
         self.load_issue(n, true);
         self.load_diff(n, true);
+        self.load_graph(n, true);
         // A search listing refreshes from the server; a window listing
         // re-appends (idempotent through the contains checks in polling).
         if self.query_active.trim().is_empty() {
@@ -1133,6 +1202,7 @@ fn event_loop(
         poll_sections(app);
         poll_issues(app);
         poll_diffs(app);
+        poll_graphs(app);
         poll_board(app);
         poll_details(app);
         if app.quit {
@@ -1224,6 +1294,22 @@ pub(crate) fn poll_diffs(app: &mut App) {
         match result {
             Ok(files) => {
                 app.diffs.insert(number, files);
+            }
+            Err(e) => app.notify(e),
+        }
+    }
+}
+
+pub(crate) fn poll_graphs(app: &mut App) {
+    let ready: Vec<_> = app.graph_rx.try_iter().collect();
+    for (number, result) in ready {
+        app.graph_pending.remove(&number);
+        match result {
+            Ok(data) => {
+                app.graphs.insert(number, data);
+                if app.current == Some(number) {
+                    app.graph_cursor = app.graph_cursor.min(app.graph_order_numbers().len().saturating_sub(1));
+                }
             }
             Err(e) => app.notify(e),
         }

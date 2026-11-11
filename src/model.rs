@@ -8,7 +8,7 @@ pub struct Author {
     pub login: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     #[serde(default)]
     pub name: String,
@@ -875,6 +875,267 @@ mod tests {
         assert_eq!(header_file_index("▾ \u{f15c} a.rs   added", &files), Some(0));
         assert_eq!(header_file_index("  -old", &files), None);
         assert_eq!(header_file_index("───", &files), None);
+    }
+}
+
+/// Cap on nodes in one dependency graph (center included). The graph is a
+/// 1-hop star around the current issue; a full-repo layout is out of scope.
+pub const MAX_GRAPH_NODES: usize = 24;
+
+/// Label chips shown per graph node before the `+k` overflow.
+pub const MAX_GRAPH_LABELS: usize = 3;
+
+/// One relationship in the dependency graph, named from the center issue's
+/// perspective: `Blocks` means the center blocks the neighbor, `BlockedBy`
+/// the reverse, and so on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GraphEdgeKind {
+    Blocks,
+    BlockedBy,
+    Parent,
+    Child,
+    References,
+    ReferencedBy,
+    Closes,
+}
+
+/// Section order for the graph pane: blast radius first, then origins,
+/// then plain references.
+pub const GRAPH_SECTION_ORDER: [GraphEdgeKind; 7] = [
+    GraphEdgeKind::Blocks,
+    GraphEdgeKind::BlockedBy,
+    GraphEdgeKind::Parent,
+    GraphEdgeKind::Child,
+    GraphEdgeKind::Closes,
+    GraphEdgeKind::References,
+    GraphEdgeKind::ReferencedBy,
+];
+
+/// Pane section header per edge kind.
+pub fn graph_edge_label(kind: GraphEdgeKind) -> &'static str {
+    match kind {
+        GraphEdgeKind::Blocks => "Blocks",
+        GraphEdgeKind::BlockedBy => "Blocked by",
+        GraphEdgeKind::Parent => "Parent",
+        GraphEdgeKind::Child => "Sub-issues",
+        GraphEdgeKind::References => "References",
+        GraphEdgeKind::ReferencedBy => "Referenced by",
+        GraphEdgeKind::Closes => "Closing PRs",
+    }
+}
+
+/// A PR linked to a graph node (closing reference), with its merge state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphLinkedPr {
+    pub number: u64,
+    #[serde(default)]
+    pub state: String,
+}
+
+/// One issue or PR in the dependency graph: number, slug title, state,
+/// project status, label chips, and linked PR numbers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub number: u64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub is_pr: bool,
+    #[serde(default)]
+    pub labels: Vec<Label>,
+    #[serde(default)]
+    pub project_status: Option<String>,
+    #[serde(default)]
+    pub linked_prs: Vec<GraphLinkedPr>,
+}
+
+/// A directed relationship between two graph nodes. `Blocks` edges point
+/// from the blocker to the blocked; every other kind points from the
+/// neighbor toward the center or vice versa per `edge_for`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: u64,
+    pub to: u64,
+    pub kind: GraphEdgeKind,
+}
+
+/// The 1-hop dependency star around one issue: the center plus its capped
+/// neighbors. `truncated` means neighbors were dropped at the cap;
+/// `from_references` means blocked-by/blocking fields were unavailable and
+/// reference edges were derived from body `#` refs instead.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphData {
+    pub center: u64,
+    #[serde(default)]
+    pub nodes: Vec<GraphNode>,
+    #[serde(default)]
+    pub edges: Vec<GraphEdge>,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub from_references: bool,
+}
+
+/// Directed edge for one neighbor `kind`, from the center's perspective.
+pub fn edge_for(center: u64, neighbor: u64, kind: GraphEdgeKind) -> GraphEdge {
+    match kind {
+        GraphEdgeKind::Blocks
+        | GraphEdgeKind::Child
+        | GraphEdgeKind::References => GraphEdge { from: center, to: neighbor, kind },
+        GraphEdgeKind::BlockedBy
+        | GraphEdgeKind::Parent
+        | GraphEdgeKind::ReferencedBy
+        | GraphEdgeKind::Closes => GraphEdge { from: neighbor, to: center, kind },
+    }
+}
+
+/// Build the graph from the center plus neighbors in priority order (first
+/// edge wins on duplicates). Nodes past `MAX_GRAPH_NODES` drop and set
+/// `truncated`. The center node itself carries no edge.
+pub fn build_graph(center: GraphNode, neighbors: Vec<(GraphNode, GraphEdgeKind)>) -> GraphData {
+    let center_number = center.number;
+    let mut nodes = vec![center];
+    let mut edges = vec![];
+    let mut truncated = false;
+    for (node, kind) in neighbors {
+        if node.number == center_number || nodes.iter().any(|n| n.number == node.number) {
+            continue;
+        }
+        if nodes.len() >= MAX_GRAPH_NODES {
+            truncated = true;
+            continue;
+        }
+        edges.push(edge_for(center_number, node.number, kind));
+        nodes.push(node);
+    }
+    GraphData { center: center_number, nodes, edges, truncated, from_references: false }
+}
+
+/// True when `number` blocks something: it is the blocker end of a
+/// blocking relationship. Both `Blocks` and `BlockedBy` edges point from
+/// the blocker to the blocked (the kind names the center's perspective),
+/// so the blocker is always `from`. Nodes without one render gray/dim.
+pub fn graph_blocks_something(data: &GraphData, number: u64) -> bool {
+    data.edges.iter().any(|e| {
+        e.from == number && matches!(e.kind, GraphEdgeKind::Blocks | GraphEdgeKind::BlockedBy)
+    })
+}
+
+/// Node indices grouped by edge kind in `GRAPH_SECTION_ORDER`. The center
+/// node carries no edge, so it never appears here; see `graph_order`.
+pub fn graph_sections(data: &GraphData) -> Vec<(GraphEdgeKind, Vec<usize>)> {
+    let kind_of = |idx: usize| {
+        let n = data.nodes[idx].number;
+        data.edges
+            .iter()
+            .find(|e| (e.from == n && e.to == data.center) || (e.from == data.center && e.to == n))
+            .map(|e| e.kind)
+    };
+    let mut out = vec![];
+    for kind in GRAPH_SECTION_ORDER {
+        let mut group = vec![];
+        for (idx, node) in data.nodes.iter().enumerate() {
+            if node.number != data.center && kind_of(idx) == Some(kind) {
+                group.push(idx);
+            }
+        }
+        if !group.is_empty() {
+            out.push((kind, group));
+        }
+    }
+    out
+}
+
+/// Flat navigation order: the center first, then neighbors section by
+/// section. Indices into `data.nodes`.
+pub fn graph_order(data: &GraphData) -> Vec<usize> {
+    let mut order = vec![];
+    if let Some(center) = data.nodes.iter().position(|n| n.number == data.center) {
+        order.push(center);
+    }
+    for (_, group) in graph_sections(data) {
+        order.extend(group);
+    }
+    order
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+
+    fn node(number: u64) -> GraphNode {
+        GraphNode {
+            number,
+            title: format!("issue {number}"),
+            state: "OPEN".to_string(),
+            is_pr: false,
+            labels: vec![],
+            project_status: None,
+            linked_prs: vec![],
+        }
+    }
+
+    #[test]
+    fn edge_kinds_point_the_documented_way() {
+        assert_eq!(edge_for(7, 9, GraphEdgeKind::Blocks), GraphEdge { from: 7, to: 9, kind: GraphEdgeKind::Blocks });
+        assert_eq!(edge_for(7, 9, GraphEdgeKind::BlockedBy), GraphEdge { from: 9, to: 7, kind: GraphEdgeKind::BlockedBy });
+        assert_eq!(edge_for(7, 9, GraphEdgeKind::Parent), GraphEdge { from: 9, to: 7, kind: GraphEdgeKind::Parent });
+        assert_eq!(edge_for(7, 9, GraphEdgeKind::Child), GraphEdge { from: 7, to: 9, kind: GraphEdgeKind::Child });
+        assert_eq!(edge_for(7, 9, GraphEdgeKind::Closes), GraphEdge { from: 9, to: 7, kind: GraphEdgeKind::Closes });
+    }
+
+    #[test]
+    fn build_dedups_and_caps() {
+        let neighbors = vec![
+            (node(9), GraphEdgeKind::Blocks),
+            (node(9), GraphEdgeKind::References),
+            (node(7), GraphEdgeKind::Child),
+        ];
+        let data = build_graph(node(7), neighbors);
+        assert_eq!(data.nodes.iter().map(|n| n.number).collect::<Vec<_>>(), vec![7, 9]);
+        assert_eq!(data.edges, vec![edge_for(7, 9, GraphEdgeKind::Blocks)]);
+        assert!(!data.truncated);
+
+        let many: Vec<(GraphNode, GraphEdgeKind)> =
+            (1..=40).map(|n| (node(n), GraphEdgeKind::References)).collect();
+        let capped = build_graph(node(100), many);
+        assert_eq!(capped.nodes.len(), MAX_GRAPH_NODES);
+        assert!(capped.truncated);
+    }
+
+    #[test]
+    fn blocker_end_of_either_kind_counts_as_blocking() {
+        let data = build_graph(node(7), vec![(node(9), GraphEdgeKind::Blocks), (node(10), GraphEdgeKind::BlockedBy)]);
+        assert!(graph_blocks_something(&data, 7));
+        assert!(!graph_blocks_something(&data, 9));
+        assert!(graph_blocks_something(&data, 10));
+        assert!(!graph_blocks_something(&data, 999));
+    }
+
+    #[test]
+    fn sections_follow_blast_radius_order_and_order_leads_with_center() {
+        let data = build_graph(
+            node(7),
+            vec![
+                (node(11), GraphEdgeKind::ReferencedBy),
+                (node(9), GraphEdgeKind::Blocks),
+                (node(10), GraphEdgeKind::Parent),
+            ],
+        );
+        let labels: Vec<GraphEdgeKind> =
+            graph_sections(&data).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(labels, vec![GraphEdgeKind::Blocks, GraphEdgeKind::Parent, GraphEdgeKind::ReferencedBy]);
+        let order: Vec<u64> = graph_order(&data).into_iter().map(|i| data.nodes[i].number).collect();
+        assert_eq!(order, vec![7, 9, 10, 11]);
+    }
+
+    #[test]
+    fn edge_labels_cover_every_kind() {
+        for kind in GRAPH_SECTION_ORDER {
+            assert!(!graph_edge_label(kind).is_empty());
+        }
     }
 }
 

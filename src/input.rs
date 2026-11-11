@@ -104,6 +104,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('1') => app.set_tab(Tab::Body),
         KeyCode::Char('2') => app.set_tab(Tab::Comments),
         KeyCode::Char('3') => app.set_tab(Tab::Diff),
+        KeyCode::Char('4') => app.set_tab(Tab::Graph),
         KeyCode::Char('t') => {
             app.notify(format!("theme: {}", crate::theme::cycle()));
         }
@@ -112,17 +113,48 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.filter_open = true;
             app.query_edit = false;
         }
-        KeyCode::Char('j') => pane_down(app, 1),
-        KeyCode::Char('k') => pane_down(app, -1),
+        KeyCode::Char('j') => {
+            if graph_focused(app) {
+                app.graph_move(1);
+            } else {
+                pane_down(app, 1);
+            }
+        }
+        KeyCode::Char('k') => {
+            if graph_focused(app) {
+                app.graph_move(-1);
+            } else {
+                pane_down(app, -1);
+            }
+        }
+        KeyCode::Char('h') => {
+            if graph_focused(app) {
+                app.graph_move(-1);
+            }
+        }
+        KeyCode::Char('l') => {
+            if graph_focused(app) {
+                app.graph_move(1);
+            }
+        }
+        KeyCode::Enter => {
+            if graph_focused(app) {
+                app.open_graph_selection();
+            }
+        }
         KeyCode::Down => {
-            if app.tab == Tab::Diff {
+            if graph_focused(app) {
+                app.graph_move(1);
+            } else if app.tab == Tab::Diff {
                 move_diff_cursor(app, 1);
             } else {
                 app.scroll = app.scroll.saturating_add(3);
             }
         }
         KeyCode::Up => {
-            if app.tab == Tab::Diff {
+            if graph_focused(app) {
+                app.graph_move(-1);
+            } else if app.tab == Tab::Diff {
                 move_diff_cursor(app, -1);
             } else {
                 app.scroll = app.scroll.saturating_sub(3);
@@ -175,6 +207,13 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         _ => {}
     }
+}
+
+/// Graph keys act only while the Graph tab has main focus: arrows and
+/// hjkl move between nodes, Enter loads the selected issue. Anywhere
+/// else those keys keep their existing meaning.
+pub(crate) fn graph_focused(app: &App) -> bool {
+    app.tab == Tab::Graph && app.pane == Pane::Main && app.focus == Focus::Main
 }
 
 /// j/k walks one sidebar list: issues or PRs, never crossing over.
@@ -444,16 +483,19 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if in_rect(app.tabs_area, m.column, m.row) {
-                // Tabs are icon + "Body  Comments  Diff": Body ends at 7,
-                // Comments ends at 20, the rest is Diff.
+                // Tabs are icon + "Body  Comments  Diff  Graph": Body ends
+                // at 7, Comments ends at 20, Diff ends at 29, the rest is
+                // Graph. Divider cells map to the tab on their left.
                 app.pane = Pane::Main;
                 let rel = m.column.saturating_sub(app.tabs_area.x);
                 app.set_tab(if rel < 9 {
                     Tab::Body
                 } else if rel < 22 {
                     Tab::Comments
-                } else {
+                } else if rel < 31 {
                     Tab::Diff
+                } else {
+                    Tab::Graph
                 });
                 return;
             }

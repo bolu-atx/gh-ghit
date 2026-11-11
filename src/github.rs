@@ -140,6 +140,31 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
     Ok(model::BoardDetail::from_issue(&data))
 }
 
+/// Dependency graph for one issue, cached like single issues.
+pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::GraphData, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    let raw = repo.to_lowercase().replace('/', "__");
+    let name = format!("graph-{raw}-{number}");
+    if !force {
+        let name_c = name.clone();
+        let hit: Option<model::GraphData> =
+            tokio::task::spawn_blocking(move || cache::cache_get(&name_c))
+                .await
+                .map_err(|e| format!("cache read failed: {e}"))?;
+        if let Some(data) = hit {
+            return Ok(data);
+        }
+    }
+    let data = api::graph(repo, number, token).await?;
+    let (name_c, data_c) = (name, data.clone());
+    let _ = tokio::task::spawn_blocking(move || {
+        cache::cache_put(&name_c, &data_c);
+    })
+    .await;
+    Ok(data)
+}
+
 /// Changed files for one PR, cached like single issues.
 pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<model::DiffFile>, String> {
     require_repo(repo)?;
@@ -194,5 +219,6 @@ mod tests {
         assert!(search_repo("", "bug").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
         assert!(fetch_diff("", 1, false).await.is_err());
+        assert!(fetch_graph("", 1, false).await.is_err());
     }
 }
