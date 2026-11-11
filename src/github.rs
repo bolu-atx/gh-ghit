@@ -10,6 +10,23 @@ use crate::model::IssueData;
 /// `(issue, [(project title, status|None)])`.
 pub type IssueBundle = (IssueData, Vec<(String, Option<String>)>);
 
+/// Issue-fetch traffic on the existing issue channel: comment-page
+/// progress (`done` pages of `total`) while a large thread streams in,
+/// then the terminal result. Single-request fetches send only `Done`.
+#[derive(Debug)]
+pub enum IssueEvent {
+    Progress { done: usize, total: usize },
+    Done(Result<IssueBundle, String>),
+}
+
+/// Section-fetch traffic on the existing section channel: rows fetched
+/// vs the row cap while more pages remain, then the terminal result.
+#[derive(Debug)]
+pub enum SectionEvent {
+    Progress { done: usize, total: usize },
+    Done(Result<Vec<api::Row>, String>),
+}
+
 /// Owner half of an `owner/repo` slug, for board fetches.
 pub fn board_owner(repo: Option<&str>) -> Option<String> {
     let r = repo?;
@@ -64,8 +81,15 @@ fn require_token() -> Result<&'static str, String> {
 
 /// Fetch one issue/PR plus its project statuses. Failures are strings for
 /// the status line, never panics. File-cache access runs on the blocking
-/// pool so async workers never touch the disk.
-pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueBundle, String> {
+/// pool so async workers never touch the disk. `progress` re-tags the
+/// comment-page counts onto the caller's existing issue channel; `None`
+/// keeps the fetch silent. Same requests either way.
+pub async fn fetch_number(
+    repo: &str,
+    number: u64,
+    force: bool,
+    progress: Option<std::sync::mpsc::Sender<(u64, IssueEvent)>>,
+) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
     let raw = repo.to_lowercase().replace('/', "__");
@@ -93,7 +117,13 @@ pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueB
         tokio::task::spawn_blocking(move || cache::cache_get(&name)).await.unwrap_or(None)
     };
     let comments_fetched = cached_comments.is_none();
-    let (data, statuses) = api::issue(repo, number, token, cached_comments).await?;
+    let report = |done: usize, total: usize| {
+        if let Some(tx) = &progress {
+            let _ = tx.send((number, IssueEvent::Progress { done, total }));
+        }
+    };
+    let (data, statuses) =
+        api::issue(repo, number, token, cached_comments, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await?;
     let (data_c, statuses_c) = (data.clone(), statuses.clone());
     let _ = tokio::task::spawn_blocking(move || {
         if comments_fetched { cache::cache_put(&comments_name, &data_c.comments); }
@@ -105,10 +135,21 @@ pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueB
 }
 
 /// Recent rows: open + windowed merged PRs, open + windowed closed issues.
-pub async fn fetch_recent_sections(repo: &str, hours: u64) -> Result<Vec<api::Row>, String> {
+/// `progress` re-tags the page counts onto the caller's existing section
+/// channel. Same requests either way.
+pub async fn fetch_recent_sections(
+    repo: &str,
+    hours: u64,
+    progress: Option<std::sync::mpsc::Sender<SectionEvent>>,
+) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::sections(repo, hours, token).await
+    let report = |done: usize, total: usize| {
+        if let Some(tx) = &progress {
+            let _ = tx.send(SectionEvent::Progress { done, total });
+        }
+    };
+    api::sections(repo, hours, token, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await
 }
 
 /// Server-side issue/PR search scoped to the repo.
@@ -132,7 +173,7 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
     let read_name = name.clone();
     let comments = tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
     let comments_fetched = comments.is_none();
-    let (data, _) = api::issue(repo, number, token, comments).await?;
+    let (data, _) = api::issue(repo, number, token, comments, None).await?;
     let saved_comments = data.comments.clone();
     if comments_fetched {
         let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &saved_comments)).await;
@@ -214,8 +255,8 @@ mod tests {
     async fn fetches_fail_before_the_network_without_a_repo() {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
-        assert!(fetch_number("", 1, false).await.is_err());
-        assert!(fetch_recent_sections("", 24).await.is_err());
+        assert!(fetch_number("", 1, false, None).await.is_err());
+        assert!(fetch_recent_sections("", 24, None).await.is_err());
         assert!(search_repo("", "bug").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
         assert!(fetch_diff("", 1, false).await.is_err());

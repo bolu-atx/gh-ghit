@@ -125,6 +125,110 @@ pub fn window_label(hours: u64) -> String {
     }
 }
 
+/// One in-flight fetch the status bar can name, in bar order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadSource {
+    Issue,
+    Diff,
+    Graph,
+    Details,
+    Board,
+    Sections,
+}
+
+/// Plain fetch state the status bar derives from. Counts are pending-set
+/// sizes, the bools name live receivers, and progress is `(done, total)`.
+/// Plain values only: no `App`, no channels, no widgets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FetchState {
+    pub issues: usize,
+    pub diffs: usize,
+    pub graphs: usize,
+    pub details: usize,
+    pub sections_live: bool,
+    pub bootstrap_live: bool,
+    pub board: bool,
+    pub message_visible: bool,
+    pub issue_progress: Option<(usize, usize)>,
+    pub section_progress: Option<(usize, usize)>,
+}
+
+/// One bar segment: what is fetching, plus determinate progress if known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadingItem {
+    pub source: LoadSource,
+    pub progress: Option<(usize, usize)>,
+}
+
+/// Determinate `done/total` text. `None` when the total is unknown
+/// (`0/0`) or the work is complete (`done >= total`): the spinner then
+/// stays indeterminate, or hides once the poll lands.
+pub fn progress_label(done: usize, total: usize) -> Option<String> {
+    if total == 0 || done >= total {
+        return None;
+    }
+    Some(format!("{done}/{total}"))
+}
+
+/// Spinner input: what is in flight right now. Empty means idle, so the
+/// segment collapses. Explicit messages win: a visible message hides the
+/// spinner. Progress rides along only while determinate; unknown or
+/// complete totals collapse to the plain label.
+pub fn loading(s: &FetchState) -> Vec<LoadingItem> {
+    if s.message_visible {
+        return vec![];
+    }
+    let mut out = Vec::new();
+    if s.issues > 0 {
+        out.push(LoadingItem {
+            source: LoadSource::Issue,
+            progress: s.issue_progress.filter(|(d, t)| progress_label(*d, *t).is_some()),
+        });
+    }
+    if s.diffs > 0 {
+        out.push(LoadingItem { source: LoadSource::Diff, progress: None });
+    }
+    if s.graphs > 0 {
+        out.push(LoadingItem { source: LoadSource::Graph, progress: None });
+    }
+    if s.details > 0 {
+        out.push(LoadingItem { source: LoadSource::Details, progress: None });
+    }
+    if s.board {
+        out.push(LoadingItem { source: LoadSource::Board, progress: None });
+    }
+    if s.sections_live || s.bootstrap_live {
+        out.push(LoadingItem {
+            source: LoadSource::Sections,
+            progress: s.section_progress.filter(|(d, t)| progress_label(*d, *t).is_some()),
+        });
+    }
+    out
+}
+
+/// Bar text for the in-flight list, without the spinner glyph: plain
+/// labels joined with ` · `, determinate `n/m` where known.
+pub fn loading_label(items: &[LoadingItem]) -> String {
+    items
+        .iter()
+        .map(|item| {
+            let name = match item.source {
+                LoadSource::Issue => "issue",
+                LoadSource::Diff => "diff",
+                LoadSource::Graph => "graph",
+                LoadSource::Details => "details",
+                LoadSource::Board => "board",
+                LoadSource::Sections => "sections",
+            };
+            match item.progress.and_then(|(d, t)| progress_label(d, t)) {
+                Some(p) => format!("{name} {p}"),
+                None => name.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Toggle `n` in the pin list, returning the new list.
 pub fn toggle_pin(pins: &[u64], n: u64) -> Vec<u64> {
     let mut out = pins.to_vec();
@@ -468,6 +572,73 @@ mod tests {
         assert_eq!(window_label(1), "open + merged ≤1h");
         assert_eq!(window_label(24), "open + merged ≤24h");
         assert_eq!(window_label(168), "open + merged ≤7d");
+    }
+
+    #[test]
+    fn loading_names_each_pending_source() {
+        for (state, source) in [
+            (FetchState { issues: 1, ..FetchState::default() }, LoadSource::Issue),
+            (FetchState { diffs: 2, ..FetchState::default() }, LoadSource::Diff),
+            (FetchState { graphs: 1, ..FetchState::default() }, LoadSource::Graph),
+            (FetchState { details: 3, ..FetchState::default() }, LoadSource::Details),
+            (FetchState { board: true, ..FetchState::default() }, LoadSource::Board),
+            (FetchState { sections_live: true, ..FetchState::default() }, LoadSource::Sections),
+            (FetchState { bootstrap_live: true, ..FetchState::default() }, LoadSource::Sections),
+        ] {
+            let got = loading(&state);
+            assert_eq!(got.len(), 1, "{state:?}");
+            assert_eq!(got[0].source, source, "{state:?}");
+            assert_eq!(got[0].progress, None, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn loading_idle_means_empty() {
+        assert_eq!(loading(&FetchState::default()), vec![]);
+    }
+
+    #[test]
+    fn loading_message_wins_over_spinner() {
+        let state = FetchState {
+            issues: 1,
+            diffs: 1,
+            board: true,
+            sections_live: true,
+            message_visible: true,
+            ..FetchState::default()
+        };
+        assert_eq!(loading(&state), vec![]);
+    }
+
+    #[test]
+    fn progress_label_bounds_unknown_and_complete() {
+        assert_eq!(progress_label(0, 0), None, "unknown total stays indeterminate");
+        assert_eq!(progress_label(0, 5), Some("0/5".to_string()));
+        assert_eq!(progress_label(2, 5), Some("2/5".to_string()));
+        assert_eq!(progress_label(5, 5), None, "complete hides the numbers");
+        assert_eq!(progress_label(7, 5), None, "over-complete hides too");
+    }
+
+    #[test]
+    fn loading_carries_determinate_progress_only() {
+        let state = FetchState {
+            issues: 1,
+            issue_progress: Some((2, 7)),
+            sections_live: true,
+            section_progress: Some((120, 500)),
+            ..FetchState::default()
+        };
+        let got = loading(&state);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].progress, Some((2, 7)));
+        assert_eq!(got[1].progress, Some((120, 500)));
+        assert_eq!(loading_label(&got), "issue 2/7 · sections 120/500");
+        // Unknown (0/0) and complete totals collapse to the plain label.
+        let flat = FetchState { issues: 1, issue_progress: Some((0, 0)), ..FetchState::default() };
+        assert_eq!(loading(&flat)[0].progress, None);
+        assert_eq!(loading_label(&loading(&flat)), "issue");
+        let done = FetchState { issues: 1, issue_progress: Some((7, 7)), ..FetchState::default() };
+        assert_eq!(loading_label(&loading(&done)), "issue");
     }
 
     #[test]
