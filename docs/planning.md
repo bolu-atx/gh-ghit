@@ -21,7 +21,8 @@ sub-issues, blocked-by/blocking, and labels).
 - **Board**: every issue lives on the
   [`ghit dev` board](https://github.com/users/bolu-atx/projects/1).
   Create with `gh issue create -p 'ghit dev' …` or add right after
-  filing — no issue floats outside the board.
+  filing — no issue floats outside the board. Status moves and
+  the working loop live in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Issue body
 
@@ -72,24 +73,15 @@ One subject label per issue. Workflow labels (`duplicate`,
   coarse is fine, one paragraph per section to start.
 - Branch and title follow [AGENTS.md](AGENTS.md): `feat/…`,
   `fix/…`, `docs/…`, `refactor/…`, `chore/…`.
+- Open is not done. A PR counts as done only when mergeable:
+  `gh pr checks` green, no merge conflicts with `main`,
+  review comments addressed. Re-check after every push —
+  a green run on an old head says nothing about the new one.
+- Merge promptly once mergeable. A mergeable PR left open
+  rots: rebase onto `main` and re-verify if it falls behind.
 
-## Agent guidelines
+## Working the plan
 
-- Start from the plan: open `ghit`, pick the milestone, read the
-  story and its `How` before touching code.
-- Keep the story current while you work: check off phases in
-  `How`, append real `Verification performed` output, record your
-  prompt and verifier under `Agents supplemental`.
-- File one issue per story you discover, straight onto the board
-  (`-p 'ghit dev'`); link ordering with `blocked-by` only when
-  landing order truly matters.
-- Track status on the board: mark the story `In Progress` when work
-  starts. When the PR opens, add the PR to the board as well (`gh pr
-  create` takes no `-p` flag, so follow with `gh project item-add 1
-  --owner bolu-atx --url <pr-url>`) and move both to `In Review`.
-- Coordinator dispatch: the coordinator owns the cards end to end.
-  State the issue number and the board commands in each worker
-  prompt; a fresh worker never knows the board. Single session:
-  move the cards yourself at the two moments above.
-- Never press `o` during verification (it opens a browser).
-  End every tmux live drive with `q` and kill the session.
+Doing the work — board moves, coordinator dispatch, merge bar —
+lives in [CONTRIBUTING.md](../CONTRIBUTING.md). Agents read that
+first.
