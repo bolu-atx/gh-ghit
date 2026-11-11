@@ -84,6 +84,8 @@ One subject label per issue. Workflow labels (`duplicate`,
   (`-p 'ghit dev'`); link ordering with `blocked-by` only when
   landing order truly matters.
 - Track status on the board: mark the story `In Progress` when work
-  starts, `In Review` when its PR opens.
+  starts. When the PR opens, add the PR to the board as well (`gh pr
+  create` takes no `-p` flag, so follow with `gh project item-add 1
+  --owner bolu-atx --url <pr-url>`) and move both to `In Review`.
 - Never press `o` during verification (it opens a browser).
   End every tmux live drive with `q` and kill the session.
