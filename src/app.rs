@@ -1778,15 +1778,32 @@ pub(crate) fn poll_sections(app: &mut App) {
                     (app.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
                 };
             }
-            if std::mem::take(&mut app.section_replace) {
+            let replace = std::mem::take(&mut app.section_replace);
+            if replace {
                 app.drop_unvisited_background();
             }
             match result {
                 Ok(rows) => {
+                    if !replace {
+                        evict_vanished_rows(app, &rows);
+                    }
                     let mut last = None;
                     for row in rows {
                         let n = row.issue.number;
-                        if !app.data.contains_key(&n) {
+                        if let Some(d) = app.data.get_mut(&n) {
+                            // Window listings refresh display fields only.
+                            // Body, comments, and review threads belong to
+                            // the full fetch and stay. Search hits carry no
+                            // statuses, so replace mode never touches known
+                            // rows — dropped unvisited rows reinsert below.
+                            if !replace {
+                                d.title = row.issue.title;
+                                d.state = row.issue.state;
+                                d.labels = row.issue.labels;
+                                app.statuses.insert(n, row.statuses);
+                                app.board_details.insert(n, row.detail);
+                            }
+                        } else {
                             if !row.complete { app.partial.insert(n); }
                             app.data.insert(n, row.issue);
                             app.statuses.insert(n, row.statuses);
@@ -1803,6 +1820,26 @@ pub(crate) fn poll_sections(app: &mut App) {
             }
         }
     }
+}
+
+/// Window landing: evict listed background rows the fresh payload no
+/// longer carries. Visited, pinned, current, and pending-open rows stay
+/// so the open view and its thread survive a refresh; search mode never
+/// lands here and keeps `drop_unvisited_background` replace semantics.
+fn evict_vanished_rows(app: &mut App, rows: &[crate::api::Row]) {
+    let fresh: HashSet<u64> = rows.iter().map(|r| r.issue.number).collect();
+    let keep: HashSet<u64> = app.visited.iter().copied()
+        .chain(app.pin_order.iter().copied())
+        .chain(app.pinned.iter().copied())
+        .chain(app.current)
+        .chain(app.requested)
+        .collect();
+    let gone: HashSet<u64> = app.recent.iter().copied()
+        .filter(|n| !fresh.contains(n) && !keep.contains(n))
+        .collect();
+    if gone.is_empty() { return; }
+    app.recent.retain(|n| !gone.contains(n));
+    for n in gone { app.drop_cached(n); }
 }
 
 pub(crate) fn poll_issues(app: &mut App) {
@@ -2127,6 +2164,158 @@ mod tests {
             assert_eq!(app.scroll, 12);
             assert_eq!(app.hover, Some(7));
         }
+    }
+
+    fn section_row(issue: IssueData) -> crate::api::Row {
+        crate::api::Row {
+            issue,
+            statuses: vec![],
+            detail: model::BoardDetail::default(),
+            complete: false,
+            window_at: None,
+        }
+    }
+
+    fn land_sections(app: &mut App, rows: Vec<crate::api::Row>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.section_rx = Some(rx);
+        tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();
+        poll_sections(app);
+    }
+
+    #[test]
+    fn section_landing_refreshes_known_row_display_fields() {
+        let mut app = sidebar_app(&[7]);
+        {
+            let d = app.data.get_mut(&7).unwrap();
+            d.title = "stale title".to_string();
+            d.state = "OPEN".to_string();
+            d.labels = vec![model::Label { name: "stale".to_string() }];
+        }
+        let mut fresh = issue(7, "2026-01-06T00:00:00Z");
+        fresh.title = "fresh title".to_string();
+        fresh.state = "CLOSED".to_string();
+        fresh.labels = vec![model::Label { name: "bug".to_string() }];
+        let mut row = section_row(fresh);
+        row.statuses = vec![("Roadmap".to_string(), Some("Done".to_string()))];
+        row.detail = model::BoardDetail {
+            created: "2025-12-01".to_string(),
+            updated: "2026-01-06".to_string(),
+            comments: 4,
+        };
+        land_sections(&mut app, vec![row]);
+
+        let d = app.data.get(&7).unwrap();
+        assert_eq!(d.title, "fresh title", "stale title refreshes");
+        assert_eq!(d.state, "CLOSED", "stale state refreshes");
+        assert_eq!(d.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), vec!["bug"]);
+        assert_eq!(app.statuses.get(&7), Some(&vec![("Roadmap".to_string(), Some("Done".to_string()))]));
+        assert_eq!(app.board_details.get(&7).map(|d| d.comments), Some(4));
+        assert!(app.visited.contains(&7), "group membership is untouched");
+        assert!(!app.recent.contains(&7), "known rows never re-file as recent");
+    }
+
+    #[test]
+    fn section_landing_keeps_visited_body_comments_and_threads() {
+        let mut app = sidebar_app(&[7]);
+        {
+            let d = app.data.get_mut(&7).unwrap();
+            d.body = "full body".to_string();
+            d.comments = vec![model::Comment {
+                author: Author { login: "reviewer".to_string() },
+                body: "full comment".to_string(),
+                created_at: "2026-01-02T00:00:00Z".to_string(),
+            }];
+            d.review_threads = vec![model::ReviewThread {
+                id: "t1".to_string(),
+                path: "a.rs".to_string(),
+                line: Some(2),
+                ..Default::default()
+            }];
+        }
+        let mut fresh = issue(7, "2026-01-06T00:00:00Z");
+        fresh.title = "renamed".to_string();
+        fresh.body = "listing body".to_string();
+        fresh.review_threads = vec![];
+        land_sections(&mut app, vec![section_row(fresh)]);
+
+        let d = app.data.get(&7).unwrap();
+        assert_eq!(d.title, "renamed", "display fields still refresh");
+        assert_eq!(d.body, "full body", "full fetch body wins");
+        assert_eq!(d.comments.len(), 1);
+        assert_eq!(d.comments[0].body, "full comment");
+        assert_eq!(d.review_threads.len(), 1);
+        assert_eq!(d.review_threads[0].id, "t1");
+    }
+
+    #[test]
+    fn section_landing_evicts_unvisited_rows_missing_from_the_window() {
+        let mut app = sidebar_app(&[7]);
+        app.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));
+        app.statuses.insert(9, vec![]);
+        app.board_details.insert(9, model::BoardDetail::default());
+        app.partial.insert(9);
+        app.recent.push(9);
+        // The fresh window carries a new row and the visited row; 9 is gone.
+        land_sections(&mut app, vec![section_row(issue(11, "2026-01-06T00:00:00Z"))]);
+
+        assert!(!app.data.contains_key(&9), "vanished row data dropped");
+        assert!(!app.statuses.contains_key(&9));
+        assert!(!app.board_details.contains_key(&9));
+        assert!(!app.partial.contains(&9));
+        assert!(!app.recent.contains(&9));
+        assert!(app.data.contains_key(&7), "visited row survives its absence");
+        assert!(app.visited.contains(&7));
+        assert!(app.recent.contains(&11), "new window rows list as recent");
+        assert_eq!(app.issue_numbers(), vec![7, 11]);
+    }
+
+    #[test]
+    fn search_landing_keeps_replace_semantics() {
+        let mut app = sidebar_app(&[7]);
+        app.data.get_mut(&7).unwrap().body = "full body".to_string();
+        let mut stale = issue(9, "2026-01-05T00:00:00Z");
+        stale.body = "stale body".to_string();
+        app.data.insert(9, stale);
+        app.statuses.insert(9, vec![]);
+        app.partial.insert(9);
+        app.recent.push(9);
+        app.section_replace = true;
+
+        let mut hit = issue(9, "2026-01-06T00:00:00Z");
+        hit.title = "search hit".to_string();
+        hit.body = "search body".to_string();
+        land_sections(&mut app, vec![section_row(hit)]);
+
+        assert!(!app.section_replace, "replace flag is consumed");
+        assert_eq!(
+            app.data.get(&9).unwrap().body, "search body",
+            "search rows replace cached data instead of refreshing display fields"
+        );
+        assert_eq!(app.recent.iter().filter(|n| **n == 9).count(), 1, "dedup holds");
+        let visited = app.data.get(&7).expect("visited row survives an absent search result");
+        assert_eq!(visited.body, "full body", "visited body is never clobbered");
+    }
+
+    #[test]
+    fn section_landing_keeps_current_and_scroll_when_rows_vanish() {
+        let mut app = sidebar_app(&[7]);
+        // The open row was reached by cursor walk, so it is current but
+        // never filed as visited.
+        app.current = Some(9);
+        app.scroll = 12;
+        app.hover = Some(9);
+        app.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));
+        app.statuses.insert(9, vec![]);
+        app.partial.insert(9);
+        app.recent.push(9);
+        land_sections(&mut app, vec![section_row(issue(7, "2026-01-06T00:00:00Z"))]);
+
+        assert_eq!(app.current, Some(9), "current survives leaving the window");
+        assert!(app.data.contains_key(&9), "open row keeps its data");
+        assert!(app.recent.contains(&9));
+        assert_eq!(app.scroll, 12);
+        assert_eq!(app.hover, Some(9));
     }
 
     #[test]
