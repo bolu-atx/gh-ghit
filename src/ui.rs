@@ -287,6 +287,61 @@ fn highlighted_spans(text: String, query: &str, base: Style) -> Vec<Span<'static
     spans
 }
 
+/// Detail lines an expanded sidebar row adds below its summary: the full
+/// title wrapped to the pane width, every label, author and state, and the
+/// created/updated dates. Indented like the summary line.
+fn expanded_row_lines(d: &IssueData, inner_width: usize) -> Vec<Line<'static>> {
+    use crate::theme::{amber, muted, paper, state_color};
+    const INDENT: &str = "    ";
+    let width = inner_width.saturating_sub(INDENT.len()).max(8);
+    let indent = |lines: Vec<Line<'static>>| -> Vec<Line<'static>> {
+        lines
+            .into_iter()
+            .map(|line| {
+                let mut spans = vec![Span::styled(INDENT, Style::new())];
+                spans.extend(line.spans);
+                Line::from(spans)
+            })
+            .collect()
+    };
+    let mut out = indent(wrap_lines(
+        vec![Line::from(Span::styled(d.title.clone(), Style::new().fg(paper())))],
+        width,
+    ));
+    let (labels, label_style) = if d.labels.is_empty() {
+        ("no labels".to_string(), Style::new().fg(muted()))
+    } else {
+        let names = d.labels.iter().map(|l| format!("● {}", l.name)).collect::<Vec<_>>().join("  ");
+        (names, Style::new().fg(amber()))
+    };
+    out.extend(indent(wrap_lines(
+        vec![Line::from(Span::styled(labels, label_style))],
+        width,
+    )));
+    out.push(Line::from(vec![
+        Span::styled(INDENT, Style::new()),
+        Span::styled(format!("by {} · ", d.author.login), Style::new().fg(paper())),
+        Span::styled(d.state.clone(), Style::new().fg(state_color(&d.state)).bold()),
+    ]));
+    let created = d.created_at.get(..10).unwrap_or(&d.created_at);
+    let updated = d.updated_at.get(..10).unwrap_or(&d.updated_at);
+    out.push(Line::from(vec![
+        Span::styled(INDENT, Style::new()),
+        Span::styled(format!("created {created}"), Style::new().fg(muted())),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled(INDENT, Style::new()),
+        Span::styled(format!("updated {updated}"), Style::new().fg(muted())),
+    ]));
+    out
+}
+
+/// Rows the detail block of an expanded row occupies at `inner_width`.
+/// Shares `expanded_row_lines` so hit-testing and rendering agree.
+pub(crate) fn expanded_row_height(d: &IssueData, inner_width: usize) -> usize {
+    expanded_row_lines(d, inner_width).len()
+}
+
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
 /// thin divider row between non-empty groups. Everything is owned, so the
 /// returned list outlives the `&App` borrow and the caller can persist its
@@ -356,15 +411,21 @@ fn section_list(
         first.extend(highlighted_spans(title_text, &query, title_style));
         // Project status in the board color with the board glyph.
         let seg_color = crate::theme::column_color(&seg);
-        items.push(ListItem::new(vec![
+        let mut lines = vec![
             Line::from(first),
             Line::from(vec![
                 Span::raw("    "),
                 Span::styled(body, Style::new().fg(muted())),
                 Span::styled(seg, Style::new().fg(seg_color)),
             ]),
-            Line::from(""),
-        ]));
+        ];
+        if app.expanded_rows.contains(n) {
+            if let Some(d) = data {
+                lines.extend(expanded_row_lines(d, inner_width));
+            }
+        }
+        lines.push(Line::from(""));
+        items.push(ListItem::new(lines));
     }
     let border = if focused { amber() } else { muted() };
     List::new(items)
@@ -1844,6 +1905,36 @@ mod render_smoke {
     }
 
     #[test]
+    fn space_expands_sidebar_row_detail_and_collapse_restores_it() {
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.title = "Fix the thing that keeps breaking tailmarker".to_string();
+        d.labels = ["bug", "ui", "docs", "chore", "ci-pipeline"]
+            .iter()
+            .map(|name| Label { name: name.to_string() })
+            .collect();
+        app.show_issue(7);
+        let collapsed = sidebar_text(&mut app);
+        assert!(collapsed.contains("#7 Fix the thing"), "{collapsed}");
+        assert!(!collapsed.contains("tailmarker"), "collapsed title is a slug");
+        assert!(!collapsed.contains("ci-pipeline"), "summary label chips overflow");
+
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        let expanded = sidebar_text(&mut app);
+        assert!(expanded.contains("tailmarker"), "full title wraps in: {expanded}");
+        assert!(expanded.contains("● bug"), "every label: {expanded}");
+        assert!(expanded.contains("ci-pipeline"), "every label: {expanded}");
+        assert!(expanded.contains("by bo · OPEN"), "author and state: {expanded}");
+        assert!(expanded.contains("created 2026-01-02"), "created date: {expanded}");
+        assert!(expanded.contains("updated 2026-01-05"), "updated date: {expanded}");
+        // Only the selected row's number expands.
+        assert_eq!(expanded.matches("created 2026-01-02").count(), 1);
+
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert_eq!(sidebar_text(&mut app), collapsed, "collapse restores the row");
+    }
+
+    #[test]
     fn mouse_click_switches_tabs() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
@@ -1945,6 +2036,24 @@ mod render_smoke {
             .iter()
             .map(|c| c.symbol())
             .collect()
+    }
+
+    /// Text of the Issues sidebar only, so main-pane text cannot satisfy
+    /// or break row-render assertions.
+    fn sidebar_text(app: &mut App) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        let area = app.side_issue_area;
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
     }
 
     #[test]
