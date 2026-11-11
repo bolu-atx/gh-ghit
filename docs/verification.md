@@ -36,3 +36,11 @@ no visible change needs no scenario.
 - Frame test:
 
 One control per scenario. No scenario, no sign-off.
+
+## Breaking existing tests
+
+New features can break existing tests on purpose. When one fails,
+judge which side is right: if the test encodes behavior the feature
+meant to change, update the test; if the code regressed past the
+feature's intent, fix the code. Record the call in the PR body —
+one line per break: what failed, which side changed, why.
