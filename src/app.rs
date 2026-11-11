@@ -97,6 +97,7 @@ pub(crate) struct App {
     pub(crate) search: String,
     pub(crate) searching: bool,
     /// Filter dialog (`f`) state.
+    pub(crate) shortcuts_open: bool,
     pub(crate) filter_open: bool,
     pub(crate) query_edit: bool,
     pub(crate) query_draft: String,
@@ -202,6 +203,7 @@ impl App {
             bar: String::new(),
             search: String::new(),
             searching: false,
+            shortcuts_open: false,
             filter_open: false,
             query_edit: false,
             query_draft: String::new(),
