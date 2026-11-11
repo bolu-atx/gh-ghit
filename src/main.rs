@@ -14,6 +14,7 @@ mod cache;
 mod cli;
 mod clipboard;
 mod core;
+#[cfg(unix)]
 mod drive;
 mod gh;
 mod github;
@@ -30,12 +31,21 @@ fn main() {
     let numbers = args.issue_numbers();
     let mut app = app::App::new(args.repo.clone());
     if let Some(sock) = args.drive.clone() {
-        let (width, height) = args.size_parsed().unwrap_or_else(|e| {
-            eprintln!("ghit: {e}");
-            std::process::exit(1);
-        });
-        if let Err(e) = drive::run_drive(&mut app, &numbers, &sock, width, height) {
-            eprintln!("ghit: {e}");
+        #[cfg(unix)]
+        {
+            let (width, height) = args.size_parsed().unwrap_or_else(|e| {
+                eprintln!("ghit: {e}");
+                std::process::exit(1);
+            });
+            if let Err(e) = drive::run_drive(&mut app, &numbers, &sock, width, height) {
+                eprintln!("ghit: {e}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &sock;
+            eprintln!("ghit: --drive needs a Unix socket and is unavailable on this platform");
             std::process::exit(1);
         }
     } else if let Err(e) = app::run(&mut app, &numbers) {
