@@ -704,8 +704,9 @@ pub fn thread_at_cursor(
     // Thread whose block the walk is inside, if any.
     let mut block: Option<String> = None;
     for (i, row) in section.iter().enumerate().take(cursor + 1) {
-        let trimmed = row.trim_end();
-        let stripped = trimmed.strip_prefix("  ").unwrap_or(trimmed);
+        // Same gutter strip as `line_target_at_cursor`: patch rows sit
+        // behind a line-number gutter since #75.
+        let stripped = strip_diff_gutter(row.trim_end());
         let matched = match rows.get(next) {
             Some((_, text)) => !stripped.is_empty() && (stripped == text || text.starts_with(stripped)),
             None => false,
