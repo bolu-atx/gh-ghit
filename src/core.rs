@@ -240,6 +240,27 @@ pub fn toggle_pin(pins: &[u64], n: u64) -> Vec<u64> {
     out
 }
 
+/// Cap for the back/forward stacks so long sessions stay bounded; the
+/// oldest entry drops when a new jump lands on a full stack.
+pub const HISTORY_LIMIT: usize = 100;
+
+/// Record leaving `current` for `next` on the back stack. No-op when
+/// there is nothing to leave (`None`), when `next` is the current
+/// issue, or when `current` already tops the stack (async completions
+/// must not double-record one jump).
+pub fn history_push(back: &[u64], current: Option<u64>, next: u64) -> Vec<u64> {
+    let mut out = back.to_vec();
+    let Some(cur) = current else { return out };
+    if cur == next || out.last() == Some(&cur) {
+        return out;
+    }
+    out.push(cur);
+    if out.len() > HISTORY_LIMIT {
+        out.remove(0);
+    }
+    out
+}
+
 /// Split the sidebar into pinned | requested | recent. Pins win: a number in
 /// the pin order shows only in the pinned group, and a requested number
 /// never repeats in recent.
@@ -552,6 +573,24 @@ mod tests {
         assert_eq!(next_in_order(&order, None, -1), Some(9));
         assert_eq!(next_in_order(&[], Some(7), 1), None);
         assert_eq!(next_in_order(&order, Some(999), 1), Some(7));
+    }
+
+    #[test]
+    fn history_push_records_leaves_and_dedupes() {
+        assert_eq!(history_push(&[], None, 7), Vec::<u64>::new());
+        assert_eq!(history_push(&[], Some(7), 7), Vec::<u64>::new());
+        assert_eq!(history_push(&[], Some(7), 9), vec![7]);
+        assert_eq!(history_push(&[7], Some(7), 9), vec![7]);
+        assert_eq!(history_push(&[5], Some(7), 9), vec![5, 7]);
+    }
+
+    #[test]
+    fn history_push_caps_at_limit() {
+        let back: Vec<u64> = (1..=HISTORY_LIMIT as u64).collect();
+        let out = history_push(&back, Some(999), 1000);
+        assert_eq!(out.len(), HISTORY_LIMIT);
+        assert_eq!(out[0], 2);
+        assert_eq!(out[out.len() - 1], 999);
     }
 
     #[test]

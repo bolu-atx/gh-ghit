@@ -149,7 +149,8 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(block, popup);
     let lines = [
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
-        "  1/2 details/visual · e refs · n/N search matches", "",
+        "  1/2 details/visual · e refs · n/N search matches",
+        "  ctrl-o back · ctrl-i forward", "",
         "Actions", "  : command · / find · f filter · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit",
         "  a sort · A reverse · x evict", "",
@@ -2834,6 +2835,7 @@ mod render_smoke {
             let mut app = loaded_app();
             handle_key(&mut app, key(KeyCode::Char('?')));
             assert!(frame_text(&mut app).contains("Navigation"));
+            assert!(frame_text(&mut app).contains("ctrl-o back"));
             handle_key(&mut app, key(close));
             assert!(!app.shortcuts_open);
             assert!(!app.quit);

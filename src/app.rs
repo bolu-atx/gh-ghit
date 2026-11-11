@@ -90,6 +90,11 @@ pub(crate) struct App {
     /// Background-fetched recent rows (window listing or GitHub search),
     /// in fetch order.
     pub(crate) recent: Vec<u64>,
+    /// Back stack for Ctrl+O (older issues, top = most recent) and the
+    /// forward stack Ctrl+I redoes. Recorded on every explicit visit
+    /// through `ensure_visited`; cursor walks never touch them.
+    pub(crate) history: Vec<u64>,
+    pub(crate) future: Vec<u64>,
     pub(crate) pinned: HashSet<u64>,
     pub(crate) pin_order: Vec<u64>,
     pub(crate) current: Option<u64>,
@@ -222,6 +227,8 @@ impl App {
             statuses: HashMap::new(),
             visited: vec![],
             recent: vec![],
+            history: vec![],
+            future: vec![],
             pinned: HashSet::new(),
             pin_order: vec![],
             current: None,
@@ -348,8 +355,20 @@ impl App {
 
     /// File `number` under requested rows. Call this only for explicit
     /// user actions (typing, clicking, search commit): background fetches
-    /// and cursor movement must not relocate rows between groups.
+    /// and cursor movement must not relocate rows between groups. Every
+    /// explicit visit also records the issue we leave on the back stack
+    /// for Ctrl+O and drops the forward chain, so history follows exactly
+    /// the rows filed here.
     pub(crate) fn ensure_visited(&mut self, number: u64) {
+        self.history = core::history_push(&self.history, self.current, number);
+        self.future.clear();
+        self.file_visited(number);
+    }
+
+    /// File `number` under requested rows without touching history.
+    /// History restores (Ctrl+O / Ctrl+I) use this: re-recording the
+    /// jump would corrupt both stacks.
+    fn file_visited(&mut self, number: u64) {
         if !self.visited.contains(&number) {
             self.visited.push(number);
         }
@@ -703,6 +722,36 @@ impl App {
             self.load_graph(n, false);
         }
         self.refresh_refs();
+    }
+
+    /// Step back to the previously viewed issue (Ctrl+O). The current
+    /// issue moves to the forward stack so Ctrl+I can redo it. Restores
+    /// without recording, keeping both stacks intact.
+    pub(crate) fn go_back(&mut self) {
+        let Some(prev) = self.history.pop() else {
+            self.notify("no older issue".to_string());
+            return;
+        };
+        if let Some(cur) = self.current {
+            if self.future.last() != Some(&cur) {
+                self.future.push(cur);
+            }
+        }
+        self.file_visited(prev);
+        self.load_issue(prev, false);
+    }
+
+    /// Redo a step back (Ctrl+I). The current issue returns to the back
+    /// stack through the normal deduped push; the rest of the forward
+    /// chain stays redoable.
+    pub(crate) fn go_forward(&mut self) {
+        let Some(next) = self.future.pop() else {
+            self.notify("no newer issue".to_string());
+            return;
+        };
+        self.history = core::history_push(&self.history, self.current, next);
+        self.file_visited(next);
+        self.load_issue(next, false);
     }
 
     /// Select a refs row: highlight where it is mentioned in the body
@@ -1683,5 +1732,51 @@ mod tests {
         app.issue_tx.send((7, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
         poll_issues(&mut app);
         assert!(app.data.contains_key(&7));
+    }
+
+    #[test]
+    fn history_back_and_forward_walk_explicit_visits() {
+        let mut app = sidebar_app(&[7, 9, 11]);
+
+        app.ensure_visited(7);
+        app.load_issue(7, false);
+        app.ensure_visited(9);
+        app.load_issue(9, false);
+        app.ensure_visited(11);
+        app.load_issue(11, false);
+        assert_eq!(app.current, Some(11));
+        assert_eq!(app.history, vec![7, 9]);
+
+        app.go_back();
+        assert_eq!(app.current, Some(9));
+        assert_eq!(app.history, vec![7]);
+        assert_eq!(app.future, vec![11]);
+
+        app.go_back();
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.history, Vec::<u64>::new());
+        assert_eq!(app.future, vec![11, 9]);
+
+        // An empty back stack toasts instead of moving.
+        app.go_back();
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.message, "no older issue");
+
+        app.go_forward();
+        assert_eq!(app.current, Some(9));
+        assert_eq!(app.history, vec![7]);
+        assert_eq!(app.future, vec![11]);
+
+        // A new jump drops the forward chain.
+        app.ensure_visited(11);
+        app.load_issue(11, false);
+        assert_eq!(app.current, Some(11));
+        assert_eq!(app.history, vec![7, 9]);
+        assert_eq!(app.future, Vec::<u64>::new());
+
+        // An empty forward stack toasts instead of moving.
+        app.go_forward();
+        assert_eq!(app.current, Some(11));
+        assert_eq!(app.message, "no newer issue");
     }
 }
