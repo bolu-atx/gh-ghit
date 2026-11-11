@@ -137,9 +137,9 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
 }
 
 fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
-    use crate::theme::{base, ink, muted, paper};
+    use crate::theme::{amber, base, ink, muted, paper, teal};
     let width = area.width.min(76);
-    let height = area.height.min(18);
+    let height = area.height.min(26);
     let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
@@ -147,7 +147,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         .style(base()).title(" Shortcuts ");
     let inner = block.inner(popup);
     f.render_widget(block, popup);
-    let lines = [
+    let body = [
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
         "  1/2 details/visual · e refs · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
@@ -158,7 +158,27 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "Diff", "  ↑/↓ lines · space expand · s split", "",
         "Esc / ? / q close",
     ];
-    f.render_widget(Paragraph::new(lines.join("\n")).style(Style::new().bg(ink()).fg(paper())), inner);
+    // Credit footer (display-only: the modal swallows all mouse input,
+    // so the URL below is never clickable). Banner lines stay within
+    // the popup inner width (76 - 2 borders).
+    let banner = [
+        "  ___ _   _ ___ _____",
+        " / __| | | |_ _|_   _|",
+        "| (_ | |_| || |  | |",
+        " \\___|____|___|  |_|",
+    ];
+    let body_style = Style::new().bg(ink()).fg(paper());
+    let mut lines: Vec<Line> = body.into_iter().map(|s| Line::styled(s, body_style)).collect();
+    lines.push(Line::from(""));
+    for b in banner {
+        lines.push(Line::styled(b, Style::new().bg(ink()).fg(amber())));
+    }
+    lines.push(Line::styled("created by bolu-atx", Style::new().bg(ink()).fg(muted())));
+    lines.push(Line::styled(
+        "https://github.com/bolu-atx/gh-ghit",
+        Style::new().bg(ink()).fg(teal()).underlined(),
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Filter dialog (`f`): recent window, open/closed toggles, and a GitHub
@@ -2902,6 +2922,24 @@ mod render_smoke {
             assert!(!app.quit);
             assert!(!frame_text(&mut app).contains("Navigation"));
         }
+    }
+
+    #[test]
+    fn shortcuts_modal_shows_credit_footer() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('?')));
+        assert!(app.shortcuts_open);
+        let text = frame_text(&mut app);
+        // Existing sections still render above the footer.
+        assert!(text.contains("Navigation"), "sections survive: {text}");
+        assert!(text.contains("Esc / ? / q close"), "closer survives: {text}");
+        // GHIT ASCII banner (4 lines), author, and repo URL.
+        assert!(text.contains("___ _   _ ___"), "banner renders: {text}");
+        assert!(text.contains("created by bolu-atx"), "author renders: {text}");
+        assert!(
+            text.contains("https://github.com/bolu-atx/gh-ghit"),
+            "url renders: {text}"
+        );
     }
 
     #[test]
