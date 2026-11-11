@@ -673,14 +673,61 @@ impl App {
         if q.is_empty() { QueryAction::Refetch } else { QueryAction::Run(q) }
     }
 
-    /// Recent pane subtitle: window label, or the active search query.
-    pub(crate) fn recent_detail(&self) -> String {
-        let n = self.issue_rows().len() + self.pr_rows().len();
+    /// Filter context for the recent group: window label, or the active
+    /// search query. Renders in the PR footer, never the title, so all
+    /// pane titles share one shape.
+    pub(crate) fn filter_context(&self) -> String {
         if self.query_active.trim().is_empty() {
-            format!("{} · {n}", self.window_label())
+            self.window_label()
         } else {
-            format!("\"{}\" · {n}", self.query_active)
+            format!("\"{}\"", self.query_active)
         }
+    }
+
+    /// Group counts for one sidebar pane, matching the displayed rows.
+    pub(crate) fn side_counts(&self, want_pr: bool) -> (usize, usize, usize) {
+        let (p, v, r) = self.pane_groups(want_pr, self.searching);
+        (p.len(), v.len(), r.len())
+    }
+
+    /// Title subtitle for Issues/PRs: total rows plus the sort state.
+    pub(crate) fn side_subtitle(&self, want_pr: bool) -> String {
+        let (p, v, r) = self.side_counts(want_pr);
+        format!("{} · {}", p + v + r, self.sort_label())
+    }
+
+    /// Footer for Issues/PRs: per-group counts. PRs append the filter
+    /// context after the counts, so narrow panes clip context first.
+    pub(crate) fn side_footer(&self, want_pr: bool) -> String {
+        let (p, v, r) = self.side_counts(want_pr);
+        let base = format!("pinned ({p}) · requested ({v}) · recent ({r})");
+        if want_pr {
+            format!("{} · {}", base, self.filter_context())
+        } else {
+            base
+        }
+    }
+
+    /// Title subtitle for Refs: mention/pair counts (Refs has no sort).
+    pub(crate) fn refs_subtitle(&self) -> String {
+        if self.ref_paired.is_empty() {
+            format!("{} mentioned", self.ref_numbers.len())
+        } else {
+            format!(
+                "{} mentioned · {} paired",
+                self.ref_numbers.len(),
+                self.ref_paired.len()
+            )
+        }
+    }
+
+    /// Footer for Refs: per-group counts matching the subtitle.
+    pub(crate) fn refs_footer(&self) -> String {
+        format!(
+            "mentioned ({}) · paired ({})",
+            self.ref_numbers.len(),
+            self.ref_paired.len()
+        )
     }
 
     /// Position of `current` in display rows, +1 for the top spacer row.

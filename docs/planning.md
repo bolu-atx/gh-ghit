@@ -83,5 +83,7 @@ One subject label per issue. Workflow labels (`duplicate`,
 - File one issue per story you discover, straight onto the board
   (`-p 'ghit dev'`); link ordering with `blocked-by` only when
   landing order truly matters.
+- Track status on the board: mark the story `In Progress` when work
+  starts, `In Review` when its PR opens.
 - Never press `o` during verification (it opens a browser).
   End every tmux live drive with `q` and kill the session.
