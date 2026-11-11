@@ -43,7 +43,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     // renders `▸ `/`▾ ` markers. Headers match by filename (longest wins)
     // so wrapped rows and scrolled-off files resolve exactly; every other
     // row inherits the previous header's file, pre-header rows map to None.
-    if app.tab == crate::app::Tab::Diff {
+    if app.visual_diff() {
         let header_rows: Vec<(usize, usize)> = {
             let empty: Vec<model::DiffFile> = vec![];
             let files = app
@@ -149,7 +149,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(block, popup);
     let lines = [
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
-        "  1/2/3 body/comments/diff · e refs · n/N search matches", "",
+        "  1/2 details/visual · e refs · n/N search matches", "",
         "Actions", "  : command · / find · f filter · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit",
         "  a sort · A reverse · x evict", "",
@@ -607,7 +607,9 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         lines.push(Line::from(""));
         lines.push(Line::from(rule.clone()));
         lines.push(head);
-        append_review_threads(&mut lines, d, &f.filename);
+        for thread in d.review_threads.iter().filter(|t| t.path == f.filename && model::thread_patch_row(t, f).is_none()) {
+            append_review_thread(&mut lines, thread, false);
+        }
         if !expanded {
             continue;
         }
@@ -622,12 +624,12 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
             continue;
         }
         if split {
-            lines.extend(split_file_lines(&f.patch, width.saturating_sub(2)).into_iter().map(|mut l| {
+            lines.extend(split_file_lines(f, d, width.saturating_sub(2)).into_iter().map(|mut l| {
                 l.spans.insert(0, dent());
                 l
             }));
         } else {
-            for (kind, text) in model::diff_lines(&f.patch) {
+            for (row, (kind, text)) in model::diff_lines(&f.patch).into_iter().enumerate() {
                 let style = match kind {
                     DiffKind::Hunk => Style::new().bg(ink()).fg(muted()).bold(),
                     DiffKind::Add => Style::new().bg(ink()).fg(green()),
@@ -635,6 +637,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
                     DiffKind::Context => Style::new().bg(ink()).fg(paper()),
                 };
                 lines.push(Line::from(vec![dent(), Span::styled(text, style)]));
+                for thread in d.review_threads.iter().filter(|t| model::thread_patch_row(t, f) == Some(row)) { append_review_thread(&mut lines, thread, true); }
             }
         }
     }
@@ -663,18 +666,23 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
 
 fn append_review_threads(lines: &mut Vec<Line<'static>>, d: &IssueData, path: &str) {
     for thread in d.review_threads.iter().filter(|thread| thread.path == path) {
-        let line = thread.line.map(|n| format!("line {n}")).unwrap_or_else(|| "line unavailable".to_string());
-        let state = if thread.is_resolved { "resolved" } else { "unresolved" };
-        lines.push(Line::from(Span::styled(format!("  {line} · {state}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::muted()).bold())));
-        for comment in &thread.comments {
-            let author = comment.author.as_ref().map(|a| a.login.as_str()).unwrap_or("unknown");
-            lines.push(Line::from(Span::styled(format!("  {author}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::paper()).bold())));
-            let body = crate::theme::render_markdown(&comment.body);
-            lines.extend(body.lines.into_iter().map(|mut line| {
-                line.spans.insert(0, Span::raw("  "));
-                Line::from(line.spans.into_iter().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>())
-            }));
-        }
+        append_review_thread(lines, thread, false);
+    }
+}
+
+fn append_review_thread(lines: &mut Vec<Line<'static>>, thread: &model::ReviewThread, inline: bool) {
+    let indent = if inline { "    " } else { "  " };
+    let line = thread.line.map(|n| format!("line {n}")).unwrap_or_else(|| "line unavailable".to_string());
+    let state = if thread.is_resolved { "resolved" } else { "unresolved" };
+    let color = if thread.is_resolved { crate::theme::muted() } else { crate::theme::amber() };
+    lines.push(Line::from(Span::styled(format!("{indent}\u{f075} {line} · {state}"), Style::new().bg(crate::theme::ink()).fg(color).bold())));
+    for comment in &thread.comments {
+        let author = comment.author.as_ref().map(|a| a.login.as_str()).unwrap_or("unknown");
+        lines.push(Line::from(Span::styled(format!("{indent}  {author}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::paper()).bold())));
+        lines.extend(crate::theme::render_markdown(&comment.body).lines.into_iter().map(|mut line| {
+            line.spans.insert(0, Span::raw(format!("{indent}  ")));
+            Line::from(line.spans.into_iter().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>())
+        }));
     }
 }
 
@@ -688,7 +696,7 @@ fn fit_cell(s: &str, w: usize) -> String {
 }
 
 /// Side-by-side rows for one file patch at `width` cells wide.
-fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
+fn split_file_lines(file: &model::DiffFile, d: &IssueData, width: usize) -> Vec<Line<'static>> {
     use crate::theme::{green, ink, muted, paper, red};
     use model::{DiffKind, SplitRow};
     let sep = " │ ";
@@ -699,7 +707,11 @@ fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
         Span::styled(sep, Style::new().bg(ink()).fg(muted())),
         Span::styled(fit_cell("+ new", rw), Style::new().bg(ink()).fg(muted())),
     ])];
+    let patch = &file.patch;
+    let mut patch_rows = model::diff_lines(patch).into_iter().enumerate().filter(|(_, (kind, _))| *kind != DiffKind::Del);
     for row in model::split_rows(patch) {
+        let has_new = !matches!(row, SplitRow::LeftOnly { .. });
+        let patch_row = if has_new { patch_rows.next().map(|(i, _)| i) } else { None };
         match row {
             SplitRow::Hunk(text) => lines.push(Line::from(Span::styled(
                 fit_cell(&text, width),
@@ -736,6 +748,9 @@ fn split_file_lines(patch: &str, width: usize) -> Vec<Line<'static>> {
                 ),
             ])),
         }
+        if let Some(index) = patch_row {
+            for thread in d.review_threads.iter().filter(|t| model::thread_patch_row(t, file) == Some(index)) { append_review_thread(&mut lines, thread, true); }
+        }
     }
     lines
 }
@@ -754,96 +769,30 @@ fn graph_text(app: &App, d: &IssueData) -> ratatui::text::Text<'static> {
         };
         return ratatui::text::Text::from(Line::from(Span::styled(note, dim())));
     };
-    let mut lines = vec![];
-    let related = data.nodes.len().saturating_sub(1);
-    let mut head = format!("{related} related · 1–2 hops");
-    if data.truncated {
-        head.push_str(&format!(" · showing {}", model::MAX_GRAPH_NODES));
-    }
-    if data.from_references {
-        head.push_str(" · refs-derived (blocking fields unavailable)");
-    }
-    lines.push(Line::from(Span::styled(head, dim())));
-    lines.push(Line::from(""));
     let order = model::graph_order(data);
-    let cursor_number =
-        order.get(app.graph_cursor).and_then(|&i| data.nodes.get(i)).map(|n| n.number);
-    if let Some(center) = data.nodes.iter().find(|n| n.number == data.center) {
-        lines.push(graph_node_line(data, center, Some(center.number) == cursor_number));
-        lines.push(Line::from(""));
-    }
-    if order.len() <= 1 {
-        lines.push(Line::from(Span::styled("No related issues or PRs.", dim())));
-        return ratatui::text::Text::from(lines);
-    }
-    for (kind, group) in model::graph_sections(data) {
-        lines.push(Line::from(Span::styled(
-            format!("▸ {} ({})", model::graph_edge_label(kind), group.len()),
-            Style::new().bg(ink()).fg(muted()).bold(),
-        )));
-        for idx in group {
-            if let Some(node) = data.nodes.get(idx) {
-                lines.push(graph_node_line(data, node, Some(node.number) == cursor_number));
+    let mut lines = vec![Line::from(Span::styled(format!("{} related", order.len().saturating_sub(1)), dim()))];
+    for (position, index) in order.iter().take(8).enumerate() {
+        let node = &data.nodes[*index];
+        if position > 0 {
+            if let Some((kind, _)) = model::graph_sections(data).iter().find(|(_, group)| group.contains(index)) {
+                lines.push(Line::from(Span::styled(format!("  {}", model::graph_edge_label(*kind)), dim())));
             }
         }
-        lines.push(Line::from(""));
+        let label = format!("#{} {}", node.number, model::slug(&node.title, 40));
+        let width = label.chars().count() + 2;
+        let prefix = if position == 0 { "  " } else { "  └─" };
+        let marker = if app.graph_cursor == position { "█ " } else { "  " };
+        let color = crate::theme::state_color(&node.state);
+        lines.push(Line::from(Span::styled(format!("{prefix}╭{}╮", "─".repeat(width)), dim())));
+        lines.push(Line::from(vec![Span::styled(format!("{prefix}│"), dim()), Span::styled(format!("{marker}{label}"), Style::new().bg(ink()).fg(color).bold()), Span::styled("│", dim())]));
+        lines.push(Line::from(Span::styled(format!("{prefix}╰{}╯", "─".repeat(width)), dim())));
     }
+    if order.len() > 8 { lines.push(Line::from(Span::styled(format!("+{} more", order.len() - 8), dim()))); }
+    if data.truncated { lines.push(Line::from(Span::styled("More nodes omitted by data cap", dim()))); }
+    if data.from_references { lines.push(Line::from(Span::styled("refs-derived (blocking fields unavailable)", dim()))); }
     ratatui::text::Text::from(lines)
 }
 
-/// One graph row: `#num` plus slug title, status, up to N label chips,
-/// linked PR `#`s. Nodes that block nothing render gray/dim; the cursor
-/// row carries the amber sidebar marker.
-fn graph_node_line(data: &model::GraphData, node: &model::GraphNode, selected: bool) -> Line<'static> {
-    use crate::theme::{amber, ink, muted, paper, teal};
-    let dim = Style::new().bg(ink()).fg(muted());
-    // Nerd Font Font Awesome fa-share-alt brands the tab; rows reuse the
-    // sidebar marker vocabulary instead.
-    let marker = if selected { "█ " } else { "  " };
-    let mut spans = vec![Span::styled(
-        marker,
-        if selected { Style::new().bg(ink()).fg(amber()).bold() } else { dim },
-    )];
-    if model::graph_blocks_something(data, node.number) {
-        spans.push(Span::styled(
-            format!("#{} {}", node.number, model::slug(&node.title, 40)),
-            Style::new().bg(ink()).fg(paper()).bold(),
-        ));
-        spans.push(Span::styled(
-            format!(" {}", node.state),
-            Style::new().bg(ink()).fg(crate::theme::state_color(&node.state)).bold(),
-        ));
-        let chips: Vec<String> =
-            node.labels.iter().take(model::MAX_GRAPH_LABELS).map(|l| format!("● {}", l.name)).collect();
-        if !chips.is_empty() {
-            spans.push(Span::styled(format!(" {}", chips.join("  ")), Style::new().bg(ink()).fg(amber())));
-        }
-        if node.labels.len() > model::MAX_GRAPH_LABELS {
-            spans.push(Span::styled(format!(" +{}", node.labels.len() - model::MAX_GRAPH_LABELS), dim));
-        }
-        for pr in &node.linked_prs {
-            spans.push(Span::styled(format!(" #{}", pr.number), Style::new().bg(ink()).fg(teal())));
-        }
-        if let Some(st) = node.project_status.as_deref() {
-            spans.push(Span::styled(
-                format!(" · {st}"),
-                Style::new().bg(ink()).fg(crate::theme::column_color(st)),
-            ));
-        }
-        if node.is_pr {
-            spans.push(Span::styled(" PR", dim));
-        }
-    } else {
-        spans.push(Span::styled(format!("#{} {}", node.number, model::slug(&node.title, 40)), dim));
-        spans.push(Span::styled(format!(" {}", node.state), dim));
-    }
-    Line::from(spans)
-}
-
-/// Pane header: one decorative Nerd Font glyph (muted) plus the text label
-/// (amber), so a terminal without the font degrades to tofu plus readable
-/// text. Glyph sources are Font Awesome codepoints from the Nerd Fonts
-/// cheatsheet, all long-stable single-cell icons.
 fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line<'a> {
     use crate::theme::{amber, muted};
     // Inactive panes go quiet: the colored name drops to the detail grey
@@ -1020,7 +969,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         }
         None => vec![],
     };
-    if let (Some(n), crate::app::Tab::Body) = (app.ref_highlight, app.tab) {
+    if let (Some(n), crate::app::Tab::Details) = (app.ref_highlight, app.tab) {
         highlight_mentions(&mut header, n, app.repo_key().as_deref());
     }
     let header = wrap_lines(header, inner_w);
@@ -1061,13 +1010,8 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let main_focused = app.pane == crate::app::Pane::Main;
     // Nerd Font glyphs: file-text, comments, code. Labels stay so a
     // missing font degrades to a tofu box plus readable text.
-    let tabs = Tabs::new(vec!["\u{f15c}  Body", "\u{f086}  Comments", "\u{f121}  Diff", "\u{f542}  Graph"])
-        .select(match app.tab {
-            Tab::Body => 0,
-            Tab::Comments => 1,
-            Tab::Diff => 2,
-            Tab::Graph => 3,
-        })
+    let tabs = Tabs::new(vec!["\u{f15c}  Details", "\u{f121}  Visual"])
+        .select(match app.tab { Tab::Details => 0, Tab::Visual => 1 })
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
         .divider("  ")
@@ -1089,23 +1033,17 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.header_area = hgutter[1];
     f.render_widget(Paragraph::new(header).style(base()), hgutter[1]);
 
-    let owned_body: String;
-    let owned_comments: String;
+    let markdown;
     let mut text = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => match app.tab {
-            Tab::Body => {
-                owned_body = model::body_md(d);
-                crate::theme::render_markdown(&owned_body)
+            Tab::Details => {
+                markdown = format!("## Body\n\n{}\n\n## Comments\n\n{}", model::body_md(d), model::build_comments_md(d));
+                crate::theme::render_markdown(&markdown)
             }
-            Tab::Comments => {
-                owned_comments = model::build_comments_md(d);
-                crate::theme::render_markdown(&owned_comments)
-            }
-            Tab::Diff => {
-                let width = (rows[4].width as usize).saturating_sub(5);
-                diff_text(app, d, width)
-            }
-            Tab::Graph => graph_text(app, d),
+            Tab::Visual => match model::visual_content(d.is_pr) {
+                model::VisualContent::Diff => diff_text(app, d, (rows[4].width as usize).saturating_sub(5)),
+                model::VisualContent::Graph => graph_text(app, d),
+            },
         },
         None => crate::theme::render_markdown(
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
@@ -1114,7 +1052,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // A refs-row selection lights up the mentioning line instead of opening
     // the issue. Body tab only: the mentions come from the body markdown
     // (and the header above the tabs).
-    if let (Some(n), crate::app::Tab::Body) = (app.ref_highlight, app.tab) {
+    if let (Some(n), crate::app::Tab::Details) = (app.ref_highlight, app.tab) {
         highlight_mentions(&mut text.lines, n, app.repo_key().as_deref());
     }
     let pane = Paragraph::new(text)
@@ -2144,12 +2082,12 @@ mod render_smoke {
             &mut app,
             click(MouseEventKind::Down(MouseButton::Left), tx + 12, y),
         );
-        assert_eq!(app.tab, Tab::Comments);
+        assert_eq!(app.tab, Tab::Visual);
         handle_mouse(
             &mut app,
             click(MouseEventKind::Down(MouseButton::Left), tx + 1, y),
         );
-        assert_eq!(app.tab, Tab::Body);
+        assert_eq!(app.tab, Tab::Details);
     }
 
     #[test]
@@ -2304,6 +2242,39 @@ mod render_smoke {
     }
 
     #[test]
+    fn details_contains_body_before_comments() {
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.body = "body evidence".into();
+        d.comments.push(crate::model::Comment { body: "comment evidence".into(), ..Default::default() });
+        let text = frame_text(&mut app);
+        assert!(text.find("Body").unwrap() < text.find("body evidence").unwrap());
+        assert!(text.find("body evidence").unwrap() < text.find("Comments").unwrap());
+        assert!(text.find("Comments").unwrap() < text.find("comment evidence").unwrap());
+    }
+
+    #[test]
+    fn review_threads_render_at_matching_lines_in_both_modes() {
+        use crate::model::{DiffFile, ReviewThread, ReviewComment};
+        let mut app = loaded_app();
+        let mut pr = diff_pr(9);
+        pr.review_threads = vec![
+            ReviewThread { id: "a".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
+            ReviewThread { id: "b".into(), path: "a.rs".into(), line: Some(8), ..Default::default() },
+        ];
+        app.data.insert(9, pr); app.show_issue(9);
+        app.diffs.insert(9, vec![DiffFile { filename: "a.rs".into(), patch: "@@ -1 +1 @@\n-old\n+new".into(), ..Default::default() }]);
+        app.expanded_files.insert((9, "a.rs".into())); app.set_tab(Tab::Visual);
+        for split in [false, true] {
+            app.diff_split = split;
+            let text = frame_text(&mut app);
+            assert!(text.find("line 8").unwrap() < text.find("+new").unwrap(), "{text}");
+            assert!(text.find("+new").unwrap() < text.find("line 1").unwrap(), "{text}");
+            assert!(text.contains('\u{f075}') && text.contains("inline note"), "{text}");
+        }
+    }
+
+    #[test]
     fn diff_groups_review_threads_by_file() {
         use crate::model::{DiffFile, parse_review_threads};
         let mut app = loaded_app();
@@ -2320,7 +2291,7 @@ mod render_smoke {
             DiffFile { filename: "src/a.rs".into(), ..Default::default() },
             DiffFile { filename: "src/b.rs".into(), ..Default::default() },
         ]);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
         let a = text.find("▸ ").unwrap();
         let open = text.find("line 7 · unresolved").unwrap();
@@ -2342,9 +2313,9 @@ mod render_smoke {
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
             DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
         ]);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
-        assert!(text.contains("Diff"), "{text}");
+        assert!(text.contains("Visual"), "{text}");
         assert!(text.contains("2 files"), "{text}");
         assert!(text.contains("src/a.rs"), "{text}");
         assert!(text.contains("▸"), "folded by default");
@@ -2397,7 +2368,7 @@ mod render_smoke {
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
             DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 2, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
         ]);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
         // The cursor anchors to the first header without expanding it.
         let h0 = app.diff_headers[0];
@@ -2436,7 +2407,7 @@ mod render_smoke {
         app.diffs.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
         // Unfold, then step onto the deletion line.
         handle_key(&mut app, key(KeyCode::Char(' ')));
@@ -2472,7 +2443,7 @@ mod render_smoke {
         app.diffs.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
         let row = app.body_rows.iter().position(|l| l.starts_with("▸ ")).unwrap();
         let (bx, by) = (app.body_area.x, app.body_area.y);
@@ -2497,10 +2468,8 @@ mod render_smoke {
         let mut app = loaded_app();
         let text = frame_text(&mut app);
         assert!(text.contains('\u{f15c}'), "{text}");
-        assert!(text.contains('\u{f086}'), "{text}");
         assert!(text.contains('\u{f121}'), "{text}");
-        assert!(text.contains('\u{f542}'), "{text}");
-        assert!(text.contains("Graph"), "{text}");
+        assert!(text.contains("Visual"), "{text}");
     }
 
     #[test]
@@ -2512,15 +2481,15 @@ mod render_smoke {
         let _ = frame_text(&mut app);
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 8, y));
-        assert_eq!(app.tab, Tab::Body);
-        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 9, y));
-        assert_eq!(app.tab, Tab::Comments);
+        assert_eq!(app.tab, Tab::Details);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 12, y));
+        assert_eq!(app.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 22, y));
-        assert_eq!(app.tab, Tab::Diff);
+        assert_eq!(app.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 30, y));
-        assert_eq!(app.tab, Tab::Diff);
+        assert_eq!(app.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 31, y));
-        assert_eq!(app.tab, Tab::Graph);
+        assert_eq!(app.tab, Tab::Visual);
     }
 
     #[test]
@@ -2645,7 +2614,7 @@ mod render_smoke {
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
             DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
         ]);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
         assert!(text.contains("\u{f15c} 2 files"), "{text}");
     }
@@ -2714,7 +2683,7 @@ mod render_smoke {
         app.diffs.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
-        app.set_tab(crate::app::Tab::Diff);
+        app.set_tab(crate::app::Tab::Visual);
         assert_eq!(
             app.yank_text().unwrap(),
             "#9 Fix the thing — src/a.rs (modified +1 -1) — https://github.com/o/r/issues/9"
@@ -2759,9 +2728,9 @@ mod render_smoke {
     #[test]
     fn diff_tab_notes_issues_have_no_diff() {
         let mut app = loaded_app();
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
-        assert!(text.contains("only available for pull requests"), "{text}");
+        assert!(text.contains("graph"), "{text}");
     }
 
     #[test]
@@ -2771,7 +2740,7 @@ mod render_smoke {
         app.show_issue(9);
         app.diffs.remove(&9);
         app.diff_pending.insert(9);
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         assert!(frame_text(&mut app).contains("Fetching diff"), "loading state");
     }
 
@@ -2794,11 +2763,13 @@ mod render_smoke {
     fn number_keys_switch_content_tabs() {
         let mut app = loaded_app();
         handle_key(&mut app, key(KeyCode::Char('3')));
-        assert_eq!(app.tab, Tab::Diff);
+        assert_eq!(app.tab, Tab::Details);
+        handle_key(&mut app, key(KeyCode::Char('4')));
+        assert_eq!(app.tab, Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('1')));
-        assert_eq!(app.tab, Tab::Body);
+        assert_eq!(app.tab, Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('2')));
-        assert_eq!(app.tab, Tab::Comments);
+        assert_eq!(app.tab, Tab::Visual);
     }
 
     #[test]
@@ -2807,7 +2778,7 @@ mod render_smoke {
         let _ = frame_text(&mut app);
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 24, y));
-        assert_eq!(app.tab, Tab::Diff);
+        assert_eq!(app.tab, Tab::Visual);
     }
 
     fn diff_loaded_app() -> App {
@@ -2820,7 +2791,7 @@ mod render_smoke {
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
         app.expanded_files.insert((9, "src/a.rs".to_string()));
-        app.set_tab(Tab::Diff);
+        app.set_tab(Tab::Visual);
         app
     }
 
@@ -2851,7 +2822,7 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('s')));
         assert!(!app.diff_split);
         assert!(app.message.contains("unified"));
-        app.set_tab(Tab::Body);
+        app.set_tab(Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('s')));
         assert!(!app.diff_split, "s outside Diff does nothing");
     }
@@ -2897,47 +2868,36 @@ mod render_smoke {
     #[test]
     fn graph_tab_shows_skeleton_while_pending() {
         let mut app = loaded_app();
-        app.tab = Tab::Graph;
+        app.tab = Tab::Visual;
         app.graph_pending.insert(7);
         let text = frame_text(&mut app);
-        assert!(text.contains("Graph"), "tab label: {text}");
+        assert!(text.contains("Visual"), "tab label: {text}");
         assert!(text.contains("Fetching graph"), "skeleton: {text}");
     }
 
     #[test]
     fn graph_tab_renders_sections_labels_and_prs() {
         let mut app = graph_app();
-        app.set_tab(Tab::Graph);
+        app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
         assert!(text.contains("3 related"), "{text}");
-        assert!(text.contains("Blocks"), "{text}");
-        assert!(text.contains("Blocked by"), "{text}");
-        assert!(text.contains("Referenced by"), "{text}");
         assert!(text.contains("#9"), "{text}");
         assert!(text.contains("#11"), "{text}");
         assert!(text.contains("#10"), "{text}");
-        assert!(text.contains("● bug"), "label chips: {text}");
-        assert!(text.contains("#44"), "linked PR: {text}");
-        assert!(text.contains("Todo"), "project status: {text}");
-        assert!(text.contains("█"), "cursor marker: {text}");
+        assert!(text.contains("╭") && text.contains("└─") && text.contains("█"), "node boxes and cursor: {text}");
     }
 
     #[test]
-    fn graph_rows_dim_nodes_that_block_nothing() {
-        let app = graph_app();
-        let data = app.graphs.get(&7).unwrap();
-        let bright = data.nodes.iter().find(|n| n.number == 11).unwrap();
-        let line = super::graph_node_line(data, bright, false);
-        assert!(
-            line.spans.iter().any(|s| s.style.fg == Some(crate::theme::paper())),
-            "blocker keeps full color"
-        );
-        let dim_node = data.nodes.iter().find(|n| n.number == 10).unwrap();
-        let line = super::graph_node_line(data, dim_node, false);
-        assert!(
-            !line.spans.iter().any(|s| s.style.fg == Some(crate::theme::paper())),
-            "plain ref renders gray"
-        );
+    fn graph_draws_at_most_eight_nodes() {
+        let mut app = graph_app();
+        let center = graph_node(7, "Center", "OPEN");
+        let neighbors = (20..30).map(|n| (graph_node(n, "Neighbor", "OPEN"), GraphEdgeKind::References)).collect();
+        app.graphs.insert(7, crate::model::build_graph(center, neighbors));
+        app.set_tab(Tab::Visual);
+        let text = super::graph_text(&app, app.data.get(&7).unwrap()).lines.iter().map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+        assert_eq!(text.matches('╭').count(), 8, "{text}");
+        assert!(text.contains("+3 more"), "{text}");
+        assert_eq!(app.graph_order_numbers().len(), 8);
     }
 
     #[test]
@@ -2949,8 +2909,8 @@ mod render_smoke {
         assert_eq!(app.graph_cursor, 0);
         assert!(app.scroll > 0);
         // `4` opens the tab; arrows/hjkl move between nodes.
-        handle_key(&mut app, key(KeyCode::Char('4')));
-        assert_eq!(app.tab, Tab::Graph);
+        handle_key(&mut app, key(KeyCode::Char('2')));
+        assert_eq!(app.tab, Tab::Visual);
         let scroll = app.scroll;
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.graph_cursor, 1);
@@ -2978,7 +2938,7 @@ mod render_smoke {
         // graph and diff so the open stays synchronous with no fetch.
         app.graphs.insert(9, crate::model::build_graph(graph_node(9, "Blocked work", "OPEN"), vec![]));
         app.diffs.insert(9, Vec::<DiffFile>::new());
-        handle_key(&mut app, key(KeyCode::Char('4')));
+        handle_key(&mut app, key(KeyCode::Char('2')));
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.graph_cursor, 1);
         handle_key(&mut app, key(KeyCode::Enter));
@@ -2987,9 +2947,9 @@ mod render_smoke {
         assert!(app.graphs.contains_key(&9), "per-issue graph");
         // Tab switch away and back keeps the graph and the cursor.
         handle_key(&mut app, key(KeyCode::Char('1')));
-        assert_eq!(app.tab, Tab::Body);
-        handle_key(&mut app, key(KeyCode::Char('4')));
-        assert_eq!(app.tab, Tab::Graph);
+        assert_eq!(app.tab, Tab::Details);
+        handle_key(&mut app, key(KeyCode::Char('2')));
+        assert_eq!(app.tab, Tab::Visual);
         assert!(app.graphs.contains_key(&9));
     }
 

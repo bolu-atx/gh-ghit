@@ -5,7 +5,7 @@ e2e_start
 e2e_wait "move title" 60 || fail "pr data never landed"
 e2e_bar 24
 e2e_wait "■ #24 " 20 || fail "show #24"
-e2e_key 3
+e2e_key 2
 e2e_wait "files ·" 60 || fail "diff summary never rendered"
 e2e_shot diff-folded
 e2e_key Space

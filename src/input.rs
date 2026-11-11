@@ -101,10 +101,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('?') => app.shortcuts_open = true,
         KeyCode::Char('q') => app.quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
-        KeyCode::Char('1') => app.set_tab(Tab::Body),
-        KeyCode::Char('2') => app.set_tab(Tab::Comments),
-        KeyCode::Char('3') => app.set_tab(Tab::Diff),
-        KeyCode::Char('4') => app.set_tab(Tab::Graph),
+        KeyCode::Char('1') => app.set_tab(Tab::Details),
+        KeyCode::Char('2') => app.set_tab(Tab::Visual),
         KeyCode::Char('t') => {
             app.notify(format!("theme: {}", crate::theme::cycle()));
         }
@@ -145,7 +143,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Down => {
             if graph_focused(app) {
                 app.graph_move(1);
-            } else if app.tab == Tab::Diff {
+            } else if app.visual_diff() {
                 move_diff_cursor(app, 1);
             } else {
                 app.scroll = app.scroll.saturating_add(3);
@@ -154,7 +152,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Up => {
             if graph_focused(app) {
                 app.graph_move(-1);
-            } else if app.tab == Tab::Diff {
+            } else if app.visual_diff() {
                 move_diff_cursor(app, -1);
             } else {
                 app.scroll = app.scroll.saturating_sub(3);
@@ -193,8 +191,9 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('a') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.cycle_sort(),
         KeyCode::Char('A') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.toggle_sort_dir(),
         KeyCode::Char('x') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
-        KeyCode::Char('s') if app.tab == Tab::Diff => app.toggle_diff_split(),
-        KeyCode::Char(' ') if app.tab == Tab::Diff => app.toggle_diff_file(),
+        KeyCode::Char('s') if app.visual_diff() => app.toggle_diff_split(),
+        KeyCode::Char(' ') if app.visual_diff() => app.toggle_diff_file(),
+
         KeyCode::Char(' ') => app.toggle_row_expansion(),
         KeyCode::Char('w') => {
             app.merged_window_hours = core::cycle_window(app.merged_window_hours);
@@ -218,7 +217,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
 /// hjkl move between nodes, Enter loads the selected issue. Anywhere
 /// else those keys keep their existing meaning.
 pub(crate) fn graph_focused(app: &App) -> bool {
-    app.tab == Tab::Graph && app.pane == Pane::Main && app.focus == Focus::Main
+    app.visual_graph() && app.pane == Pane::Main && app.focus == Focus::Main
 }
 
 /// j/k walks one sidebar list: issues or PRs, never crossing over.
@@ -253,7 +252,7 @@ fn pane_down(app: &mut App, delta: isize) {
 /// auto-expands a landed-on collapsed file from the fresh capture, so this
 /// only moves the cursor and flags it touched.
 fn move_diff_cursor(app: &mut App, delta: isize) {
-    if app.tab != Tab::Diff {
+    if !app.visual_diff() {
         return;
     }
     let height = app.body_area.height as usize;
@@ -488,20 +487,9 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if in_rect(app.tabs_area, m.column, m.row) {
-                // Tabs are icon + "Body  Comments  Diff  Graph": Body ends
-                // at 7, Comments ends at 20, Diff ends at 29, the rest is
-                // Graph. Divider cells map to the tab on their left.
                 app.pane = Pane::Main;
                 let rel = m.column.saturating_sub(app.tabs_area.x);
-                app.set_tab(if rel < 9 {
-                    Tab::Body
-                } else if rel < 22 {
-                    Tab::Comments
-                } else if rel < 31 {
-                    Tab::Diff
-                } else {
-                    Tab::Graph
-                });
+                app.set_tab(if rel < 12 { Tab::Details } else { Tab::Visual });
                 return;
             }
             // The title/label block above the tabs resolves refs and URLs
@@ -513,7 +501,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 app.pane = Pane::Main;
                 let area = if in_body { app.body_area } else { app.header_area };
                 let row = (m.row - area.y) as usize;
-                if in_body && app.tab == Tab::Diff {
+                if in_body && app.visual_diff() {
                     // Clicking parks the active line there; render resolves
                     // the file and expands a collapsed header. Clicking an
                     // expanded header folds it back instead. Other rows fall

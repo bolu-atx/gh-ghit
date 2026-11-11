@@ -499,6 +499,59 @@ pub fn diff_lines(patch: &str) -> Vec<(DiffKind, String)> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualContent { Diff, Graph }
+
+pub fn visual_content(is_pr: bool) -> VisualContent {
+    if is_pr { VisualContent::Diff } else { VisualContent::Graph }
+}
+
+/// Map each patch row to its new-file line, or None for headers and deletions.
+pub fn patch_new_lines(patch: &str) -> Vec<Option<u64>> {
+    let mut next = None;
+    diff_lines(patch).iter().map(|(kind, text)| match kind {
+        DiffKind::Hunk => {
+            next = text.split_whitespace().find_map(|part| part.strip_prefix('+'))
+                .and_then(|part| part.split(',').next())
+                .and_then(|part| part.parse::<u64>().ok());
+            None
+        }
+        DiffKind::Del => None,
+        DiffKind::Add | DiffKind::Context if !text.starts_with('\\') => {
+            let line = next;
+            next = next.map(|n| n + 1);
+            line
+        }
+        _ => None,
+    }).collect()
+}
+
+pub fn thread_patch_row(thread: &ReviewThread, file: &DiffFile) -> Option<usize> {
+    if thread.path != file.filename { return None; }
+    let line = thread.line?;
+    patch_new_lines(&file.patch).iter().position(|n| *n == Some(line))
+}
+
+#[cfg(test)]
+mod content_polish_tests {
+    use super::*;
+    #[test]
+    fn selects_visual_by_kind() {
+        assert_eq!(visual_content(true), VisualContent::Diff);
+        assert_eq!(visual_content(false), VisualContent::Graph);
+    }
+    #[test]
+    fn matches_new_side_and_falls_back_for_missing_lines() {
+        let file = DiffFile { filename: "a".into(), patch: "@@ -2,2 +4,2 @@\n-old\n+new\n context".into(), ..Default::default() };
+        let mut thread = ReviewThread { path: "a".into(), line: Some(4), ..Default::default() };
+        assert_eq!(thread_patch_row(&thread, &file), Some(2));
+        thread.line = Some(2);
+        assert_eq!(thread_patch_row(&thread, &file), None);
+        thread.line = Some(4); thread.path = "b".into();
+        assert_eq!(thread_patch_row(&thread, &file), None);
+    }
+}
+
 /// File index of a rendered `▸ `/`▾ ` diff header row. Longest filename
 /// wins so `a.rs` never shadows `src/a.rs`. `None` for any other row.
 pub fn header_file_index(line: &str, files: &[DiffFile]) -> Option<usize> {
@@ -960,7 +1013,7 @@ mod tests {
 pub const MAX_GRAPH_NODES: usize = 24;
 
 /// Label chips shown per graph node before the `+k` overflow.
-pub const MAX_GRAPH_LABELS: usize = 3;
+
 
 /// One relationship in the dependency graph, named from the center issue's
 /// perspective: `Blocks` means the center blocks the neighbor, `BlockedBy`
@@ -1094,6 +1147,7 @@ pub fn build_graph(center: GraphNode, neighbors: Vec<(GraphNode, GraphEdgeKind)>
 /// blocking relationship. Both `Blocks` and `BlockedBy` edges point from
 /// the blocker to the blocked (the kind names the center's perspective),
 /// so the blocker is always `from`. Nodes without one render gray/dim.
+#[cfg(test)]
 pub fn graph_blocks_something(data: &GraphData, number: u64) -> bool {
     data.edges.iter().any(|e| {
         e.from == number && matches!(e.kind, GraphEdgeKind::Blocks | GraphEdgeKind::BlockedBy)
