@@ -5,7 +5,9 @@
 //! unit test without a TUI. The stateful shells (`app`, `input`) delegate to
 //! these functions instead of reimplementing the rules inline.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+use crate::model::IssueData;
 
 /// What the command bar text means. Parsing never touches state.
 #[derive(Debug, PartialEq, Eq)]
@@ -195,6 +197,91 @@ pub fn matches_search(number: u64, title: &str, labels: &[&str], author: &str, q
         return true;
     }
     labels.iter().any(|l| l.to_lowercase().contains(&q))
+}
+
+/// Sidebar sort key. `Default` restores the incoming pinned/requested/
+/// recent order; `Updated` sorts by the raw timestamp (newest first by
+/// default), `Author`/`State` by login/state, and `Label` by the first
+/// label name alphabetically.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SideSort {
+    #[default]
+    Default,
+    Updated,
+    Author,
+    State,
+    Label,
+}
+
+impl SideSort {
+    /// One key cycles Default → Updated → Author → State → Label → Default.
+    pub fn next(self) -> Self {
+        match self {
+            SideSort::Default => SideSort::Updated,
+            SideSort::Updated => SideSort::Author,
+            SideSort::Author => SideSort::State,
+            SideSort::State => SideSort::Label,
+            SideSort::Label => SideSort::Default,
+        }
+    }
+
+    /// Direction a key starts in: dates newest first, text A→Z.
+    pub fn natural_desc(self) -> bool {
+        self == SideSort::Updated
+    }
+
+    /// Bar-hint label, e.g. `updated ↓`; `default` has no direction.
+    pub fn label(self, desc: bool) -> String {
+        match self {
+            SideSort::Default => "default".to_string(),
+            SideSort::Updated => format!("updated {}", if desc { "↓" } else { "↑" }),
+            SideSort::Author => format!("author {}", if desc { "↓" } else { "↑" }),
+            SideSort::State => format!("state {}", if desc { "↓" } else { "↑" }),
+            SideSort::Label => format!("label {}", if desc { "↓" } else { "↑" }),
+        }
+    }
+}
+
+/// Sort one pane group by the active key. `Default` returns the rows
+/// untouched; every other key compares case-folded text with the row
+/// number as the tie-break so the order is deterministic. Loading rows
+/// (no data yet) keep their relative place at the end.
+pub fn sort_rows(
+    rows: Vec<u64>,
+    sort: SideSort,
+    desc: bool,
+    data: &HashMap<u64, IssueData>,
+) -> Vec<u64> {
+    if sort == SideSort::Default {
+        return rows;
+    }
+    let key = |n: u64| -> Option<String> {
+        let d = data.get(&n)?;
+        Some(match sort {
+            SideSort::Updated => d.updated_at.clone(),
+            SideSort::Author => d.author.login.to_lowercase(),
+            SideSort::State => d.state.to_lowercase(),
+            SideSort::Label => d
+                .labels
+                .iter()
+                .map(|l| l.name.to_lowercase())
+                .min()
+                .unwrap_or_default(),
+            SideSort::Default => String::new(),
+        })
+    };
+    let mut keyed: Vec<(Option<String>, u64)> = rows.into_iter().map(|n| (key(n), n)).collect();
+    keyed.sort_by(|(ka, a), (kb, b)| match (ka, kb) {
+        (Some(a_key), Some(b_key)) => {
+            let ord = a_key.cmp(b_key);
+            let ord = if desc { ord.reverse() } else { ord };
+            ord.then(a.cmp(b))
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.cmp(b),
+    });
+    keyed.into_iter().map(|(_, n)| n).collect()
 }
 
 /// Collapse whitespace runs to single spaces so yanked text pastes as one
@@ -443,6 +530,106 @@ mod tests {
         assert!(matches_search(7, "Anything", &["bug"], "alice", ""));
         assert!(matches_search(7, "Anything", &["bug"], "alice", "   "));
         assert!(matches_search(7, "Anything", &[], "", ""));
+    }
+
+    fn sort_issue(number: u64, updated: &str, author: &str, state: &str, labels: &[&str]) -> IssueData {
+        IssueData {
+            number,
+            title: format!("issue {number}"),
+            state: state.to_string(),
+            author: crate::model::Author { login: author.to_string() },
+            labels: labels.iter().map(|n| crate::model::Label { name: n.to_string() }).collect(),
+            assignees: vec![],
+            created_at: String::new(),
+            updated_at: updated.to_string(),
+            url: String::new(),
+            body: String::new(),
+            comments: vec![],
+            is_pr: false,
+            review_threads: vec![],
+        }
+    }
+
+    fn sort_data() -> HashMap<u64, IssueData> {
+        [
+            sort_issue(7, "2026-01-05T00:00:00Z", "carol", "OPEN", &["ui"]),
+            sort_issue(9, "2026-01-09T00:00:00Z", "alice", "CLOSED", &["bug"]),
+            sort_issue(11, "2026-01-01T00:00:00Z", "bob", "MERGED", &["docs"]),
+        ]
+        .into_iter()
+        .map(|d| (d.number, d))
+        .collect()
+    }
+
+    #[test]
+    fn default_sort_restores_the_incoming_order() {
+        let rows = vec![11, 7, 9];
+        assert_eq!(sort_rows(rows.clone(), SideSort::Default, false, &sort_data()), rows);
+        assert_eq!(sort_rows(rows.clone(), SideSort::Default, true, &sort_data()), rows);
+    }
+
+    #[test]
+    fn updated_sort_puts_newest_first_and_reverses() {
+        let data = sort_data();
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Updated, true, &data), vec![9, 7, 11]);
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Updated, false, &data), vec![11, 7, 9]);
+    }
+
+    #[test]
+    fn author_sort_orders_by_login() {
+        let data = sort_data();
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Author, false, &data), vec![9, 11, 7]);
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Author, true, &data), vec![7, 11, 9]);
+    }
+
+    #[test]
+    fn state_sort_orders_lexically() {
+        let data = sort_data();
+        // closed < merged < open once case-folded.
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::State, false, &data), vec![9, 11, 7]);
+    }
+
+    #[test]
+    fn label_sort_orders_by_first_label_name() {
+        let data = sort_data();
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Label, false, &data), vec![9, 11, 7]);
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Label, true, &data), vec![7, 11, 9]);
+    }
+
+    #[test]
+    fn sort_cycle_ends_back_at_default() {
+        let mut sort = SideSort::Default;
+        let mut seen = vec![sort];
+        for _ in 0..4 {
+            sort = sort.next();
+            seen.push(sort);
+        }
+        assert_eq!(
+            seen,
+            vec![SideSort::Default, SideSort::Updated, SideSort::Author, SideSort::State, SideSort::Label]
+        );
+        assert_eq!(sort.next(), SideSort::Default);
+    }
+
+    #[test]
+    fn sort_direction_toggle_flips_key_order() {
+        let data = sort_data();
+        let asc = sort_rows(vec![7, 9, 11], SideSort::Updated, false, &data);
+        let desc = sort_rows(vec![7, 9, 11], SideSort::Updated, true, &data);
+        assert_eq!(asc.iter().rev().copied().collect::<Vec<_>>(), desc);
+    }
+
+    #[test]
+    fn sort_keeps_loading_rows_last_and_labels_cover_directions() {
+        let mut data = sort_data();
+        data.remove(&11);
+        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Updated, false, &data), vec![7, 9, 11]);
+        assert_eq!(sort_rows(vec![11, 9, 7], SideSort::Author, true, &data), vec![7, 9, 11]);
+        assert_eq!(SideSort::Default.label(true), "default");
+        assert_eq!(SideSort::Updated.label(true), "updated ↓");
+        assert_eq!(SideSort::Author.label(false), "author ↑");
+        assert_eq!(SideSort::State.label(false), "state ↑");
+        assert_eq!(SideSort::Label.label(false), "label ↑");
     }
 
     #[test]
