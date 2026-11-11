@@ -690,6 +690,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
                 l
             }));
         } else {
+            let numbers = model::patch_line_numbers(&f.patch);
             for (row, (kind, text)) in model::diff_lines(&f.patch).into_iter().enumerate() {
                 let style = match kind {
                     DiffKind::Hunk => Style::new().bg(ink()).fg(muted()).bold(),
@@ -697,7 +698,20 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
                     DiffKind::Del => Style::new().bg(ink()).fg(red()),
                     DiffKind::Context => Style::new().bg(ink()).fg(paper()),
                 };
-                lines.push(Line::from(vec![dent(), Span::styled(text, style)]));
+                // New-side number for Adds/Context, old-side for Dels,
+                // blank for hunk headers: the gutter `│` delimits it from
+                // the code so cursor math can strip it back off.
+                let (old, new) = numbers.get(row).copied().unwrap_or((None, None));
+                let num = match kind {
+                    DiffKind::Hunk => None,
+                    DiffKind::Del => old,
+                    _ => new,
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(diff_gutter_num(num), Style::new().bg(ink()).fg(muted())),
+                    Span::styled(" │ ", Style::new().bg(ink()).fg(muted())),
+                    Span::styled(text, style),
+                ]));
                 for thread in d.review_threads.iter().filter(|t| model::thread_patch_row(t, f) == Some(row)) { append_review_thread(&mut lines, thread, true); }
             }
         }
@@ -747,6 +761,16 @@ fn append_review_thread(lines: &mut Vec<Line<'static>>, thread: &model::ReviewTh
     }
 }
 
+/// Right-aligned line number for a diff gutter, blank when the row
+/// carries no number on its side. Width 4 covers real files; longer
+/// numbers overflow plainly rather than shifting the code column.
+fn diff_gutter_num(n: Option<u64>) -> String {
+    match n {
+        Some(v) => format!("{:>4}", v),
+        None => "    ".to_string(),
+    }
+}
+
 /// Fit `s` into exactly `w` cells: truncate, then pad with spaces.
 fn fit_cell(s: &str, w: usize) -> String {
     let mut out: String = s.chars().take(w).collect();
@@ -764,47 +788,49 @@ fn split_file_lines(file: &model::DiffFile, d: &IssueData, width: usize) -> Vec<
     let lw = width.saturating_sub(sep.len()) / 2;
     let rw = width.saturating_sub(sep.len() + lw);
     let mut lines = vec![Line::from(vec![
-        Span::styled(fit_cell("— old", lw), Style::new().bg(ink()).fg(muted())),
+        Span::styled(fit_cell("     — old", lw), Style::new().bg(ink()).fg(muted())),
         Span::styled(sep, Style::new().bg(ink()).fg(muted())),
-        Span::styled(fit_cell("+ new", rw), Style::new().bg(ink()).fg(muted())),
+        Span::styled(fit_cell("     + new", rw), Style::new().bg(ink()).fg(muted())),
     ])];
     let patch = &file.patch;
     let mut patch_rows = model::diff_lines(patch).into_iter().enumerate().filter(|(_, (kind, _))| *kind != DiffKind::Del);
     for row in model::split_rows(patch) {
         let has_new = !matches!(row, SplitRow::LeftOnly { .. });
         let patch_row = if has_new { patch_rows.next().map(|(i, _)| i) } else { None };
+        // Each side keeps its own gutter: old numbers left, new right.
+        let cell = |num: Option<u64>, text: &str| format!("{} {}", diff_gutter_num(num), text);
         match row {
             SplitRow::Hunk(text) => lines.push(Line::from(Span::styled(
                 fit_cell(&text, width),
                 Style::new().bg(ink()).fg(muted()).bold(),
             ))),
-            SplitRow::Pair { left, right } => {
+            SplitRow::Pair { left, right, old, new } => {
                 let change = left.starts_with('-') && right.starts_with('+');
                 lines.push(Line::from(vec![
                     Span::styled(
-                        fit_cell(&left, lw),
+                        fit_cell(&cell(old, &left), lw),
                         Style::new().bg(ink()).fg(if change { red() } else { paper() }),
                     ),
                     Span::styled(sep, Style::new().bg(ink()).fg(muted())),
                     Span::styled(
-                        fit_cell(&right, rw),
+                        fit_cell(&cell(new, &right), rw),
                         Style::new().bg(ink()).fg(if change { green() } else { paper() }),
                     ),
                 ]));
             }
-            SplitRow::LeftOnly { text, kind } => lines.push(Line::from(vec![
+            SplitRow::LeftOnly { text, kind, line } => lines.push(Line::from(vec![
                 Span::styled(
-                    fit_cell(&text, lw),
+                    fit_cell(&cell(line, &text), lw),
                     Style::new().bg(ink()).fg(if kind == DiffKind::Del { red() } else { paper() }),
                 ),
                 Span::styled(sep, Style::new().bg(ink()).fg(muted())),
                 Span::styled(fit_cell("", rw), Style::new().bg(ink())),
             ])),
-            SplitRow::RightOnly { text, kind } => lines.push(Line::from(vec![
+            SplitRow::RightOnly { text, kind, line } => lines.push(Line::from(vec![
                 Span::styled(fit_cell("", lw), Style::new().bg(ink())),
                 Span::styled(sep, Style::new().bg(ink()).fg(muted())),
                 Span::styled(
-                    fit_cell(&text, rw),
+                    fit_cell(&cell(line, &text), rw),
                     Style::new().bg(ink()).fg(if kind == DiffKind::Add { green() } else { paper() }),
                 ),
             ])),
@@ -1109,9 +1135,18 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
     let main_focused = app.pane == crate::app::Pane::Main;
+    // Second tab follows the current item: PRs show their diff, issues
+    // the dependency graph. Nothing loaded yet reads as Graph.
+    let visual_label = match app.current.and_then(|n| app.data.get(&n)) {
+        Some(d) if d.is_pr => "Diff View",
+        _ => "Graph",
+    };
     // Nerd Font glyphs: file-text, comments, code. Labels stay so a
     // missing font degrades to a tofu box plus readable text.
-    let tabs = Tabs::new(vec!["\u{f15c}  Details", "\u{f121}  Visual"])
+    let tabs = Tabs::new(vec![
+        format!("\u{f15c}  Details"),
+        format!("\u{f121}  {visual_label}"),
+    ])
         .select(match app.tab { Tab::Details => 0, Tab::Visual => 1 })
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
@@ -2903,7 +2938,8 @@ mod render_smoke {
         ]);
         app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
-        assert!(text.contains("Visual"), "{text}");
+        assert!(text.contains("Diff View"), "{text}");
+        assert!(!text.contains("Graph"), "{text}");
         assert!(text.contains("2 files"), "{text}");
         assert!(text.contains("src/a.rs"), "{text}");
         assert!(text.contains("▸"), "folded by default");
@@ -2920,8 +2956,9 @@ mod render_smoke {
         let open = frame_text(&mut app);
         assert!(open.contains("▾"), "{open}");
         assert!(open.contains("@@ -1"), "{open}");
-        assert!(open.contains("  -old"), "hunks indent under their file");
-        assert!(open.contains("+new"), "{open}");
+        assert!(open.contains("1 │ -old"), "old-side gutter on deletions: {open}");
+        assert!(open.contains("1 │ +new"), "new-side gutter on additions: {open}");
+        assert!(open.contains("│ @@ -1 +1 @@"), "blank gutter on hunk headers: {open}");
         // Down walks line by line: header, hunk, deletion, addition, then
         // the second file's blank, rule, and header rows.
         for _ in 0..6 {
@@ -3057,7 +3094,18 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains('\u{f15c}'), "{text}");
         assert!(text.contains('\u{f121}'), "{text}");
-        assert!(text.contains("Visual"), "{text}");
+        assert!(text.contains("Graph"), "issue mode names the Graph tab: {text}");
+        assert!(!text.contains("Diff View"), "{text}");
+    }
+
+    #[test]
+    fn content_tab_names_diff_view_for_prs() {
+        // loaded_app files issue 7 and PR 9; parking on the PR renames it.
+        let mut app = loaded_app();
+        app.show_issue(9);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Diff View"), "PR mode names the Diff View tab: {text}");
+        assert!(!text.contains("Graph"), "{text}");
     }
 
     #[test]
@@ -3338,6 +3386,7 @@ mod render_smoke {
         app.set_tab(Tab::Visual);
         let text = frame_text(&mut app);
         assert!(text.contains("graph"), "{text}");
+        assert!(text.contains("Graph"), "issue mode tab label: {text}");
     }
 
     #[test]
@@ -3411,6 +3460,8 @@ mod render_smoke {
         assert!(text.contains("│"), "{text}");
         assert!(text.contains("-old"), "{text}");
         assert!(text.contains("+new"), "{text}");
+        assert!(text.contains("1 -old"), "old-side gutter in split left cell: {text}");
+        assert!(text.contains("1 +new"), "new-side gutter in split right cell: {text}");
     }
 
     #[test]
@@ -3478,7 +3529,7 @@ mod render_smoke {
         app.tab = Tab::Visual;
         app.graph_pending.insert(7);
         let text = frame_text(&mut app);
-        assert!(text.contains("Visual"), "tab label: {text}");
+        assert!(text.contains("Graph"), "tab label: {text}");
         assert!(text.contains("Fetching graph"), "skeleton: {text}");
     }
 

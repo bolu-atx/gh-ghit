@@ -579,30 +579,74 @@ pub fn visual_content(is_pr: bool) -> VisualContent {
     if is_pr { VisualContent::Diff } else { VisualContent::Graph }
 }
 
-/// Map each patch row to its new-file line, or None for headers and deletions.
-pub fn patch_new_lines(patch: &str) -> Vec<Option<u64>> {
-    let mut next = None;
+/// Map each patch row to its `(old, new)` file lines. Hunk headers and
+/// `\ No newline` markers map to `(None, None)`; deletions carry only
+/// old, additions only new, context both. Each counter seeds from its
+/// side of the hunk header and steps past rows on that side.
+pub fn patch_line_numbers(patch: &str) -> Vec<(Option<u64>, Option<u64>)> {
+    fn hunk_start(header: &str, marker: char) -> Option<u64> {
+        header.split_whitespace().find_map(|part| part.strip_prefix(marker))
+            .and_then(|part| part.split(',').next())
+            .and_then(|part| part.parse::<u64>().ok())
+    }
+    let mut old_next = None;
+    let mut new_next = None;
     diff_lines(patch).iter().map(|(kind, text)| match kind {
         DiffKind::Hunk => {
-            next = text.split_whitespace().find_map(|part| part.strip_prefix('+'))
-                .and_then(|part| part.split(',').next())
-                .and_then(|part| part.parse::<u64>().ok());
-            None
+            old_next = hunk_start(text, '-');
+            new_next = hunk_start(text, '+');
+            (None, None)
         }
-        DiffKind::Del => None,
+        DiffKind::Del => {
+            let line = old_next;
+            old_next = old_next.map(|n| n + 1);
+            (line, None)
+        }
         DiffKind::Add | DiffKind::Context if !text.starts_with('\\') => {
-            let line = next;
-            next = next.map(|n| n + 1);
-            line
+            let new = new_next;
+            new_next = new_next.map(|n| n + 1);
+            if *kind == DiffKind::Context {
+                let old = old_next;
+                old_next = old_next.map(|n| n + 1);
+                (old, new)
+            } else {
+                (None, new)
+            }
         }
-        _ => None,
+        _ => (None, None),
     }).collect()
+}
+
+/// Map each patch row to its new-file line, or None for headers and deletions.
+pub fn patch_new_lines(patch: &str) -> Vec<Option<u64>> {
+    patch_line_numbers(patch).into_iter().map(|(_, new)| new).collect()
 }
 
 pub fn thread_patch_row(thread: &ReviewThread, file: &DiffFile) -> Option<usize> {
     if thread.path != file.filename { return None; }
     let line = thread.line?;
     patch_new_lines(&file.patch).iter().position(|n| *n == Some(line))
+}
+
+/// Strip a rendered unified-diff row down to its patch text. Code rows
+/// carry a 7-cell line-number gutter (`  42 │ code`, blank number for
+/// hunk headers). Anything else (split cells, rules, blanks, thread
+/// blocks, wrapped continuations, legacy dent) keeps the old two-cell
+/// dent strip so non-matching rows behave exactly as before.
+pub fn strip_diff_gutter(row: &str) -> &str {
+    // The gutter is 4 cells of blanks/digits plus ` │ `; `│` is
+    // multi-byte, so walk chars rather than slicing bytes.
+    let mut chars = row.chars();
+    for _ in 0..4 {
+        match chars.next() {
+            Some(c) if c == ' ' || c.is_ascii_digit() => {}
+            _ => return row.strip_prefix("  ").unwrap_or(row),
+        }
+    }
+    match chars.as_str().strip_prefix(" │ ") {
+        Some(code) => code,
+        None => row.strip_prefix("  ").unwrap_or(row),
+    }
 }
 
 /// New-side line for a cursor sitting on a rendered unified-diff section.
@@ -612,10 +656,10 @@ pub fn thread_patch_row(thread: &ReviewThread, file: &DiffFile) -> Option<usize>
 /// `patch` is the file's raw unified patch. Returns the new-side line of
 /// the nearest Add/Context row at or above the cursor, or `None` when the
 /// cursor sits above the first commentable row (hunk headers, leading
-/// deletions, binary notes). Rendered rows carry a two-cell dent that is
-/// stripped before comparing; blank, rule, and review-thread rows never
-/// match a patch row and are skipped, as are wrapped continuations (a
-/// truncated first fragment still prefixes its patch row).
+/// deletions, binary notes). Rendered rows carry a line-number gutter
+/// that is stripped before comparing; blank, rule, and review-thread
+/// rows never match a patch row and are skipped, as are wrapped
+/// continuations (a truncated first fragment still prefixes its patch row).
 pub fn line_target_at_cursor(section: &[String], cursor: usize, patch: &str) -> Option<u64> {
     let rows: Vec<(DiffKind, String)> = diff_lines(patch);
     let numbers = patch_new_lines(patch);
@@ -623,8 +667,7 @@ pub fn line_target_at_cursor(section: &[String], cursor: usize, patch: &str) -> 
     let mut next = 0;
     for row in section.iter().take(cursor + 1) {
         let Some((_, text)) = rows.get(next) else { break };
-        let trimmed = row.trim_end();
-        let stripped = trimmed.strip_prefix("  ").unwrap_or(trimmed);
+        let stripped = strip_diff_gutter(row.trim_end());
         if !stripped.is_empty() && (stripped == text || text.starts_with(stripped)) {
             if let Some(n) = numbers.get(next).copied().flatten() {
                 target = Some(n);
@@ -661,8 +704,9 @@ pub fn thread_at_cursor(
     // Thread whose block the walk is inside, if any.
     let mut block: Option<String> = None;
     for (i, row) in section.iter().enumerate().take(cursor + 1) {
-        let trimmed = row.trim_end();
-        let stripped = trimmed.strip_prefix("  ").unwrap_or(trimmed);
+        // Same gutter strip as `line_target_at_cursor`: patch rows sit
+        // behind a line-number gutter since #75.
+        let stripped = strip_diff_gutter(row.trim_end());
         let matched = match rows.get(next) {
             Some((_, text)) => !stripped.is_empty() && (stripped == text || text.starts_with(stripped)),
             None => false,
@@ -796,45 +840,49 @@ pub enum SplitRow {
     Hunk(String),
     /// Old line on the left, new line on the right. Context shows the
     /// same text on both sides; a change pairs one `-` line with one `+`.
-    Pair { left: String, right: String },
-    /// Unpaired `-` line: right cell stays blank.
-    LeftOnly { text: String, kind: DiffKind },
-    /// Unpaired `+` line: left cell stays blank.
-    RightOnly { text: String, kind: DiffKind },
+    /// `old`/`new` are the per-side file lines for the gutter.
+    Pair { left: String, right: String, old: Option<u64>, new: Option<u64> },
+    /// Unpaired `-` line: right cell stays blank. `line` is old-side.
+    LeftOnly { text: String, kind: DiffKind, line: Option<u64> },
+    /// Unpaired `+` line: left cell stays blank. `line` is new-side.
+    RightOnly { text: String, kind: DiffKind, line: Option<u64> },
 }
 
 /// Pair a unified `patch` into side-by-side rows. Runs of `-` lines pair
 /// with the `+` lines that follow them, in order; leftovers render alone.
 /// Hunk headers pass through full-width. Empty patches yield no rows.
+/// Each side keeps its file line from `patch_line_numbers` for the gutter.
 pub fn split_rows(patch: &str) -> Vec<SplitRow> {
     let mut rows: Vec<SplitRow> = vec![];
-    let mut dels: Vec<String> = vec![];
-    for (kind, text) in diff_lines(patch) {
+    let mut dels: Vec<(String, Option<u64>)> = vec![];
+    let numbers = patch_line_numbers(patch);
+    for ((kind, text), (old, new)) in diff_lines(patch).into_iter().zip(numbers) {
         match kind {
             DiffKind::Hunk => {
-                for d in dels.drain(..) {
-                    rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del });
+                for (d, line) in dels.drain(..) {
+                    rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del, line });
                 }
                 rows.push(SplitRow::Hunk(text));
             }
-            DiffKind::Del => dels.push(text),
+            DiffKind::Del => dels.push((text, old)),
             DiffKind::Add => {
                 if dels.is_empty() {
-                    rows.push(SplitRow::RightOnly { text, kind: DiffKind::Add });
+                    rows.push(SplitRow::RightOnly { text, kind: DiffKind::Add, line: new });
                 } else {
-                    rows.push(SplitRow::Pair { left: dels.remove(0), right: text });
+                    let (left, old) = dels.remove(0);
+                    rows.push(SplitRow::Pair { left, right: text, old, new });
                 }
             }
             DiffKind::Context => {
-                for d in dels.drain(..) {
-                    rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del });
+                for (d, line) in dels.drain(..) {
+                    rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del, line });
                 }
-                rows.push(SplitRow::Pair { left: text.clone(), right: text });
+                rows.push(SplitRow::Pair { left: text.clone(), right: text, old, new });
             }
         }
     }
-    for d in dels.drain(..) {
-        rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del });
+    for (d, line) in dels.drain(..) {
+        rows.push(SplitRow::LeftOnly { text: d, kind: DiffKind::Del, line });
     }
     rows
 }
@@ -1244,17 +1292,47 @@ mod tests {
     fn split_rows_pair_changes_and_keep_context() {
         let rows = split_rows("@@ -1,3 +1,3 @@\n ctx\n-old\n+new\ntrail");
         assert_eq!(rows[0], SplitRow::Hunk("@@ -1,3 +1,3 @@".to_string()));
-        assert_eq!(rows[1], SplitRow::Pair { left: " ctx".to_string(), right: " ctx".to_string() });
-        assert_eq!(rows[2], SplitRow::Pair { left: "-old".to_string(), right: "+new".to_string() });
-        assert_eq!(rows[3], SplitRow::Pair { left: "trail".to_string(), right: "trail".to_string() });
+        assert_eq!(rows[1], SplitRow::Pair { left: " ctx".to_string(), right: " ctx".to_string(), old: Some(1), new: Some(1) });
+        assert_eq!(rows[2], SplitRow::Pair { left: "-old".to_string(), right: "+new".to_string(), old: Some(2), new: Some(2) });
+        assert_eq!(rows[3], SplitRow::Pair { left: "trail".to_string(), right: "trail".to_string(), old: Some(3), new: Some(3) });
     }
 
     #[test]
     fn split_rows_leave_unpaired_lines_alone() {
         let rows = split_rows("@@ -1 +1 @@\n-a\n-b\n+c");
-        assert_eq!(rows[1], SplitRow::Pair { left: "-a".to_string(), right: "+c".to_string() });
-        assert_eq!(rows[2], SplitRow::LeftOnly { text: "-b".to_string(), kind: DiffKind::Del });
+        assert_eq!(rows[1], SplitRow::Pair { left: "-a".to_string(), right: "+c".to_string(), old: Some(1), new: Some(1) });
+        assert_eq!(rows[2], SplitRow::LeftOnly { text: "-b".to_string(), kind: DiffKind::Del, line: Some(2) });
         assert!(split_rows("").is_empty());
+    }
+
+    #[test]
+    fn patch_line_numbers_tracks_both_sides_across_hunks() {
+        let numbers = patch_line_numbers("@@ -1,2 +10,3 @@\n ctx\n-old\n+new\n+more\n@@ -5,1 +15,1 @@\n tail");
+        assert_eq!(numbers, vec![
+            (None, None),
+            (Some(1), Some(10)),
+            (Some(2), None),
+            (None, Some(11)),
+            (None, Some(12)),
+            (None, None),
+            (Some(5), Some(15)),
+        ]);
+        // `\ No newline` markers carry no line on either side.
+        let numbers = patch_line_numbers("@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file");
+        assert_eq!(numbers, vec![(None, None), (Some(1), None), (None, Some(1)), (None, None)]);
+    }
+
+    #[test]
+    fn cursor_maps_guttered_rows_to_new_side_lines() {
+        // Rows render with a line-number gutter, exactly as `ui` emits.
+        let patch = "@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n+more\n tail";
+        let section: Vec<String> = ["     │ @@ -1,3 +1,3 @@", "   1 │  ctx", "   2 │ -old", "   2 │ +new", "   3 │ +more", "   3 │  tail"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(line_target_at_cursor(&section, 0, patch), None, "hunk header has no line");
+        assert_eq!(line_target_at_cursor(&section, 1, patch), Some(1));
+        assert_eq!(line_target_at_cursor(&section, 2, patch), Some(1), "deletion keeps the line above");
+        assert_eq!(line_target_at_cursor(&section, 3, patch), Some(2));
+        assert_eq!(line_target_at_cursor(&section, 5, patch), Some(4));
     }
 
     #[test]

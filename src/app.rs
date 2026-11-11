@@ -1242,7 +1242,7 @@ impl App {
                                 &d.title,
                                 &d.url,
                                 &file.filename,
-                                line,
+                                model::strip_diff_gutter(line),
                             ));
                         }
                     }
