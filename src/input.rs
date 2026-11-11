@@ -98,6 +98,12 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 
     match key.code {
+        // History walks. Ctrl+I arrives as Tab on terminals without the
+        // kitty protocol, so both Ctrl forms redo; plain Tab (no Ctrl)
+        // keeps cycling panes below.
+        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_back(),
+        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_forward(),
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_forward(),
         KeyCode::Char('?') => app.shortcuts_open = true,
         KeyCode::Char('q') => app.quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
@@ -634,5 +640,44 @@ mod tests {
         for y in row9_top..row9_top + 3 {
             assert_eq!(sidebar_hit(area, &rows, &app, 5, y), Some(9), "row 9 line {y}");
         }
+    }
+
+    fn ctrl_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn ctrl_o_and_ctrl_i_walk_history() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for n in [7, 9] {
+            app.data.insert(n, sample(n));
+            app.statuses.insert(n, vec![]);
+        }
+        app.ensure_visited(7);
+        app.load_issue(7, false);
+        app.ensure_visited(9);
+        app.load_issue(9, false);
+        assert_eq!(app.current, Some(9));
+
+        handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
+        assert_eq!(app.current, Some(7));
+
+        // Ctrl+I arrives as Tab on terminals without the kitty protocol.
+        handle_key(&mut app, ctrl_key(KeyCode::Tab));
+        assert_eq!(app.current, Some(9));
+
+        handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
+        assert_eq!(app.current, Some(9));
+
+        // Plain Tab (no Ctrl) still cycles panes instead of redoing.
+        app.pane = crate::app::Pane::Issues;
+        handle_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
+        );
+        assert_eq!(app.pane, crate::app::Pane::PRs);
+        assert_eq!(app.current, Some(9));
     }
 }
