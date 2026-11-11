@@ -97,6 +97,7 @@ pub(crate) struct App {
     pub(crate) search: String,
     pub(crate) searching: bool,
     /// Filter dialog (`f`) state.
+    pub(crate) shortcuts_open: bool,
     pub(crate) filter_open: bool,
     pub(crate) query_edit: bool,
     pub(crate) query_draft: String,
@@ -147,6 +148,10 @@ pub(crate) struct App {
     pub(crate) diff_row_files: Vec<Option<usize>>,
     /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
     pub(crate) expanded_files: HashSet<(u64, String)>,
+    /// Issue numbers whose sidebar row shows its detail block. Keyed by
+    /// number, so the state is sticky across cursor moves and shared by
+    /// the Issues, PRs, and Refs panes.
+    pub(crate) expanded_rows: HashSet<u64>,
     /// Visible buffer rows of the diff file headers, in file order.
     pub(crate) diff_headers: Vec<usize>,
     pub(crate) diff_pending: HashSet<u64>,
@@ -202,6 +207,7 @@ impl App {
             bar: String::new(),
             search: String::new(),
             searching: false,
+            shortcuts_open: false,
             filter_open: false,
             query_edit: false,
             query_draft: String::new(),
@@ -234,6 +240,7 @@ impl App {
             diff_touched: false,
             diff_row_files: vec![],
             expanded_files: HashSet::new(),
+            expanded_rows: HashSet::new(),
             diff_headers: vec![],
             diff_pending: HashSet::new(),
             diff_tx,
@@ -579,6 +586,22 @@ impl App {
                 .any(|(_, t)| *t == model::LinkTarget::Issue(n))
         }) {
             self.scroll = self.body_base.saturating_add(row as u16);
+        }
+    }
+
+    /// Toggle the detail block on the focused pane's selected row. The set
+    /// is keyed by issue number, so expansion sticks across cursor moves.
+    /// The body has no row selection, so there the key is a no-op.
+    pub(crate) fn toggle_row_expansion(&mut self) {
+        let selected = match self.pane {
+            Pane::Issues => self.current.filter(|n| self.issue_numbers().contains(n)),
+            Pane::PRs => self.current.filter(|n| self.pr_numbers().contains(n)),
+            Pane::Refs => self.ref_highlight,
+            Pane::Main => None,
+        };
+        let Some(n) = selected else { return };
+        if !self.expanded_rows.remove(&n) {
+            self.expanded_rows.insert(n);
         }
     }
 
@@ -1204,5 +1227,45 @@ pub(crate) fn poll_diffs(app: &mut App) {
             }
             Err(e) => app.notify(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_row_expansion_is_sticky_and_keyed_by_number() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.visited = vec![7, 9, 11];
+        app.current = Some(7);
+        app.pane = Pane::Issues;
+
+        app.toggle_row_expansion();
+        assert!(app.expanded_rows.contains(&7), "space expands the selected row");
+        app.toggle_row_expansion();
+        assert!(!app.expanded_rows.contains(&7), "space collapses it again");
+
+        // Expansion sticks across cursor moves and is keyed by number:
+        // expanding one row never touches another.
+        app.toggle_row_expansion();
+        app.show_issue(9);
+        assert!(app.expanded_rows.contains(&7), "cursor move keeps expansion");
+        app.toggle_row_expansion();
+        assert!(app.expanded_rows.contains(&9));
+        assert!(app.expanded_rows.contains(&7), "rows expand independently");
+
+        // The refs pane toggles its highlighted row.
+        app.pane = Pane::Refs;
+        app.ref_highlight = Some(11);
+        app.toggle_row_expansion();
+        assert!(app.expanded_rows.contains(&11));
+
+        // The body pane has no row selection.
+        app.pane = Pane::Main;
+        let before = app.expanded_rows.clone();
+        app.toggle_row_expansion();
+        assert_eq!(app.expanded_rows, before);
     }
 }

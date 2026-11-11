@@ -10,6 +10,13 @@ use crate::app::{App, Focus, Pane, Tab, board_move, board_open, board_selected_n
 use crate::core;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    if app.shortcuts_open {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+            app.shortcuts_open = false;
+        }
+        return;
+    }
+
     // Board modal captures everything.
     if board_open(app) {
         match key.code {
@@ -91,6 +98,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 
     match key.code {
+        KeyCode::Char('?') => app.shortcuts_open = true,
         KeyCode::Char('q') => app.quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
         KeyCode::Char('1') => app.set_tab(Tab::Body),
@@ -150,6 +158,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('e') => app.toggle_refs(),
         KeyCode::Char('s') if app.tab == Tab::Diff => app.toggle_diff_split(),
         KeyCode::Char(' ') if app.tab == Tab::Diff => app.toggle_diff_file(),
+        KeyCode::Char(' ') => app.toggle_row_expansion(),
         KeyCode::Char('w') => {
             app.merged_window_hours = core::cycle_window(app.merged_window_hours);
             app.refetch_recent();
@@ -328,14 +337,28 @@ fn in_rect(area: Rect, x: u16, y: u16) -> bool {
 }
 
 /// Sidebar rows are 3 lines each (`Item`) with 1-line labeled dividers,
-/// below a 1-line border plus a 1-line spacer. Dividers never hit.
-fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], x: u16, y: u16) -> Option<u64> {
+/// below a 1-line border plus a 1-line spacer. Dividers never hit. An
+/// expanded row adds the wrapped detail block its render draws, measured
+/// with the same inner width.
+fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], app: &App, x: u16, y: u16) -> Option<u64> {
     if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
+    let inner_width = (area.width as usize).saturating_sub(2);
     let mut rel = (y - area.y - 2) as usize;
     for row in rows {
-        let h = if row.number().is_some() { 3 } else { 1 };
+        let h = match row.number() {
+            Some(n) => {
+                let detail = match app.data.get(&n) {
+                    Some(d) if app.expanded_rows.contains(&n) => {
+                        crate::ui::expanded_row_height(d, inner_width)
+                    }
+                    _ => 0,
+                };
+                3 + detail
+            }
+            None => 1,
+        };
         if rel < h {
             return row.number();
         }
@@ -345,6 +368,7 @@ fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], x: u16, y: u16) -> Op
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
+    if app.shortcuts_open { return; }
     if board_open(app) {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -396,14 +420,14 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
             let issue_rows = app.side_issue_rows.clone();
             let pr_rows = app.side_pr_rows.clone();
-            if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, m.column, m.row) {
+            if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, app, m.column, m.row) {
                 app.focus = Focus::Main;
                 app.pane = Pane::Issues;
                 app.ensure_visited(n);
                 app.show_issue(n);
                 return;
             }
-            if let Some(n) = sidebar_hit(app.side_pr_area, &pr_rows, m.column, m.row) {
+            if let Some(n) = sidebar_hit(app.side_pr_area, &pr_rows, app, m.column, m.row) {
                 app.focus = Focus::Main;
                 app.pane = Pane::PRs;
                 app.ensure_visited(n);
@@ -413,7 +437,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             // Refs rows never navigate: selecting one highlights its source
             // line in the body instead.
             let ref_rows = app.ref_rows.clone();
-            if let Some(n) = sidebar_hit(app.refs_area, &ref_rows, m.column, m.row) {
+            if let Some(n) = sidebar_hit(app.refs_area, &ref_rows, app, m.column, m.row) {
                 app.focus = Focus::Main;
                 app.pane = Pane::Refs;
                 app.select_ref(n);
@@ -511,4 +535,60 @@ fn open_url(url: &str, app: &mut App) {
 #[cfg(test)]
 fn open_url(url: &str, app: &mut App) {
     app.notify(format!("opened {url}"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Author, IssueData, SideRow};
+
+    fn sample(number: u64) -> IssueData {
+        IssueData {
+            number,
+            title: "Fix the thing".to_string(),
+            state: "OPEN".to_string(),
+            author: Author { login: "bo".to_string() },
+            labels: vec![],
+            assignees: vec![],
+            created_at: "2026-01-02T00:00:00Z".to_string(),
+            updated_at: "2026-01-05T00:00:00Z".to_string(),
+            url: format!("https://github.com/o/r/issues/{number}"),
+            body: String::new(),
+            comments: vec![],
+            is_pr: false,
+        }
+    }
+
+    #[test]
+    fn expanded_row_detail_shifts_hits_below() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for n in [7, 9] {
+            app.data.insert(n, sample(n));
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        let rows = app.issue_rows();
+        assert_eq!(rows, vec![SideRow::Item(7), SideRow::Item(9)]);
+
+        let area = Rect::new(0, 0, 40, 40);
+        let inner_width = (area.width as usize) - 2;
+        let detail = crate::ui::expanded_row_height(app.data.get(&7).unwrap(), inner_width);
+        assert!(detail > 3, "detail block is tall enough to span a row: {detail}");
+
+        // Collapsed geometry still applies: row 7 hits its own summary.
+        assert_eq!(sidebar_hit(area, &rows, &app, 5, area.y + 2), Some(7));
+
+        app.expanded_rows.insert(7);
+        // Every line of the detail block belongs to the expanded row.
+        let detail_top = area.y + 4;
+        for y in detail_top..detail_top + detail as u16 {
+            assert_eq!(sidebar_hit(area, &rows, &app, 5, y), Some(7), "detail line {y}");
+        }
+        // Row 9 starts only after the detail block plus the item's blank tail.
+        let row9_top = area.y + 2 + 3 + detail as u16;
+        for y in row9_top..row9_top + 3 {
+            assert_eq!(sidebar_hit(area, &rows, &app, 5, y), Some(9), "row 9 line {y}");
+        }
+    }
 }

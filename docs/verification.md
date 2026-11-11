@@ -44,3 +44,23 @@ judge which side is right: if the test encodes behavior the feature
 meant to change, update the test; if the code regressed past the
 feature's intent, fix the code. Record the call in the PR body —
 one line per break: what failed, which side changed, why.
+
+## Architecture review procedure
+
+1. Coordinator gathers the diff range since the last review, plus a
+   one-paragraph note per story on what the work was.
+2. One read-only reviewer pass over that range: layer violations
+   (`ui`/`input` ↔ `api`/`gh`/`cache`, `model`/`core` ↔
+   ratatui/crossterm), duplication, dead code.
+3. Reviewer judges each finding against the Principles in
+   [code-style.md](code-style.md).
+4. Coordinator files the `chore` issue below. No-change verdicts get
+   filed too, with the rationale.
+
+Issue template:
+
+- Range reviewed:
+- Lift (third copies):
+- Change (abstractions that no longer fit):
+- Delete (dead or one-caller code):
+- Verdict: refactor issue(s) / no change, because:
