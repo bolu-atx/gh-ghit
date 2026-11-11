@@ -13,6 +13,19 @@ use std::time::{Duration, Instant};
 const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const RECENT_REFRESH_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Auto-refresh cadence, overridable for deterministic runs: the e2e
+/// harness stretches it past any scenario lifetime so each scenario
+/// issues exactly one sections fetch per boot instead of hammering
+/// the API every 5s. Zero or garbage falls back to the default.
+fn auto_refresh_interval_default() -> Duration {
+    std::env::var("GHIT_AUTO_REFRESH_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(RECENT_REFRESH_INTERVAL)
+}
+
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
@@ -275,7 +288,7 @@ impl App {
             initial_numbers: vec![],
             section_rx: None,
             last_sections_fetch: Instant::now(),
-            auto_refresh_interval: RECENT_REFRESH_INTERVAL,
+            auto_refresh_interval: auto_refresh_interval_default(),
             section_auto_refresh: false,
             section_progress: None,
             partial: HashSet::new(),
@@ -1785,7 +1798,7 @@ pub(crate) fn poll_sections(app: &mut App) {
             let auto = std::mem::take(&mut app.section_auto_refresh);
             if auto {
                 app.auto_refresh_interval = if result.is_ok() {
-                    RECENT_REFRESH_INTERVAL
+                    auto_refresh_interval_default()
                 } else {
                     (app.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
                 };
@@ -2101,6 +2114,20 @@ mod tests {
         assert!(!app.issue_progress.contains_key(&9), "terminal result clears progress");
         assert!(!app.issue_pending.contains(&9));
         assert!(app.data.contains_key(&9));
+    }
+
+    #[test]
+    fn auto_refresh_interval_env_override() {
+        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
+        assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL);
+        std::env::set_var("GHIT_AUTO_REFRESH_SECS", "3600");
+        assert_eq!(auto_refresh_interval_default(), Duration::from_secs(3600));
+        for bad in ["0", "nope", ""] {
+            std::env::set_var("GHIT_AUTO_REFRESH_SECS", bad);
+            assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL, "reject {bad}");
+        }
+        std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
     }
 
     #[test]

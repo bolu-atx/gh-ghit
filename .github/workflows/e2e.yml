@@ -4,7 +4,32 @@ on:
   push:
     branches: [main]
 jobs:
+  # A push to main that is a squash-merge of a green PR re-tests the
+  # identical tree. Skip the run when the merged PR's head already
+  # passed: the "(#N)" suffix names it. Anything else always runs.
+  tip-check:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.tip.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" != "push" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
+          NUM=$(git log -1 --format=%s | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | head -1)
+          if [ -z "$NUM" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
+          HEAD=$(gh pr view "$NUM" --json headRefOid --jq .headRefOid 2>/dev/null || true)
+          if [ -z "$HEAD" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
+          # Check-runs (not commit statuses): skip only when the head has
+          # at least one run and every run completed green.
+          BAD=$(gh api "repos/${{ github.repository }}/commits/$HEAD/check-runs" --jq '[.check_runs[] | select(.status != "completed" or .conclusion != "success")] | length' 2>/dev/null || echo 1)
+          TOTAL=$(gh api "repos/${{ github.repository }}/commits/$HEAD/check-runs" --jq '.total_count' 2>/dev/null || echo 0)
+          if [ "$TOTAL" -ge 1 ] && [ "$BAD" = "0" ]; then echo "skip=true" >>"$GITHUB_OUTPUT"; else echo "skip=false" >>"$GITHUB_OUTPUT"; fi
   socket-drive:
+    needs: tip-check
+    if: needs.tip-check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

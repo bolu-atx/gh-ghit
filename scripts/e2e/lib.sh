@@ -19,6 +19,10 @@ E2E_PANE="${E2E_PANE:-$E2E_FRAMES/pane.txt}"
 E2E_GHIT_PID=""
 E2E_BRIDGE_PID=""
 E2E_CMD_FD=""
+# Stretch auto-refresh past any scenario lifetime: each scenario boots
+# fresh and issues exactly one sections fetch instead of hammering the
+# API every 5s (which also exhausts CI rate budget mid-run).
+export GHIT_AUTO_REFRESH_SECS=3600
 if [ -z "${E2E_ROOT:-}" ]; then
   E2E_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -z "$E2E_ROOT" ]; then
