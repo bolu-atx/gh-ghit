@@ -108,7 +108,8 @@ pub fn cycle() -> &'static str {
     THEMES[next].0
 }
 
-pub fn name() -> &'static str {
+#[cfg(test)]
+fn name() -> &'static str {
     THEMES[active_idx()].0
 }
 

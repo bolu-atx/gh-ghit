@@ -58,6 +58,12 @@ pub fn parse_review_threads(value: &serde_json::Value) -> Vec<ReviewThread> {
     threads
 }
 
+/// Merge independently fetched pages in page order.
+pub fn merge_comment_pages(mut pages: Vec<(usize, Vec<Comment>)>) -> Vec<Comment> {
+    pages.sort_by_key(|(page, _)| *page);
+    pages.into_iter().flat_map(|(_, comments)| comments).collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueData {
@@ -869,5 +875,17 @@ mod tests {
         assert_eq!(header_file_index("▾ \u{f15c} a.rs   added", &files), Some(0));
         assert_eq!(header_file_index("  -old", &files), None);
         assert_eq!(header_file_index("───", &files), None);
+    }
+}
+
+#[cfg(test)]
+mod comment_page_tests {
+    use super::*;
+
+    #[test]
+    fn merges_pages_in_oldest_first_order() {
+        let comment = |body: &str| Comment { body: body.to_owned(), ..Comment::default() };
+        let merged = merge_comment_pages(vec![(2, vec![comment("third")]), (1, vec![comment("first"), comment("second")])]);
+        assert_eq!(merged.iter().map(|c| c.body.as_str()).collect::<Vec<_>>(), vec!["first", "second", "third"]);
     }
 }

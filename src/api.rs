@@ -1,4 +1,4 @@
-use crate::model::{Author, BoardDetail, DiffFile, IssueData, Label};
+use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
@@ -46,13 +46,22 @@ const ISSUE_FIELDS: &str = r#"
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
 
+/// Total-row ceiling across the four section lists: one giant repo must not
+/// blow up the sidebar (or memory) no matter how many pages it fills.
+/// Fetching stops once the raw nodes reach this many, and `parse_rows`
+/// truncates the merged rows here too.
+const MAX_SECTION_ROWS: usize = 500;
+
+// NOTE(#12): that issue also touches this sections query, and either may
+// land first — so this change only adds the cursor/pageInfo plumbing that
+// pagination needs, nothing else.
 fn query() -> String {
-    format!(r#"query($owner: String!, $repo: String!) {{
+    format!(r#"query($owner: String!, $repo: String!, $openAfter: String, $mergedAfter: String, $openIssuesAfter: String, $closedIssuesAfter: String) {{
  repository(owner: $owner, name: $repo) {{
- open: pullRequests(first: 50, states: OPEN, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} }}
- merged: pullRequests(first: 50, states: MERGED, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} }}
- openIssues: issues(first: 50, states: OPEN, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} }}
- closedIssues: issues(first: 50, states: CLOSED, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} }}
+ open: pullRequests(first: 50, states: OPEN, after: $openAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
+ merged: pullRequests(first: 50, states: MERGED, after: $mergedAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
+ openIssues: issues(first: 50, states: OPEN, after: $openIssuesAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
+ closedIssues: issues(first: 50, states: CLOSED, after: $closedIssuesAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
  }} }}"#)
 }
 
@@ -61,9 +70,9 @@ fn within_window(s: Option<&str>, now: chrono::DateTime<chrono::Utc>, hours: u64
         .is_some_and(|d| d.with_timezone(&chrono::Utc) >= now - chrono::Duration::hours(hours as i64))
 }
 
-fn parse_rows(value: &Value, now: chrono::DateTime<chrono::Utc>, hours: u64) -> Result<Vec<Row>, String> {
-    let repo = value.pointer("/data/repository").filter(|v| v.is_object())
-        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
+fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -> Result<Vec<Row>, String> {
+    pages.first().and_then(|v| v.pointer("/data/repository")).filter(|v| v.is_object())
+        .ok_or_else(|| format!("GitHub GraphQL: {}", pages.first().and_then(|v| v.get("errors")).unwrap_or(&Value::Null)))?;
     let mut rows = Vec::new();
     // (alias, is_pr, date key, filter to window?)
     for (section, is_pr, date_key, windowed) in [
@@ -72,9 +81,14 @@ fn parse_rows(value: &Value, now: chrono::DateTime<chrono::Utc>, hours: u64) -> 
         ("openIssues", false, "createdAt", false),
         ("closedIssues", false, "updatedAt", true),
     ] {
-        let nodes = repo.pointer(&format!("/{section}/nodes")).and_then(Value::as_array).ok_or("missing section rows")?;
-        for n in nodes {
-            if windowed && !within_window(n.get(date_key).and_then(Value::as_str), now, hours) { continue; }
+        // Pages merge in fetch order, so row order matches creation/update
+        // order within each section across page boundaries.
+        for page in pages {
+            let repo = page.pointer("/data/repository").filter(|v| v.is_object()).ok_or("missing section rows")?;
+            let nodes = repo.pointer(&format!("/{section}/nodes")).and_then(Value::as_array).ok_or("missing section rows")?;
+            for n in nodes {
+                if rows.len() >= MAX_SECTION_ROWS { return Ok(rows); }
+                if windowed && !within_window(n.get(date_key).and_then(Value::as_str), now, hours) { continue; }
             let string = |k: &str| n.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
             let number = n.get("number").and_then(Value::as_u64).ok_or("missing row number")?;
             let labels = n.pointer("/labels/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("name")?.as_str().map(|s| Label { name: s.to_owned() })).collect();
@@ -84,6 +98,7 @@ fn parse_rows(value: &Value, now: chrono::DateTime<chrono::Utc>, hours: u64) -> 
             let updated = string("updatedAt");
             let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
             rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), is_pr }, statuses, detail, complete: false });
+            }
         }
     }
     Ok(rows)
@@ -132,12 +147,87 @@ async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Val
         .map_err(|e| format!("bad GitHub response: {e}"))
 }
 
+/// `(hasNextPage, endCursor)` for one section connection of a sections page.
+/// A missing pageInfo counts as done; `parse_rows` still rejects the page
+/// itself when its nodes are absent.
+fn section_cursor(value: &Value, section: &str) -> (bool, Option<String>) {
+    let info = value.pointer(&format!("/data/repository/{section}/pageInfo"));
+    let more = info.and_then(|v| v.get("hasNextPage")).and_then(Value::as_bool).unwrap_or(false);
+    let cursor = info.and_then(|v| v.get("endCursor")).and_then(Value::as_str).map(str::to_owned);
+    (more, cursor)
+}
+
+/// Section aliases in `parse_rows` order. Cursors and liveness use the same
+/// order.
+const ALIASES: [&str; 4] = ["open", "merged", "openIssues", "closedIssues"];
+
+/// Fold one fetched page into the page loop and return its live node count.
+/// The query is static, so a section that retired before this fetch comes
+/// back as its first page again (`after: null`). Drop those already-seen
+/// nodes before the page is merged, or `parse_rows` appends them twice.
+fn absorb_page(value: &mut Value, live: &mut [bool; 4], cursors: &mut [Option<String>; 4]) -> usize {
+    let was_live = *live;
+    for (i, section) in ALIASES.iter().enumerate() {
+        if was_live[i] { continue; }
+        if let Some(nodes) = value.pointer_mut(&format!("/data/repository/{section}/nodes")) {
+            *nodes = Value::Array(Vec::new());
+        }
+    }
+    let mut fetched = 0;
+    for (i, section) in ALIASES.iter().enumerate() {
+        if !live[i] { continue; }
+        fetched += value.pointer(&format!("/data/repository/{section}/nodes")).and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+        let (more, cursor) = section_cursor(value, section);
+        if more && cursor.is_some() { cursors[i] = cursor; } else { live[i] = false; cursors[i] = None; }
+    }
+    fetched
+}
+
 pub async fn sections(repo: &str, hours: u64, bearer: &str) -> Result<Vec<Row>, String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
-    let value = post_json(&client(), &url, bearer, &json!({"query": query(), "variables": {"owner": owner, "repo": name}})).await?;
-    parse_rows(&value, chrono::Utc::now(), hours)
+    let client = client();
+    // One cursor per section, same order as `parse_rows` lists them: open,
+    // merged, openIssues, closedIssues. Same page-loop shape as `pull_files`:
+    // fetch, append, stop a section when its page has no next cursor — plus
+    // a stop for every section once the raw nodes reach the row cap.
+    let mut cursors: [Option<String>; 4] = [None, None, None, None];
+    let mut live = [true; 4];
+    let mut pages = Vec::new();
+    let mut fetched: usize = 0;
+    loop {
+        let mut value = post_json(&client, &url, bearer, &json!({"query": query(), "variables": {"owner": owner, "repo": name, "openAfter": cursors[0], "mergedAfter": cursors[1], "openIssuesAfter": cursors[2], "closedIssuesAfter": cursors[3]}})).await?;
+        fetched += absorb_page(&mut value, &mut live, &mut cursors);
+        pages.push(value);
+        if live.iter().all(|l| !l) || fetched >= MAX_SECTION_ROWS { break; }
+    }
+    parse_rows(&pages, chrono::Utc::now(), hours)
+}
+
+/// Fetch details for the actual board cards, including cards outside the sections window.
+pub async fn board_details(cards: &[(String, u64)], bearer: &str) -> Result<Vec<Option<BoardDetail>>, String> {
+    let mut fields = String::new();
+    for (i, (repo, number)) in cards.iter().enumerate() {
+        let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
+        fields.push_str(&format!("c{i}: repository(owner: {}, name: {}) {{ issueOrPullRequest(number: {number}) {{ ... on Issue {{ createdAt updatedAt comments {{ totalCount }} }} ... on PullRequest {{ createdAt updatedAt comments {{ totalCount }} }} }} }} ", json!(owner), json!(name)));
+    }
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
+    let value = post_json(&client(), &url, bearer, &json!({"query": format!("query {{ {fields} }}")})).await?;
+    parse_board_details(&value, cards.len())
+}
+
+fn parse_board_details(value: &Value, count: usize) -> Result<Vec<Option<BoardDetail>>, String> {
+    let data = value.get("data").filter(|v| v.is_object())
+        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
+    Ok((0..count).map(|i| {
+        let node = data.pointer(&format!("/c{i}/issueOrPullRequest"))?;
+        let created = node.get("createdAt")?.as_str()?.get(..10)?.to_owned();
+        let updated = node.get("updatedAt")?.as_str()?.get(..10)?.to_owned();
+        let comments = node.pointer("/comments/totalCount")?.as_u64()? as usize;
+        Some(BoardDetail { created, updated, comments })
+    }).collect())
 }
 
 /// One GitHub issue-search hit as a sidebar row. Search items carry no
@@ -244,7 +334,35 @@ pub async fn pull_files(repo: &str, number: u64, bearer: &str) -> Result<Vec<Dif
     Ok(out)
 }
 
-pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, Statuses), String> {
+async fn fetch_comment_pages(client: &reqwest::Client, base: &str, repo: &str, number: u64, bearer: &str, count: u64) -> Result<Vec<Comment>, String> {
+    let mut pages = Vec::new();
+    let total = count.div_ceil(100);
+    // Bound the number of simultaneous requests for unusually large threads.
+    for first in (1..=total).step_by(8) {
+        let mut tasks = tokio::task::JoinSet::new();
+        for page in first..=(first + 7).min(total) {
+            let client = client.clone();
+            let url = format!("{base}/repos/{repo}/issues/{number}/comments?per_page=100&page={page}");
+            let bearer = bearer.to_owned();
+            tasks.spawn(async move {
+                let value = get(&client, &url, &bearer).await?;
+                let items = value.as_array().ok_or("bad comments payload")?;
+                let comments = items.iter().map(|c| Comment {
+                    author: Author { login: c.pointer("/user/login").and_then(Value::as_str).unwrap_or("").to_owned() },
+                    body: c["body"].as_str().unwrap_or("").to_owned(),
+                    created_at: c["created_at"].as_str().unwrap_or("").to_owned(),
+                }).collect();
+                Ok::<_, String>((page as usize, comments))
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            pages.push(result.map_err(|e| format!("comment fetch failed: {e}"))??);
+        }
+    }
+    Ok(model::merge_comment_pages(pages))
+}
+
+pub async fn issue(repo: &str, number: u64, bearer: &str, cached_comments: Option<Vec<Comment>>) -> Result<(IssueData, Statuses), String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
     let client = client();
@@ -256,15 +374,10 @@ pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, 
     if v["body"].is_null() { v["body"] = json!(""); }
     if is_pr && !v["pull_request"]["merged_at"].is_null() { v["state"] = json!("MERGED"); }
     else if let Some(state) = v["state"].as_str() { v["state"] = json!(state.to_uppercase()); }
-    let mut comments = Vec::new();
-    let mut page = 1;
-    loop {
-        let items = get(&client, &format!("{base}/repos/{repo}/issues/{number}/comments?per_page=100&page={page}"), bearer).await?;
-        let items = items.as_array().ok_or("bad comments payload")?;
-        for c in items { comments.push(json!({"author": c.get("user").filter(|u| !u.is_null()).cloned().unwrap_or(json!({})), "body": c["body"].as_str().unwrap_or(""), "createdAt": c["created_at"]})); }
-        if items.len() < 100 { break; }
-        page += 1;
-    }
+    let comments = match cached_comments {
+        Some(comments) => comments,
+        None => fetch_comment_pages(&client, &base, repo, number, bearer, v["comments"].as_u64().ok_or("missing comment count")?).await?,
+    };
     v["comments"] = json!(comments);
     v["isPr"] = json!(is_pr);
     let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
@@ -289,9 +402,19 @@ pub async fn issue(repo: &str, number: u64, bearer: &str) -> Result<(IssueData, 
 mod tests {
     use super::*;
     #[test]
+    fn parses_board_batch_and_marks_missing_cards_for_fallback() {
+        let value = json!({"data": {"c0": {"issueOrPullRequest": {"createdAt": "2026-01-02T03:04:05Z", "updatedAt": "2026-02-03T04:05:06Z", "comments": {"totalCount": 7}}}, "c1": null, "c2": {"issueOrPullRequest": {"createdAt": "2026-01-02T03:04:05Z"}}}});
+        let details = parse_board_details(&value, 3).unwrap();
+        let detail = details[0].as_ref().unwrap();
+        assert_eq!((&*detail.created, &*detail.updated, detail.comments), ("2026-01-02", "2026-02-03", 7));
+        assert!(details[1].is_none());
+        assert!(details[2].is_none());
+        assert!(parse_board_details(&json!({"errors": [{"message": "denied"}]}), 1).is_err());
+    }
+    #[test]
     fn query_has_both_sections_and_metadata() {
         let q = query();
-        for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo"] { assert!(q.contains(field)); }
+        for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter"] { assert!(q.contains(field)); }
     }
     #[test]
     fn parses_rows_and_filters_merged_window() {
@@ -299,7 +422,7 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let mut v = v;
         v["data"]["repository"]["open"]["nodes"][0]["reviewThreads"] = json!({"nodes":[{"id":"thread-id","path":"src/a.rs","line":12,"isResolved":false,"comments":{"nodes":[{"id":"comment-id","author":{"login":"reviewer"},"body":"Please fix"}]}},{"id":"bad"}]});
-        let rows = parse_rows(&v, now, 1).unwrap();
+        let rows = parse_rows(&[v], now, 1).unwrap();
         assert_eq!(rows[0].issue.review_threads.len(), 1);
         assert_eq!(rows[0].issue.review_threads[0].id, "thread-id");
         assert_eq!(rows[0].issue.review_threads[0].comments[0].id, "comment-id");
@@ -309,7 +432,75 @@ mod tests {
         assert_eq!(rows[0].detail.comments, 3);
         assert!(rows.iter().find(|r| r.issue.number == 1).unwrap().issue.is_pr);
         assert!(!rows.iter().find(|r| r.issue.number == 7).unwrap().issue.is_pr);
-        assert!(parse_rows(&json!({"errors":[{"message":"denied"}]}), now, 1).is_err());
+        assert!(parse_rows(&[json!({"errors":[{"message":"denied"}]})], now, 1).is_err());
+    }
+    #[test]
+    fn merges_section_pages_in_order_with_window() {
+        // Two pages: open rows split across the boundary, merged and closed
+        // rows split with one stale row per section that the window drops.
+        let page1 = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":1,"title":"one","state":"OPEN"},{"number":2,"title":"two","state":"OPEN"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}},
+            "merged":{"nodes":[{"number":3,"title":"three","state":"MERGED","mergedAt":"2026-11-10T11:30:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c2"}},
+            "openIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "closedIssues":{"nodes":[{"number":9,"title":"nine","state":"CLOSED","updatedAt":"2026-11-09T10:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c3"}}}}});
+        let page2 = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":4,"title":"four","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "merged":{"nodes":[{"number":5,"title":"five","state":"MERGED","mergedAt":"2026-11-09T10:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "openIssues":{"nodes":[{"number":7,"title":"seven","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "closedIssues":{"nodes":[{"number":8,"title":"eight","state":"CLOSED","updatedAt":"2026-11-10T11:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}});
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let rows = parse_rows(&[page1, page2], now, 1).unwrap();
+        // Open pages merge in order, stale merged 5 and stale closed 9 drop.
+        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 4, 3, 7, 8]);
+        assert!(rows.iter().find(|r| r.issue.number == 4).unwrap().issue.is_pr);
+        assert!(!rows.iter().find(|r| r.issue.number == 7).unwrap().issue.is_pr);
+    }
+    #[test]
+    fn retired_section_does_not_duplicate_rows_across_pages() {
+        // Page 1: merged retires (no next page) while open continues. The
+        // static query then refetches merged page 1 with `after: null` on
+        // page 2, so `absorb_page` must drop those nodes before merging.
+        let mut page1 = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":1,"title":"one","state":"OPEN"},{"number":2,"title":"two","state":"OPEN"}],"pageInfo":{"hasNextPage":true,"endCursor":"o1"}},
+            "merged":{"nodes":[{"number":3,"title":"three","state":"MERGED","mergedAt":"2026-11-10T11:30:00Z"},{"number":4,"title":"four","state":"MERGED","mergedAt":"2026-11-10T11:10:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "openIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "closedIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}});
+        let mut page2 = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":5,"title":"five","state":"OPEN"}],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "merged":{"nodes":[{"number":3,"title":"three","state":"MERGED","mergedAt":"2026-11-10T11:30:00Z"},{"number":4,"title":"four","state":"MERGED","mergedAt":"2026-11-10T11:10:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "openIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "closedIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}});
+        let mut live = [true; 4];
+        let mut cursors: [Option<String>; 4] = [None, None, None, None];
+        let mut pages = Vec::new();
+        absorb_page(&mut page1, &mut live, &mut cursors);
+        assert!(live[0] && !live[1], "open stays live, merged retires on page 1");
+        pages.push(page1);
+        absorb_page(&mut page2, &mut live, &mut cursors);
+        assert!(page2.pointer("/data/repository/merged/nodes").and_then(Value::as_array).is_some_and(Vec::is_empty), "retired merged nodes are cleared from page 2");
+        pages.push(page2);
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let rows = parse_rows(&pages, now, 1).unwrap();
+        let numbers = |state: &str| rows.iter().filter(|r| r.issue.state == state).map(|r| r.issue.number).collect::<Vec<_>>();
+        assert_eq!(numbers("OPEN"), vec![1, 2, 5], "open rows merge in page order");
+        assert_eq!(numbers("MERGED"), vec![3, 4], "each merged row appears exactly once");
+    }
+    #[test]
+    fn section_rows_stop_at_named_cap() {
+        let nodes: Vec<Value> = (1..=MAX_SECTION_ROWS as u64 + 10)
+            .map(|n| json!({"number": n, "title": "row", "state": "OPEN"}))
+            .collect();
+        let (head, tail) = nodes.split_at(50);
+        let page = |ns: &[Value]| json!({"data":{"repository":{
+            "open":{"nodes": ns, "pageInfo":{"hasNextPage":true,"endCursor":"c"}},
+            "merged":{"nodes": [], "pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "openIssues":{"nodes": [], "pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "closedIssues":{"nodes": [], "pageInfo":{"hasNextPage":false,"endCursor":null}}}}});
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let rows = parse_rows(&[page(head), page(tail)], now, 24).unwrap();
+        assert_eq!(rows.len(), MAX_SECTION_ROWS);
+        assert_eq!(rows[0].issue.number, 1);
+        assert_eq!(rows[MAX_SECTION_ROWS - 1].issue.number, MAX_SECTION_ROWS as u64);
     }
     #[test]
     fn search_row_marks_prs_and_stays_partial() {

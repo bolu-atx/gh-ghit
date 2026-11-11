@@ -87,9 +87,16 @@ pub async fn fetch_number(repo: &str, number: u64, force: bool) -> Result<IssueB
             return Ok(bundle);
         }
     }
-    let (data, statuses) = api::issue(repo, number, token).await?;
+    let comments_name = cache::comment_cache_name(repo, number);
+    let cached_comments = if force { None } else {
+        let name = comments_name.clone();
+        tokio::task::spawn_blocking(move || cache::cache_get(&name)).await.unwrap_or(None)
+    };
+    let comments_fetched = cached_comments.is_none();
+    let (data, statuses) = api::issue(repo, number, token, cached_comments).await?;
     let (data_c, statuses_c) = (data.clone(), statuses.clone());
     let _ = tokio::task::spawn_blocking(move || {
+        if comments_fetched { cache::cache_put(&comments_name, &data_c.comments); }
         cache::cache_put(&iname, &data_c);
         cache::cache_put(&sname, &statuses_c);
     })
@@ -111,11 +118,26 @@ pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, Strin
     api::search(repo, query, token).await
 }
 
+/// Batch board card details in one GraphQL request.
+pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<model::BoardDetail>>, String> {
+    let token = require_token()?;
+    api::board_details(cards, token).await
+}
+
 /// Per-card detail: dates plus comment count.
 pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::issue(repo, number, token).await.map(|(d, _)| model::BoardDetail::from_issue(&d))
+    let name = cache::comment_cache_name(repo, number);
+    let read_name = name.clone();
+    let comments = tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
+    let comments_fetched = comments.is_none();
+    let (data, _) = api::issue(repo, number, token, comments).await?;
+    let saved_comments = data.comments.clone();
+    if comments_fetched {
+        let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &saved_comments)).await;
+    }
+    Ok(model::BoardDetail::from_issue(&data))
 }
 
 /// Changed files for one PR, cached like single issues.

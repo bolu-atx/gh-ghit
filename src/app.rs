@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
@@ -23,8 +22,7 @@ use crate::{api, cache, core, github, model};
 use crate::model::{BoardData, IssueData};
 
 /// The one executor for all background fetches. Tasks are cheap, so callers
-/// spawn one per request and let the runtime schedule them; only the board
-/// fan-out additionally caps concurrency (see `kick_off_details`). Built
+/// spawn tasks per request and let the runtime schedule them. Built
 /// lazily so tests that never fetch pay nothing, and never dropped.
 fn rt() -> &'static tokio::runtime::Runtime {
     static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
@@ -99,6 +97,7 @@ pub(crate) struct App {
     pub(crate) search: String,
     pub(crate) searching: bool,
     /// Filter dialog (`f`) state.
+    pub(crate) shortcuts_open: bool,
     pub(crate) filter_open: bool,
     pub(crate) query_edit: bool,
     pub(crate) query_draft: String,
@@ -149,6 +148,10 @@ pub(crate) struct App {
     pub(crate) diff_row_files: Vec<Option<usize>>,
     /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
     pub(crate) expanded_files: HashSet<(u64, String)>,
+    /// Issue numbers whose sidebar row shows its detail block. Keyed by
+    /// number, so the state is sticky across cursor moves and shared by
+    /// the Issues, PRs, and Refs panes.
+    pub(crate) expanded_rows: HashSet<u64>,
     /// Visible buffer rows of the diff file headers, in file order.
     pub(crate) diff_headers: Vec<usize>,
     pub(crate) diff_pending: HashSet<u64>,
@@ -204,6 +207,7 @@ impl App {
             bar: String::new(),
             search: String::new(),
             searching: false,
+            shortcuts_open: false,
             filter_open: false,
             query_edit: false,
             query_draft: String::new(),
@@ -236,6 +240,7 @@ impl App {
             diff_touched: false,
             diff_row_files: vec![],
             expanded_files: HashSet::new(),
+            expanded_rows: HashSet::new(),
             diff_headers: vec![],
             diff_pending: HashSet::new(),
             diff_tx,
@@ -569,6 +574,22 @@ impl App {
                 .any(|(_, t)| *t == model::LinkTarget::Issue(n))
         }) {
             self.scroll = self.body_base.saturating_add(row as u16);
+        }
+    }
+
+    /// Toggle the detail block on the focused pane's selected row. The set
+    /// is keyed by issue number, so expansion sticks across cursor moves.
+    /// The body has no row selection, so there the key is a no-op.
+    pub(crate) fn toggle_row_expansion(&mut self) {
+        let selected = match self.pane {
+            Pane::Issues => self.current.filter(|n| self.issue_numbers().contains(n)),
+            Pane::PRs => self.current.filter(|n| self.pr_numbers().contains(n)),
+            Pane::Refs => self.ref_highlight,
+            Pane::Main => None,
+        };
+        let Some(n) = selected else { return };
+        if !self.expanded_rows.remove(&n) {
+            self.expanded_rows.insert(n);
         }
     }
 
@@ -979,40 +1000,48 @@ pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
     cols.get(app.board_col)?.1.get(app.board_row)?.number
 }
 
-/// Fetch dates and comment counts for every card, in the background.
-/// Cards fill in progressively; warm issue cache hits skip the network.
-/// Tasks are cheap, so one spawns per card, but only a few run at once.
+/// Fetch missing board card details together without blocking the event loop.
 fn kick_off_details(app: &mut App) {
     let Some(board) = &app.board else { return };
-    let tx = app.detail_tx.clone();
-    let live = Arc::new(tokio::sync::Semaphore::new(8));
+    let mut cards = Vec::new();
     for item in &board.items {
-        let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else {
-            continue;
-        };
-        if app.board_details.contains_key(&n) || app.detail_pending.contains(&n) {
-            continue;
-        }
+        let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else { continue };
+        if app.board_details.contains_key(&n) || app.detail_pending.contains(&n) { continue; }
         if let Some(d) = app.data.get(&n) {
             app.board_details.insert(n, model::BoardDetail::from_issue(d));
             continue;
         }
         app.detail_pending.insert(n);
-        let tx = tx.clone();
-        let live = live.clone();
-        rt().spawn(async move {
-            let _permit = live.acquire_owned().await;
-            let _ = tx.send((n, github::fetch_board_detail(&repo, n).await));
-        });
+        cards.push((repo, n));
     }
+    if cards.is_empty() { return; }
+    let tx = app.detail_tx.clone();
+    rt().spawn(async move {
+        match github::fetch_board_details(&cards).await {
+            Ok(details) => {
+                let mut missing = Vec::new();
+                for ((repo, n), detail) in cards.into_iter().zip(details) {
+                    match detail {
+                        Some(detail) => { let _ = tx.send((n, Ok(detail))); }
+                        None => missing.push((repo, n)),
+                    }
+                }
+                for (repo, n) in missing {
+                    let _ = tx.send((n, github::fetch_board_detail(&repo, n).await));
+                }
+            }
+            Err(e) => for (_, n) in cards { let _ = tx.send((n, Err(e.clone()))); },
+        }
+    });
 }
 
 fn poll_details(app: &mut App) {
     let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.detail_rx.try_iter().collect();
     for (n, res) in ready {
         app.detail_pending.remove(&n);
-        if let Ok(d) = res {
-            app.board_details.insert(n, d);
+        match res {
+            Ok(d) => { app.board_details.insert(n, d); }
+            Err(e) => app.notify(e),
         }
     }
 }
@@ -1186,5 +1215,45 @@ pub(crate) fn poll_diffs(app: &mut App) {
             }
             Err(e) => app.notify(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_row_expansion_is_sticky_and_keyed_by_number() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.visited = vec![7, 9, 11];
+        app.current = Some(7);
+        app.pane = Pane::Issues;
+
+        app.toggle_row_expansion();
+        assert!(app.expanded_rows.contains(&7), "space expands the selected row");
+        app.toggle_row_expansion();
+        assert!(!app.expanded_rows.contains(&7), "space collapses it again");
+
+        // Expansion sticks across cursor moves and is keyed by number:
+        // expanding one row never touches another.
+        app.toggle_row_expansion();
+        app.show_issue(9);
+        assert!(app.expanded_rows.contains(&7), "cursor move keeps expansion");
+        app.toggle_row_expansion();
+        assert!(app.expanded_rows.contains(&9));
+        assert!(app.expanded_rows.contains(&7), "rows expand independently");
+
+        // The refs pane toggles its highlighted row.
+        app.pane = Pane::Refs;
+        app.ref_highlight = Some(11);
+        app.toggle_row_expansion();
+        assert!(app.expanded_rows.contains(&11));
+
+        // The body pane has no row selection.
+        app.pane = Pane::Main;
+        let before = app.expanded_rows.clone();
+        app.toggle_row_expansion();
+        assert_eq!(app.expanded_rows, before);
     }
 }

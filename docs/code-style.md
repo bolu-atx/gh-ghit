@@ -3,6 +3,21 @@
 Rust edition 2021. `cargo build` must be warning-free; warnings are errors
 in spirit. Fix the code, never silence the lint.
 
+## Principles
+
+What good code looks like here:
+
+- Data first: types in `model.rs` carry the shape; behavior follows.
+- Functional core, imperative shell: `model`/`core` stay pure; IO
+  lives in `app`/`github.rs` behind channels.
+- Parse, don't validate: check inputs once at the boundary, then
+  trust the types.
+- YAGNI: no hooks, frameworks, or helpers for imagined work.
+- Rule of three: first copy is fine, second is a note, third lifts
+  into a shared helper.
+- Delete beats abstract: a helper left with one caller gets inlined
+  and removed.
+
 ## Shape of the code
 
 - Small functions with one job: fetch over HTTPS behind the `github.rs`
