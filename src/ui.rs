@@ -2783,6 +2783,36 @@ mod render_smoke {
     }
 
     #[test]
+    fn compose_on_thread_block_targets_the_reply() {
+        use crate::model::{DiffFile, ReviewThread, ReviewComment};
+        let mut app = loaded_app();
+        let mut pr = diff_pr(9);
+        pr.review_threads = vec![
+            ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
+        ];
+        app.data.insert(9, pr);
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        ]);
+        app.expanded_files.insert((9, "a.rs".into()));
+        app.set_tab(Tab::Visual);
+        let _ = frame_text(&mut app);
+        // Header, hunk, deletion, addition, then the thread header the reply lands in.
+        for _ in 0..4 {
+            handle_key(&mut app, key(KeyCode::Down));
+        }
+        handle_key(&mut app, key(KeyCode::Char('c')));
+        assert_eq!(
+            app.compose.as_ref().map(|c| c.target.clone()),
+            Some(crate::app::ComposeTarget::Reply { thread_id: "t1".into() }),
+        );
+        let text = frame_text(&mut app);
+        assert!(text.contains("Reply · #9"), "{text}");
+    }
+
+    #[test]
     fn compose_modal_shows_reply_target_and_discards() {
         let mut app = loaded_app();
         app.compose = Some(crate::app::ComposeState {

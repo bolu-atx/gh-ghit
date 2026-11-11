@@ -635,6 +635,62 @@ pub fn line_target_at_cursor(section: &[String], cursor: usize, patch: &str) -> 
     target
 }
 
+/// Thread id for a cursor sitting inside a rendered review-thread block.
+///
+/// Same `section`/`cursor` contract as `line_target_at_cursor`, plus the
+/// file and its threads in render order. Threads attach after their patch
+/// row (`thread_patch_row`); a block opens at its reply-glyph header row
+/// and runs to the next patch row or thread header, so the cursor on a
+/// header, author, or comment row answers that thread's id. Code rows,
+/// blanks, and rules answer `None` so callers keep the line-comment
+/// target there. The k-th header after a patch row names the k-th thread
+/// attached there, matching render order.
+pub fn thread_at_cursor(
+    section: &[String],
+    cursor: usize,
+    file: &DiffFile,
+    threads: &[ReviewThread],
+) -> Option<String> {
+    let rows = diff_lines(&file.patch);
+    let mut next = 0;
+    // Patch row the current gap follows; `None` before the first one.
+    // Threads with no patch row render in that leading zone.
+    let mut attach: Option<usize> = None;
+    // Ids of headers seen since the last consumed patch row, in order.
+    let mut seen: Vec<String> = vec![];
+    // Thread whose block the walk is inside, if any.
+    let mut block: Option<String> = None;
+    for (i, row) in section.iter().enumerate().take(cursor + 1) {
+        let trimmed = row.trim_end();
+        let stripped = trimmed.strip_prefix("  ").unwrap_or(trimmed);
+        let matched = match rows.get(next) {
+            Some((_, text)) => !stripped.is_empty() && (stripped == text || text.starts_with(stripped)),
+            None => false,
+        };
+        if matched {
+            next += 1;
+            attach = Some(next - 1);
+            seen.clear();
+            block = None;
+            continue;
+        }
+        if stripped.contains('\u{f075}') {
+            let attached: Vec<&ReviewThread> = threads
+                .iter()
+                .filter(|t| t.path == file.filename && thread_patch_row(t, file) == attach)
+                .collect();
+            if let Some(thread) = attached.get(seen.len()) {
+                seen.push(thread.id.clone());
+                block = Some(thread.id.clone());
+            }
+        }
+        if i == cursor {
+            return block;
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod content_polish_tests {
     use super::*;
@@ -664,6 +720,41 @@ mod content_polish_tests {
         assert_eq!(line_target_at_cursor(&section, 2, patch), Some(1), "deletion keeps the line above");
         assert_eq!(line_target_at_cursor(&section, 3, patch), Some(2));
         assert_eq!(line_target_at_cursor(&section, 5, patch), Some(4));
+    }
+    #[test]
+    fn cursor_inside_thread_block_answers_thread_id() {
+        let file = DiffFile { filename: "a.rs".into(), patch: "@@ -1,2 +1,2 @@\n a\n+b".into(), ..Default::default() };
+        let threads = vec![ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(2), ..Default::default() }];
+        let section: Vec<String> = ["  @@ -1,2 +1,2 @@", "   a", "  +b", "      \u{f075} line 2 · unresolved", "      reviewer"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(thread_at_cursor(&section, 0, &file, &threads), None, "hunk header");
+        assert_eq!(thread_at_cursor(&section, 1, &file, &threads), None, "code row keeps line target");
+        assert_eq!(thread_at_cursor(&section, 2, &file, &threads), None, "own patch row keeps line target");
+        assert_eq!(thread_at_cursor(&section, 3, &file, &threads), Some("t1".into()), "thread header");
+        assert_eq!(thread_at_cursor(&section, 4, &file, &threads), Some("t1".into()), "author row");
+    }
+    #[test]
+    fn thread_headers_after_one_row_resolve_in_order() {
+        let file = DiffFile { filename: "a.rs".into(), patch: "@@ -1,2 +1,2 @@\n a\n+b".into(), ..Default::default() };
+        let threads = vec![
+            ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(2), ..Default::default() },
+            ReviewThread { id: "t2".into(), path: "a.rs".into(), line: Some(2), ..Default::default() },
+        ];
+        let section: Vec<String> = ["  @@ -1,2 +1,2 @@", "   a", "  +b",
+            "      \u{f075} line 2 · unresolved", "      \u{f075} line 2 · unresolved"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(thread_at_cursor(&section, 2, &file, &threads), None, "own patch row");
+        assert_eq!(thread_at_cursor(&section, 3, &file, &threads), Some("t1".into()));
+        assert_eq!(thread_at_cursor(&section, 4, &file, &threads), Some("t2".into()));
+    }
+    #[test]
+    fn thread_without_a_patch_row_resolves_in_the_leading_zone() {
+        let file = DiffFile { filename: "a.rs".into(), patch: "@@ -1,1 +1,1 @@\n a".into(), ..Default::default() };
+        let threads = vec![ReviewThread { id: "t9".into(), path: "a.rs".into(), line: None, ..Default::default() }];
+        let section: Vec<String> = ["    \u{f075} line unavailable · unresolved", "  @@ -1,1 +1,1 @@", "   a"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(thread_at_cursor(&section, 0, &file, &threads), Some("t9".into()));
+        assert_eq!(thread_at_cursor(&section, 2, &file, &threads), None, "code row");
     }
     #[test]
     fn cursor_skips_thread_and_blank_rows() {
