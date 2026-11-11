@@ -65,10 +65,8 @@ pub(crate) enum ComposeTarget {
     Thread,
     /// Single-shot PR line comment: file plus new-side line.
     Line { path: String, line: u64 },
-    /// Reply inside an existing review thread. Phase 4 of #31: the
-    /// submit path is wired, but nothing targets it yet — picking the
-    /// thread under the cursor waits on #11.
-    #[allow(dead_code)]
+    /// Reply inside an existing review thread: the cursor sits in its
+    /// rendered block on the Diff tab.
     Reply { thread_id: String },
 }
 
@@ -1364,9 +1362,10 @@ impl App {
         self.compose = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false });
     }
 
-    /// Line-comment target for the active diff line, or `None` for a
+    /// Comment target for the active diff line, or `None` for a plain
     /// thread comment: not a PR diff, split layout, no file under the
-    /// cursor, or no new-side line at the cursor.
+    /// cursor, or no new-side line at the cursor. A cursor inside a
+    /// rendered review-thread block answers a reply to that thread.
     fn compose_target(&self) -> Option<ComposeTarget> {
         if !self.visual_diff() || self.diff_split {
             return None;
@@ -1383,7 +1382,12 @@ impl App {
             return None;
         }
         let section: Vec<String> = self.body_rows[header + 1..].to_vec();
-        let line = model::line_target_at_cursor(&section, vis - (header + 1), &file.patch)?;
+        let cursor = vis - (header + 1);
+        let d = self.data.get(&n)?;
+        if let Some(thread_id) = model::thread_at_cursor(&section, cursor, file, &d.review_threads) {
+            return Some(ComposeTarget::Reply { thread_id });
+        }
+        let line = model::line_target_at_cursor(&section, cursor, &file.patch)?;
         Some(ComposeTarget::Line { path: file.filename.clone(), line })
     }
 
@@ -2053,6 +2057,61 @@ mod tests {
         let c = app.compose.as_ref().expect("compose");
         assert_eq!((c.number, c.body.as_str(), c.cursor), (7, "", 0));
         assert_eq!(c.target, ComposeTarget::Thread);
+    }
+
+    /// PR with one file, one thread on its second line, and the cursor
+    /// parked by absolute body row. Rows mirror `ui` rendering: header,
+    /// dented patch rows, then the thread block.
+    fn thread_pr_app(diff_line: usize) -> App {
+        let mut app = sidebar_app(&[9]);
+        let d = app.data.get_mut(&9).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![crate::model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(2),
+            ..Default::default()
+        }];
+        app.diffs.insert(
+            9,
+            vec![crate::model::DiffFile {
+                filename: "a.rs".into(),
+                patch: "@@ -1,2 +1,2 @@\n a\n+b".into(),
+                ..Default::default()
+            }],
+        );
+        app.tab = Tab::Visual;
+        app.body_rows = vec![
+            "▸ a.rs",
+            "  @@ -1,2 +1,2 @@",
+            "   a",
+            "  +b",
+            "      \u{f075} line 2 · unresolved",
+            "      reviewer",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+        app.body_base = 0;
+        app.diff_line = Some(diff_line);
+        app.diff_row_files = vec![None, None, None, Some(0), Some(0), Some(0)];
+        app
+    }
+
+    #[test]
+    fn compose_on_a_thread_row_targets_the_reply() {
+        let mut app = thread_pr_app(4);
+        app.open_compose();
+        let c = app.compose.as_ref().expect("compose");
+        assert_eq!(c.target, ComposeTarget::Reply { thread_id: "t1".into() });
+    }
+
+    #[test]
+    fn compose_on_a_code_row_still_targets_the_line() {
+        let mut app = thread_pr_app(3);
+        app.open_compose();
+        let c = app.compose.as_ref().expect("compose");
+        assert_eq!(c.target, ComposeTarget::Line { path: "a.rs".into(), line: 2 });
     }
 
     #[test]
