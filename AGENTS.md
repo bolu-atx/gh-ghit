@@ -63,7 +63,9 @@ We plan in milestones and issues — see [docs/planning.md](docs/planning.md).
 Milestone = epic, issue = coarse story, labels = subject
 (`feature`, `bugfix`, `docs`, `chore`). PRs open with `Closes #N`.
 Every issue and PR lives on the `ghit dev` board: `In Progress`
-when work starts, `In Review` when the PR opens.
+when work starts, `In Review` when the PR opens. Coordinator
+dispatch: the coordinator owns the cards and names the issue in
+each worker prompt.
 Templates live in `.github/ISSUE_TEMPLATE/story.md` and
 `.github/pull_request_template.md`. Browse the plan with ghit itself.
 
