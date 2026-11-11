@@ -53,3 +53,24 @@ tmux send-keys -t ghit-e2e -l $'\x1b[<3;70;25m'
 Rules: never press `o` (opens a browser). Refresh (`r`) and pins (`p`)
 are safe under the isolated `XDG_DATA_HOME`. End every session with `q`
 and `tmux kill-session -t ghit-e2e`.
+
+## Visual taste gate
+
+Layout, theme, or new modal changes only.
+
+Workers check structure with `frame_text` + `capture-pane -p`.
+That text strips style, so it cannot judge looks.
+
+Coordinator judges looks: one PNG each of the loaded issue and the
+board modal, at fixed geometry. Pass means one focus per frame,
+aligned columns, no dead panes, theme colors only, and no
+truncation at 200x50 and 120x40. Fail on crowding, weak contrast
+in either palette, or repeated status info.
+
+## Coordinator owns e2e coverage
+
+Each coordinated interactive change adds one scenario: scripted
+input plus expected pane rows. The coordinator picks it from the
+touched control, records the exact `send-keys` / `capture-pane`
+lines, and requires the matching `render_smoke` frame test for UI
+changes. No scenario, no sign-off.
