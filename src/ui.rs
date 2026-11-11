@@ -418,12 +418,13 @@ fn section_list(
             ))));
             continue;
         };
-        // The selection marker renders on the focused pane, plus the
-        // wheel hover wherever it sits: hovering is highlight-only, so
-        // the pane shows the cursor without visiting. The ListState
-        // cursor underneath is untouched, so tabbing away and back
-        // restores the exact row and scroll position.
-        let sel = (focused && (app.current == Some(*n) || mark == Some(*n))) || app.hover == Some(*n);
+        // The selection marker renders on the focused pane for the
+        // active issue only: `current` is the single active item, so the
+        // wheel hover never draws the active marker. Hover stays a
+        // transient preview in state (j/k continue from it); the
+        // ListState cursor underneath is untouched, so tabbing away and
+        // back restores the exact row and scroll position.
+        let sel = focused && (app.current == Some(*n) || mark == Some(*n));
         let marker = if sel { "█ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
@@ -2318,8 +2319,8 @@ mod render_smoke {
         handle_mouse(&mut app, click(MouseEventKind::ScrollDown, x, y));
         assert_eq!(app.hover, Some(8));
         assert_eq!(app.current, Some(7), "wheel never visits");
-        let _ = frame_text(&mut app); // viewport follows the hover
-        assert_eq!(app.issue_state.selected(), Some(2), "hovered row tracked");
+        let _ = frame_text(&mut app); // selection stays on the active issue
+        assert_eq!(app.issue_state.selected(), Some(1), "hover never outranks current");
         assert_eq!(app.current, Some(7));
         assert_eq!(app.scroll, 0, "body scroll untouched");
     }
