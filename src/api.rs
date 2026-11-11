@@ -741,6 +741,75 @@ pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, S
     }
 }
 
+/// GraphQL endpoint honoring `GH_HOST`, shared by every mutation below.
+fn graphql_url() -> String {
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    if host == "github.com" {
+        "https://api.github.com/graphql".to_owned()
+    } else {
+        format!("https://{host}/api/graphql")
+    }
+}
+
+/// Unwrap a GraphQL response: transport errors already surfaced, so a
+/// top-level `errors` array is the failure, and `data` the payload.
+fn graphql_data(value: &Value) -> Result<&Value, String> {
+    if let Some(errors) = value.get("errors") {
+        return Err(format!("GitHub GraphQL: {errors}"));
+    }
+    value.get("data").filter(|v| v.is_object()).ok_or_else(|| format!("GitHub GraphQL: {value}"))
+}
+
+/// Post a plain issue/PR thread comment through REST. Validation errors
+/// are strings for the status line, never panics.
+pub async fn add_comment(repo: &str, number: u64, body: &str, bearer: &str) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("comment is empty: write something first".to_string());
+    }
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
+    post_json(&client(), &format!("{base}/repos/{repo}/issues/{number}/comments"), bearer, &json!({"body": body})).await?;
+    Ok(())
+}
+
+/// Post a single-shot line comment on a PR through
+/// `addPullRequestReviewThread`: no review flow, one thread per call.
+/// Needs the PR's node ID, so it resolves `number` first, then mutates.
+pub async fn add_review_thread(repo: &str, number: u64, body: &str, path: &str, line: u64, bearer: &str) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("comment is empty: write something first".to_string());
+    }
+    if path.is_empty() || line == 0 {
+        return Err("line comment needs a file and a new-side line".to_string());
+    }
+    let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
+    let url = graphql_url();
+    let client = client();
+    let id_query = "query($owner:String!, $repo:String!, $num:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$num) { id } } }";
+    let id_value = post_json(&client, &url, bearer, &json!({"query": id_query, "variables": {"owner": owner, "repo": name, "num": number}})).await?;
+    let pr_id = graphql_data(&id_value)?.pointer("/repository/pullRequest/id").and_then(Value::as_str).ok_or("PR not found: line comments need a pull request")?;
+    let mutation = "mutation($prId:ID!, $path:String!, $line:Int!, $body:String!) { addPullRequestReviewThread(input:{pullRequestId:$prId, path:$path, line:$line, side:RIGHT, body:$body}) { thread { id } } }";
+    let out = post_json(&client, &url, bearer, &json!({"query": mutation, "variables": {"prId": pr_id, "path": path, "line": line, "body": body}})).await?;
+    graphql_data(&out)?.pointer("/addPullRequestReviewThread/thread/id").and_then(Value::as_str).ok_or("line comment failed: no thread returned")?;
+    Ok(())
+}
+
+/// Reply inside an existing review thread. Wired end to end, but the
+/// compose modal never targets it yet: picking the thread under the
+/// cursor waits on #11, so callers surface its absence instead.
+pub async fn add_thread_reply(thread_id: &str, body: &str, bearer: &str) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("comment is empty: write something first".to_string());
+    }
+    if thread_id.is_empty() {
+        return Err("reply needs a thread: open the thread first".to_string());
+    }
+    let mutation = "mutation($threadId:ID!, $body:String!) { addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId, body:$body}) { comment { id } } }";
+    let out = post_json(&client(), &graphql_url(), bearer, &json!({"query": mutation, "variables": {"threadId": thread_id, "body": body}})).await?;
+    graphql_data(&out)?.pointer("/addPullRequestReviewThreadReply/comment/id").and_then(Value::as_str).ok_or("reply failed: no comment returned")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1026,6 +1095,13 @@ mod tests {
         assert!(q.contains("issueOrPullRequest(number: 10)"));
     }
 
+    #[test]
+    fn graphql_errors_reject_and_data_unwraps() {
+        let ok = json!({"data": {"addPullRequestReviewThread": {"thread": {"id": "t"}}}});
+        assert_eq!(graphql_data(&ok).unwrap().pointer("/addPullRequestReviewThread/thread/id").and_then(Value::as_str), Some("t"));
+        assert!(graphql_data(&json!({"errors": [{"message": "denied"}]})).is_err());
+        assert!(graphql_data(&json!({"data": null})).is_err());
+    }
     #[test]
     fn diff_file_maps_patch_and_binary() {
         let f = diff_file(&json!({"filename":"src/a.rs","status":"modified","additions":3,"deletions":1,"patch":"@@ -1 +1 @@\n-old\n+new"})).unwrap();

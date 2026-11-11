@@ -58,6 +58,41 @@ pub(crate) enum Pane {
     Refs,
 }
 
+/// Where a composed comment lands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ComposeTarget {
+    /// Plain issue/PR thread comment.
+    Thread,
+    /// Single-shot PR line comment: file plus new-side line.
+    Line { path: String, line: u64 },
+    /// Reply inside an existing review thread. Phase 4 of #31: the
+    /// submit path is wired, but nothing targets it yet — picking the
+    /// thread under the cursor waits on #11.
+    #[allow(dead_code)]
+    Reply { thread_id: String },
+}
+
+impl ComposeTarget {
+    pub(crate) fn title(&self, number: u64) -> String {
+        match self {
+            ComposeTarget::Thread => format!("Comment · thread #{number}"),
+            ComposeTarget::Line { path, line } => format!("Comment · {path}:{line}"),
+            ComposeTarget::Reply { .. } => format!("Reply · #{number}"),
+        }
+    }
+}
+
+/// The compose modal: a draft plus where it goes. `cursor` is a char
+/// index into `body` where typing lands; `sending` locks editing while
+/// the background submit is in flight.
+pub(crate) struct ComposeState {
+    pub(crate) number: u64,
+    pub(crate) target: ComposeTarget,
+    pub(crate) body: String,
+    pub(crate) cursor: usize,
+    pub(crate) sending: bool,
+}
+
 /// What a filter-dialog query commit asks the caller to fetch.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum QueryAction {
@@ -199,6 +234,10 @@ pub(crate) struct App {
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
+    // Compose modal (`c`) plus its background submit channel.
+    pub(crate) compose: Option<ComposeState>,
+    pub(crate) compose_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
+    pub(crate) compose_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
     // Board modal.
     pub(crate) board: Option<BoardData>,
     /// Frame counter, bumped once per event-loop pass. Drives the status
@@ -211,6 +250,7 @@ pub(crate) struct App {
 impl App {
     pub(crate) fn new(repo_flag: Option<String>) -> Self {
         let (detail_tx, detail_rx) = std::sync::mpsc::channel();
+        let (compose_tx, compose_rx) = std::sync::mpsc::channel();
         let (issue_tx, issue_rx) = std::sync::mpsc::channel();
         let (diff_tx, diff_rx) = std::sync::mpsc::channel();
         let (graph_tx, graph_rx) = std::sync::mpsc::channel();
@@ -256,6 +296,9 @@ impl App {
             issue_state: ListState::default(),
             pr_state: ListState::default(),
             board: None,
+            compose: None,
+            compose_tx,
+            compose_rx,
             tick: 0,
             board_col: 0,
             board_row: 0,
@@ -1282,6 +1325,135 @@ impl App {
         });
     }
 
+    /// The compose modal is up, whether drafting or sending.
+    pub(crate) fn compose_open(&self) -> bool {
+        self.compose.is_some()
+    }
+
+    /// Open the compose modal, deriving the target from context: on the
+    /// Diff tab over a unified hunk row with a new-side line it drafts a
+    /// line comment, everywhere else a thread comment. Split diffs fall
+    /// back to a thread comment since paired rows carry no single line.
+    pub(crate) fn open_compose(&mut self) {
+        let Some(n) = self.current else {
+            self.notify("view an issue first".to_string());
+            return;
+        };
+        if !self.data.contains_key(&n) {
+            self.notify("still loading: wait for the issue first".to_string());
+            return;
+        }
+        let target = self.compose_target().unwrap_or(ComposeTarget::Thread);
+        self.compose = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false });
+    }
+
+    /// Line-comment target for the active diff line, or `None` for a
+    /// thread comment: not a PR diff, split layout, no file under the
+    /// cursor, or no new-side line at the cursor.
+    fn compose_target(&self) -> Option<ComposeTarget> {
+        if !self.visual_diff() || self.diff_split {
+            return None;
+        }
+        let n = self.current?;
+        let files = self.diffs.get(&n)?;
+        let fi = self.diff_file_at_cursor()?;
+        let file = files.get(fi)?;
+        let abs = self.diff_line?;
+        let vis = abs.checked_sub(self.body_base as usize)?;
+        let header = self.body_rows.iter().enumerate()
+            .find_map(|(i, line)| (model::header_file_index(line, files) == Some(fi)).then_some(i))?;
+        if vis <= header {
+            return None;
+        }
+        let section: Vec<String> = self.body_rows[header + 1..].to_vec();
+        let line = model::line_target_at_cursor(&section, vis - (header + 1), &file.patch)?;
+        Some(ComposeTarget::Line { path: file.filename.clone(), line })
+    }
+
+    /// Discard the draft, whatever it holds. Quiet: Esc means gone.
+    pub(crate) fn discard_compose(&mut self) {
+        self.compose = None;
+    }
+
+    /// Byte offset of a char index, clamped to the end.
+    fn compose_byte(body: &str, cursor: usize) -> usize {
+        body.char_indices().nth(cursor).map(|(b, _)| b).unwrap_or(body.len())
+    }
+
+    /// Type a char at the cursor. Locked while sending so the in-flight
+    /// body never changes under the request.
+    pub(crate) fn compose_insert(&mut self, c: char) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending {
+            return;
+        }
+        let cursor = s.cursor.min(s.body.chars().count());
+        let byte = Self::compose_byte(&s.body, cursor);
+        s.body.insert(byte, c);
+        s.cursor = cursor + 1;
+    }
+
+    /// Delete the char before the cursor.
+    pub(crate) fn compose_backspace(&mut self) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending || s.cursor == 0 {
+            return;
+        }
+        let cursor = s.cursor.min(s.body.chars().count());
+        let end = Self::compose_byte(&s.body, cursor);
+        let start = Self::compose_byte(&s.body, cursor - 1);
+        s.body.drain(start..end);
+        s.cursor = cursor - 1;
+    }
+
+    /// Step the cursor one char left or right.
+    pub(crate) fn compose_step(&mut self, delta: isize) {
+        let Some(s) = self.compose.as_mut() else { return };
+        let len = s.body.chars().count();
+        s.cursor = s.cursor.saturating_add_signed(delta).min(len);
+    }
+
+    /// Step the cursor one visual line up or down, keeping the column.
+    pub(crate) fn compose_line(&mut self, delta: isize) {
+        let Some(s) = self.compose.as_mut() else { return };
+        let cursor = s.cursor.min(s.body.chars().count());
+        let chars: Vec<char> = s.body.chars().collect();
+        let head: String = chars[..cursor].iter().collect();
+        let row = head.matches('\n').count() as isize;
+        let col = head.rsplit('\n').next().map(|l| l.chars().count()).unwrap_or(0) as isize;
+        let lines: Vec<&str> = s.body.split('\n').collect();
+        let next_row = (row + delta).clamp(0, lines.len() as isize - 1) as usize;
+        let next_col = col.min(lines[next_row].chars().count() as isize).max(0) as usize;
+        let base: usize = lines[..next_row].iter().map(|l| l.chars().count() + 1).sum();
+        s.cursor = base + next_col;
+    }
+
+    /// Submit the draft on a background thread; the loop never blocks.
+    /// Empty drafts stay open with a status-line error, never a send.
+    pub(crate) fn submit_compose(&mut self) {
+        let Some(c) = self.compose.as_mut() else { return };
+        if c.sending {
+            return;
+        }
+        if c.body.trim().is_empty() {
+            self.notify("comment is empty: write something first".to_string());
+            return;
+        }
+        c.sending = true;
+        let (number, target, body) = (c.number, c.target.clone(), c.body.clone());
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let tx = self.compose_tx.clone();
+        rt().spawn(async move {
+            let result = match &target {
+                ComposeTarget::Thread => github::post_thread_comment(&repo, number, &body).await,
+                ComposeTarget::Line { path, line } => github::post_line_comment(&repo, number, &body, path, *line).await,
+                ComposeTarget::Reply { thread_id } => github::post_thread_reply(thread_id, &body).await,
+            };
+            let _ = tx.send((number, result));
+        });
+        self.notify("sending comment…".to_string());
+    }
+
     /// Snapshot the visible body text so clicks can land on `#123` refs.
     /// `body_base` records the scroll offset the snapshot was taken at, so
     /// selections map visible rows back without accumulating across clicks.
@@ -1376,6 +1548,28 @@ fn poll_details(app: &mut App) {
     }
 }
 
+/// Land a compose submit: success closes the modal, confirms on the
+/// status line, and refetches the issue so the Comments tab shows the
+/// new comment; failure keeps the draft and names the cause.
+pub(crate) fn poll_compose(app: &mut App) {
+    let ready: Vec<(u64, Result<(), String>)> = app.compose_rx.try_iter().collect();
+    for (n, res) in ready {
+        match res {
+            Ok(()) => {
+                app.compose = None;
+                app.notify(format!("comment posted to #{n}"));
+                app.load_issue(n, true);
+            }
+            Err(e) => {
+                if let Some(c) = app.compose.as_mut() {
+                    c.sending = false;
+                }
+                app.notify(e);
+            }
+        }
+    }
+}
+
 fn poll_board(app: &mut App) {
     if !app.board_loading {
         return;
@@ -1457,6 +1651,7 @@ fn event_loop(
         poll_graphs(app);
         poll_board(app);
         poll_details(app);
+        poll_compose(app);
         if app.quit {
             return Ok(());
         }
@@ -1826,5 +2021,76 @@ mod tests {
         app.go_forward();
         assert_eq!(app.current, Some(11));
         assert_eq!(app.message, "no newer issue");
+    }
+
+    #[test]
+    fn compose_needs_a_loaded_issue() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.open_compose();
+        assert!(app.compose.is_none());
+        assert_eq!(app.message, "view an issue first");
+
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        let c = app.compose.as_ref().expect("compose");
+        assert_eq!((c.number, c.body.as_str(), c.cursor), (7, "", 0));
+        assert_eq!(c.target, ComposeTarget::Thread);
+    }
+
+    #[test]
+    fn compose_edits_at_the_cursor() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        for ch in "hi\nok".chars() {
+            app.compose_insert(ch);
+        }
+        assert_eq!(app.compose.as_ref().unwrap().body, "hi\nok");
+        app.compose_step(-3);
+        app.compose_insert('!');
+        assert_eq!(app.compose.as_ref().unwrap().body, "hi!\nok");
+        app.compose_backspace();
+        assert_eq!(app.compose.as_ref().unwrap().body, "hi\nok");
+        // Down keeps the column across lines.
+        app.compose_line(1);
+        app.compose_insert('?');
+        assert_eq!(app.compose.as_ref().unwrap().body, "hi\nok?");
+    }
+
+    #[test]
+    fn compose_empty_submit_stays_open() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        app.submit_compose();
+        let c = app.compose.as_ref().expect("draft kept");
+        assert!(!c.sending);
+        assert!(app.message.contains("empty"), "status names the problem");
+    }
+
+    #[test]
+    fn compose_poll_success_closes_and_refreshes() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        app.compose.as_mut().unwrap().body = "looks good".to_string();
+        app.compose.as_mut().unwrap().sending = true;
+        app.compose_tx.send((7, Ok(()))).unwrap();
+        poll_compose(&mut app);
+        assert!(app.compose.is_none());
+        assert_eq!(app.message, "comment posted to #7");
+        assert!(app.issue_pending.contains(&7), "refetch shows the new comment");
+    }
+
+    #[test]
+    fn compose_poll_failure_keeps_the_draft() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        app.compose.as_mut().unwrap().body = "looks good".to_string();
+        app.compose.as_mut().unwrap().sending = true;
+        app.compose_tx.send((7, Err("token scopes deny comments".to_string()))).unwrap();
+        poll_compose(&mut app);
+        let c = app.compose.as_ref().expect("draft kept");
+        assert!(!c.sending);
+        assert_eq!(c.body, "looks good");
+        assert_eq!(app.message, "token scopes deny comments");
     }
 }

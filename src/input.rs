@@ -17,6 +17,13 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
 
+    // Compose modal captures everything: typing edits the draft,
+    // Ctrl+S sends, Esc discards.
+    if app.compose_open() {
+        handle_compose_key(app, key);
+        return;
+    }
+
     // Board modal captures everything.
     if board_open(app) {
         match key.code {
@@ -113,6 +120,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.notify(format!("theme: {}", crate::theme::cycle()));
         }
         KeyCode::Char('b') => app.open_board(),
+        KeyCode::Char('c') => app.open_compose(),
         KeyCode::Char('f') => {
             app.filter_open = true;
             app.query_edit = false;
@@ -217,6 +225,32 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Tab => {
             app.cycle_pane();
         }
+        _ => {}
+    }
+}
+
+/// Compose modal keys: printable chars edit the draft, arrows move the
+/// cursor, Ctrl+S submits, Esc discards. Ctrl+C never quits here — a
+/// lost draft would be worse than an ignored key.
+pub(crate) fn handle_compose_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('s') => app.submit_compose(),
+            _ => {}
+        }
+        return;
+    }
+    match key.code {
+        KeyCode::Esc => app.discard_compose(),
+        KeyCode::Enter => app.compose_insert('\n'),
+        KeyCode::Backspace => app.compose_backspace(),
+        KeyCode::Left => app.compose_step(-1),
+        KeyCode::Right => app.compose_step(1),
+        KeyCode::Up => app.compose_line(-1),
+        KeyCode::Down => app.compose_line(1),
+        KeyCode::Char(c) => app.compose_insert(c),
+        KeyCode::Tab => app.compose_insert('\t'),
         _ => {}
     }
 }
@@ -830,5 +864,49 @@ mod tests {
         );
         assert_eq!(app.pane, crate::app::Pane::PRs);
         assert_eq!(app.current, Some(9));
+    }
+
+    fn plain_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    fn compose_app() -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.data.insert(7, sample(7));
+        app.statuses.insert(7, vec![]);
+        app.visited.push(7);
+        app.show_issue(7);
+        app
+    }
+
+    #[test]
+    fn c_opens_compose_and_esc_discards() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        assert!(app.compose_open());
+        handle_key(&mut app, plain_key(KeyCode::Char('x')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "x");
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.compose_open());
+    }
+
+    #[test]
+    fn compose_ctrl_s_with_empty_draft_stays_open() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('s')));
+        assert!(app.compose_open(), "empty draft never sends");
+        assert!(!app.compose.as_ref().unwrap().sending);
+        assert!(app.message.contains("empty"));
+    }
+
+    #[test]
+    fn compose_ctrl_c_never_quits() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('c')));
+        assert!(!app.quit);
+        assert!(app.compose_open(), "draft survives");
     }
 }
