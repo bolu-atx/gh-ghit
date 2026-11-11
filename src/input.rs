@@ -418,6 +418,48 @@ fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], app: &App, x: u16, y:
     None
 }
 
+/// Where a wheel event lands: the Issues/PRs side panes, the right
+/// Refs pane while visible, or the main body everywhere else. A hidden
+/// Refs pane falls through to Main.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WheelTarget {
+    Issues,
+    PRs,
+    Refs,
+    Main,
+}
+
+pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
+    if in_rect(app.side_issue_area, x, y) {
+        WheelTarget::Issues
+    } else if in_rect(app.side_pr_area, x, y) {
+        WheelTarget::PRs
+    } else if app.refs_visible() && in_rect(app.refs_area, x, y) {
+        WheelTarget::Refs
+    } else {
+        WheelTarget::Main
+    }
+}
+
+/// Wheel steps one sidebar/refs row through the j/k selection paths so
+/// `ListState` offsets follow; the focused pane never changes. Main
+/// keeps the body scroll and leaves the diff cursor alone.
+fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
+    match target {
+        WheelTarget::Issues => move_in_list(app, app.issue_numbers(), delta),
+        WheelTarget::PRs => move_in_list(app, app.pr_numbers(), delta),
+        WheelTarget::Refs => {
+            let next = core::next_in_order(&app.ref_order(), app.ref_highlight, delta);
+            if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
+                app.select_ref(n);
+            }
+        }
+        WheelTarget::Main => {
+            app.scroll = app.scroll.saturating_add_signed(delta as i16 * 3);
+        }
+    }
+}
+
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
     if app.shortcuts_open { return; }
     if board_open(app) {
@@ -561,10 +603,10 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             app.focus = Focus::Main;
         }
         MouseEventKind::ScrollDown => {
-            app.scroll = app.scroll.saturating_add(3);
+            wheel_move(app, wheel_target(app, m.column, m.row), 1);
         }
         MouseEventKind::ScrollUp => {
-            app.scroll = app.scroll.saturating_sub(3);
+            wheel_move(app, wheel_target(app, m.column, m.row), -1);
         }
         _ => {}
     }
@@ -640,6 +682,114 @@ mod tests {
         for y in row9_top..row9_top + 3 {
             assert_eq!(sidebar_hit(area, &rows, &app, 5, y), Some(9), "row 9 line {y}");
         }
+    }
+
+    fn wheel_app() -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let mut pr1 = sample(9);
+        pr1.is_pr = true;
+        let mut pr2 = sample(11);
+        pr2.is_pr = true;
+        for d in [sample(7), sample(8), pr1, pr2] {
+            let n = d.number;
+            app.data.insert(n, d);
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        app.side_issue_area = Rect::new(0, 0, 30, 20);
+        app.side_pr_area = Rect::new(0, 20, 30, 20);
+        app.refs_area = Rect::new(90, 0, 30, 40);
+        app.body_area = Rect::new(30, 0, 60, 40);
+        app.show_issue(7);
+        // `show_issue` recomputes refs from the body, so seed the pane after.
+        app.ref_numbers = vec![21, 22];
+        app.pane = crate::app::Pane::Main;
+        app.scroll = 0;
+        app
+    }
+
+    fn wheel(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
+        MouseEvent { kind, column: x, row: y, modifiers: KeyModifiers::empty() }
+    }
+
+    #[test]
+    fn wheel_router_maps_each_area() {
+        let app = wheel_app();
+        assert_eq!(wheel_target(&app, 5, 5), WheelTarget::Issues);
+        assert_eq!(wheel_target(&app, 5, 25), WheelTarget::PRs);
+        assert_eq!(wheel_target(&app, 95, 5), WheelTarget::Refs);
+        assert_eq!(wheel_target(&app, 40, 5), WheelTarget::Main);
+    }
+
+    #[test]
+    fn wheel_router_hidden_refs_falls_through_to_main() {
+        let mut app = wheel_app();
+        app.show_refs = false;
+        assert!(!app.refs_visible());
+        assert_eq!(wheel_target(&app, 95, 5), WheelTarget::Main);
+    }
+
+    #[test]
+    fn wheel_over_issues_walks_one_row_without_touching_pane() {
+        let mut app = wheel_app();
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
+        assert_eq!(app.current, Some(8));
+        assert_eq!(app.pane, crate::app::Pane::Main);
+        assert_eq!(app.scroll, 0);
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 5));
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.pane, crate::app::Pane::Main);
+    }
+
+    #[test]
+    fn wheel_over_prs_walks_pr_rows_only() {
+        let mut app = wheel_app();
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
+        assert_eq!(app.current, Some(9));
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
+        assert_eq!(app.current, Some(11));
+        assert_eq!(app.pane, crate::app::Pane::Main);
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 25));
+        assert_eq!(app.current, Some(9));
+    }
+
+    #[test]
+    fn wheel_over_refs_moves_highlight_without_touching_pane() {
+        let mut app = wheel_app();
+        assert_eq!(app.ref_highlight, None);
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
+        assert_eq!(app.ref_highlight, Some(21));
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
+        assert_eq!(app.ref_highlight, Some(22));
+        assert_eq!(app.pane, crate::app::Pane::Main);
+        assert_eq!(app.current, Some(7));
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 95, 5));
+        assert_eq!(app.ref_highlight, Some(21));
+    }
+
+    #[test]
+    fn wheel_over_body_scrolls_and_keeps_issue() {
+        let mut app = wheel_app();
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 40, 5));
+        assert_eq!(app.scroll, 3);
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.pane, crate::app::Pane::Main);
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 40, 5));
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn wheel_over_body_on_diff_tab_leaves_diff_line_alone() {
+        let mut app = wheel_app();
+        // Only PRs show a diff; issues show the graph tab instead.
+        app.show_issue(9);
+        app.tab = crate::app::Tab::Visual;
+        assert!(app.visual_diff());
+        app.diff_line = Some(5);
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 40, 5));
+        assert_eq!(app.scroll, 3);
+        assert_eq!(app.diff_line, Some(5));
     }
 
     fn ctrl_key(code: KeyCode) -> crossterm::event::KeyEvent {
