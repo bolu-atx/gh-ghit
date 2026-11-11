@@ -263,8 +263,11 @@ pub(crate) fn graph_focused(app: &App) -> bool {
 }
 
 /// j/k walks one sidebar list: issues or PRs, never crossing over.
+/// Starts from the wheel hover when one names a row here, so keyboard
+/// and wheel continue from the same place; the visit clears the hover.
 fn move_in_list(app: &mut App, order: Vec<u64>, delta: isize) {
-    if let Some(n) = core::next_in_order(&order, app.current, delta) {
+    let base = app.hover.filter(|n| order.contains(n)).or(app.current);
+    if let Some(n) = core::next_in_order(&order, base, delta) {
         app.show_issue(n);
     }
 }
@@ -475,17 +478,29 @@ pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
     }
 }
 
-/// Wheel steps one sidebar/refs row through the j/k selection paths so
-/// `ListState` offsets follow; the focused pane never changes. Main
-/// keeps the body scroll and leaves the diff cursor alone.
+/// Wheel steps a highlight-only hover through one sidebar order. Unlike
+/// j/k this never visits: `current`, body scroll, and the other panes
+/// stay exactly where they were. Landing back on `current` clears the
+/// hover since there is nothing left to distinguish.
+fn wheel_hover(app: &mut App, order: Vec<u64>, delta: isize) {
+    let base = app.hover.filter(|n| order.contains(n)).or(app.current);
+    if let Some(n) = core::next_in_order(&order, base, delta) {
+        app.hover = if Some(n) == app.current { None } else { Some(n) };
+    }
+}
+
+/// Wheel scrolls only the hovered area: side panes move the hover so
+/// `ListState` offsets follow, refs moves its highlight without the
+/// click-style body jump, and Main keeps the body scroll. The focused
+/// pane never changes; click/Enter/j/k promote the hover to a visit.
 fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
     match target {
-        WheelTarget::Issues => move_in_list(app, app.issue_numbers(), delta),
-        WheelTarget::PRs => move_in_list(app, app.pr_numbers(), delta),
+        WheelTarget::Issues => wheel_hover(app, app.issue_numbers(), delta),
+        WheelTarget::PRs => wheel_hover(app, app.pr_numbers(), delta),
         WheelTarget::Refs => {
             let next = core::next_in_order(&app.ref_order(), app.ref_highlight, delta);
             if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
-                app.select_ref(n);
+                app.ref_highlight = Some(n);
             }
         }
         WheelTarget::Main => {
@@ -766,49 +781,76 @@ mod tests {
     }
 
     #[test]
-    fn wheel_over_issues_walks_one_row_without_touching_pane() {
+    fn wheel_over_issues_hovers_without_visiting() {
         let mut app = wheel_app();
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
-        assert_eq!(app.current, Some(8));
+        assert_eq!(app.hover, Some(8));
+        assert_eq!(app.current, Some(7), "wheel never visits");
         assert_eq!(app.pane, crate::app::Pane::Main);
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.scroll, 0, "body scroll untouched");
+        // Wheeling back onto the current row dissolves the hover.
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 5));
+        assert_eq!(app.hover, None);
+        assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn wheel_over_prs_hovers_pr_rows_only() {
+        let mut app = wheel_app();
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
+        assert_eq!(app.hover, Some(9));
+        assert_eq!(app.current, Some(7), "main content untouched");
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
+        assert_eq!(app.hover, Some(11));
         assert_eq!(app.current, Some(7));
         assert_eq!(app.pane, crate::app::Pane::Main);
-    }
-
-    #[test]
-    fn wheel_over_prs_walks_pr_rows_only() {
-        let mut app = wheel_app();
-        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
-        assert_eq!(app.current, Some(9));
-        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
-        assert_eq!(app.current, Some(11));
-        assert_eq!(app.pane, crate::app::Pane::Main);
+        assert_eq!(app.scroll, 0);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 25));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.hover, Some(9));
+        assert_eq!(app.current, Some(7));
     }
 
     #[test]
-    fn wheel_over_refs_moves_highlight_without_touching_pane() {
+    fn wheel_over_refs_moves_highlight_without_scrolling_body() {
         let mut app = wheel_app();
+        // A mentioning line below the viewport: the old click-style jump
+        // would move body scroll here; the wheel must not.
+        app.body_rows = vec!["unrelated".to_string(), "context".to_string(), "fixes #22".to_string()];
+        app.body_base = 5;
+        app.scroll = 9;
         assert_eq!(app.ref_highlight, None);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
         assert_eq!(app.ref_highlight, Some(21));
+        assert_eq!(app.scroll, 9, "body stays where it was");
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
         assert_eq!(app.ref_highlight, Some(22));
+        assert_eq!(app.scroll, 9, "mention jump is click-only");
         assert_eq!(app.pane, crate::app::Pane::Main);
         assert_eq!(app.current, Some(7));
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 95, 5));
         assert_eq!(app.ref_highlight, Some(21));
+        assert_eq!(app.scroll, 9);
+    }
+
+    #[test]
+    fn jk_promotes_hover_to_current() {
+        let mut app = wheel_app();
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
+        assert_eq!(app.hover, Some(8));
+        app.pane = crate::app::Pane::Issues;
+        handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()));
+        assert_eq!(app.current, Some(7), "k walks back from the hover");
+        assert_eq!(app.hover, None, "visiting clears the hover");
     }
 
     #[test]
     fn wheel_over_body_scrolls_and_keeps_issue() {
         let mut app = wheel_app();
+        app.hover = Some(8);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 40, 5));
         assert_eq!(app.scroll, 3);
         assert_eq!(app.current, Some(7));
+        assert_eq!(app.hover, Some(8), "body wheel leaves the hover alone");
         assert_eq!(app.pane, crate::app::Pane::Main);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 40, 5));
         assert_eq!(app.scroll, 0);

@@ -228,6 +228,10 @@ pub(crate) struct App {
     pub(crate) ref_paired: Vec<u64>,
     /// Click-selected refs row: highlights its source line instead of opening it.
     pub(crate) ref_highlight: Option<u64>,
+    /// Wheel-selected sidebar row: highlight-only, never a visit.
+    /// Click/Enter/j/k promote it to `current` and clear it; while it
+    /// moves, `current`, body scroll, and the other panes stay untouched.
+    pub(crate) hover: Option<u64>,
     pub(crate) refs_area: Rect,
     pub(crate) ref_rows: Vec<model::SideRow>,
     pub(crate) refs_state: ListState,
@@ -342,6 +346,7 @@ impl App {
             ref_numbers: vec![],
             ref_paired: vec![],
             ref_highlight: None,
+            hover: None,
             refs_area: Rect::default(),
             ref_rows: vec![],
             refs_state: ListState::default(),
@@ -773,6 +778,16 @@ impl App {
         )
     }
 
+    /// Row the sidebar lists track: the wheel hover while it names a
+    /// visible row, else `current`. Lets the wheel scroll the hovered
+    /// pane without visiting: `current`, body scroll, and the other
+    /// panes stay untouched.
+    pub(crate) fn effective(&self, rows: &[model::SideRow]) -> Option<u64> {
+        self.hover
+            .filter(|n| rows.iter().any(|r| r.number() == Some(*n)))
+            .or(self.current)
+    }
+
     /// Position of `current` in display rows, +1 for the top spacer row.
     fn selected_index(rows: &[model::SideRow], current: Option<u64>) -> Option<usize> {
         current
@@ -805,6 +820,7 @@ impl App {
         self.diff_line = None;
         self.diff_touched = false;
         self.ref_highlight = None;
+        self.hover = None;
         self.graph_cursor = 0;
         self.sync_selection();
         self.load_diff(n, false);
@@ -848,6 +864,7 @@ impl App {
     /// instead of opening it. Clicking the same row again clears it.
     /// Tab cycles Issues → PRs → Refs, so the pane keeps focus until then.
     pub(crate) fn select_ref(&mut self, n: u64) {
+        self.hover = None;
         if self.ref_highlight == Some(n) {
             self.ref_highlight = None;
             return;
