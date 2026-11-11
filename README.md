@@ -45,23 +45,27 @@ gh ghit [numbers...] [-R owner/repo]
 Without `-R`, the repo resolves from the current directory via `gh repo view`.
 Without numbers, pinned issues load and the command bar takes focus.
 
-Keybindings:
+Keybindings (full list in the app: `?`):
 
 | Key | Does |
 | --- | ---- |
-| `1` / `2` / `3` | Body / Comments / Diff tab |
+| `1` / `2` | Details / Visual tab (Visual shows the diff for PRs, the graph for issues) |
+| `?` | Shortcuts modal |
 | `b` | Project board modal (`h`/`l` columns, `j`/`k` cards, `Enter` opens) |
-| `j` / `k` | Scroll (with no issue loaded: move selection) |
+| `j` / `k`, arrows, PgUp/PgDn | Select and scroll |
+| `Ctrl+O` / `Ctrl+I` | Back / forward in issue history |
 | `Tab` | Cycle focus between panes |
-| `:` or `/` | Focus the command bar (`/` starts a find; `n` / `N` jumps) |
-| `f` | Filter the sidebar |
-| `e` | Toggle the refs panel |
-| `s` / `Space` | Diff tab: toggle split view / fold file |
+| `:` or `/` | Command bar (`/` starts a find; `n` / `N` jumps) |
+| `f` | Filter (merged window, open/closed toggles, query) |
+| `c` | Comment / reply (type, `Ctrl+S` sends, `Esc` discards) |
 | `o` | Open the current issue in GitHub |
-| `r` | Refresh (busts the cache for this issue and board) |
-| `p` | Pin to the top of the sidebar |
-| `t` | Cycle theme |
-| `w` | Cycle the merged-PR window |
+| `r` / `p` / `y` | Refresh / pin / yank to clipboard |
+| `e` | Toggle the refs panel |
+| `a` / `A` | Sort the sidebar / reverse direction |
+| `x` | Evict the row from the sidebar |
+| `Space` | Expand the row, or fold the file in a diff |
+| `s` | Diff: toggle split view |
+| `t` / `w` | Cycle theme / merged-PR window |
 | `q` | Quit |
 
 The command bar takes space-separated issue lists (`12 34 56`), `o [n]` to open,
