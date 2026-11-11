@@ -200,7 +200,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let mut qline = vec![
         Span::styled("query ", Style::new().bg(ink()).fg(muted())),
         Span::styled(
-            if query_text.is_empty() { "github search, e to edit …".to_string() } else { query_text.clone() },
+            if query_text.is_empty() { "server github search, e to edit …".to_string() } else { query_text.clone() },
             Style::new().bg(ink()).fg(if query_text.is_empty() { muted() } else { paper() }),
         ),
     ];
@@ -982,7 +982,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             }
         },
         None => crate::theme::render_markdown(
-            "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or search titles with `/`.",
+            "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
         ),
     };
     // A refs-row selection lights up the mentioning line instead of opening
@@ -1011,7 +1011,7 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let text = if app.searching { &app.search } else { &app.bar };
         let prompt = if app.searching { "/ " } else { "❯ " };
         let shown = if text.is_empty() {
-            if app.searching { "search title or #n …" } else { "type #123, o, q …" }
+            if app.searching { "instant filter loaded: title, #n, label, author …" } else { "type #123, o, q …" }
         } else { text };
         f.render_widget(Paragraph::new(Line::from(vec![
             Span::styled(prompt, Style::new().fg(amber()).bold()),

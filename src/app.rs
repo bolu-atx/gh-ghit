@@ -399,6 +399,19 @@ impl App {
         self.data.get(&n).map(|d| d.title.clone()).unwrap_or_default()
     }
 
+    /// Client-side `/` row match over already-fetched rows: title,
+    /// number, label names, and author login. Rows still loading fall
+    /// back to title/number only.
+    fn row_matches(&self, n: u64, query: &str) -> bool {
+        match self.data.get(&n) {
+            Some(d) => {
+                let labels: Vec<&str> = d.labels.iter().map(|l| l.name.as_str()).collect();
+                core::matches_search(n, &d.title, &labels, &d.author.login, query)
+            }
+            None => core::matches_search(n, &self.row_title(n), &[], "", query),
+        }
+    }
+
     /// True for issues, false for PRs and rows still loading (filed with
     /// issues until their data arrives and re-files them).
     fn is_pr(&self, n: u64) -> bool {
@@ -430,9 +443,7 @@ impl App {
             list.into_iter()
                 .filter(|n| {
                     self.is_pr(*n) == want_pr
-                        && (!filtered
-                            || q.trim().is_empty()
-                            || core::matches_search(*n, &self.row_title(*n), &q))
+                        && (!filtered || q.trim().is_empty() || self.row_matches(*n, &q))
                 })
                 .collect()
         };
@@ -474,9 +485,10 @@ impl App {
         }
         let (ip, iv, ir) = self.pane_groups(false, false);
         let (pp, pv, pr) = self.pane_groups(true, false);
+        let q = self.search.clone();
         ip.into_iter()
             .chain(iv).chain(ir).chain(pp).chain(pv).chain(pr)
-            .filter(|n| core::matches_search(*n, &self.row_title(*n), &self.search))
+            .filter(|n| self.row_matches(*n, &q))
             .collect()
     }
 
