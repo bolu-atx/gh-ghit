@@ -604,7 +604,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 app.set_tab(if rel < 12 { Tab::Details } else { Tab::Visual });
                 return;
             }
-            // The title/label block above the tabs resolves refs and URLs
+            // The meta/label block above the tabs resolves refs and URLs
             // exactly like body lines; only the body folds diff files.
             let in_body = in_rect(app.body_area, m.column, m.row);
             let in_header = !in_body && in_rect(app.header_area, m.column, m.row);
