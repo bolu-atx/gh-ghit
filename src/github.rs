@@ -118,6 +118,12 @@ pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, Strin
     api::search(repo, query, token).await
 }
 
+/// Batch board card details in one GraphQL request.
+pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<model::BoardDetail>>, String> {
+    let token = require_token()?;
+    api::board_details(cards, token).await
+}
+
 /// Per-card detail: dates plus comment count.
 pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
     require_repo(repo)?;
