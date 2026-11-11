@@ -50,6 +50,23 @@ pub fn parse_bar(text: &str) -> BarCommand {
     }
 }
 
+/// Graph cursor step over the flat node order (center first, then
+/// sections), clamped at the ends. `None` when the graph is empty; an
+/// out-of-range cursor clamps into the fresh order.
+pub fn graph_select(count: usize, current: Option<usize>, delta: isize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let last = count - 1;
+    let next = match current {
+        Some(pos) => (pos as isize + delta).clamp(0, last as isize) as usize,
+        None => {
+            if delta > 0 { 0 } else { last }
+        }
+    };
+    Some(next.min(last))
+}
+
 /// Next selection walking issues-then-PRs as one flat list, clamped at the
 /// ends. `None` when the list is empty.
 pub fn next_in_order(order: &[u64], current: Option<u64>, delta: isize) -> Option<u64> {
@@ -311,6 +328,19 @@ mod tests {
         assert_eq!(parse_bar(""), BarCommand::Dismiss);
         assert_eq!(parse_bar("o abc"), BarCommand::Hint);
         assert_eq!(parse_bar("hello"), BarCommand::Hint);
+    }
+
+    #[test]
+    fn graph_cursor_steps_and_clamps() {
+        assert_eq!(graph_select(4, Some(1), 1), Some(2));
+        assert_eq!(graph_select(4, Some(0), -1), Some(0));
+        assert_eq!(graph_select(4, Some(3), 1), Some(3));
+        assert_eq!(graph_select(4, None, 1), Some(0));
+        assert_eq!(graph_select(4, None, -1), Some(3));
+        assert_eq!(graph_select(0, Some(0), 1), None);
+        // A cursor past a shrunken order clamps instead of panicking.
+        assert_eq!(graph_select(2, Some(9), 1), Some(1));
+        assert_eq!(graph_select(2, Some(9), -1), Some(1));
     }
 
     #[test]
