@@ -187,7 +187,12 @@ fn absorb_page(value: &mut Value, live: &mut [bool; 4], cursors: &mut [Option<St
     fetched
 }
 
-pub async fn sections(repo: &str, hours: u64, bearer: &str) -> Result<Vec<Row>, String> {
+pub async fn sections(
+    repo: &str,
+    hours: u64,
+    bearer: &str,
+    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> Result<Vec<Row>, String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
@@ -203,6 +208,13 @@ pub async fn sections(repo: &str, hours: u64, bearer: &str) -> Result<Vec<Row>, 
     loop {
         let mut value = post_json(&client, &url, bearer, &json!({"query": query(), "variables": {"owner": owner, "repo": name, "openAfter": cursors[0], "mergedAfter": cursors[1], "openIssuesAfter": cursors[2], "closedIssuesAfter": cursors[3]}})).await?;
         fetched += absorb_page(&mut value, &mut live, &mut cursors);
+        // Rows fetched vs the row cap, while more pages remain: a single
+        // page is one request and stays indeterminate.
+        if live.iter().any(|l| *l) && fetched < MAX_SECTION_ROWS {
+            if let Some(report) = progress {
+                report(fetched, MAX_SECTION_ROWS);
+            }
+        }
         pages.push(value);
         if live.iter().all(|l| !l) || fetched >= MAX_SECTION_ROWS { break; }
     }
@@ -338,7 +350,19 @@ pub async fn pull_files(repo: &str, number: u64, bearer: &str) -> Result<Vec<Dif
     Ok(out)
 }
 
-async fn fetch_comment_pages(client: &reqwest::Client, base: &str, repo: &str, number: u64, bearer: &str, count: u64) -> Result<Vec<Comment>, String> {
+/// Optional progress sink for multi-page fetches: called with
+/// `(done, total)` as pages land. A shared `&dyn Fn` keeps the fetch
+/// signatures free of channel types; the caller re-tags onto its own
+/// channel. Single-page fetches never call it and stay indeterminate.
+async fn fetch_comment_pages(
+    client: &reqwest::Client,
+    base: &str,
+    repo: &str,
+    number: u64,
+    bearer: &str,
+    count: u64,
+    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> Result<Vec<Comment>, String> {
     let mut pages = Vec::new();
     let total = count.div_ceil(100);
     // Bound the number of simultaneous requests for unusually large threads.
@@ -362,11 +386,24 @@ async fn fetch_comment_pages(client: &reqwest::Client, base: &str, repo: &str, n
         while let Some(result) = tasks.join_next().await {
             pages.push(result.map_err(|e| format!("comment fetch failed: {e}"))??);
         }
+        // Multi-page threads only: a single page is one request and stays
+        // indeterminate like every other single-request fetch.
+        if total > 1 {
+            if let Some(report) = progress {
+                report(pages.len(), total as usize);
+            }
+        }
     }
     Ok(model::merge_comment_pages(pages))
 }
 
-pub async fn issue(repo: &str, number: u64, bearer: &str, cached_comments: Option<Vec<Comment>>) -> Result<(IssueData, Statuses), String> {
+pub async fn issue(
+    repo: &str,
+    number: u64,
+    bearer: &str,
+    cached_comments: Option<Vec<Comment>>,
+    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> Result<(IssueData, Statuses), String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
     let client = client();
@@ -380,7 +417,7 @@ pub async fn issue(repo: &str, number: u64, bearer: &str, cached_comments: Optio
     else if let Some(state) = v["state"].as_str() { v["state"] = json!(state.to_uppercase()); }
     let comments = match cached_comments {
         Some(comments) => comments,
-        None => fetch_comment_pages(&client, &base, repo, number, bearer, v["comments"].as_u64().ok_or("missing comment count")?).await?,
+        None => fetch_comment_pages(&client, &base, repo, number, bearer, v["comments"].as_u64().ok_or("missing comment count")?, progress).await?,
     };
     v["comments"] = json!(comments);
     v["isPr"] = json!(is_pr);

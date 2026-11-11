@@ -1069,6 +1069,10 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
 }
 
+/// Status bar spinner frames, stepped by the event-loop tick. Braille
+/// dots read as motion at a glance and stay one cell wide.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, base, ink, muted, paper};
     if app.focus == crate::app::Focus::Bar {
@@ -1093,6 +1097,9 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         f.set_cursor_position((area.x + (2 + text.len() as u16).min(area.width.saturating_sub(1)), area.y));
         return;
     }
+    let hint = "? for shortcuts";
+    let hint_width = hint.len() as u16;
+    let left_width = area.width.saturating_sub(hint_width + 1);
     let mut segments: Vec<(String, bool)> = Vec::new();
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
         segments.push((format!("\u{f1d3} {repo}"), false));
@@ -1103,6 +1110,22 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
             segments.push((format!("\u{f0db} {title}{suffix}"), false));
         }
     }
+    // Loading spinner between project and message: muted, with
+    // determinate `n/m` where known. Explicit messages win, so the
+    // derivation already hides this under one; empty collapses per the
+    // existing rule. The label truncates first so the `?` hint never
+    // shrinks, keeping the 80-cell bar intact.
+    let loads = crate::core::loading(&app.fetch_state());
+    if !loads.is_empty() {
+        let label = crate::core::loading_label(&loads);
+        let used: usize = segments.iter().map(|(s, _)| s.chars().count()).sum::<usize>();
+        let room = (left_width as usize).saturating_sub(used + segments.len() * 3 + 2);
+        if room > 0 {
+            let shown = crate::core::toast_snippet(&label, room.max(1));
+            let frame = SPINNER[(app.tick as usize) % SPINNER.len()];
+            segments.push((format!("{frame} {shown}"), false));
+        }
+    }
     if app.message_visible() && !app.message.is_empty() {
         segments.push((format!("\u{f071} {}", app.message), true));
     }
@@ -1111,9 +1134,6 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         if i > 0 { spans.push(Span::styled(" · ", Style::new().fg(muted()))); }
         spans.push(Span::styled(text, Style::new().fg(if accent { amber() } else { paper() })));
     }
-    let hint = "? for shortcuts";
-    let hint_width = hint.len() as u16;
-    let left_width = area.width.saturating_sub(hint_width + 1);
     f.render_widget(Paragraph::new(Line::from(spans)).style(base()), Rect::new(area.x, area.y, left_width, area.height));
     if area.width >= hint_width {
         f.render_widget(Paragraph::new(hint).style(Style::new().bg(ink()).fg(muted())), Rect::new(area.x + area.width - hint_width, area.y, hint_width, area.height));
@@ -1487,6 +1507,72 @@ mod render_smoke {
         assert!(text.contains("Fetching"), "skeleton title");
     }
 
+    /// 80-cell bar text, so tests can assert the hint survives truncation.
+    fn frame_text_narrow(app: &mut App, width: u16) -> String {
+        let backend = TestBackend::new(width, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn bar_shows_spinner_while_loading_then_collapses() {
+        let mut app = loaded_app();
+        app.tick = 0;
+        app.issue_pending.insert(7);
+        let text = frame_text(&mut app);
+        assert!(text.contains("⠋ issue"), "spinner plus label: {text}");
+        // Determinate progress rides the label where known.
+        app.issue_progress.insert(7, (2, 7));
+        let text = frame_text(&mut app);
+        assert!(text.contains("issue 2/7"), "determinate progress: {text}");
+        // The spinner animates off the cheap frame tick.
+        app.tick = 1;
+        let text = frame_text(&mut app);
+        assert!(text.contains("⠙ issue 2/7"), "next frame: {text}");
+        // Done means collapsed, not blank space.
+        app.issue_pending.clear();
+        app.issue_progress.clear();
+        let text = frame_text(&mut app);
+        assert!(!text.contains("⠋") && !text.contains("⠙"), "spinner gone: {text}");
+    }
+
+    #[test]
+    fn bar_message_wins_over_spinner() {
+        let mut app = loaded_app();
+        app.issue_pending.insert(7);
+        app.issue_progress.insert(7, (2, 7));
+        app.notify("refreshed #7".to_string());
+        let text = frame_text(&mut app);
+        assert!(text.contains("refreshed #7"), "message shows: {text}");
+        assert!(!text.contains("2/7"), "spinner yields: {text}");
+    }
+
+    #[test]
+    fn bar_loading_fits_the_80_cell_bar() {
+        let mut app = loaded_app();
+        app.issue_pending.insert(7);
+        app.diff_pending.insert(9);
+        app.graph_pending.insert(7);
+        app.detail_pending.insert(100);
+        app.board_loading = true;
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.section_rx = Some(rx);
+        let _ = tx.send(crate::github::SectionEvent::Progress { done: 120, total: 500 });
+        crate::app::poll_sections(&mut app);
+        // Narrow render must not panic, and the `?` hint always survives:
+        // the loading label truncates first, never the hint.
+        let text = frame_text_narrow(&mut app, 80);
+        assert!(text.contains("? for shortcuts"), "hint survives: {text}");
+        assert!(text.contains("⠋"), "spinner shows: {text}");
+    }
+
     #[test]
     fn board_cards_show_labels_not_status() {
         let mut app = board_app(3);
@@ -1656,7 +1742,7 @@ mod render_smoke {
         app.show_issue(42);
         assert_eq!(app.visited, Vec::<u64>::new());
         // Background fetch lands.
-        app.issue_tx.send((42, Ok((d, vec![])))).unwrap();
+        app.issue_tx.send((42, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
         poll_issues(&mut app);
         assert_eq!(app.visited, Vec::<u64>::new());
         let (_, _, recent) = app.pane_groups(true, false);
@@ -1854,7 +1940,7 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('e')));
         let mut d = sample(7);
         d.body = "see #9".to_string();
-        app.issue_tx.send((7, Ok((d, vec![])))).unwrap();
+        app.issue_tx.send((7, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
         crate::app::poll_issues(&mut app);
         assert_eq!(app.ref_numbers, vec![9]);
     }
@@ -2219,7 +2305,7 @@ mod render_smoke {
         let mut issue = sample(42);
         issue.is_pr = true;
         issue.title = "background pull request".to_string();
-        tx.send(Ok(vec![crate::api::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false }])).unwrap();
+        tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::api::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false }]))).unwrap();
         poll_sections(&mut app);
         assert_eq!(app.current, Some(7));
         assert!(app.partial.contains(&42));

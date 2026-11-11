@@ -18,7 +18,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
-use crate::{api, cache, core, github, model};
+use crate::{cache, core, github, model};
 use crate::model::{BoardData, IssueData};
 
 /// The one executor for all background fetches. Tasks are cheap, so callers
@@ -70,11 +70,17 @@ pub(crate) struct App {
     pub(crate) repo_slug: Option<String>,
     pub(crate) bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
     pub(crate) initial_numbers: Vec<u64>,
-    pub(crate) section_rx: Option<std::sync::mpsc::Receiver<Result<Vec<api::Row>, String>>>,
+    pub(crate) section_rx: Option<std::sync::mpsc::Receiver<github::SectionEvent>>,
+    /// Section page progress: rows fetched vs the row cap, while pages
+    /// remain. Cleared when the terminal result lands.
+    pub(crate) section_progress: Option<(usize, usize)>,
     pub(crate) partial: HashSet<u64>,
-    pub(crate) issue_tx: std::sync::mpsc::Sender<(u64, Result<github::IssueBundle, String>)>,
-    pub(crate) issue_rx: std::sync::mpsc::Receiver<(u64, Result<github::IssueBundle, String>)>,
+    pub(crate) issue_tx: std::sync::mpsc::Sender<(u64, github::IssueEvent)>,
+    pub(crate) issue_rx: std::sync::mpsc::Receiver<(u64, github::IssueEvent)>,
     pub(crate) issue_pending: HashSet<u64>,
+    /// Comment-page progress per issue: pages done vs total. Cleared when
+    /// the terminal result lands.
+    pub(crate) issue_progress: HashMap<u64, (usize, usize)>,
     pub(crate) requested: Option<u64>,
     pub(crate) data: HashMap<u64, IssueData>,
     pub(crate) statuses: HashMap<u64, Vec<(String, Option<String>)>>,
@@ -186,6 +192,9 @@ pub(crate) struct App {
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
     // Board modal.
     pub(crate) board: Option<BoardData>,
+    /// Frame counter, bumped once per event-loop pass. Drives the status
+    /// bar spinner; cheap because the loop already redraws every pass.
+    pub(crate) tick: u64,
     pub(crate) board_col: usize,
     pub(crate) board_row: usize,
 }
@@ -202,8 +211,9 @@ impl App {
             bootstrap_rx: None,
             initial_numbers: vec![],
             section_rx: None,
+            section_progress: None,
             partial: HashSet::new(),
-            issue_tx, issue_rx, issue_pending: HashSet::new(), requested: None,
+            issue_tx, issue_rx, issue_pending: HashSet::new(), issue_progress: HashMap::new(), requested: None,
             data: HashMap::new(),
             statuses: HashMap::new(),
             visited: vec![],
@@ -235,6 +245,7 @@ impl App {
             issue_state: ListState::default(),
             pr_state: ListState::default(),
             board: None,
+            tick: 0,
             board_col: 0,
             board_row: 0,
             board_loading: false,
@@ -299,6 +310,25 @@ impl App {
         }
     }
 
+    /// Plain fetch snapshot for the status bar spinner. The pure `core`
+    /// derivation decides what shows; this only gathers the counts.
+    pub(crate) fn fetch_state(&self) -> core::FetchState {
+        // Concurrent comment fetches report separately: sum what is known.
+        let (done, total) = self.issue_progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
+        core::FetchState {
+            issues: self.issue_pending.len(),
+            diffs: self.diff_pending.len(),
+            graphs: self.graph_pending.len(),
+            details: self.detail_pending.len(),
+            sections_live: self.section_rx.is_some(),
+            bootstrap_live: self.bootstrap_rx.is_some(),
+            board: self.board_loading,
+            message_visible: self.message_visible(),
+            issue_progress: if self.issue_progress.is_empty() { None } else { Some((done, total)) },
+            section_progress: self.section_progress,
+        }
+    }
+
     pub(crate) fn repo_key(&self) -> Option<String> {
         let r = self
             .repo_flag
@@ -337,7 +367,8 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.section_rx = Some(rx);
         rt().spawn(async move {
-            let _ = tx.send(github::fetch_recent_sections(&repo, hours).await);
+            let result = github::fetch_recent_sections(&repo, hours, Some(tx.clone())).await;
+            let _ = tx.send(github::SectionEvent::Done(result));
         });
     }
 
@@ -363,7 +394,8 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.section_rx = Some(rx);
         rt().spawn(async move {
-            let _ = tx.send(github::search_repo(&repo, &query).await);
+            // Server search is a single request: indeterminate, no progress.
+            let _ = tx.send(github::SectionEvent::Done(github::search_repo(&repo, &query).await));
         });
     }
 
@@ -384,6 +416,7 @@ impl App {
     /// Remove every cached payload for `n` so a revisit fetches again.
     fn drop_cached(&mut self, n: u64) {
         self.partial.remove(&n);
+        self.issue_progress.remove(&n);
         self.data.remove(&n);
         self.statuses.remove(&n);
         self.board_details.remove(&n);
@@ -455,7 +488,8 @@ impl App {
         let tx = self.issue_tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         rt().spawn(async move {
-            let _ = tx.send((number, github::fetch_number(&repo, number, force).await));
+            let result = github::fetch_number(&repo, number, force, Some(tx.clone())).await;
+            let _ = tx.send((number, github::IssueEvent::Done(result)));
         });
     }
 
@@ -807,7 +841,8 @@ impl App {
             let tx = tx.clone();
             let repo = repo.clone();
             rt().spawn(async move {
-                let _ = tx.send((m, github::fetch_number(&repo, m, false).await));
+                let result = github::fetch_number(&repo, m, false, Some(tx.clone())).await;
+                let _ = tx.send((m, github::IssueEvent::Done(result)));
             });
         }
     }
@@ -1275,6 +1310,9 @@ fn event_loop(
     app: &mut App,
 ) -> Result<(), String> {
     loop {
+        // Cheap frame tick for the status bar spinner: one bump per pass,
+        // no timers, no extra wakeups.
+        app.tick = app.tick.wrapping_add(1);
         terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| e.to_string())?;
         if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
@@ -1318,58 +1356,75 @@ fn poll_bootstrap(app: &mut App) {
 }
 
 pub(crate) fn poll_sections(app: &mut App) {
-    let Some(result) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
-    app.section_rx = None;
-    if std::mem::take(&mut app.section_replace) {
-        app.drop_unvisited_background();
-    }
-    match result {
-        Ok(rows) => {
-            let mut last = None;
-            for row in rows {
-                let n = row.issue.number;
-                if !app.data.contains_key(&n) {
-                    if !row.complete { app.partial.insert(n); }
-                    app.data.insert(n, row.issue);
-                    app.statuses.insert(n, row.statuses);
-                    app.board_details.insert(n, row.detail);
-                    app.ensure_recent(n);
-                    last = Some(n);
-                }
+    let Some(event) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+    match event {
+        github::SectionEvent::Progress { done, total } => {
+            app.section_progress = Some((done, total));
+        }
+        github::SectionEvent::Done(result) => {
+            app.section_rx = None;
+            app.section_progress = None;
+            if std::mem::take(&mut app.section_replace) {
+                app.drop_unvisited_background();
             }
-            if app.current.is_none() && app.requested.is_none() {
-                if let Some(n) = last { app.load_issue(n, false); }
+            match result {
+                Ok(rows) => {
+                    let mut last = None;
+                    for row in rows {
+                        let n = row.issue.number;
+                        if !app.data.contains_key(&n) {
+                            if !row.complete { app.partial.insert(n); }
+                            app.data.insert(n, row.issue);
+                            app.statuses.insert(n, row.statuses);
+                            app.board_details.insert(n, row.detail);
+                            app.ensure_recent(n);
+                            last = Some(n);
+                        }
+                    }
+                    if app.current.is_none() && app.requested.is_none() {
+                        if let Some(n) = last { app.load_issue(n, false); }
+                    }
+                },
+                Err(e) => app.notify(e),
             }
-        },
-        Err(e) => app.notify(e),
+        }
     }
 }
 
 pub(crate) fn poll_issues(app: &mut App) {
     let ready: Vec<_> = app.issue_rx.try_iter().collect();
-    for (number, result) in ready {
-        app.issue_pending.remove(&number);
-        match result {
-            Ok((data, statuses)) => {
-                // Completing the full fetch never files the row: viewing a
-                // recent row must not relocate it to requested. Explicit
-                // actions file through `ensure_visited` at their own site.
-                app.partial.remove(&number);
-                app.data.insert(number, data);
-                app.statuses.insert(number, statuses);
-                if app.current == Some(number) {
-                    app.refresh_refs();
-                    if app.visual_graph() { app.load_graph(number, false); }
-                    if app.visual_diff() { app.load_diff(number, false); }
-                }
-                if app.requested == Some(number) {
-                    app.show_issue(number);
-                    app.bar.clear();
-                    app.focus = Focus::Main;
-                    app.message.clear();
+    for (number, event) in ready {
+        match event {
+            github::IssueEvent::Progress { done, total } => {
+                app.issue_progress.insert(number, (done, total));
+            }
+            github::IssueEvent::Done(result) => {
+                app.issue_progress.remove(&number);
+                app.issue_pending.remove(&number);
+                match result {
+                    Ok((data, statuses)) => {
+                        // Completing the full fetch never files the row:
+                        // viewing a recent row must not relocate it to
+                        // requested. Explicit actions file through
+                        // `ensure_visited` at their own site.
+                        app.partial.remove(&number);
+                        app.data.insert(number, data);
+                        app.statuses.insert(number, statuses);
+                        if app.current == Some(number) {
+                            app.refresh_refs();
+                            if app.visual_graph() { app.load_graph(number, false); }
+                            if app.visual_diff() { app.load_diff(number, false); }
+                        }
+                        if app.requested == Some(number) {
+                            app.show_issue(number);
+                            app.bar.clear();
+                            app.focus = Focus::Main;
+                            app.message.clear();
+                        }
+                    }
+                    Err(e) => app.notify(e),
                 }
             }
-            Err(e) => app.notify(e),
         }
     }
 }
@@ -1550,6 +1605,37 @@ mod tests {
     }
 
     #[test]
+    fn issue_progress_rides_the_issue_channel() {
+        let mut app = sidebar_app(&[7]);
+        app.issue_pending.insert(9);
+        app.issue_tx.send((9, github::IssueEvent::Progress { done: 2, total: 7 })).unwrap();
+        poll_issues(&mut app);
+        assert_eq!(app.issue_progress.get(&9), Some(&(2, 7)));
+        assert!(app.issue_pending.contains(&9), "progress is not completion");
+        let fresh = issue(9, "2026-01-06T00:00:00Z");
+        app.issue_tx.send((9, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        poll_issues(&mut app);
+        assert!(!app.issue_progress.contains_key(&9), "terminal result clears progress");
+        assert!(!app.issue_pending.contains(&9));
+        assert!(app.data.contains_key(&9));
+    }
+
+    #[test]
+    fn section_progress_rides_the_section_channel() {
+        let mut app = sidebar_app(&[7]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.section_rx = Some(rx);
+        tx.send(github::SectionEvent::Progress { done: 120, total: 500 }).unwrap();
+        poll_sections(&mut app);
+        assert_eq!(app.section_progress, Some((120, 500)));
+        assert!(app.section_rx.is_some(), "progress keeps the receiver live");
+        tx.send(github::SectionEvent::Done(Ok(vec![]))).unwrap();
+        poll_sections(&mut app);
+        assert_eq!(app.section_progress, None);
+        assert!(app.section_rx.is_none(), "terminal result releases the receiver");
+    }
+
+    #[test]
     fn evicted_row_can_be_refetched_on_revisit() {
         let mut app = sidebar_app(&[7, 9]);
         app.current = Some(7);
@@ -1560,7 +1646,7 @@ mod tests {
         assert!(app.issue_numbers().contains(&7), "row is listable again");
         // The refetch lands through the normal poll path.
         let fresh = issue(7, "2026-01-06T00:00:00Z");
-        app.issue_tx.send((7, Ok((fresh, vec![])))).unwrap();
+        app.issue_tx.send((7, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
         poll_issues(&mut app);
         assert!(app.data.contains_key(&7));
     }
