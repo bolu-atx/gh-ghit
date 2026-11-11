@@ -70,9 +70,12 @@ in either palette, or repeated status info. Procedure:
 
 ## Coordinator owns e2e coverage
 
-Each coordinated interactive change adds one scenario: scripted
-input plus expected pane rows. The coordinator picks it from the
-touched control, records the exact `send-keys` / `capture-pane`
-lines, and requires the matching `render_smoke` frame test for UI
-changes, using the template in [verification.md](verification.md).
-No scenario, no sign-off.
+Each coordinated user-visible change adds one scenario:
+scripted input plus expected pane rows. Visible means new or
+changed controls, flows, or layout. Optimization, config,
+refactor, and data-layer work with no visible change needs no
+scenario. The coordinator picks it from the touched control,
+records the exact `send-keys` / `capture-pane` lines, and requires
+the matching `render_smoke` frame test for UI changes, using the
+template in [verification.md](verification.md). No scenario for a
+visible change, no sign-off.

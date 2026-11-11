@@ -24,8 +24,10 @@ repeated status info.
 
 ## E2e scenario template
 
-Each coordinated interactive change adds one scenario to the PR
-body, plus the matching `render_smoke` frame test for UI changes.
+Each coordinated user-visible change adds one scenario to the
+PR body, plus the matching `render_smoke` frame test for UI
+changes. Optimization, config, refactor, and data-layer work with
+no visible change needs no scenario.
 
 - Touched control:
 - `send-keys`:
