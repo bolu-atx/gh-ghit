@@ -188,6 +188,11 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('p') => app.toggle_pin(),
         KeyCode::Char('y') => app.yank(),
         KeyCode::Char('e') => app.toggle_refs(),
+        // Sidebar-only: a cycles the row sort, A flips its direction, and
+        // x evicts the highlighted row. Diff keeps s for split.
+        KeyCode::Char('a') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.cycle_sort(),
+        KeyCode::Char('A') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.toggle_sort_dir(),
+        KeyCode::Char('x') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
         KeyCode::Char('s') if app.tab == Tab::Diff => app.toggle_diff_split(),
         KeyCode::Char(' ') if app.tab == Tab::Diff => app.toggle_diff_file(),
         KeyCode::Char(' ') => app.toggle_row_expansion(),

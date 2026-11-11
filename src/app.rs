@@ -97,6 +97,9 @@ pub(crate) struct App {
     /// `searching` is true only while editing it in the bar.
     pub(crate) search: String,
     pub(crate) searching: bool,
+    /// Client-side sort for both sidebar panes: key plus direction.
+    pub(crate) sort: core::SideSort,
+    pub(crate) sort_desc: bool,
     /// Filter dialog (`f`) state.
     pub(crate) shortcuts_open: bool,
     pub(crate) filter_open: bool,
@@ -216,6 +219,8 @@ impl App {
             bar: String::new(),
             search: String::new(),
             searching: false,
+            sort: core::SideSort::Default,
+            sort_desc: false,
             shortcuts_open: false,
             filter_open: false,
             query_edit: false,
@@ -373,16 +378,67 @@ impl App {
         self.recent.retain(|n| keep.contains(n));
         for n in self.partial.iter().copied().collect::<Vec<_>>() {
             if !keep.contains(&n) {
-                self.partial.remove(&n);
-                self.data.remove(&n);
-                self.statuses.remove(&n);
-                self.board_details.remove(&n);
-                self.diffs.remove(&n);
-                self.diff_pending.remove(&n);
-                self.graphs.remove(&n);
-                self.graph_pending.remove(&n);
+                self.drop_cached(n);
             }
         }
+    }
+
+    /// Remove every cached payload for `n` so a revisit fetches again.
+    fn drop_cached(&mut self, n: u64) {
+        self.partial.remove(&n);
+        self.data.remove(&n);
+        self.statuses.remove(&n);
+        self.board_details.remove(&n);
+        self.diffs.remove(&n);
+        self.diff_pending.remove(&n);
+        self.graphs.remove(&n);
+        self.graph_pending.remove(&n);
+    }
+
+    /// Evict the highlighted sidebar row: drop it from the pane lists and
+    /// every cached payload, then put the cursor on the next row (falling
+    /// back to the previous one at the end). Pinned rows resist until
+    /// unpinned with `p`; a revisit refetches from the network.
+    pub(crate) fn evict_current(&mut self) {
+        if !matches!(self.pane, Pane::Issues | Pane::PRs) {
+            return;
+        }
+        let Some(n) = self.current else {
+            self.notify("no row to evict".to_string());
+            return;
+        };
+        if self.pinned.contains(&n) || self.pin_order.contains(&n) {
+            self.notify(format!("#{n} is pinned — unpin with p first"));
+            return;
+        }
+        let order = match self.pane {
+            Pane::Issues => self.issue_numbers(),
+            Pane::PRs => self.pr_numbers(),
+            _ => return,
+        };
+        let Some(pos) = order.iter().position(|x| *x == n) else { return };
+        self.visited.retain(|x| *x != n);
+        self.recent.retain(|x| *x != n);
+        self.expanded_rows.remove(&n);
+        if self.ref_highlight == Some(n) {
+            self.ref_highlight = None;
+        }
+        self.drop_cached(n);
+        let next = order
+            .get(pos + 1)
+            .copied()
+            .or_else(|| pos.checked_sub(1).and_then(|i| order.get(i)).copied());
+        match next {
+            Some(next) => self.show_issue(next),
+            None => {
+                self.current = None;
+                self.requested = None;
+                self.ref_numbers.clear();
+                self.scroll = 0;
+                self.sync_selection();
+            }
+        }
+        self.notify(format!("evicted #{n}"));
     }
 
     pub(crate) fn window_label(&self) -> String {
@@ -451,7 +507,8 @@ impl App {
 
     /// (pinned, requested, recent) for one pane. When `filtered`, the `/`
     /// query narrows rows; the committed highlight in `search` always
-    /// applies at render through `section_list`.
+    /// applies at render through `section_list`. Each group keeps its
+    /// section order but is sorted by the active client-side key.
     pub(crate) fn pane_groups(&self, want_pr: bool, filtered: bool) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
         let (p, v, r) = self.sections();
         let q = self.search.clone();
@@ -463,11 +520,33 @@ impl App {
                 })
                 .collect()
         };
-        let pinned = pick(p);
-        let requested = pick(v);
-        let mut recent = pick(r);
+        let sorted = |list: Vec<u64>| -> Vec<u64> {
+            core::sort_rows(list, self.sort, self.sort_desc, &self.data)
+        };
+        let pinned = sorted(pick(p));
+        let requested = sorted(pick(v));
+        let mut recent = sorted(pick(r));
         recent.retain(|n| self.recent_visible(*n));
         (pinned, requested, recent)
+    }
+
+    /// One key cycles the sort key; each key starts in its natural
+    /// direction (updated newest first, text A→Z).
+    pub(crate) fn cycle_sort(&mut self) {
+        self.sort = self.sort.next();
+        self.sort_desc = self.sort.natural_desc();
+    }
+
+    /// Flip the active sort direction. Default order has nothing to flip.
+    pub(crate) fn toggle_sort_dir(&mut self) {
+        if self.sort != core::SideSort::Default {
+            self.sort_desc = !self.sort_desc;
+        }
+    }
+
+    /// `/` bar hint label for the active sort.
+    pub(crate) fn sort_label(&self) -> String {
+        self.sort.label(self.sort_desc)
     }
 
     /// Display rows for the Issues pane, dividers marking group slots.
@@ -1319,6 +1398,38 @@ pub(crate) fn poll_graphs(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Author, Label};
+
+    fn issue(number: u64, updated: &str) -> IssueData {
+        IssueData {
+            number,
+            title: format!("issue {number}"),
+            state: "OPEN".to_string(),
+            author: Author { login: "bo".to_string() },
+            labels: vec![],
+            assignees: vec![],
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: updated.to_string(),
+            url: format!("https://github.com/o/r/issues/{number}"),
+            body: String::new(),
+            comments: vec![],
+            review_threads: vec![],
+            is_pr: false,
+        }
+    }
+
+    fn sidebar_app(numbers: &[u64]) -> App {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for &n in numbers {
+            app.data.insert(n, issue(n, "2026-01-05T00:00:00Z"));
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        app.current = numbers.first().copied();
+        app.sync_selection();
+        app
+    }
 
     #[test]
     fn toggle_row_expansion_is_sticky_and_keyed_by_number() {
@@ -1353,5 +1464,96 @@ mod tests {
         let before = app.expanded_rows.clone();
         app.toggle_row_expansion();
         assert_eq!(app.expanded_rows, before);
+    }
+
+    #[test]
+    fn sort_cycle_orders_rows_and_restores_default() {
+        let mut app = sidebar_app(&[7, 9, 11]);
+        app.data.get_mut(&7).unwrap().updated_at = "2026-01-05T00:00:00Z".to_string();
+        app.data.get_mut(&9).unwrap().updated_at = "2026-01-09T00:00:00Z".to_string();
+        app.data.get_mut(&11).unwrap().updated_at = "2026-01-01T00:00:00Z".to_string();
+        assert_eq!(app.issue_numbers(), vec![7, 9, 11]);
+        app.cycle_sort();
+        assert_eq!(app.sort, core::SideSort::Updated);
+        assert_eq!(app.issue_numbers(), vec![9, 7, 11], "newest first");
+        app.toggle_sort_dir();
+        assert_eq!(app.issue_numbers(), vec![11, 7, 9], "direction flips");
+        for _ in 0..4 {
+            app.cycle_sort();
+        }
+        assert_eq!(app.sort, core::SideSort::Default);
+        assert_eq!(app.issue_numbers(), vec![7, 9, 11], "default order is back");
+    }
+
+    #[test]
+    fn sort_applies_to_the_prs_pane_too() {
+        let mut app = sidebar_app(&[7]);
+        for (n, updated) in [(13, "2026-01-03T00:00:00Z"), (15, "2026-01-08T00:00:00Z")] {
+            let mut pr = issue(n, updated);
+            pr.is_pr = true;
+            app.data.insert(n, pr);
+            app.statuses.insert(n, vec![]);
+            app.visited.push(n);
+        }
+        assert_eq!(app.pr_numbers(), vec![13, 15]);
+        app.cycle_sort();
+        assert_eq!(app.pr_numbers(), vec![15, 13], "PRs sort newest first");
+        assert_eq!(app.issue_numbers(), vec![7], "panes stay separate");
+    }
+
+    #[test]
+    fn evict_drops_row_and_cached_data_then_moves_cursor() {
+        let mut app = sidebar_app(&[7, 9]);
+        app.current = Some(7);
+        app.expanded_rows.insert(7);
+        app.diffs.insert(7, vec![]);
+        app.graphs.insert(7, model::GraphData::default());
+        app.evict_current();
+        assert!(!app.visited.contains(&7));
+        assert!(!app.data.contains_key(&7), "data dropped");
+        assert!(!app.statuses.contains_key(&7), "status dropped");
+        assert!(!app.diffs.contains_key(&7), "diff dropped");
+        assert!(!app.graphs.contains_key(&7), "graph dropped");
+        assert!(!app.expanded_rows.contains(&7), "expansion dropped");
+        assert_eq!(app.current, Some(9), "cursor falls to the next row");
+        assert_eq!(app.issue_numbers(), vec![9]);
+    }
+
+    #[test]
+    fn evict_refuses_pinned_rows() {
+        let mut app = sidebar_app(&[7]);
+        app.current = Some(7);
+        app.pinned.insert(7);
+        app.pin_order.push(7);
+        app.evict_current();
+        assert!(app.data.contains_key(&7), "pinned row stays");
+        assert!(app.visited.contains(&7));
+        assert_eq!(app.current, Some(7));
+        assert!(app.message.contains("pinned"), "{}", app.message);
+    }
+
+    #[test]
+    fn evict_falls_back_to_previous_row_at_the_end() {
+        let mut app = sidebar_app(&[7, 9]);
+        app.current = Some(9);
+        app.evict_current();
+        assert_eq!(app.current, Some(7));
+        assert_eq!(app.issue_numbers(), vec![7]);
+    }
+
+    #[test]
+    fn evicted_row_can_be_refetched_on_revisit() {
+        let mut app = sidebar_app(&[7, 9]);
+        app.current = Some(7);
+        app.evict_current();
+        assert!(!app.data.contains_key(&7), "cache dropped so a revisit fetches");
+        assert!(!app.issue_pending.contains(&7), "no stale in-flight marker");
+        app.ensure_visited(7);
+        assert!(app.issue_numbers().contains(&7), "row is listable again");
+        // The refetch lands through the normal poll path.
+        let fresh = issue(7, "2026-01-06T00:00:00Z");
+        app.issue_tx.send((7, Ok((fresh, vec![])))).unwrap();
+        poll_issues(&mut app);
+        assert!(app.data.contains_key(&7));
     }
 }

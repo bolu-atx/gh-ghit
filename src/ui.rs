@@ -151,7 +151,8 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
         "  1/2/3 body/comments/diff · e refs · n/N search matches", "",
         "Actions", "  : command · / find · f filter · b board · w window",
-        "  o open · r refresh · p pin · y yank · t theme · q quit", "",
+        "  o open · r refresh · p pin · y yank · t theme · q quit",
+        "  a sort · A reverse · x evict", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open", "",
         "Diff", "  ↑/↓ lines · space expand · s split", "",
         "Esc / ? / q close",
@@ -353,6 +354,7 @@ fn section_list(
     inner_width: usize,
     mark: Option<u64>,
     focused: bool,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> List<'static> {
     use crate::theme::{amber, code_bg, ink, muted, paper, state_color};
     use crate::model::SideRow;
@@ -382,14 +384,22 @@ fn section_list(
         } else {
             Style::new().fg(muted())
         };
-        let (title_text, body, seg) = match app.data.get(n) {
+        let (title_text, labels, updated, status) = match app.data.get(n) {
             Some(d) => {
                 let st = app.statuses.get(n).cloned().unwrap_or_default();
-                let (_, b, s) =
-                    model::sidebar_lines(*n, &d.title, &d.labels, &st, 38, app.pinned.contains(n));
-                (model::slug(&d.title, 30), b, s)
+                let (_, labels, updated, status) = model::sidebar_lines(
+                    *n,
+                    &d.title,
+                    &d.labels,
+                    &st,
+                    &d.updated_at,
+                    now,
+                    38,
+                    app.pinned.contains(n),
+                );
+                (model::slug(&d.title, 30), labels, updated, status)
             }
-            None => (String::new(), String::new(), String::new()),
+            None => (String::new(), String::new(), String::new(), String::new()),
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
@@ -409,16 +419,26 @@ fn section_list(
         ];
         first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
         first.extend(highlighted_spans(title_text, &query, title_style));
-        // Project status in the board color with the board glyph.
-        let seg_color = crate::theme::column_color(&seg);
-        let mut lines = vec![
-            Line::from(first),
-            Line::from(vec![
-                Span::raw("    "),
-                Span::styled(body, Style::new().fg(muted())),
-                Span::styled(seg, Style::new().fg(seg_color)),
-            ]),
-        ];
+        // Second line: labels · relative updated · project status. Empty
+        // segments collapse; the status keeps the board color and glyph.
+        let status_color = crate::theme::column_color(&status);
+        let mut second = vec![Span::raw("    ")];
+        let mut first_segment = true;
+        for (text, style) in [
+            (labels, Style::new().fg(muted())),
+            (updated, Style::new().fg(muted())),
+            (status, Style::new().fg(status_color)),
+        ] {
+            if text.is_empty() {
+                continue;
+            }
+            if !first_segment {
+                second.push(Span::styled(" · ", Style::new().fg(muted())));
+            }
+            first_segment = false;
+            second.push(Span::styled(text, style));
+        }
+        let mut lines = vec![Line::from(first), Line::from(second)];
         if app.expanded_rows.contains(n) {
             if let Some(d) = data {
                 lines.extend(expanded_row_lines(d, inner_width));
@@ -859,6 +879,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.side_issue_rows = issue_rows.clone();
     app.side_pr_rows = pr_rows.clone();
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
+    let now = chrono::Utc::now();
     let issues_focused = app.pane == crate::app::Pane::Issues;
     let il = section_list(
         // Nerd Font Font Awesome fa-exclamation-circle.
@@ -868,6 +889,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         inner(panes[0]),
         None,
         issues_focused,
+        now,
     );
     let mut istate = std::mem::take(&mut app.issue_state);
     istate.select(selected_index(&issue_rows, app.current));
@@ -882,6 +904,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         inner(panes[1]),
         None,
         prs_focused,
+        now,
     );
     let mut pstate = std::mem::take(&mut app.pr_state);
     pstate.select(selected_index(&pr_rows, app.current));
@@ -906,6 +929,7 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         inner,
         app.ref_highlight,
         refs_focused,
+        chrono::Utc::now(),
     );
     let mut state = std::mem::take(&mut app.refs_state);
     let sel = app
@@ -1113,8 +1137,17 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let text = if app.searching { &app.search } else { &app.bar };
         let prompt = if app.searching { "/ " } else { "❯ " };
         let shown = if text.is_empty() {
-            if app.searching { "instant filter loaded: title, #n, label, author …" } else { "type #123, o, q …" }
-        } else { text };
+            if app.searching {
+                format!(
+                    "instant filter loaded: title, #n, label, author · sort {} (a/A) …",
+                    app.sort_label()
+                )
+            } else {
+                "type #123, o, q …".to_string()
+            }
+        } else {
+            text.clone()
+        };
         f.render_widget(Paragraph::new(Line::from(vec![
             Span::styled(prompt, Style::new().fg(amber()).bold()),
             Span::styled(shown, Style::new().fg(if text.is_empty() { muted() } else { paper() })),
@@ -2069,6 +2102,37 @@ mod render_smoke {
 
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert_eq!(sidebar_text(&mut app), collapsed, "collapse restores the row");
+    }
+
+    #[test]
+    fn sidebar_rows_show_labels_updated_and_status_and_sort_hint() {
+        let mut app = loaded_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.labels = vec![Label { name: "bug".to_string() }];
+        d.updated_at = "2020-01-05T00:00:00Z".to_string();
+        app.statuses.insert(7, vec![("Roadmap".to_string(), Some("Todo".to_string()))]);
+        let mut newer = sample(5);
+        newer.updated_at = "2020-02-05T00:00:00Z".to_string();
+        app.data.insert(5, newer);
+        app.statuses.insert(5, vec![]);
+        app.visited.push(5);
+        app.show_issue(7);
+
+        let text = sidebar_text(&mut app);
+        assert!(text.contains("● bug · 01/05/20"), "labels and date: {text}");
+        assert!(text.contains("01/05/20 · \u{f10c} Todo"), "date and status: {text}");
+
+        // One key cycles the sort; the `/` hint names key and direction.
+        handle_key(&mut app, key(KeyCode::Char('a')));
+        assert_eq!(app.sort, crate::core::SideSort::Updated);
+        let sorted = sidebar_text(&mut app);
+        assert!(
+            sorted.find("#5").unwrap_or(usize::MAX) < sorted.find("#7").unwrap_or(usize::MAX),
+            "newest row first: {sorted}"
+        );
+        handle_key(&mut app, key(KeyCode::Char('/')));
+        let text = frame_text(&mut app);
+        assert!(text.contains("sort updated ↓"), "sort hint: {text}");
     }
 
     #[test]

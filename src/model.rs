@@ -587,66 +587,88 @@ pub fn board_columns<'a>(items: &'a [BoardItem], order: &[String]) -> Vec<(Strin
     cols
 }
 
-/// Sidebar row: `#n title` on line one, label chips plus the project
-/// status on line two. Returns `(first, body, status)` with the status
-/// segment split out so the UI can paint it in the board color with the
-/// board glyph; `body` already carries the trailing pad so the joined
-/// row still fills exactly `width` cells.
+/// Relative updated time for a sidebar row: under 60 min → `N min ago`,
+/// under 24 h → `N hr ago`, under 30 days → `N day ago`, under 12 months
+/// (30-day months) → `N m ago`, else `mm/dd/yy`. Future stamps clamp to
+/// `0 min ago`; unparseable stamps collapse the segment.
+pub fn relative_updated(updated_at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::Datelike;
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(updated_at) else {
+        return String::new();
+    };
+    let stamp = parsed.with_timezone(&chrono::Utc);
+    let secs = now.signed_duration_since(stamp).num_seconds().max(0);
+    const MIN: i64 = 60;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+    const MONTH: i64 = 30 * DAY;
+    if secs < HOUR {
+        format!("{} min ago", secs / MIN)
+    } else if secs < DAY {
+        format!("{} hr ago", secs / HOUR)
+    } else if secs < MONTH {
+        format!("{} day ago", secs / DAY)
+    } else if secs < 12 * MONTH {
+        format!("{} m ago", secs / MONTH)
+    } else {
+        format!("{:02}/{:02}/{:02}", stamp.month(), stamp.day(), stamp.year().rem_euclid(100))
+    }
+}
+
+/// Sidebar row: `#n title` on line one; line two is up to three `·`
+/// separated segments — label chips, relative updated time, project
+/// status. Returns `(first, labels, updated, status)`; empty segments
+/// collapse and labels truncate first so date and status always fit.
+/// The status segment comes back separately so the UI can paint it in the
+/// board color with the board glyph.
 pub fn sidebar_lines(
     number: u64,
     title: &str,
     labels: &[Label],
     statuses: &[(String, Option<String>)],
+    updated_at: &str,
+    now: chrono::DateTime<chrono::Utc>,
     width: usize,
     pinned: bool,
-) -> (String, String, String) {
+) -> (String, String, String, String) {
     let first = format!("#{}{} {}", number, if pinned { " 📌" } else { "" }, slug(title, 30.min(width)));
-    let status = status_text(statuses);
-    let icon = crate::theme::column_icon(&status);
-    let seg = if status.is_empty() {
+    let plain_status = status_text(statuses);
+    let status = if plain_status.is_empty() {
         String::new()
-    } else if icon.is_empty() {
-        status.clone()
     } else {
-        format!("{icon} {status}")
+        let icon = crate::theme::column_icon(&plain_status);
+        if icon.is_empty() { plain_status } else { format!("{icon} {plain_status}") }
     };
-    let status_w = seg.chars().count();
+    let updated = relative_updated(updated_at, now);
+    // Fixed cost: the date and status segments plus their ` · ` separator.
+    let fixed = updated.chars().count()
+        + status.chars().count()
+        + if !updated.is_empty() && !status.is_empty() { 3 } else { 0 };
+    // Labels also pay one separator when another segment follows them.
+    let room = width
+        .saturating_sub(fixed)
+        .saturating_sub(if fixed > 0 { 3 } else { 0 });
     let chips: Vec<String> = labels.iter().map(|l| format!("● {}", l.name)).collect();
-    let mut second = String::new();
-    let room = if seg.is_empty() {
-        width
-    } else {
-        width.saturating_sub(status_w + 1)
-    };
+    let mut labels_text = String::new();
     let mut used = 0;
     for (i, chip) in chips.iter().enumerate() {
-        let add = chip.len() + 2;
+        let add = chip.chars().count() + if i > 0 { 2 } else { 0 };
         if used + add > room {
             if i == 0 {
-                second.push_str(&format!("+{} labels", chips.len()));
+                let tail = format!("+{} labels", chips.len());
+                if tail.chars().count() <= room {
+                    labels_text = tail;
+                }
             }
             break;
         }
         if i > 0 {
-            second.push_str("  ");
+            labels_text.push_str("  ");
         }
-        second.push_str(chip);
+        labels_text.push_str(chip);
         used += add;
     }
-    if second.is_empty() && !chips.is_empty() {
-        second = format!("+{} labels", chips.len());
-    } else if second.is_empty() {
-        second = "–".to_string();
-    }
-    let (body, seg) = if seg.is_empty() {
-        (second, String::new())
-    } else {
-        let pad = width
-            .saturating_sub(second.chars().count() + status_w)
-            .max(1);
-        (format!("{}{}", second, " ".repeat(pad)), seg)
-    };
-    (first, body, seg)
+    (first, labels_text, updated, status)
 }
 
 #[cfg(test)]
@@ -776,15 +798,69 @@ mod tests {
         assert_eq!(status_text(&[]), "");
     }
 
+    fn at(stamp: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(stamp).unwrap().with_timezone(&chrono::Utc)
+    }
+
     #[test]
-    fn sidebar_row_ends_with_status() {
+    fn relative_time_buckets_at_each_boundary() {
+        let now = at("2026-11-10T12:00:00Z");
+        assert_eq!(relative_updated("2026-11-10T12:00:00Z", now), "0 min ago");
+        assert_eq!(relative_updated("2026-11-10T11:00:01Z", now), "59 min ago");
+        assert_eq!(relative_updated("2026-11-10T11:00:00Z", now), "1 hr ago");
+        assert_eq!(relative_updated("2026-11-09T12:00:01Z", now), "23 hr ago");
+        assert_eq!(relative_updated("2026-11-09T12:00:00Z", now), "1 day ago");
+        assert_eq!(relative_updated("2026-10-11T12:00:01Z", now), "29 day ago");
+        assert_eq!(relative_updated("2026-10-11T12:00:00Z", now), "1 m ago");
+        assert_eq!(relative_updated("2025-11-16T12:00:00Z", now), "11 m ago");
+        assert_eq!(relative_updated("2025-11-15T12:00:00Z", now), "11/15/25");
+        // Future stamps clamp; unparseable stamps collapse the segment.
+        assert_eq!(relative_updated("2026-11-10T12:00:01Z", now), "0 min ago");
+        assert_eq!(relative_updated("not a date", now), "");
+    }
+
+    #[test]
+    fn relative_time_old_date_reads_mm_dd_yy() {
+        let now = at("2026-11-10T12:00:00Z");
+        assert_eq!(relative_updated("2020-01-05T00:00:00Z", now), "01/05/20");
+    }
+
+    #[test]
+    fn sidebar_row_joins_labels_date_and_status() {
         let d = sample_issue();
         let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
-        let (_, body, seg) = sidebar_lines(d.number, &d.title, &d.labels, &st, 40, false);
-        let second = format!("{body}{seg}");
-        assert!(second.ends_with("Todo"), "{second}");
-        assert_eq!(second.chars().count(), 40, "{second}");
-        assert!(seg.starts_with(crate::theme::column_icon("Todo")), "{seg}");
+        let now = at("2026-01-07T00:00:00Z");
+        let (first, labels, updated, status) =
+            sidebar_lines(d.number, &d.title, &d.labels, &st, &d.updated_at, now, 40, false);
+        assert!(first.starts_with("#1 some title here"), "{first}");
+        assert_eq!(labels, "● needs-triage");
+        assert_eq!(updated, "2 day ago");
+        assert_eq!(status, format!("{} Todo", crate::theme::column_icon("Todo")));
+        let line = format!("{labels} · {updated} · {status}");
+        assert!(line.chars().count() <= 40, "{line}");
+    }
+
+    #[test]
+    fn sidebar_labels_truncate_before_date_and_status() {
+        let labels = vec![
+            Label { name: "alpha".to_string() },
+            Label { name: "beta".to_string() },
+        ];
+        let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
+        let now = at("2026-01-07T00:00:00Z");
+        let (_, kept, updated, status) =
+            sidebar_lines(7, "t", &labels, &st, "2026-01-05T00:00:00Z", now, 30, false);
+        assert_eq!(kept, "● alpha", "only the first chip fits");
+        assert_eq!(updated, "2 day ago");
+        assert!(status.ends_with("Todo"));
+    }
+
+    #[test]
+    fn sidebar_segments_collapse_when_empty() {
+        let now = at("2026-01-07T00:00:00Z");
+        let (_, labels, updated, status) =
+            sidebar_lines(7, "t", &[], &[], "", now, 40, false);
+        assert_eq!((labels.as_str(), updated.as_str(), status.as_str()), ("", "", ""));
     }
 
     #[test]
@@ -824,9 +900,10 @@ mod tests {
 
     #[test]
     fn pinned_marker() {
-        let (first, _, _) = sidebar_lines(7, "t", &[], &[], 40, true);
+        let now = at("2026-01-07T00:00:00Z");
+        let (first, _, _, _) = sidebar_lines(7, "t", &[], &[], "", now, 40, true);
         assert!(first.contains("📌"));
-        let (plain, _, _) = sidebar_lines(7, "t", &[], &[], 40, false);
+        let (plain, _, _, _) = sidebar_lines(7, "t", &[], &[], "", now, 40, false);
         assert!(!plain.contains("📌"));
     }
 
