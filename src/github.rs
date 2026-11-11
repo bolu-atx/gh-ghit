@@ -135,8 +135,10 @@ pub async fn fetch_number(
 }
 
 /// Recent rows: open + windowed merged PRs, open + windowed closed issues.
-/// `progress` re-tags the page counts onto the caller's existing section
-/// channel. Same requests either way.
+/// The last payload is persisted per repo and window (`sections-<repo>-<hours>`)
+/// so the next refresh fetches head-first and stops on overlap with it; a
+/// cache miss walks every page like before. `progress` re-tags the page
+/// counts onto the caller's existing section channel.
 pub async fn fetch_recent_sections(
     repo: &str,
     hours: u64,
@@ -144,12 +146,33 @@ pub async fn fetch_recent_sections(
 ) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
+    let name = sections_cache_name(repo, hours);
+    let read_name = name.clone();
+    let cached: Option<Vec<api::Row>> =
+        tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
+    let cached_numbers: Option<std::collections::HashSet<u64>> =
+        cached.as_ref().map(|rows| rows.iter().map(|r| r.issue.number).collect());
     let report = |done: usize, total: usize| {
         if let Some(tx) = &progress {
             let _ = tx.send(SectionEvent::Progress { done, total });
         }
     };
-    api::sections(repo, hours, token, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await
+    let fresh = api::sections(
+        repo,
+        hours,
+        token,
+        cached_numbers.as_ref(),
+        Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
+    )
+    .await?;
+    let rows = api::merge_rows(fresh, cached.unwrap_or_default(), chrono::Utc::now(), hours);
+    let rows_c = rows.clone();
+    let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &rows_c)).await;
+    Ok(rows)
+}
+
+fn sections_cache_name(repo: &str, hours: u64) -> String {
+    format!("sections-{}-{hours}", repo.to_lowercase().replace('/', "__"))
 }
 
 /// Server-side issue/PR search scoped to the repo.
