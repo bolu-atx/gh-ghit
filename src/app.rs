@@ -19,6 +19,9 @@ pub(crate) const POLL_TIMEOUT_MS: u64 = 15;
 /// Click-flash dwell: the clicked rect inverts for ~150ms so the press
 /// reads as acknowledged before its fetch lands.
 pub(crate) const CLICK_FLASH_MS: u64 = 150;
+/// Spinner frame dwell: while a fetch runs the loop repaints at this
+/// cadence for the animation, not on every 15ms poll pass.
+pub(crate) const SPIN_FRAME_MS: u64 = 100;
 
 /// Auto-refresh cadence, overridable for deterministic runs: the e2e
 /// harness stretches it past any scenario lifetime so each scenario
@@ -458,10 +461,17 @@ impl App {
     }
 
     /// Anything animates the status bar: a live fetch or a visible
-    /// message. While true the loop must redraw every frame; while
-    /// false an idle frame can skip the draw.
+    /// message. While true the loop repaints on the spinner cadence;
+    /// while false an idle frame can skip the draw.
     pub(crate) fn spinner_active(&self) -> bool {
         self.message_visible() || !crate::core::loading(&self.fetch_state()).is_empty()
+    }
+
+    /// The spinner owes a repaint: active, and the last spinner paint
+    /// is older than one frame dwell. Pure in its inputs so tests pin
+    /// the pacing without a terminal.
+    pub(crate) fn spin_owed(&self, last_paint: Instant) -> bool {
+        self.spinner_active() && last_paint.elapsed() >= Duration::from_millis(SPIN_FRAME_MS)
     }
 
     /// Plain fetch snapshot for the status bar spinner. The pure `core`
@@ -1999,15 +2009,28 @@ fn event_loop(
     app: &mut App,
 ) -> Result<(), String> {
     // First paint is unconditional; after that a frame redraws only
-    // when input, a poll landing, or an animation (spinner, message,
-    // click flash) says something visible changed.
+    // when input, a poll landing, or an animation (spinner frame,
+    // message flip, click flash) says something visible changed. The
+    // tick bumps per paint, so the spinner keeps its old speed even
+    // though passes now run faster than paints.
     let mut needs_draw = true;
+    let mut spin_painted_at = Instant::now();
+    let mut msg_shown = false;
     loop {
-        // Cheap frame tick for the status bar spinner: one bump per pass,
-        // no timers, no extra wakeups.
-        app.tick = app.tick.wrapping_add(1);
-        if needs_draw || app.spinner_active() || app.flash_live() {
+        // The spinner repaints on its own cadence, not every poll
+        // pass; a message flip always owes one paint so its expiry
+        // clears even when nothing else stirs.
+        let spin_owed = app.spin_owed(spin_painted_at);
+        let msg_owed = app.message_visible() != msg_shown;
+        if needs_draw || app.flash_live() || spin_owed || msg_owed {
+            // Cheap frame tick for the status bar spinner: one bump per
+            // paint, no timers, no extra wakeups.
+            app.tick = app.tick.wrapping_add(1);
             terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| e.to_string())?;
+            if spin_owed {
+                spin_painted_at = Instant::now();
+            }
+            msg_shown = app.message_visible();
         }
         let mut input_dirty = false;
         if event::poll(Duration::from_millis(POLL_TIMEOUT_MS)).map_err(|e| e.to_string())? {
@@ -2522,6 +2545,18 @@ mod tests {
         app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
         assert!(app.section_rx.is_some());
         assert!(app.section_auto_refresh);
+    }
+
+    #[test]
+    fn spin_owed_paces_spinner_repaints() {
+        let mut app = sidebar_app(&[7]);
+        assert!(!app.spin_owed(Instant::now()), "idle owes nothing");
+        app.notify("loading".to_string());
+        assert!(!app.spin_owed(Instant::now()), "fresh paint owes nothing");
+        let stale = Instant::now() - Duration::from_millis(SPIN_FRAME_MS + 50);
+        assert!(app.spin_owed(stale), "stale frame owes a repaint");
+        app.message_at = Some(Instant::now() - Duration::from_secs(5));
+        assert!(!app.spin_owed(stale), "expired message owes nothing");
     }
 
     #[test]
