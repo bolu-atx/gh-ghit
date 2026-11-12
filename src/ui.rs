@@ -1493,6 +1493,11 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let short_hint = BAR_HINT_TIERS[BAR_HINT_TIERS.len() - 1].chars().count() as u16;
     let left_width = if area.width > short_hint + 1 { area.width - short_hint - 1 } else { area.width };
     let mut segments: Vec<(String, bool)> = Vec::new();
+    // Lasting auth warning first, so long project names never clip it.
+    // It stays until a re-auth succeeds and names the `R` reopen key.
+    if app.auth.degraded {
+        segments.push(("⚠ auth degraded · R re-auth".to_string(), true));
+    }
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
         segments.push((format!("\u{f1d3} {repo}"), false));
     }
@@ -2115,6 +2120,28 @@ mod render_smoke {
         app.issues.progress.clear();
         let text = frame_text(&mut app);
         assert!(!text.contains("⠋") && !text.contains("⠙"), "spinner gone: {text}");
+    }
+
+    #[test]
+    fn bar_keeps_auth_badge_after_dismiss_and_clean_probe() {
+        let mut app = loaded_app();
+        app.auth.dismissed = true;
+        crate::app::auth_failure(
+            &mut app,
+            "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials",
+        );
+        let text = frame_text(&mut app);
+        assert!(text.contains("auth degraded"), "badge shows: {text}");
+        assert!(text.contains("R re-auth"), "badge names the key: {text}");
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.auth.rx = Some(rx);
+        tx.send(Ok(vec![])).unwrap();
+        crate::app::poll_auth(&mut app);
+        let text = frame_text(&mut app);
+        assert!(text.contains("auth degraded"), "a clean probe keeps it: {text}");
+        app.auth.degraded = false;
+        let text = frame_text(&mut app);
+        assert!(!text.contains("auth degraded"), "a successful re-auth clears it: {text}");
     }
 
     #[test]
