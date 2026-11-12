@@ -227,6 +227,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             }
         }
         KeyCode::Char('r') => app.refresh_current(),
+        KeyCode::Char('R') => app.reopen_reauth(),
         KeyCode::Char('p') => app.toggle_pin(),
         KeyCode::Char('y') => app.yank(),
         KeyCode::Char('e') => app.toggle_refs(),
@@ -1342,6 +1343,20 @@ mod tests {
         app.nav.visited.push(7);
         app.show_issue(7);
         app
+    }
+
+    #[test]
+    fn shift_r_reopens_reauth_only_while_degraded() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('R')));
+        assert!(app.confirm.is_none(), "healthy key is a no-op");
+        app.auth.dismissed = true;
+        app.auth.degraded = true;
+        handle_key(&mut app, plain_key(KeyCode::Char('R')));
+        assert!(
+            matches!(app.confirm.as_ref().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)),
+            "degraded key reopens the dialog",
+        );
     }
 
     #[test]

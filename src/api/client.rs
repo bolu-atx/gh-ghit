@@ -24,7 +24,8 @@ pub fn is_auth_error(e: &str) -> bool {
     const MARKERS: &[&str] = &[
         "401 Unauthorized", "Bad credentials", "Requires authentication",
         "Resource not accessible", "requires authentication",
-        "missing scope", "Insufficient scopes", "Could not resolve to a Repository",
+        "missing scope", "missing required scopes", "Insufficient scopes",
+        "INSUFFICIENT_SCOPES", "Could not resolve to a Repository",
         "FORBIDDEN", "UNAUTHORIZED", "SAML", "Must have admin rights",
     ];
     MARKERS.iter().any(|m| e.contains(m))
@@ -284,6 +285,25 @@ mod tests {
             assert!(!is_auth_error(e), "not auth: {e}");
             assert_eq!(with_auth_hint(e.to_string()), e, "untouched: {e}");
         }
+    }
+
+    #[test]
+    fn scope_gap_formats_classify_as_auth() {
+        // GraphQL scope denial rides a 200 with the INSUFFICIENT_SCOPES
+        // type plus GitHub's own message.
+        let denied = json!({
+            "data": {"repository": null},
+            "errors": [{"type": "INSUFFICIENT_SCOPES",
+                "message": "Your token has not been granted the required scopes to execute this query."}],
+        });
+        let err = graphql_auth_failure(&denied).expect("scope denial is auth-class");
+        assert!(err.contains("gh auth refresh"), "hint: {err}");
+        assert!(is_auth_error(&denied.to_string()), "raw payload: {denied}");
+        // The gh CLI names the missing scopes in its own line.
+        let cli = "error: your authentication token is missing required scopes [read:project]";
+        assert!(is_auth_error(cli), "gh cli: {cli}");
+        let hinted = with_auth_hint(cli.to_string());
+        assert!(hinted.contains("gh auth refresh"), "hint: {hinted}");
     }
 
     #[test]
