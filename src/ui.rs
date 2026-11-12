@@ -142,6 +142,34 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_auth(f, f.area(), app);
     }
+    paint_click_flash(f, app);
+}
+
+/// Click flash: invert the last-clicked rect for `CLICK_FLASH_MS` so the
+/// press reads instantly, even before its fetch lands. Reversed style
+/// only, no colors, so every theme flashes. Style-only and painted after
+/// the frame capture above, so `body_rows` hit areas stay intact;
+/// an expired flash clears here, queuing nothing.
+fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
+    if !app.flash_visible() {
+        app.last_click = None;
+        return;
+    }
+    let Some((rect, _)) = app.last_click else { return };
+    let area = f.area();
+    let x0 = rect.x.max(area.x);
+    let y0 = rect.y.max(area.y);
+    let x1 = (rect.x + rect.width).min(area.x + area.width);
+    let y1 = (rect.y + rect.height).min(area.y + area.height);
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let buf = f.buffer_mut();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            buf[(x, y)].set_style(Style::new().reversed());
+        }
+    }
 }
 
 /// Auth-scope prompt (`gh` token dead or under-scoped): names the cause,
@@ -1881,6 +1909,57 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("refreshed #7"), "message shows: {text}");
         assert!(!text.contains("2/7"), "spinner yields: {text}");
+    }
+
+    #[test]
+    fn click_flash_appears_then_expires() {
+        use ratatui::style::Modifier;
+        use std::time::{Duration, Instant};
+        let mut app = loaded_app();
+        // First frame populates hit areas and the per-frame row cache.
+        let _ = frame_text(&mut app);
+        assert!(app.last_click.is_none(), "no flash before input");
+        let (x, y) = (app.side_issue_area.x + 1, app.side_issue_area.y + 2);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        let Some((rect, _)) = app.last_click else {
+            panic!("press records a flash");
+        };
+        let body_before = app.body_rows.clone();
+        // The next frame inverts the clicked rect, style-only.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        assert_eq!(app.body_rows, body_before, "flash paint keeps hit areas");
+        let buf = terminal.backend().buffer();
+        let flashed = (rect.y..rect.y + rect.height).any(|yy| {
+            (rect.x..rect.x + rect.width)
+                .any(|xx| buf[(xx, yy)].style().add_modifier.contains(Modifier::REVERSED))
+        });
+        assert!(flashed, "clicked row inverts while the flash lives");
+        // Past the dwell the flash clears instead of painting.
+        app.last_click = Some((rect, Instant::now() - Duration::from_millis(1000)));
+        let _ = frame_text(&mut app);
+        assert!(app.last_click.is_none(), "expired flash clears");
+    }
+
+    #[test]
+    fn drag_hovers_without_visiting_and_up_is_noop() {
+        let mut app = loaded_app();
+        let _ = frame_text(&mut app);
+        let visited_before = app.visited.clone();
+        let (x, y) = (app.side_pr_area.x + 1, app.side_pr_area.y + 2);
+        handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x, y));
+        assert_eq!(app.hover, Some(9), "drag previews the row");
+        assert_eq!(app.current, Some(7), "drag never visits");
+        assert_eq!(app.visited, visited_before, "drag files nothing");
+        assert!(app.last_click.is_some(), "drag flashes");
+        let current = app.current;
+        let hover = app.hover;
+        let visited = app.visited.clone();
+        handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
+        assert_eq!(app.current, current, "release changes nothing");
+        assert_eq!(app.hover, hover, "release keeps hover");
+        assert_eq!(app.visited, visited, "release files nothing");
     }
 
     #[test]

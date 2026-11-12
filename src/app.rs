@@ -13,6 +13,16 @@ use std::time::{Duration, Instant};
 const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const RECENT_REFRESH_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Blocking poll wait per frame: short enough that batched mouse/key
+/// input feels instant, long enough to avoid a busy loop.
+pub(crate) const POLL_TIMEOUT_MS: u64 = 15;
+/// Click-flash dwell: the clicked rect inverts for ~150ms so the press
+/// reads as acknowledged before its fetch lands.
+pub(crate) const CLICK_FLASH_MS: u64 = 150;
+/// Spinner frame dwell: while a fetch runs the loop repaints at this
+/// cadence for the animation, not on every 15ms poll pass.
+pub(crate) const SPIN_FRAME_MS: u64 = 100;
+
 /// Auto-refresh cadence, overridable for deterministic runs: the e2e
 /// harness stretches it past any scenario lifetime so each scenario
 /// issues exactly one sections fetch per boot instead of hammering
@@ -287,6 +297,10 @@ pub(crate) struct App {
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
+    /// Click flash: the last clicked rect plus when it landed. Render
+    /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
+    /// by construction (reversed style, no colors).
+    pub(crate) last_click: Option<(Rect, Instant)>,
     // Compose modal (`c`) plus its background submit channel.
     pub(crate) compose: Option<ComposeState>,
     pub(crate) compose_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
@@ -411,6 +425,7 @@ impl App {
             tabs_area: Rect::default(),
             bar_area: Rect::default(),
             board_cells: Vec::new(),
+            last_click: None,
         }
     }
 
@@ -426,6 +441,37 @@ impl App {
             (false, Some(at)) => at.elapsed() < std::time::Duration::from_secs(4),
             _ => false,
         }
+    }
+
+    /// Record a click flash: the pressed rect inverts on the next frames
+    /// until `CLICK_FLASH_MS` elapses.
+    pub(crate) fn note_click(&mut self, area: Rect) {
+        self.last_click = Some((area, Instant::now()));
+    }
+
+    /// The flash still owes frames: visible now, or expired and owed one
+    /// last draw to clear it.
+    pub(crate) fn flash_live(&self) -> bool {
+        self.last_click.is_some()
+    }
+
+    /// The flash currently paints: inside `CLICK_FLASH_MS`.
+    pub(crate) fn flash_visible(&self) -> bool {
+        matches!(self.last_click, Some((_, at)) if at.elapsed() < Duration::from_millis(CLICK_FLASH_MS))
+    }
+
+    /// Anything animates the status bar: a live fetch or a visible
+    /// message. While true the loop repaints on the spinner cadence;
+    /// while false an idle frame can skip the draw.
+    pub(crate) fn spinner_active(&self) -> bool {
+        self.message_visible() || !crate::core::loading(&self.fetch_state()).is_empty()
+    }
+
+    /// The spinner owes a repaint: active, and the last spinner paint
+    /// is older than one frame dwell. Pure in its inputs so tests pin
+    /// the pacing without a terminal.
+    pub(crate) fn spin_owed(&self, last_paint: Instant) -> bool {
+        self.spinner_active() && last_paint.elapsed() >= Duration::from_millis(SPIN_FRAME_MS)
     }
 
     /// Plain fetch snapshot for the status bar spinner. The pure `core`
@@ -1749,8 +1795,9 @@ fn kick_off_details(app: &mut App) {
     });
 }
 
-pub(crate) fn poll_details(app: &mut App) {
+pub(crate) fn poll_details(app: &mut App) -> bool {
     let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.detail_rx.try_iter().collect();
+    let landed = !ready.is_empty();
     for (n, res) in ready {
         app.detail_pending.remove(&n);
         match res {
@@ -1758,13 +1805,15 @@ pub(crate) fn poll_details(app: &mut App) {
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
+    landed
 }
 
 /// Land a compose submit: success closes the modal, confirms on the
 /// status line, and refetches the issue so the Comments tab shows the
 /// new comment; failure keeps the draft and names the cause.
-pub(crate) fn poll_compose(app: &mut App) {
+pub(crate) fn poll_compose(app: &mut App) -> bool {
     let ready: Vec<(u64, Result<(), String>)> = app.compose_rx.try_iter().collect();
+    let landed = !ready.is_empty();
     for (n, res) in ready {
         match res {
             Ok(()) => {
@@ -1781,14 +1830,15 @@ pub(crate) fn poll_compose(app: &mut App) {
             }
         }
     }
+    landed
 }
 
-pub(crate) fn poll_board(app: &mut App) {
+pub(crate) fn poll_board(app: &mut App) -> bool {
     if !app.board_loading {
-        return;
+        return false;
     }
     let res = app.board_rx.as_ref().and_then(|rx| rx.try_recv().ok());
-    let Some(res) = res else { return };
+    let Some(res) = res else { return false };
     app.board_rx = None;
     app.board_loading = false;
     match res {
@@ -1802,6 +1852,7 @@ pub(crate) fn poll_board(app: &mut App) {
         }
         Err(e) => { auth_failure(app, &e); app.notify(e); }
     }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -1835,8 +1886,8 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
 
 /// Land an auth probe: a dead token or missing scopes raises the
 /// re-auth modal; a covered token stays silent.
-pub(crate) fn poll_auth(app: &mut App) {
-    let Some(result) = app.auth_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+pub(crate) fn poll_auth(app: &mut App) -> bool {
+    let Some(result) = app.auth_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     app.auth_rx = None;
     match result {
         Ok(missing) if missing.is_empty() => {}
@@ -1854,6 +1905,7 @@ pub(crate) fn poll_auth(app: &mut App) {
         }
         Err(e) => app.notify(e),
     }
+    true
 }
 
 /// Route an auth-class fetch failure at the re-auth modal: the early
@@ -1911,18 +1963,23 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
 }
 
 /// Every background lander, once per loop pass. The terminal and drive
-/// loops share this so both pick up fetches the same way.
-pub(crate) fn poll_all(app: &mut App) {
-    poll_bootstrap(app);
-    poll_auth(app);
-    poll_sections(app);
+/// loops share this so both pick up fetches the same way. True when any
+/// lander changed visible state, so the loop knows a redraw is owed.
+pub(crate) fn poll_all(app: &mut App) -> bool {
+    let mut landed = false;
+    landed |= poll_bootstrap(app);
+    landed |= poll_auth(app);
+    landed |= poll_sections(app);
+    let had_fetch = app.section_rx.is_some();
     app.auto_refresh_recent(Instant::now());
-    poll_issues(app);
-    poll_diffs(app);
-    poll_graphs(app);
-    poll_board(app);
-    poll_details(app);
-    poll_compose(app);
+    landed |= had_fetch != app.section_rx.is_some();
+    landed |= poll_issues(app);
+    landed |= poll_diffs(app);
+    landed |= poll_graphs(app);
+    landed |= poll_board(app);
+    landed |= poll_details(app);
+    landed |= poll_compose(app);
+    landed
 }
 
 pub(crate) fn run(app: &mut App, numbers: &[u64]) -> Result<(), String> {
@@ -1951,30 +2008,60 @@ fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
 ) -> Result<(), String> {
+    // First paint is unconditional; after that a frame redraws only
+    // when input, a poll landing, or an animation (spinner frame,
+    // message flip, click flash) says something visible changed. The
+    // tick bumps per paint, so the spinner keeps its old speed even
+    // though passes now run faster than paints.
+    let mut needs_draw = true;
+    let mut spin_painted_at = Instant::now();
+    let mut msg_shown = false;
     loop {
-        // Cheap frame tick for the status bar spinner: one bump per pass,
-        // no timers, no extra wakeups.
-        app.tick = app.tick.wrapping_add(1);
-        terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| e.to_string())?;
-        if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
-            match event::read().map_err(|e| e.to_string())? {
-                Event::Key(key) => crate::input::handle_key(app, key),
-                Event::Mouse(m) => crate::input::handle_mouse(app, m),
-                _ => {}
-            };
+        // The spinner repaints on its own cadence, not every poll
+        // pass; a message flip always owes one paint so its expiry
+        // clears even when nothing else stirs.
+        let spin_owed = app.spin_owed(spin_painted_at);
+        let msg_owed = app.message_visible() != msg_shown;
+        if needs_draw || app.flash_live() || spin_owed || msg_owed {
+            // Cheap frame tick for the status bar spinner: one bump per
+            // paint, no timers, no extra wakeups.
+            app.tick = app.tick.wrapping_add(1);
+            terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| e.to_string())?;
+            if spin_owed {
+                spin_painted_at = Instant::now();
+            }
+            msg_shown = app.message_visible();
         }
-        poll_all(app);
+        let mut input_dirty = false;
+        if event::poll(Duration::from_millis(POLL_TIMEOUT_MS)).map_err(|e| e.to_string())? {
+            // Drain the whole queue: one slow redraw must never strand a
+            // second press behind it.
+            loop {
+                match event::read().map_err(|e| e.to_string())? {
+                    Event::Key(key) => crate::input::handle_key(app, key),
+                    Event::Mouse(m) => crate::input::handle_mouse(app, m),
+                    _ => {}
+                };
+                input_dirty = true;
+                if !event::poll(Duration::ZERO).map_err(|e| e.to_string())? {
+                    break;
+                }
+            }
+        }
+        let poll_dirty = poll_all(app);
         if app.reauth_requested {
             run_reauth(app, terminal);
+            input_dirty = true;
         }
+        needs_draw = input_dirty || poll_dirty;
         if app.quit {
             return Ok(());
         }
     }
 }
 
-fn poll_bootstrap(app: &mut App) {
-    let Some(result) = app.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+fn poll_bootstrap(app: &mut App) -> bool {
+    let Some(result) = app.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     app.bootstrap_rx = None;
     app.repo_slug = result;
     // Repo-scoped access probe, once: the boot probe only checks the
@@ -2005,10 +2092,11 @@ fn poll_bootstrap(app: &mut App) {
     } else {
         for n in numbers { app.load_issue(n, false); }
     }
+    true
 }
 
-pub(crate) fn poll_sections(app: &mut App) {
-    let Some(event) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+pub(crate) fn poll_sections(app: &mut App) -> bool {
+    let Some(event) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     match event {
         github::SectionEvent::Progress { done, total } => {
             app.section_progress = Some((done, total));
@@ -2069,6 +2157,7 @@ pub(crate) fn poll_sections(app: &mut App) {
             }
         }
     }
+    true
 }
 
 /// Window landing: evict listed background rows the fresh payload no
@@ -2091,8 +2180,9 @@ fn evict_vanished_rows(app: &mut App, rows: &[crate::api::Row]) {
     for n in gone { app.drop_cached(n); }
 }
 
-pub(crate) fn poll_issues(app: &mut App) {
+pub(crate) fn poll_issues(app: &mut App) -> bool {
     let ready: Vec<_> = app.issue_rx.try_iter().collect();
+    let landed = !ready.is_empty();
     for (number, event) in ready {
         match event {
             github::IssueEvent::Progress { done, total } => {
@@ -2146,10 +2236,12 @@ pub(crate) fn poll_issues(app: &mut App) {
             }
         }
     }
+    landed
 }
 
-pub(crate) fn poll_diffs(app: &mut App) {
+pub(crate) fn poll_diffs(app: &mut App) -> bool {
     let ready: Vec<_> = app.diff_rx.try_iter().collect();
+    let landed = !ready.is_empty();
     for (number, result) in ready {
         app.diff_pending.remove(&number);
         match result {
@@ -2159,10 +2251,12 @@ pub(crate) fn poll_diffs(app: &mut App) {
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
+    landed
 }
 
-pub(crate) fn poll_graphs(app: &mut App) {
+pub(crate) fn poll_graphs(app: &mut App) -> bool {
     let ready: Vec<_> = app.graph_rx.try_iter().collect();
+    let landed = !ready.is_empty();
     for (number, result) in ready {
         app.graph_pending.remove(&number);
         match result {
@@ -2175,6 +2269,7 @@ pub(crate) fn poll_graphs(app: &mut App) {
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
+    landed
 }
 
 #[cfg(test)]
@@ -2450,6 +2545,18 @@ mod tests {
         app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
         assert!(app.section_rx.is_some());
         assert!(app.section_auto_refresh);
+    }
+
+    #[test]
+    fn spin_owed_paces_spinner_repaints() {
+        let mut app = sidebar_app(&[7]);
+        assert!(!app.spin_owed(Instant::now()), "idle owes nothing");
+        app.notify("loading".to_string());
+        assert!(!app.spin_owed(Instant::now()), "fresh paint owes nothing");
+        let stale = Instant::now() - Duration::from_millis(SPIN_FRAME_MS + 50);
+        assert!(app.spin_owed(stale), "stale frame owes a repaint");
+        app.message_at = Some(Instant::now() - Duration::from_secs(5));
+        assert!(!app.spin_owed(stale), "expired message owes nothing");
     }
 
     #[test]
