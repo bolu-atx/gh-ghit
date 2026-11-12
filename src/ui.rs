@@ -46,19 +46,19 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     if app.visual_diff() {
         let header_rows: Vec<(usize, usize)> = {
             let empty: Vec<model::DiffFile> = vec![];
-            let files = app
+            let files = app.nav
                 .current
-                .and_then(|n| app.diffs.get(&n))
+                .and_then(|n| app.diff.files.get(&n))
                 .map(|fs| fs.as_slice())
                 .unwrap_or(&empty);
-            app.body_rows
+            app.hits.body_rows
                 .iter()
                 .enumerate()
                 .filter_map(|(i, line)| model::header_file_index(line, files).map(|fi| (i, fi)))
                 .collect()
         };
-        app.diff_headers = header_rows.iter().map(|(i, _)| *i).collect();
-        let mut row_files: Vec<Option<usize>> = vec![None; app.body_rows.len()];
+        app.diff.headers = header_rows.iter().map(|(i, _)| *i).collect();
+        let mut row_files: Vec<Option<usize>> = vec![None; app.hits.body_rows.len()];
         let mut cur: Option<usize> = None;
         let mut hi = 0;
         for (i, slot) in row_files.iter_mut().enumerate() {
@@ -68,65 +68,65 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
             }
             *slot = cur;
         }
-        app.diff_row_files = row_files;
+        app.diff.row_files = row_files;
         // Resolve the active line against the fresh capture: track the
         // owning file, and unfold a collapsed file landed on by input.
         // The lazy init anchor never expands: opening a Diff stays folded.
-        match app.diff_line {
+        match app.diff.line {
             None => {
-                if let Some(&h) = app.diff_headers.first() {
-                    app.diff_line = Some(app.body_base as usize + h);
+                if let Some(&h) = app.diff.headers.first() {
+                    app.diff.line = Some(app.hits.body_base as usize + h);
                 }
             }
             Some(abs) => {
-                let vis = abs.saturating_sub(app.body_base as usize);
-                let landed = app.diff_row_files.get(vis).copied().flatten();
+                let vis = abs.saturating_sub(app.hits.body_base as usize);
+                let landed = app.diff.row_files.get(vis).copied().flatten();
                 if let Some(f) = landed {
-                    app.diff_cursor = f;
-                    if app.diff_touched {
-                        let key = app.current.and_then(|n| {
-                            app.diffs
+                    app.diff.cursor = f;
+                    if app.diff.touched {
+                        let key = app.nav.current.and_then(|n| {
+                            app.diff.files
                                 .get(&n)
                                 .and_then(|fs| fs.get(f))
                                 .map(|file| (n, file.filename.clone()))
                         });
                         if let Some(k) = key {
-                            app.expanded_files.insert(k);
+                            app.diff.expanded_files.insert(k);
                         }
                     }
                 }
-                if vis < app.diff_row_files.len() {
-                    app.diff_touched = false;
+                if vis < app.diff.row_files.len() {
+                    app.diff.touched = false;
                 }
             }
         }
         // Active-line highlight, painted on the buffer after the paragraph
         // so wrapped rows light up exactly. Same amber/ink vocabulary as
         // the refs mention highlight.
-        if let Some(abs) = app.diff_line {
+        if let Some(abs) = app.diff.line {
             use crate::theme::{amber, ink};
-            let vis = abs.saturating_sub(app.scroll as usize);
-            if vis < app.body_area.height as usize {
-                let y = app.body_area.y + vis as u16;
+            let vis = abs.saturating_sub(app.nav.scroll as usize);
+            if vis < app.hits.body_area.height as usize {
+                let y = app.hits.body_area.y + vis as u16;
                 let buf = f.buffer_mut();
-                for x in app.body_area.x..app.body_area.x + app.body_area.width {
+                for x in app.hits.body_area.x..app.hits.body_area.x + app.hits.body_area.width {
                     buf[(x, y)].set_style(Style::new().bg(amber()).fg(ink()));
                 }
             }
         }
     } else {
-        app.diff_headers = vec![];
-        app.diff_row_files = vec![];
+        app.diff.headers = vec![];
+        app.diff.row_files = vec![];
     }
 
-    app.bar_area = root[1];
+    app.hits.bar_area = root[1];
     render_bar(f, root[1], app);
 
     if crate::app::board_open(app) {
         dim_background(f, 0.35);
         render_board(f, f.area(), app);
     }
-    if app.filter_open {
+    if app.sidebar.filter_open {
         dim_background(f, 0.35);
         render_filter(f, f.area(), app);
     }
@@ -138,7 +138,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_compose(f, f.area(), app);
     }
-    if app.auth_prompt.is_some() {
+    if app.auth.prompt.is_some() {
         dim_background(f, 0.35);
         render_auth(f, f.area(), app);
     }
@@ -191,10 +191,10 @@ fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &App) {
 /// an expired flash clears here, queuing nothing.
 fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
     if !app.flash_visible() {
-        app.last_click = None;
+        app.hits.last_click = None;
         return;
     }
-    let Some((rect, _)) = app.last_click else { return };
+    let Some((rect, _)) = app.hits.last_click else { return };
     let area = f.area();
     let x0 = rect.x.max(area.x);
     let y0 = rect.y.max(area.y);
@@ -216,7 +216,7 @@ fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
 /// TUI and runs it; `n` dismisses to a status-line hint.
 fn render_auth(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, ink, muted, paper, teal, base};
-    let Some(p) = app.auth_prompt.as_ref() else { return };
+    let Some(p) = app.auth.prompt.as_ref() else { return };
     let popup = centered(area, 80, 60);
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
@@ -332,7 +332,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let window_mark = |hours: u64| {
-        if app.merged_window_hours == hours {
+        if app.sections.merged_window_hours == hours {
             Span::styled("● ", Style::new().bg(ink()).fg(amber()).bold())
         } else {
             Span::styled("○ ", Style::new().bg(ink()).fg(muted()))
@@ -353,7 +353,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]
     };
     let mut lines = vec![];
-    let query_text = if app.query_edit { &app.query_draft } else { &app.query_active };
+    let query_text = if app.sidebar.query_edit { &app.sidebar.query_draft } else { &app.sidebar.query_active };
     let mut qline = vec![
         Span::styled("query ", Style::new().bg(ink()).fg(muted())),
         Span::styled(
@@ -361,7 +361,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
             Style::new().bg(ink()).fg(if query_text.is_empty() { muted() } else { paper() }),
         ),
     ];
-    if app.query_edit {
+    if app.sidebar.query_edit {
         qline.push(Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()));
     } else {
         qline.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
@@ -381,14 +381,14 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     ]));
     lines.push(Line::from(""));
     let mut open_line = vec![Span::styled("show   ", Style::new().bg(ink()).fg(muted()))];
-    open_line.extend(toggle(app.show_open_prs, "open PRs", "o"));
+    open_line.extend(toggle(app.sidebar.show_open_prs, "open PRs", "o"));
     open_line.push(Span::raw("   "));
-    open_line.extend(toggle(app.show_merged_prs, "merged PRs", "m"));
+    open_line.extend(toggle(app.sidebar.show_merged_prs, "merged PRs", "m"));
     lines.push(Line::from(open_line));
     let mut closed_line = vec![Span::styled("       ", Style::new().bg(ink()))];
-    closed_line.extend(toggle(app.show_open_issues, "open issues", "i"));
+    closed_line.extend(toggle(app.sidebar.show_open_issues, "open issues", "i"));
     closed_line.push(Span::raw("   "));
-    closed_line.extend(toggle(app.show_closed_issues, "closed issues", "c"));
+    closed_line.extend(toggle(app.sidebar.show_closed_issues, "closed issues", "c"));
     lines.push(Line::from(closed_line));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -396,8 +396,8 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Style::new().bg(ink()).fg(muted()),
     )));
     f.render_widget(Paragraph::new(lines).style(base()), inner);
-    if app.query_edit {
-        f.set_cursor_position((inner.x + 6 + app.query_draft.len() as u16, inner.y));
+    if app.sidebar.query_edit {
+        f.set_cursor_position((inner.x + 6 + app.sidebar.query_draft.len() as u16, inner.y));
     }
 }
 
@@ -428,16 +428,16 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
             Style::new().bg(ink()).fg(if active { amber() } else { muted() }).bold(),
         )
     };
-    let empty = app.query_draft.is_empty();
+    let empty = app.sidebar.query_draft.is_empty();
     let mut text_row = vec![
-        marker(app.filter_focus == 0),
+        marker(app.board.filter_focus == 0),
         Span::styled("filter ", Style::new().bg(ink()).fg(muted())),
         Span::styled(
-            if empty { "label, title, #num …".to_string() } else { app.query_draft.clone() },
+            if empty { "label, title, #num …".to_string() } else { app.sidebar.query_draft.clone() },
             Style::new().bg(ink()).fg(if empty { muted() } else { paper() }),
         ),
     ];
-    if app.query_edit {
+    if app.sidebar.query_edit {
         text_row.push(Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()));
     } else {
         text_row.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
@@ -454,11 +454,11 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         )));
     }
     for (i, pill) in pills.iter().enumerate() {
-        let on = app.filter_milestone_draft.contains(pill);
+        let on = app.board.milestone_draft.contains(pill);
         let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
         let name = pill.clone().unwrap_or_else(|| "(no milestone)".to_string());
         lines.push(Line::from(vec![
-            marker(app.filter_focus == i + 1),
+            marker(app.board.filter_focus == i + 1),
             Span::styled(
                 format!("{box_glyph} {name}"),
                 Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
@@ -471,8 +471,8 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Style::new().bg(ink()).fg(muted()),
     )));
     f.render_widget(Paragraph::new(lines).style(base()), inner);
-    if app.query_edit {
-        f.set_cursor_position((inner.x + 9 + app.query_draft.chars().count() as u16, inner.y));
+    if app.sidebar.query_edit {
+        f.set_cursor_position((inner.x + 9 + app.sidebar.query_draft.chars().count() as u16, inner.y));
     }
 }
 
@@ -608,7 +608,7 @@ fn section_list(
 ) -> List<'static> {
     use crate::theme::{amber, code_bg, ink, muted, paper, state_color};
     use crate::model::SideRow;
-    let query = app.search.clone();
+    let query = app.sidebar.search.clone();
     let mut items: Vec<ListItem<'static>> = vec![ListItem::new(Line::from(""))];
     for row in rows {
         let SideRow::Item(n) = row else {
@@ -632,16 +632,16 @@ fn section_list(
         // state (j/k continue from it); the ListState cursor underneath
         // is untouched, so tabbing away and back restores the exact row
         // and scroll position.
-        let sel = app.current == Some(*n) || mark == Some(*n);
+        let sel = app.nav.current == Some(*n) || mark == Some(*n);
         let marker = if sel { "█ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
         } else {
             Style::new().fg(muted())
         };
-        let (title_text, labels, updated, status) = match app.data.get(n) {
+        let (title_text, labels, updated, status) = match app.issues.data.get(n) {
             Some(d) => {
-                let st = app.statuses.get(n).cloned().unwrap_or_default();
+                let st = app.issues.statuses.get(n).cloned().unwrap_or_default();
                 let (_, labels, updated, status) = model::sidebar_lines(
                     *n,
                     &d.title,
@@ -650,7 +650,7 @@ fn section_list(
                     &d.updated_at,
                     now,
                     38,
-                    app.pinned.contains(n),
+                    app.nav.pinned.contains(n),
                 );
                 (model::slug(&d.title, 30), labels, updated, status)
             }
@@ -658,8 +658,8 @@ fn section_list(
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
-        let pin = if app.pinned.contains(n) { "\u{f08d} " } else { "" };
-        let data = app.data.get(n);
+        let pin = if app.nav.pinned.contains(n) { "\u{f08d} " } else { "" };
+        let data = app.issues.data.get(n);
         let num_style = Style::new()
             .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
             .bold();
@@ -701,7 +701,7 @@ fn section_list(
             second.push(Span::styled(text, style));
         }
         let mut lines = vec![Line::from(first), Line::from(second)];
-        if app.expanded_rows.contains(n) {
+        if app.diff.expanded_rows.contains(n) {
             if let Some(d) = data {
                 lines.extend(expanded_row_lines(d, inner_width));
             }
@@ -792,8 +792,8 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
             Style::new().bg(ink()).fg(muted()),
         )));
     }
-    let Some(files) = app.diffs.get(&d.number) else {
-        let note = if app.diff_pending.contains(&d.number) {
+    let Some(files) = app.diff.files.get(&d.number) else {
+        let note = if app.diff.pending.contains(&d.number) {
             "Fetching diff …"
         } else {
             "No diff loaded yet."
@@ -809,8 +809,8 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
             Style::new().bg(ink()).fg(muted()),
         )));
     }
-    let split = app.diff_split && width >= 40;
-    let cursor = app.diff_cursor.min(files.len().saturating_sub(1).max(0));
+    let split = app.diff.split && width >= 40;
+    let cursor = app.diff.cursor.min(files.len().saturating_sub(1).max(0));
     let cursor_name = files.get(cursor).map(|f| f.filename.as_str()).unwrap_or("");
     // Nerd Font Font Awesome fa-file-text reuses the per-file vocabulary;
     // the status words keep their own icons and stay spelled out. The `❯`
@@ -826,7 +826,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         ),
         Style::new().bg(ink()).fg(muted()),
     ))];
-    let cursor_here = app.pane == crate::app::Pane::Main;
+    let cursor_here = app.nav.pane == crate::app::Pane::Main;
     let rule = Span::styled("─".repeat(width.max(8)), Style::new().bg(ink()).fg(muted()));
     // Hunk rows sit two cells in so they read as belonging to the section.
     let dent = || Span::styled("  ", Style::new().bg(ink()));
@@ -841,7 +841,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         _ => "",
     };
     for (fi, f) in files.iter().take(MAX_DIFF_FILES).enumerate() {
-        let expanded = app.expanded_files.contains(&(d.number, f.filename.clone()));
+        let expanded = app.diff.expanded_files.contains(&(d.number, f.filename.clone()));
         let at_cursor = cursor_here && cursor == fi;
         let mut head = Line::from(vec![
             Span::styled(
@@ -955,13 +955,13 @@ pub(crate) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u
     if delta == 0 {
         return None;
     }
-    let n = app.current?;
-    let files = app.diffs.get(&n)?;
+    let n = app.nav.current?;
+    let files = app.diff.files.get(&n)?;
     if fi >= files.len().min(MAX_DIFF_FILES) {
         return None;
     }
-    let width = u32::from(app.body_area.width);
-    let height = u32::from(app.body_area.height);
+    let width = u32::from(app.hits.body_area.width);
+    let height = u32::from(app.hits.body_area.height);
     if width == 0 || height == 0 {
         return None;
     }
@@ -970,13 +970,13 @@ pub(crate) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u
     if files.get(fi).map(|f| f.filename.len() + 5 > width as usize).unwrap_or(true) {
         return None;
     }
-    let d = app.data.get(&n)?;
+    let d = app.issues.data.get(&n)?;
     let text = diff_text(app, d, width as usize);
     use ratatui::buffer::Buffer;
     use ratatui::widgets::Widget;
     let window = height.max(1) * 2;
     let area = Rect::new(0, 0, width as u16, window.min(u16::MAX as u32) as u16);
-    let start = u32::from(app.scroll);
+    let start = u32::from(app.nav.scroll);
     let mut scanned: u32 = 0;
     let mut k: u32 = 0;
     loop {
@@ -1128,8 +1128,8 @@ fn split_file_lines(file: &model::DiffFile, d: &IssueData, width: usize) -> Vec<
 fn graph_text(app: &App, d: &IssueData) -> ratatui::text::Text<'static> {
     use crate::theme::{ink, muted};
     let dim = || Style::new().bg(ink()).fg(muted());
-    let Some(data) = app.graphs.get(&d.number) else {
-        let note = if app.graph_pending.contains(&d.number) {
+    let Some(data) = app.graph.data.get(&d.number) else {
+        let note = if app.graph.pending.contains(&d.number) {
             "Fetching graph …"
         } else {
             "No graph loaded yet."
@@ -1148,7 +1148,7 @@ fn graph_text(app: &App, d: &IssueData) -> ratatui::text::Text<'static> {
         let label = format!("#{} {}", node.number, model::slug(&node.title, 40));
         let width = label.chars().count() + 2;
         let prefix = if position == 0 { "  " } else { "  └─" };
-        let marker = if app.graph_cursor == position { "█ " } else { "  " };
+        let marker = if app.graph.cursor == position { "█ " } else { "  " };
         let color = crate::theme::state_color(&node.state);
         lines.push(Line::from(Span::styled(format!("{prefix}╭{}╮", "─".repeat(width)), dim())));
         lines.push(Line::from(vec![Span::styled(format!("{prefix}│"), dim()), Span::styled(format!("{marker}{label}"), Style::new().bg(ink()).fg(color).bold()), Span::styled("│", dim())]));
@@ -1197,13 +1197,13 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
     let issue_rows = app.issue_rows();
     let pr_rows = app.pr_rows();
-    app.side_issue_area = panes[0];
-    app.side_pr_area = panes[1];
-    app.side_issue_rows = issue_rows.clone();
-    app.side_pr_rows = pr_rows.clone();
+    app.hits.side_issue_area = panes[0];
+    app.hits.side_pr_area = panes[1];
+    app.hits.side_issue_rows = issue_rows.clone();
+    app.hits.side_pr_rows = pr_rows.clone();
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
     let now = chrono::Utc::now();
-    let issues_focused = app.pane == crate::app::Pane::Issues;
+    let issues_focused = app.nav.pane == crate::app::Pane::Issues;
     let il = section_list(
         // Nerd Font Font Awesome fa-exclamation-circle.
         section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused),
@@ -1215,11 +1215,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         issues_focused,
         now,
     );
-    let mut istate = std::mem::take(&mut app.issue_state);
+    let mut istate = std::mem::take(&mut app.sidebar.issue_state);
     istate.select(selected_index(&issue_rows, app.effective(&issue_rows)));
     f.render_stateful_widget(il, panes[0], &mut istate);
-    app.issue_state = istate;
-    let prs_focused = app.pane == crate::app::Pane::PRs;
+    app.sidebar.issue_state = istate;
+    let prs_focused = app.nav.pane == crate::app::Pane::PRs;
     let pl = section_list(
         // Nerd Font Font Awesome fa-code-fork.
         section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused),
@@ -1231,10 +1231,10 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         prs_focused,
         now,
     );
-    let mut pstate = std::mem::take(&mut app.pr_state);
+    let mut pstate = std::mem::take(&mut app.sidebar.pr_state);
     pstate.select(selected_index(&pr_rows, app.effective(&pr_rows)));
     f.render_stateful_widget(pl, panes[1], &mut pstate);
-    app.pr_state = pstate;
+    app.sidebar.pr_state = pstate;
 }
 
 /// Right pane: issues/PRs mentioned in the current body, with the same row
@@ -1242,10 +1242,10 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// hides the column otherwise so the main pane keeps its width.
 fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let rows = app.refs_rows();
-    app.refs_area = area;
-    app.ref_rows = rows.clone();
+    app.hits.refs_area = area;
+    app.hits.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
-    let refs_focused = app.pane == crate::app::Pane::Refs;
+    let refs_focused = app.nav.pane == crate::app::Pane::Refs;
     let list = section_list(
         // Nerd Font Font Awesome fa-link.
         section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
@@ -1253,18 +1253,18 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         &rows,
         app,
         inner,
-        app.ref_highlight,
+        app.refs.highlight,
         refs_focused,
         chrono::Utc::now(),
     );
-    let mut state = std::mem::take(&mut app.refs_state);
-    let sel = app
-        .ref_highlight
+    let mut state = std::mem::take(&mut app.refs.state);
+    let sel = app.refs
+        .highlight
         .and_then(|n| rows.iter().position(|r| r.number() == Some(n)))
         .map(|p| p + 1);
     state.select(sel);
     f.render_stateful_widget(list, area, &mut state);
-    app.refs_state = state;
+    app.refs.state = state;
 }
 
 /// Greedy word-wrap of styled lines to `width` cells. Words longer than
@@ -1360,27 +1360,27 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // place instead of overflowing the masthead. Its height is measured
     // first (same inner width as the body) so the rows below just fit.
     let inner_w = (area.width as usize).saturating_sub(5);
-    let mut header: Vec<Line> = match app.current.and_then(|n| app.data.get(&n)) {
+    let mut header: Vec<Line> = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
         Some(d) => {
-            let st = app.statuses.get(&d.number).cloned().unwrap_or_default();
+            let st = app.issues.statuses.get(&d.number).cloned().unwrap_or_default();
             header_lines(d, &st)
         }
         None => vec![],
     };
-    if let (Some(n), crate::app::Tab::Details) = (app.ref_highlight, app.tab) {
+    if let (Some(n), crate::app::Tab::Details) = (app.refs.highlight, app.nav.tab) {
         highlight_mentions(&mut header, n, app.repo_key().as_deref());
     }
     let header = wrap_lines(header, inner_w);
     // The paired line renders with the header block and joins
     // `header_rows`, so clicking `#N` navigates to the counterpart.
-    let paired = match (app.tab, app.current.and_then(|n| app.data.get(&n))) {
+    let paired = match (app.nav.tab, app.nav.current.and_then(|n| app.issues.data.get(&n))) {
         (crate::app::Tab::Details, Some(d)) => paired_line(d)
             .map(|line| wrap_lines(vec![line], inner_w))
             .unwrap_or_default(),
         _ => vec![],
     };
     let header: Vec<Line> = header.into_iter().chain(paired).collect();
-    app.header_rows = header
+    app.hits.header_rows = header
         .iter()
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
         .collect();
@@ -1397,12 +1397,12 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
     // rows[0] masthead (brand line, then the issue line), rows[1]
     // meta/labels, rows[2] breathing room, rows[3] tabs, rows[4] pane.
-    app.tabs_area = rows[3];
+    app.hits.tabs_area = rows[3];
     // Nerd Font Font Awesome fa-git brands the wordmark; repo and number
     // stay plain text so identifiers scan without a patched font. The PR
     // head-commit CI glyph rides the issue line, the single title source
     // now that the header block starts at the meta lines.
-    let mast: Vec<Line> = match app.current.and_then(|n| app.data.get(&n)) {
+    let mast: Vec<Line> = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
         Some(d) => {
             let mut title = vec![
                 Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
@@ -1426,10 +1426,10 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
-    let main_focused = app.pane == crate::app::Pane::Main;
+    let main_focused = app.nav.pane == crate::app::Pane::Main;
     // Second tab follows the current item: PRs show their diff, issues
     // the dependency graph. Nothing loaded yet reads as Graph.
-    let visual_label = match app.current.and_then(|n| app.data.get(&n)) {
+    let visual_label = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
         Some(d) if d.is_pr => "Diff View",
         _ => "Graph",
     };
@@ -1438,7 +1438,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // `1`/`2` prefixes mirror the Details/Visual keys; the click
     // router splits on the first title via `TAB_SPLIT_X`.
     let tabs = Tabs::new(crate::app::tab_titles(visual_label).to_vec())
-        .select(match app.tab { Tab::Details => 0, Tab::Visual => 1 })
+        .select(match app.nav.tab { Tab::Details => 0, Tab::Visual => 1 })
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
         .divider("  ")
@@ -1457,12 +1457,12 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
         .split(rows[1]);
-    app.header_area = hgutter[1];
+    app.hits.header_area = hgutter[1];
     f.render_widget(Paragraph::new(header).style(base()), hgutter[1]);
 
     let markdown;
-    let mut text = match app.current.and_then(|n| app.data.get(&n)) {
-        Some(d) => match app.tab {
+    let mut text = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
+        Some(d) => match app.nav.tab {
             Tab::Details => {
                 markdown = format!("## Body\n\n{}\n\n## Comments\n\n{}", model::body_md(d), model::build_comments_md(d));
                 crate::theme::render_markdown(&markdown)
@@ -1479,19 +1479,19 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // A refs-row selection lights up the mentioning line instead of opening
     // the issue. Body tab only: the mentions come from the body markdown
     // (and the header above the tabs).
-    if let (Some(n), crate::app::Tab::Details) = (app.ref_highlight, app.tab) {
+    if let (Some(n), crate::app::Tab::Details) = (app.refs.highlight, app.nav.tab) {
         highlight_mentions(&mut text.lines, n, app.repo_key().as_deref());
     }
     let pane = Paragraph::new(text)
         .style(base())
         .wrap(Wrap { trim: false })
-        .scroll((app.scroll, 0));
+        .scroll((app.nav.scroll, 0));
     // Breathing room: text never touches the column edges.
     let gutter = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
         .split(rows[4]);
-    app.body_area = gutter[1];
+    app.hits.body_area = gutter[1];
     f.render_widget(pane, gutter[1]);
 
 }
@@ -1511,11 +1511,11 @@ const BAR_HINT_TIERS: [&str; 2] = [
 
 fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, base, ink, muted, paper};
-    if app.focus == crate::app::Focus::Bar {
-        let text = if app.searching { &app.search } else { &app.bar };
-        let prompt = if app.searching { "/ " } else { "❯ " };
+    if app.nav.focus == crate::app::Focus::Bar {
+        let text = if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
+        let prompt = if app.sidebar.searching { "/ " } else { "❯ " };
         let shown = if text.is_empty() {
-            if app.searching {
+            if app.sidebar.searching {
                 format!(
                     "instant filter loaded: title, #n, label, author · sort {} (a/A) …",
                     app.sort_label()
@@ -1543,7 +1543,7 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
         segments.push((format!("\u{f1d3} {repo}"), false));
     }
-    if let Some(statuses) = app.current.and_then(|n| app.statuses.get(&n)) {
+    if let Some(statuses) = app.nav.current.and_then(|n| app.issues.statuses.get(&n)) {
         for (title, status) in statuses.iter().filter(|(title, _)| !title.is_empty()) {
             let suffix = status.as_ref().filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default();
             segments.push((format!("\u{f0db} {title}{suffix}"), false));
@@ -1635,7 +1635,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-columns; the board name keeps its label.
     // Column headers stay icon-free: their vocabularies are user-defined
     // and already color-coded, so glyphs would add noise, not signal.
-    let title = match &app.board {
+    let title = match &app.board.data {
         Some(b) => Line::from(vec![
             Span::styled(" \u{f0db} ", Style::new().bg(ink()).fg(muted())),
             Span::styled(format!("{} ", b.title), Style::new().bg(ink()).fg(amber()).bold()),
@@ -1663,19 +1663,19 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let (inner, hint_area) = (chunks[0], chunks[1]);
     let filtered = app.board_filtered();
     let mut hint = vec![];
-    if !app.board_filter.trim().is_empty() {
+    if !app.board.filter.trim().is_empty() {
         hint.push(Span::styled("filter ", Style::new().bg(ink()).fg(muted())));
         hint.push(Span::styled(
-            format!("\"{}\"", app.board_filter),
+            format!("\"{}\"", app.board.filter),
             Style::new().bg(ink()).fg(amber()).bold(),
         ));
         hint.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
     }
-    if !app.board_milestones.is_empty() {
+    if !app.board.milestones.is_empty() {
         let names: Vec<String> = app
             .board_pills()
             .into_iter()
-            .filter(|p| app.board_milestones.contains(p))
+            .filter(|p| app.board.milestones.contains(p))
             .map(|p| p.unwrap_or_else(|| "(no milestone)".to_string()))
             .collect();
         hint.push(Span::styled("milestones ", Style::new().bg(ink()).fg(muted())));
@@ -1695,20 +1695,20 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     ));
     f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
-    let Some(board) = &app.board else {
+    let Some(board) = &app.board.data else {
         render_skeleton(f, inner);
         return;
     };
-    let cols = crate::app::board_columns(board, &app.board_filter, &app.board_milestones);
+    let cols = crate::app::board_columns(board, &app.board.filter, &app.board.milestones);
     if cols.is_empty() {
         f.render_widget(Paragraph::new("empty board").style(base()), inner);
         return;
     }
-    while app.board_states.len() < cols.len() {
-        app.board_states.push(ListState::default());
+    while app.board.states.len() < cols.len() {
+        app.board.states.push(ListState::default());
     }
     let col_areas = column_layout(inner, cols.len(), 36);
-    app.board_cells.clear();
+    app.hits.board_cells.clear();
     for (i, (name, cards)) in cols.iter().enumerate() {
         let Some(a) = col_areas.get(i) else { continue };
         let inner_w = a.width.saturating_sub(2);
@@ -1716,12 +1716,12 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             .iter()
             .enumerate()
             .map(|(ri, c)| {
-                let sel = app.board_col == i && app.board_row == ri;
-                let detail = c.number.and_then(|n| app.board_details.get(&n));
-                board_card(c, sel, app.board_expanded == Some((i, ri)), detail, inner_w)
+                let sel = app.board.col == i && app.board.row == ri;
+                let detail = c.number.and_then(|n| app.board.details.get(&n));
+                board_card(c, sel, app.board.expanded == Some((i, ri)), detail, inner_w)
             })
             .collect();
-        let active = app.board_col == i;
+        let active = app.board.col == i;
         let color = crate::theme::column_color(name);
         let icon = crate::theme::column_icon(name);
         let mut head = vec![];
@@ -1751,8 +1751,8 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .style(base())
                 .title(Line::from(head)),
         );
-        let state = &mut app.board_states[i];
-        state.select(if active { Some(app.board_row) } else { None });
+        let state = &mut app.board.states[i];
+        state.select(if active { Some(app.board.row) } else { None });
         f.render_stateful_widget(list, *a, state);
         let col_inner = Block::default().borders(Borders::ALL).inner(*a);
         if cards.is_empty() {
@@ -1771,14 +1771,14 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         }
         // Map visible cards back to click areas using the widget's scroll
         // offset. Cards have variable height, so walk line offsets.
-        let offset = app.board_states[i].offset();
+        let offset = app.board.states[i].offset();
         let mut y = col_inner.y;
         for (ri, _) in cards.iter().enumerate().skip(offset) {
-            let h = card_height(app.board_expanded == Some((i, ri)));
+            let h = card_height(app.board.expanded == Some((i, ri)));
             if y + h > col_inner.y + col_inner.height {
                 break;
             }
-            app.board_cells.push((Rect::new(col_inner.x, y, col_inner.width, h), i, ri));
+            app.hits.board_cells.push((Rect::new(col_inner.x, y, col_inner.width, h), i, ri));
             y += h;
         }
     }
@@ -1787,10 +1787,10 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// Top-right header icons: a flag for the repo milestones page plus an
 /// external-link for the project board itself. Nerd Font glyphs only,
 /// in the same teal-underlined URL style as card links, so the header
-/// stays one row tall. Hit areas land in `app.board_links`.
+/// stays one row tall. Hit areas land in `app.hits.board_links`.
 fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
     use crate::theme::{base, ink, teal};
-    app.board_links.clear();
+    app.hits.board_links.clear();
     let mut links: Vec<(String, String)> = vec![];
     // Nerd Font Font Awesome fa-flag: the repo milestones page.
     if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
@@ -1802,7 +1802,7 @@ fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-external-link: the project board page,
     // from `gh project list` (old caches predate it and show no icon
     // until the board refetches).
-    if let Some(url) = app.board.as_ref().map(|b| b.url.clone()) {
+    if let Some(url) = app.board.data.as_ref().map(|b| b.url.clone()) {
         if !url.is_empty() {
             links.push(("\u{f08e}".to_string(), url));
         }
@@ -1826,7 +1826,7 @@ fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
         Rect::new(x, popup.y, width, 1),
     );
     for (i, (_, url)) in links.iter().enumerate() {
-        app.board_links
+        app.hits.board_links
             .push((Rect::new(x + i as u16 * 3, popup.y, 3, 1), url.clone()));
     }
 }
@@ -1965,7 +1965,7 @@ fn card_assignee(c: &model::BoardItem) -> Option<String> {
 /// `Ctrl+O`; resolving threads is out of scope and never offered here.
 fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, ink, muted, base, paper};
-    let Some(c) = app.compose.as_ref() else { return };
+    let Some(c) = app.compose.draft.as_ref() else { return };
     let popup = centered(area, 80, 76);
     f.render_widget(Clear, popup);
     let head = if c.sending { " Sending… " } else { " Compose " };
@@ -2111,7 +2111,7 @@ mod render_smoke {
                 }),
             })
             .collect();
-        app.board = Some(BoardData {
+        app.board.data = Some(BoardData {
             title: "Roadmap".to_string(),
             order: vec!["Todo".to_string()],
             items,
@@ -2123,7 +2123,7 @@ mod render_smoke {
     #[test]
     fn board_skeleton_shows_while_loading() {
         let mut app = App::new(Some("o/r".to_string()));
-        app.board_loading = true;
+        app.board.loading = true;
         let text = frame_text(&mut app);
         assert!(text.contains("Fetching"), "skeleton title");
     }
@@ -2146,11 +2146,11 @@ mod render_smoke {
     fn bar_shows_spinner_while_loading_then_collapses() {
         let mut app = loaded_app();
         app.tick = 0;
-        app.issue_pending.insert(7);
+        app.issues.pending.insert(7);
         let text = frame_text(&mut app);
         assert!(text.contains("⠋ issue"), "spinner plus label: {text}");
         // Determinate progress rides the label where known.
-        app.issue_progress.insert(7, (2, 7));
+        app.issues.progress.insert(7, (2, 7));
         let text = frame_text(&mut app);
         assert!(text.contains("issue 2/7"), "determinate progress: {text}");
         // The spinner animates off the cheap frame tick.
@@ -2158,8 +2158,8 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("⠙ issue 2/7"), "next frame: {text}");
         // Done means collapsed, not blank space.
-        app.issue_pending.clear();
-        app.issue_progress.clear();
+        app.issues.pending.clear();
+        app.issues.progress.clear();
         let text = frame_text(&mut app);
         assert!(!text.contains("⠋") && !text.contains("⠙"), "spinner gone: {text}");
     }
@@ -2167,8 +2167,8 @@ mod render_smoke {
     #[test]
     fn bar_message_wins_over_spinner() {
         let mut app = loaded_app();
-        app.issue_pending.insert(7);
-        app.issue_progress.insert(7, (2, 7));
+        app.issues.pending.insert(7);
+        app.issues.progress.insert(7, (2, 7));
         app.notify("refreshed #7".to_string());
         let text = frame_text(&mut app);
         assert!(text.contains("refreshed #7"), "message shows: {text}");
@@ -2182,18 +2182,18 @@ mod render_smoke {
         let mut app = loaded_app();
         // First frame populates hit areas and the per-frame row cache.
         let _ = frame_text(&mut app);
-        assert!(app.last_click.is_none(), "no flash before input");
-        let (x, y) = (app.side_issue_area.x + 1, app.side_issue_area.y + 2);
+        assert!(app.hits.last_click.is_none(), "no flash before input");
+        let (x, y) = (app.hits.side_issue_area.x + 1, app.hits.side_issue_area.y + 2);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        let Some((rect, _)) = app.last_click else {
+        let Some((rect, _)) = app.hits.last_click else {
             panic!("press records a flash");
         };
-        let body_before = app.body_rows.clone();
+        let body_before = app.hits.body_rows.clone();
         // The next frame inverts the clicked rect, style-only.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, &mut app)).expect("draw");
-        assert_eq!(app.body_rows, body_before, "flash paint keeps hit areas");
+        assert_eq!(app.hits.body_rows, body_before, "flash paint keeps hit areas");
         let buf = terminal.backend().buffer();
         let flashed = (rect.y..rect.y + rect.height).any(|yy| {
             (rect.x..rect.x + rect.width)
@@ -2201,41 +2201,41 @@ mod render_smoke {
         });
         assert!(flashed, "clicked row inverts while the flash lives");
         // Past the dwell the flash clears instead of painting.
-        app.last_click = Some((rect, Instant::now() - Duration::from_millis(1000)));
+        app.hits.last_click = Some((rect, Instant::now() - Duration::from_millis(1000)));
         let _ = frame_text(&mut app);
-        assert!(app.last_click.is_none(), "expired flash clears");
+        assert!(app.hits.last_click.is_none(), "expired flash clears");
     }
 
     #[test]
     fn drag_hovers_without_visiting_and_up_is_noop() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
-        let visited_before = app.visited.clone();
-        let (x, y) = (app.side_pr_area.x + 1, app.side_pr_area.y + 2);
+        let visited_before = app.nav.visited.clone();
+        let (x, y) = (app.hits.side_pr_area.x + 1, app.hits.side_pr_area.y + 2);
         handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x, y));
-        assert_eq!(app.hover, Some(9), "drag previews the row");
-        assert_eq!(app.current, Some(7), "drag never visits");
-        assert_eq!(app.visited, visited_before, "drag files nothing");
-        assert!(app.last_click.is_some(), "drag flashes");
-        let current = app.current;
-        let hover = app.hover;
-        let visited = app.visited.clone();
+        assert_eq!(app.nav.hover, Some(9), "drag previews the row");
+        assert_eq!(app.nav.current, Some(7), "drag never visits");
+        assert_eq!(app.nav.visited, visited_before, "drag files nothing");
+        assert!(app.hits.last_click.is_some(), "drag flashes");
+        let current = app.nav.current;
+        let hover = app.nav.hover;
+        let visited = app.nav.visited.clone();
         handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
-        assert_eq!(app.current, current, "release changes nothing");
-        assert_eq!(app.hover, hover, "release keeps hover");
-        assert_eq!(app.visited, visited, "release files nothing");
+        assert_eq!(app.nav.current, current, "release changes nothing");
+        assert_eq!(app.nav.hover, hover, "release keeps hover");
+        assert_eq!(app.nav.visited, visited, "release files nothing");
     }
 
     #[test]
     fn bar_loading_fits_the_80_cell_bar() {
         let mut app = loaded_app();
-        app.issue_pending.insert(7);
-        app.diff_pending.insert(9);
-        app.graph_pending.insert(7);
-        app.detail_pending.insert(100);
-        app.board_loading = true;
+        app.issues.pending.insert(7);
+        app.diff.pending.insert(9);
+        app.graph.pending.insert(7);
+        app.board.detail_pending.insert(100);
+        app.board.loading = true;
         let (tx, rx) = std::sync::mpsc::channel();
-        app.section_rx = Some(rx);
+        app.sections.rx = Some(rx);
         let _ = tx.send(crate::github::SectionEvent::Progress { done: 120, total: 500 });
         crate::app::poll_sections(&mut app);
         // Narrow render must not panic, and the short hint always survives:
@@ -2261,7 +2261,7 @@ mod render_smoke {
     fn board_header_links_milestones_and_project() {
         let mut app = board_app(1);
         let _ = frame_text(&mut app);
-        let urls: Vec<&str> = app.board_links.iter().map(|(_, u)| u.as_str()).collect();
+        let urls: Vec<&str> = app.hits.board_links.iter().map(|(_, u)| u.as_str()).collect();
         assert_eq!(
             urls,
             vec![
@@ -2270,13 +2270,13 @@ mod render_smoke {
             ],
             "flag then project link: {urls:?}"
         );
-        assert!(app.board_links.iter().all(|(r, _)| r.width == 3 && r.height == 1));
+        assert!(app.hits.board_links.iter().all(|(r, _)| r.width == 3 && r.height == 1));
     }
 
     #[test]
     fn board_headers_show_card_counts() {
         let mut app = board_app(2);
-        let board = app.board.as_mut().expect("board");
+        let board = app.board.data.as_mut().expect("board");
         board.order.push("Done".to_string());
         board.items.push(BoardItem {
             title: "Card 2".to_string(),
@@ -2295,7 +2295,7 @@ mod render_smoke {
     #[test]
     fn board_empty_column_shows_empty_state() {
         let mut app = board_app(1);
-        app.board.as_mut().expect("board").order.push("Done".to_string());
+        app.board.data.as_mut().expect("board").order.push("Done".to_string());
         let text = frame_text(&mut app);
         assert!(text.contains("Done (0)"), "zero count missing: {text}");
         assert!(text.contains("no cards"), "empty label missing: {text}");
@@ -2305,7 +2305,7 @@ mod render_smoke {
     fn board_filter_narrows_columns_then_esc_restores() {
         use crossterm::event::KeyEvent;
         let mut app = board_app(2);
-        let board = app.board.as_mut().expect("board");
+        let board = app.board.data.as_mut().expect("board");
         board.order.push("Done".to_string());
         board.items.push(BoardItem {
             title: "Other card".to_string(),
@@ -2340,7 +2340,7 @@ mod render_smoke {
         // the single row cannot scroll past itself.
         assert_eq!(crate::app::board_selected_number(&app), Some(100));
         board_move(&mut app, 0, 1);
-        assert_eq!((app.board_col, app.board_row), (0, 0), "cursor clamps to the filtered column");
+        assert_eq!((app.board.col, app.board.row), (0, 0), "cursor clamps to the filtered column");
 
         key(&mut app, KeyCode::Esc);
         let restored = frame_text(&mut app);
@@ -2355,7 +2355,7 @@ mod render_smoke {
         let before = frame_text(&mut app);
         assert!(before.contains("● x"), "{before}");
         assert!(before.contains("…"), "date cell loads in");
-        app.board_details.insert(100, BoardDetail {
+        app.board.details.insert(100, BoardDetail {
             created: "2026-11-01".to_string(),
             updated: "2026-11-05".to_string(),
             comments: 2,
@@ -2367,7 +2367,7 @@ mod render_smoke {
     #[test]
     fn board_expanded_card_shows_detail() {
         let mut app = board_app(3);
-        app.board_expanded = Some((0, 0));
+        app.board.expanded = Some((0, 0));
         let text = frame_text(&mut app);
         assert!(text.contains("Todo · ISSUE"));
         assert!(text.contains("https://github.com/o/r/issues"));
@@ -2380,22 +2380,22 @@ mod render_smoke {
         let mut app = board_app(3);
         let space = || KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
         handle_key(&mut app, space());
-        assert_eq!(app.board_expanded, Some((0, 0)));
+        assert_eq!(app.board.expanded, Some((0, 0)));
         handle_key(&mut app, space());
-        assert_eq!(app.board_expanded, None);
+        assert_eq!(app.board.expanded, None);
         handle_key(&mut app, space());
         board_move(&mut app, 0, 1);
-        assert_eq!(app.board_expanded, None);
-        assert_eq!((app.board_col, app.board_row), (0, 1));
+        assert_eq!(app.board.expanded, None);
+        assert_eq!((app.board.col, app.board.row), (0, 1));
     }
 
     #[test]
     fn board_scrolls_selected_into_view() {
         let mut app = board_app(30);
-        app.board_row = 29;
+        app.board.row = 29;
         let text = frame_text(&mut app);
         assert!(text.contains("Card 29"), "selected card visible");
-        assert!(app.board_states[0].offset() > 0, "list scrolled");
+        assert!(app.board.states[0].offset() > 0, "list scrolled");
     }
 
     fn sample(number: u64) -> IssueData {
@@ -2426,9 +2426,9 @@ mod render_smoke {
         pr.is_pr = true;
         for d in [sample(7), pr] {
             let n = d.number;
-            app.data.insert(n, d);
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, d);
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         app.show_issue(7);
         app
@@ -2456,16 +2456,16 @@ mod render_smoke {
         let mut pr = sample(9);
         pr.is_pr = true;
         pr.url = "https://github.com/o/r/pull/9".to_string();
-        app.data.insert(9, pr);
-        assert!(app.visited.is_empty());
+        app.issues.data.insert(9, pr);
+        assert!(app.nav.visited.is_empty());
         app.ensure_visited(9);
         app.load_issue(9, false);
-        assert_eq!(app.visited, vec![9]);
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.visited, vec![9]);
+        assert_eq!(app.nav.current, Some(9));
         // A second click files nothing twice.
         app.ensure_visited(9);
         app.load_issue(9, false);
-        assert_eq!(app.visited, vec![9]);
+        assert_eq!(app.nav.visited, vec![9]);
     }
 
     #[test]
@@ -2477,27 +2477,27 @@ mod render_smoke {
         app.repo_slug = Some("o/r".to_string());
         let mut d = sample(42);
         d.is_pr = true;
-        app.data.insert(42, d.clone());
-        app.statuses.insert(42, vec![]);
-        app.recent.push(42);
+        app.issues.data.insert(42, d.clone());
+        app.issues.statuses.insert(42, vec![]);
+        app.nav.recent.push(42);
         app.show_issue(42);
-        assert_eq!(app.visited, Vec::<u64>::new());
+        assert_eq!(app.nav.visited, Vec::<u64>::new());
         // Background fetch lands.
-        app.issue_tx.send((42, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
+        app.issues.tx.send((42, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
         poll_issues(&mut app);
-        assert_eq!(app.visited, Vec::<u64>::new());
+        assert_eq!(app.nav.visited, Vec::<u64>::new());
         let (_, _, recent) = app.pane_groups(true, false);
         assert_eq!(recent, vec![42]);
-        assert_eq!(app.current, Some(42));
+        assert_eq!(app.nav.current, Some(42));
     }
 
     #[test]
     fn merged_window_label_reads_plain() {
         let mut app = App::new(Some("o/r".to_string()));
         assert_eq!(app.window_label(), "open + merged ≤24h");
-        app.merged_window_hours = 1;
+        app.sections.merged_window_hours = 1;
         assert_eq!(app.window_label(), "open + merged ≤1h");
-        app.merged_window_hours = 168;
+        app.sections.merged_window_hours = 168;
         assert_eq!(app.window_label(), "open + merged ≤7d");
     }
 
@@ -2508,51 +2508,51 @@ mod render_smoke {
         // A second issue to walk between.
         let mut extra = sample(5);
         extra.body = String::new();
-        app.data.insert(5, extra);
-        app.statuses.insert(5, vec![]);
-        app.visited.push(5);
+        app.issues.data.insert(5, extra);
+        app.issues.statuses.insert(5, vec![]);
+        app.nav.visited.push(5);
         app.show_issue(7);
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
         // j never crosses into PRs: it walks issues only.
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.current, Some(5));
+        assert_eq!(app.nav.current, Some(5));
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.current, Some(5));
+        assert_eq!(app.nav.current, Some(5));
         handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
         // The PRs pane walks PRs only, starting from the first PR even
         // when the selection sits on an issue.
-        app.pane = Pane::PRs;
+        app.nav.pane = Pane::PRs;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
         handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
     }
 
     #[test]
     fn tab_cycles_issues_prs_refs() {
         use crate::app::Pane;
         let mut app = loaded_app();
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
         // No refs yet: Tab alternates the two sidebar lists.
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::PRs);
+        assert_eq!(app.nav.pane, Pane::PRs);
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
         // With mentions, Refs joins the cycle after PRs; the body keeps
         // its dedicated keys so it never takes Tab focus.
-        app.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
         app.show_issue(7);
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::PRs);
+        assert_eq!(app.nav.pane, Pane::PRs);
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Refs);
+        assert_eq!(app.nav.pane, Pane::Refs);
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
         // From the body (mouse), Tab returns to the sidebar.
-        app.pane = Pane::Main;
+        app.nav.pane = Pane::Main;
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
     }
 
     /// Foreground color of the first cell spelling `needle` on buffer row
@@ -2580,7 +2580,7 @@ mod render_smoke {
     fn pane_focus_drives_border_title_and_marker() {
         use crate::app::Pane;
         let mut app = loaded_app();
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -2588,7 +2588,7 @@ mod render_smoke {
         // Focused pane: thick double border, amber title, row marker.
         assert_eq!(buf[(40, 0)].symbol(), "═", "active pane has the thick border");
         assert_eq!(title_fg(&buf, 0, "Issues"), Some(crate::theme::amber()));
-        let pr_top = app.side_pr_area.y;
+        let pr_top = app.hits.side_pr_area.y;
         assert_eq!(title_fg(&buf, pr_top, "Pull requests"), Some(crate::theme::muted()));
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("█"), "focused pane marks its row");
@@ -2597,9 +2597,9 @@ mod render_smoke {
         // Tab away: border thins and title quiets, the marker stays on
         // the active row, cursor stays.
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::PRs);
-        assert_eq!(app.current, Some(7));
-        assert_eq!(app.issue_state.selected(), Some(1), "cursor kept while blurred");
+        assert_eq!(app.nav.pane, Pane::PRs);
+        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.sidebar.issue_state.selected(), Some(1), "cursor kept while blurred");
         terminal.draw(|f| render(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         assert_eq!(buf[(40, 0)].symbol(), "─", "inactive pane thins its border");
@@ -2608,13 +2608,13 @@ mod render_smoke {
         assert!(text.contains("█"), "blurred pane keeps the active marker");
         // Tab back: everything returns on the same row.
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.pane, Pane::Issues);
+        assert_eq!(app.nav.pane, Pane::Issues);
         terminal.draw(|f| render(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         assert_eq!(buf[(40, 0)].symbol(), "═");
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("█"), "marker returns with focus");
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
@@ -2623,17 +2623,17 @@ mod render_smoke {
         let mut app = loaded_app();
         // Clicking the Diff/Visual tab moves focus to Main; the sidebar
         // marker must stay coupled to what the main pane displays.
-        app.pane = Pane::Main;
-        assert_eq!(app.current, Some(7));
+        app.nav.pane = Pane::Main;
+        assert_eq!(app.nav.current, Some(7));
         let text = sidebar_text(&mut app);
         assert!(text.contains("█"), "main focus keeps the active marker");
         // Same for a PR in the lower pane.
         app.show_issue(9);
-        app.pane = Pane::Main;
+        app.nav.pane = Pane::Main;
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, &mut app)).expect("draw");
-        let area = app.side_pr_area;
+        let area = app.hits.side_pr_area;
         let buf = terminal.backend().buffer().clone();
         let mut pr_text = String::new();
         for y in area.y..area.y + area.height {
@@ -2649,37 +2649,37 @@ mod render_smoke {
     fn jk_in_main_scrolls_instead_of_moving_selection() {
         use crate::app::Pane;
         let mut app = loaded_app();
-        app.pane = Pane::Main;
+        app.nav.pane = Pane::Main;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.scroll, 3);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.scroll, 3);
+        assert_eq!(app.nav.current, Some(7));
         handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.scroll, 0);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.scroll, 0);
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
     fn jk_in_refs_moves_highlight_instead_of_opening() {
         use crate::app::Pane;
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "see #9 then #12".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "see #9 then #12".to_string();
         app.show_issue(7);
-        app.pane = Pane::Refs;
+        app.nav.pane = Pane::Refs;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.ref_highlight, Some(9));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.refs.highlight, Some(9));
+        assert_eq!(app.nav.current, Some(7));
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.ref_highlight, Some(12));
+        assert_eq!(app.refs.highlight, Some(12));
         handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.ref_highlight, Some(9));
+        assert_eq!(app.refs.highlight, Some(9));
     }
 
     #[test]
     fn panes_group_pins_requested_and_recent_with_dividers() {
         let mut app = loaded_app();
-        app.pin_order = vec![9];
-        app.pinned = [9].into_iter().collect();
-        app.recent = vec![9, 7, 42];
+        app.nav.pin_order = vec![9];
+        app.nav.pinned = [9].into_iter().collect();
+        app.nav.recent = vec![9, 7, 42];
         let (ip, iv, ir) = app.pane_groups(false, false);
         assert_eq!((ip, iv, ir), (vec![], vec![7], vec![42]));
         let (pp, pv, pr) = app.pane_groups(true, false);
@@ -2710,15 +2710,15 @@ mod render_smoke {
             "group counts in footer: {text}"
         );
         // Sort state rides the subtitle; reverse flips the arrow.
-        app.sort = crate::core::SideSort::Updated;
-        app.sort_desc = true;
+        app.sidebar.sort = crate::core::SideSort::Updated;
+        app.sidebar.sort_desc = true;
         let text = frame_text(&mut app);
         assert!(text.contains("1 · updated ↓"), "sort indicator: {text}");
         app.toggle_sort_dir();
         let text = frame_text(&mut app);
         assert!(text.contains("1 · updated ↑"), "reverse indicator: {text}");
         // An active search query moves to the PR footer, not the title.
-        app.query_active = "is:open".to_string();
+        app.sidebar.query_active = "is:open".to_string();
         assert!(app.side_footer(true).contains("\"is:open\""), "query in footer");
         assert!(!app.side_subtitle(true).contains("is:open"), "query out of title");
     }
@@ -2726,7 +2726,7 @@ mod render_smoke {
     #[test]
     fn refs_pane_shares_title_and_footer_shape() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "see #9".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "see #9".to_string();
         app.show_issue(7);
         assert!(app.refs_visible());
         assert_eq!(app.refs_subtitle(), "1 mentioned");
@@ -2747,7 +2747,7 @@ mod render_smoke {
         let mut app = loaded_app();
         let text = frame_text(&mut app);
         assert!(!text.contains("Paired"), "no line without pairs: {text}");
-        app.data.get_mut(&7).unwrap().paired =
+        app.issues.data.get_mut(&7).unwrap().paired =
             vec![PairedRef { number: 9, state: "MERGED".to_string() }];
         app.show_issue(7);
         let text = frame_text(&mut app);
@@ -2755,24 +2755,24 @@ mod render_smoke {
         assert!(text.contains("#9 MERGED"), "{text}");
         // Clickable: the line joins header click resolution so `#9`
         // navigates to the counterpart.
-        assert!(app.header_rows.iter().any(|l| l.contains("Paired")), "{:?}", app.header_rows);
+        assert!(app.hits.header_rows.iter().any(|l| l.contains("Paired")), "{:?}", app.hits.header_rows);
     }
 
     #[test]
     fn paired_header_click_opens_counterpart_in_main() {
         use crate::app::Pane;
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().paired =
+        app.issues.data.get_mut(&7).unwrap().paired =
             vec![PairedRef { number: 9, state: "MERGED".to_string() }];
         app.show_issue(7);
         let _ = frame_text(&mut app);
-        let idx = app.header_rows.iter().position(|l| l.contains("Paired")).expect("paired row");
-        let col = app.header_area.x + app.header_rows[idx].find("#9").expect("paired ref col") as u16;
-        let row_y = app.header_area.y + idx as u16;
+        let idx = app.hits.header_rows.iter().position(|l| l.contains("Paired")).expect("paired row");
+        let col = app.hits.header_area.x + app.hits.header_rows[idx].find("#9").expect("paired ref col") as u16;
+        let row_y = app.hits.header_area.y + idx as u16;
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, row_y));
-        assert_eq!(app.current, Some(9), "clicking the paired header opens the counterpart");
-        assert_eq!(app.pane, Pane::Main, "counterpart opens in the main tab");
-        assert!(matches!(app.focus, crate::app::Focus::Main));
+        assert_eq!(app.nav.current, Some(9), "clicking the paired header opens the counterpart");
+        assert_eq!(app.nav.pane, Pane::Main, "counterpart opens in the main tab");
+        assert!(matches!(app.nav.focus, crate::app::Focus::Main));
     }
 
     #[test]
@@ -2780,7 +2780,7 @@ mod render_smoke {
         use crate::app::Pane;
         use crate::model::SideRow::{Divider, Item};
         let mut app = loaded_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.body = String::new();
         d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
         app.show_issue(7);
@@ -2788,40 +2788,40 @@ mod render_smoke {
         assert_eq!(app.refs_rows(), vec![Divider("Paired"), Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("Paired"), "{text}");
-        app.pane = Pane::Refs;
+        app.nav.pane = Pane::Refs;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.ref_highlight, Some(9));
-        assert_eq!(app.current, Some(7), "j only moves the highlight");
+        assert_eq!(app.refs.highlight, Some(9));
+        assert_eq!(app.nav.current, Some(7), "j only moves the highlight");
         handle_key(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.current, Some(9), "Enter opens the paired counterpart");
+        assert_eq!(app.nav.current, Some(9), "Enter opens the paired counterpart");
     }
 
     #[test]
     fn paired_refs_row_click_opens_instead_of_highlighting() {
         let mut app = loaded_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.body = String::new();
         d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
         app.show_issue(7);
         let _ = frame_text(&mut app); // records hit areas
         // Divider sits on the first list row; the paired item below it.
-        let (x, y) = (app.refs_area.x + 2, app.refs_area.y + 3);
+        let (x, y) = (app.hits.refs_area.x + 2, app.hits.refs_area.y + 3);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(9));
-        assert_eq!(app.ref_highlight, None);
+        assert_eq!(app.nav.current, Some(9));
+        assert_eq!(app.refs.highlight, None);
     }
 
     #[test]
     fn refs_pane_lists_mentioned_rows_and_toggles() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
         app.show_issue(7);
-        assert_eq!(app.ref_numbers, vec![9]);
+        assert_eq!(app.refs.numbers, vec![9]);
         assert!(app.refs_visible());
         let text = frame_text(&mut app);
         assert!(text.contains("Refs"), "{text}");
         handle_key(&mut app, key(KeyCode::Char('e')));
-        assert!(!app.show_refs);
+        assert!(!app.refs.show);
         assert!(!app.refs_visible());
         let hidden = frame_text(&mut app);
         assert!(!hidden.contains("Refs"), "{hidden}");
@@ -2829,40 +2829,40 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('e')));
         let mut d = sample(7);
         d.body = "see #9".to_string();
-        app.issue_tx.send((7, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
+        app.issues.tx.send((7, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
         crate::app::poll_issues(&mut app);
-        assert_eq!(app.ref_numbers, vec![9]);
+        assert_eq!(app.refs.numbers, vec![9]);
     }
 
     #[test]
     fn mouse_click_on_refs_row_highlights_source_instead_of_opening() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "intro\n\nblocked by #9, see details".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "intro\n\nblocked by #9, see details".to_string();
         app.show_issue(7);
         let _ = frame_text(&mut app); // records hit areas
         // +2 skips the border and the breathing-room spacer row.
-        let (x, y) = (app.refs_area.x + 2, app.refs_area.y + 2);
+        let (x, y) = (app.hits.refs_area.x + 2, app.hits.refs_area.y + 2);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(7), "stays on the issue");
-        assert_eq!(app.ref_highlight, Some(9));
+        assert_eq!(app.nav.current, Some(7), "stays on the issue");
+        assert_eq!(app.refs.highlight, Some(9));
         // Scrolled so the mentioning row sits at the top.
-        let row = app.body_rows.iter().position(|l| l.contains("#9")).unwrap();
-        assert_eq!(app.scroll, row as u16);
+        let row = app.hits.body_rows.iter().position(|l| l.contains("#9")).unwrap();
+        assert_eq!(app.nav.scroll, row as u16);
         // Clicking the same row again clears the highlight.
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.ref_highlight, None);
+        assert_eq!(app.refs.highlight, None);
         // Switching issues clears it too.
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.ref_highlight, Some(9));
+        assert_eq!(app.refs.highlight, Some(9));
         // The mentioning line renders highlighted at the top of the pane.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
-        let cell = &buf[(app.body_area.x + 1, app.body_area.y)];
+        let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y)];
         assert_eq!(cell.bg, crate::theme::amber(), "source line highlighted");
         app.show_issue(9);
-        assert_eq!(app.ref_highlight, None);
+        assert_eq!(app.refs.highlight, None);
     }
 
     #[test]
@@ -2871,13 +2871,13 @@ mod render_smoke {
         app.repo_slug = Some("o/r".to_string());
         for n in 1..=30 {
             let d = sample(n);
-            app.data.insert(n, d);
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, d);
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         app.show_issue(30);
         let _ = frame_text(&mut app);
-        assert!(app.issue_state.offset() > 0, "pane scrolled");
+        assert!(app.sidebar.issue_state.offset() > 0, "pane scrolled");
     }
 
     #[test]
@@ -2885,27 +2885,27 @@ mod render_smoke {
         let mut app = loaded_app();
         // A second issue row so the wheel has somewhere to go.
         let d = sample(8);
-        app.data.insert(8, d);
-        app.statuses.insert(8, vec![]);
-        app.visited.push(8);
+        app.issues.data.insert(8, d);
+        app.issues.statuses.insert(8, vec![]);
+        app.nav.visited.push(8);
         let _ = frame_text(&mut app); // records hit areas
-        let (x, y) = (app.side_issue_area.x + 2, app.side_issue_area.y + 2);
+        let (x, y) = (app.hits.side_issue_area.x + 2, app.hits.side_issue_area.y + 2);
         handle_mouse(&mut app, click(MouseEventKind::ScrollDown, x, y));
-        assert_eq!(app.hover, Some(8));
-        assert_eq!(app.current, Some(7), "wheel never visits");
+        assert_eq!(app.nav.hover, Some(8));
+        assert_eq!(app.nav.current, Some(7), "wheel never visits");
         let _ = frame_text(&mut app); // selection stays on the active issue
-        assert_eq!(app.issue_state.selected(), Some(1), "hover never outranks current");
-        assert_eq!(app.current, Some(7));
-        assert_eq!(app.scroll, 0, "body scroll untouched");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(1), "hover never outranks current");
+        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.nav.scroll, 0, "body scroll untouched");
     }
 
     #[test]
     fn slash_search_filters_and_enters_first_hit() {
         use crossterm::event::{KeyEvent, KeyModifiers};
         let mut app = loaded_app();
-        app.data.get_mut(&9).unwrap().title = "Zebra migration".to_string();
+        app.issues.data.get_mut(&9).unwrap().title = "Zebra migration".to_string();
         handle_key(&mut app, key(KeyCode::Char('/')));
-        assert!(app.searching);
+        assert!(app.sidebar.searching);
         for c in "zebra".chars() {
             handle_key(&mut app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()));
         }
@@ -2914,23 +2914,23 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("zebra"));
         handle_key(&mut app, key(KeyCode::Enter));
-        assert!(!app.searching);
-        assert_eq!(app.current, Some(9));
+        assert!(!app.sidebar.searching);
+        assert_eq!(app.nav.current, Some(9));
         // Highlight persists after commit.
-        assert_eq!(app.search, "zebra");
+        assert_eq!(app.sidebar.search, "zebra");
     }
 
     #[test]
     fn search_n_jumps_between_hits() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().title = "Fix login".to_string();
-        app.data.get_mut(&9).unwrap().title = "Fix logout".to_string();
-        app.search = "fix".to_string();
+        app.issues.data.get_mut(&7).unwrap().title = "Fix login".to_string();
+        app.issues.data.get_mut(&9).unwrap().title = "Fix logout".to_string();
+        app.sidebar.search = "fix".to_string();
         assert_eq!(app.search_hits(), vec![7, 9]);
         handle_key(&mut app, key(KeyCode::Char('n')));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
         handle_key(&mut app, key(KeyCode::Char('N')));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
@@ -2939,60 +2939,60 @@ mod render_smoke {
         let mut merged = sample(20);
         merged.is_pr = true;
         merged.state = "MERGED".to_string();
-        app.data.insert(20, merged);
-        app.statuses.insert(20, vec![]);
-        app.recent.push(20);
+        app.issues.data.insert(20, merged);
+        app.issues.statuses.insert(20, vec![]);
+        app.nav.recent.push(20);
         use crate::model::SideRow::{Divider, Item};
         assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent"), Item(20)]);
         handle_key(&mut app, key(KeyCode::Char('f')));
-        assert!(app.filter_open);
+        assert!(app.sidebar.filter_open);
         let text = frame_text(&mut app);
         assert!(text.contains("Filter"));
         assert!(text.contains("query"));
         handle_key(&mut app, key(KeyCode::Char('m')));
-        assert!(!app.show_merged_prs);
+        assert!(!app.sidebar.show_merged_prs);
         assert_eq!(app.pr_rows(), vec![Item(9)]);
         // Requested rows ignore the toggle.
         handle_key(&mut app, key(KeyCode::Char('f')));
-        assert!(!app.filter_open);
+        assert!(!app.sidebar.filter_open);
     }
 
     #[test]
     fn filter_query_draft_commits_and_clears() {
         use crate::app::QueryAction;
         let mut app = loaded_app();
-        app.filter_open = true;
+        app.sidebar.filter_open = true;
         app.start_query_edit();
-        assert_eq!(app.query_draft, "");
-        app.query_draft = "label:bug".to_string();
+        assert_eq!(app.sidebar.query_draft, "");
+        app.sidebar.query_draft = "label:bug".to_string();
         assert_eq!(app.commit_query_draft(), QueryAction::Run("label:bug".to_string()));
-        assert_eq!(app.query_active, "label:bug");
-        assert!(!app.filter_open);
-        app.filter_open = true;
+        assert_eq!(app.sidebar.query_active, "label:bug");
+        assert!(!app.sidebar.filter_open);
+        app.sidebar.filter_open = true;
         app.start_query_edit();
-        assert_eq!(app.query_draft, "label:bug");
+        assert_eq!(app.sidebar.query_draft, "label:bug");
         // Esc in edit mode reverts the draft but keeps the dialog.
-        app.query_draft = "other".to_string();
+        app.sidebar.query_draft = "other".to_string();
         handle_key(&mut app, key(KeyCode::Esc));
-        assert!(app.filter_open);
-        assert!(!app.query_edit);
-        assert_eq!(app.query_draft, "label:bug");
-        assert_eq!(app.query_active, "label:bug");
+        assert!(app.sidebar.filter_open);
+        assert!(!app.sidebar.query_edit);
+        assert_eq!(app.sidebar.query_draft, "label:bug");
+        assert_eq!(app.sidebar.query_active, "label:bug");
         // Empty commit clears back to the window listing.
         app.start_query_edit();
-        app.query_draft = String::new();
+        app.sidebar.query_draft = String::new();
         assert_eq!(app.commit_query_draft(), QueryAction::Refetch);
-        assert!(app.query_active.is_empty());
+        assert!(app.sidebar.query_active.is_empty());
     }
 
     #[test]
     fn arrows_scroll_instead() {
         let mut app = loaded_app();
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.scroll, 3);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.scroll, 3);
+        assert_eq!(app.nav.current, Some(7));
         handle_key(&mut app, key(KeyCode::Up));
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.nav.scroll, 0);
     }
 
     #[test]
@@ -3001,15 +3001,15 @@ mod render_smoke {
         app.show_issue(9);
         let _ = frame_text(&mut app); // records hit areas
         // +2 skips the border and the breathing-room spacer row.
-        let (x, y) = (app.side_issue_area.x + 2, app.side_issue_area.y + 2);
+        let (x, y) = (app.hits.side_issue_area.x + 2, app.hits.side_issue_area.y + 2);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
     fn space_expands_sidebar_row_detail_and_collapse_restores_it() {
         let mut app = loaded_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.title = "Fix the thing that keeps breaking tailmarker".to_string();
         d.labels = ["bug", "ui", "docs", "chore", "ci-pipeline"]
             .iter()
@@ -3039,15 +3039,15 @@ mod render_smoke {
     #[test]
     fn sidebar_rows_show_labels_updated_and_status_and_sort_hint() {
         let mut app = loaded_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.labels = vec![Label { name: "bug".to_string() }];
         d.updated_at = "2020-01-05T00:00:00Z".to_string();
-        app.statuses.insert(7, vec![("Roadmap".to_string(), Some("Todo".to_string()))]);
+        app.issues.statuses.insert(7, vec![("Roadmap".to_string(), Some("Todo".to_string()))]);
         let mut newer = sample(5);
         newer.updated_at = "2020-02-05T00:00:00Z".to_string();
-        app.data.insert(5, newer);
-        app.statuses.insert(5, vec![]);
-        app.visited.push(5);
+        app.issues.data.insert(5, newer);
+        app.issues.statuses.insert(5, vec![]);
+        app.nav.visited.push(5);
         app.show_issue(7);
 
         let text = sidebar_text(&mut app);
@@ -3056,7 +3056,7 @@ mod render_smoke {
 
         // One key cycles the sort; the `/` hint names key and direction.
         handle_key(&mut app, key(KeyCode::Char('a')));
-        assert_eq!(app.sort, crate::core::SideSort::Updated);
+        assert_eq!(app.sidebar.sort, crate::core::SideSort::Updated);
         let sorted = sidebar_text(&mut app);
         assert!(
             sorted.find("#5").unwrap_or(usize::MAX) < sorted.find("#7").unwrap_or(usize::MAX),
@@ -3072,7 +3072,7 @@ mod render_smoke {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, app)).expect("draw");
-        let area = app.side_pr_area;
+        let area = app.hits.side_pr_area;
         let buf = terminal.backend().buffer();
         let mut text = String::new();
         for y in area.y..area.y + area.height {
@@ -3094,9 +3094,9 @@ mod render_smoke {
     fn check_app(number: u64, checks: Option<crate::model::CheckState>) -> App {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
-        app.data.insert(number, check_pr(number, checks));
-        app.statuses.insert(number, vec![]);
-        app.visited.push(number);
+        app.issues.data.insert(number, check_pr(number, checks));
+        app.issues.statuses.insert(number, vec![]);
+        app.nav.visited.push(number);
         app.show_issue(number);
         app
     }
@@ -3111,9 +3111,9 @@ mod render_smoke {
             (22, Some(CheckState::Fail)),
             (23, Some(CheckState::Pending)),
         ] {
-            app.data.insert(n, check_pr(n, checks));
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, check_pr(n, checks));
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         app.show_issue(21);
         let text = pr_sidebar_text(&mut app);
@@ -3203,67 +3203,67 @@ mod render_smoke {
     fn mouse_click_switches_tabs() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
-        let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
+        let (tx, y) = (app.hits.tabs_area.x, app.hits.tabs_area.y);
         handle_mouse(
             &mut app,
             click(MouseEventKind::Down(MouseButton::Left), tx + 14, y),
         );
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
         handle_mouse(
             &mut app,
             click(MouseEventKind::Down(MouseButton::Left), tx + 1, y),
         );
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
     }
 
     #[test]
     fn mouse_click_on_ref_opens_issue() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
         let _ = frame_text(&mut app);
-        let row = app
+        let row = app.hits
             .body_rows
             .iter()
             .position(|l| l.contains("#9"))
             .expect("ref visible");
-        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
     }
 
     #[test]
     fn mouse_click_opens_nearest_ref_on_row() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "fix #7 then #9 ok".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "fix #7 then #9 ok".to_string();
         let _ = frame_text(&mut app);
-        let row = app
+        let row = app.hits
             .body_rows
             .iter()
             .position(|l| l.contains("#7 then #9"))
             .expect("refs visible");
-        let line = app.body_rows[row].clone();
-        let (bax, bay) = (app.body_area.x, app.body_area.y);
+        let line = app.hits.body_rows[row].clone();
+        let (bax, bay) = (app.hits.body_area.x, app.hits.body_area.y);
         let x9 = bax + line.find("#9").unwrap() as u16;
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x9, bay + row as u16));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
         let x7 = bax + line.find("#7").unwrap() as u16;
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x7, bay + row as u16));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
     fn mouse_click_on_url_opens_browser_not_issue() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "see https://example.com/a ok".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "see https://example.com/a ok".to_string();
         let _ = frame_text(&mut app);
-        let row = app
+        let row = app.hits
             .body_rows
             .iter()
             .position(|l| l.contains("example.com"))
             .expect("url visible");
-        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
         assert!(app.message.contains("opened https://example.com/a"));
     }
 
@@ -3271,23 +3271,23 @@ mod render_smoke {
     fn mouse_click_on_plain_text_keeps_issue() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
-        let row = app
+        let row = app.hits
             .body_rows
             .iter()
             .position(|l| l.contains("hello"))
             .expect("body visible");
-        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
     fn mouse_wheel_scrolls() {
         let mut app = loaded_app();
         handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 60, 20));
-        assert_eq!(app.scroll, 3);
+        assert_eq!(app.nav.scroll, 3);
         handle_mouse(&mut app, click(MouseEventKind::ScrollUp, 60, 20));
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.nav.scroll, 0);
     }
 
     fn frame_text(app: &mut App) -> String {
@@ -3309,7 +3309,7 @@ mod render_smoke {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, app)).expect("draw");
-        let area = app.side_issue_area;
+        let area = app.hits.side_issue_area;
         let buf = terminal.backend().buffer();
         let mut text = String::new();
         for y in area.y..area.y + area.height {
@@ -3326,9 +3326,9 @@ mod render_smoke {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         let d = sample(7);
-        app.data.insert(7, d);
-        app.statuses.insert(7, vec![]);
-        app.visited.push(7);
+        app.issues.data.insert(7, d);
+        app.issues.statuses.insert(7, vec![]);
+        app.nav.visited.push(7);
         app.show_issue(7);
         let text = frame_text(&mut app);
         assert!(text.contains("ghit"), "masthead wordmark");
@@ -3352,15 +3352,15 @@ mod render_smoke {
     #[test]
     fn main_pane_keeps_a_single_title_line_with_hint() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().title = "Quasar title nine".to_string();
+        app.issues.data.get_mut(&7).unwrap().title = "Quasar title nine".to_string();
         let text = frame_text(&mut app);
         // Masthead plus the one sidebar row; the header block starts at
         // the meta lines and no longer repeats the title.
         assert_eq!(text.matches("Quasar title nine").count(), 2, "single main-pane title: {text}");
         assert!(
-            !app.header_rows.iter().any(|l| l.contains("Quasar title nine")),
+            !app.hits.header_rows.iter().any(|l| l.contains("Quasar title nine")),
             "header starts at meta: {:?}",
-            app.header_rows
+            app.hits.header_rows
         );
         assert!(
             text.contains("q quit · tab panes · j/k move · : open · b board · ? shortcuts"),
@@ -3372,14 +3372,14 @@ mod render_smoke {
     fn background_section_rows_render_without_changing_selection() {
         let mut app = loaded_app();
         let (tx, rx) = std::sync::mpsc::channel();
-        app.section_rx = Some(rx);
+        app.sections.rx = Some(rx);
         let mut issue = sample(42);
         issue.is_pr = true;
         issue.title = "background pull request".to_string();
         tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::github::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false, window_at: None }]))).unwrap();
         poll_sections(&mut app);
-        assert_eq!(app.current, Some(7));
-        assert!(app.partial.contains(&42));
+        assert_eq!(app.nav.current, Some(7));
+        assert!(app.issues.partial.contains(&42));
         assert!(frame_text(&mut app).contains("background pull request"));
     }
 
@@ -3417,7 +3417,7 @@ mod render_smoke {
     #[test]
     fn auth_modal_names_scopes_and_command() {
         let mut app = loaded_app();
-        app.auth_prompt = Some(crate::app::AuthPrompt {
+        app.auth.prompt = Some(crate::app::AuthPrompt {
             missing: vec!["project".to_string()],
             cause: "token lacks scopes ghit needs".to_string(),
             scopes_known: true,
@@ -3437,13 +3437,13 @@ mod render_smoke {
     fn compose_on_diff_line_targets_file_and_line() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
-        app.expanded_files.insert((9, "a.rs".into()));
+        app.diff.expanded_files.insert((9, "a.rs".into()));
         app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
         // Header, hunk, deletion, then the addition the comment lands on.
@@ -3452,7 +3452,7 @@ mod render_smoke {
         }
         handle_key(&mut app, key(KeyCode::Char('c')));
         assert_eq!(
-            app.compose.as_ref().map(|c| c.target.clone()),
+            app.compose.draft.as_ref().map(|c| c.target.clone()),
             Some(crate::app::ComposeTarget::Line { path: "a.rs".to_string(), line: 1 }),
         );
         let text = frame_text(&mut app);
@@ -3467,13 +3467,13 @@ mod render_smoke {
         pr.review_threads = vec![
             ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
         ];
-        app.data.insert(9, pr);
+        app.issues.data.insert(9, pr);
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
-        app.expanded_files.insert((9, "a.rs".into()));
+        app.diff.expanded_files.insert((9, "a.rs".into()));
         app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
         // Header, hunk, deletion, addition, then the thread header the reply lands in.
@@ -3482,7 +3482,7 @@ mod render_smoke {
         }
         handle_key(&mut app, key(KeyCode::Char('c')));
         assert_eq!(
-            app.compose.as_ref().map(|c| c.target.clone()),
+            app.compose.draft.as_ref().map(|c| c.target.clone()),
             Some(crate::app::ComposeTarget::Reply { thread_id: "t1".into() }),
         );
         let text = frame_text(&mut app);
@@ -3492,7 +3492,7 @@ mod render_smoke {
     #[test]
     fn compose_modal_shows_reply_target_and_discards() {
         let mut app = loaded_app();
-        app.compose = Some(crate::app::ComposeState {
+        app.compose.draft = Some(crate::app::ComposeState {
             number: 7,
             target: crate::app::ComposeTarget::Reply { thread_id: "t".into() },
             body: "reply".into(),
@@ -3519,27 +3519,27 @@ mod render_smoke {
     #[test]
     fn compose_modal_steals_mouse_focus() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
         handle_key(&mut app, key(KeyCode::Char('c')));
         assert!(app.compose_open());
         let _ = frame_text(&mut app);
-        let row = app
+        let row = app.hits
             .body_rows
             .iter()
             .position(|l| l.contains("#9"))
             .expect("ref visible");
-        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-        assert_eq!(app.current, Some(7), "clicks never leak past the modal");
+        assert_eq!(app.nav.current, Some(7), "clicks never leak past the modal");
         assert!(app.compose_open(), "the draft survives the click");
         handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 60, 20));
-        assert_eq!(app.scroll, 0, "wheel never scrolls behind the modal");
+        assert_eq!(app.nav.scroll, 0, "wheel never scrolls behind the modal");
     }
 
     #[test]
     fn details_contains_body_before_comments() {
         let mut app = loaded_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.body = "body evidence".into();
         d.comments.push(crate::model::Comment { body: "comment evidence".into(), ..Default::default() });
         let text = frame_text(&mut app);
@@ -3557,11 +3557,11 @@ mod render_smoke {
             ReviewThread { id: "a".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
             ReviewThread { id: "b".into(), path: "a.rs".into(), line: Some(8), ..Default::default() },
         ];
-        app.data.insert(9, pr); app.show_issue(9);
-        app.diffs.insert(9, vec![DiffFile { filename: "a.rs".into(), patch: "@@ -1 +1 @@\n-old\n+new".into(), ..Default::default() }]);
-        app.expanded_files.insert((9, "a.rs".into())); app.set_tab(Tab::Visual);
+        app.issues.data.insert(9, pr); app.show_issue(9);
+        app.diff.files.insert(9, vec![DiffFile { filename: "a.rs".into(), patch: "@@ -1 +1 @@\n-old\n+new".into(), ..Default::default() }]);
+        app.diff.expanded_files.insert((9, "a.rs".into())); app.set_tab(Tab::Visual);
         for split in [false, true] {
-            app.diff_split = split;
+            app.diff.split = split;
             let text = frame_text(&mut app);
             assert!(text.find("line 8").unwrap() < text.find("+new").unwrap(), "{text}");
             assert!(text.find("+new").unwrap() < text.find("line 1").unwrap(), "{text}");
@@ -3572,8 +3572,8 @@ mod render_smoke {
     #[test]
     fn pending_nav_dialog_renders_all_three_actions() {
         let mut app = loaded_app();
-        app.current = Some(9);
-        let d = app.data.get_mut(&9).unwrap();
+        app.nav.current = Some(9);
+        let d = app.issues.data.get_mut(&9).unwrap();
         d.is_pr = true;
         d.review_threads = vec![crate::model::ReviewThread {
             id: "t1".into(),
@@ -3602,10 +3602,10 @@ mod render_smoke {
                 ReviewComment { id: "d".into(), body: "live note".into(), ..Default::default() },
             ], ..Default::default() },
         ];
-        app.data.insert(9, pr);
+        app.issues.data.insert(9, pr);
         app.show_issue(9);
-        app.diffs.insert(9, vec![DiffFile { filename: "a.rs".into(), patch: "@@ -1 +1 @@\n-old\n+new".into(), ..Default::default() }]);
-        app.expanded_files.insert((9, "a.rs".into()));
+        app.diff.files.insert(9, vec![DiffFile { filename: "a.rs".into(), patch: "@@ -1 +1 @@\n-old\n+new".into(), ..Default::default() }]);
+        app.diff.expanded_files.insert((9, "a.rs".into()));
         app.set_tab(Tab::Visual);
         app.confirm_choose(1);
         assert!(!app.confirm_open(), "discard keeps the test on the Diff tab");
@@ -3625,10 +3625,10 @@ mod render_smoke {
             {"id":"t2","path":"src/a.rs","line":7,"isResolved":false,"comments":{"nodes":[{"id":"c2","author":{"login":"bob"},"body":"**open body**"}]}},
             {"id":"t3","path":"src/b.rs","line":null,"isResolved":false,"comments":{"nodes":[{"id":"c3","author":{"login":"cam"},"body":"other body"}]}}
         ]}}));
-        app.data.insert(9, pr);
+        app.issues.data.insert(9, pr);
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), ..Default::default() },
             DiffFile { filename: "src/b.rs".into(), ..Default::default() },
         ]);
@@ -3647,10 +3647,10 @@ mod render_smoke {
     fn diff_tab_folds_files_by_default() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
             DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
         ]);
@@ -3670,7 +3670,7 @@ mod render_smoke {
         assert!(!text.contains("binary or large file"), "note hidden while folded");
         // Space unfolds the file under the active line.
         handle_key(&mut app, key(KeyCode::Char(' ')));
-        assert!(app.expanded_files.contains(&(9, "src/a.rs".to_string())));
+        assert!(app.diff.expanded_files.contains(&(9, "src/a.rs".to_string())));
         let open = frame_text(&mut app);
         assert!(open.contains("▾"), "{open}");
         assert!(open.contains("@@ -1"), "{open}");
@@ -3682,10 +3682,10 @@ mod render_smoke {
         for _ in 0..6 {
             handle_key(&mut app, key(KeyCode::Down));
         }
-        assert_eq!(app.diff_cursor, 0, "still resolving file 0 until render");
+        assert_eq!(app.diff.cursor, 0, "still resolving file 0 until render");
         let _ = frame_text(&mut app);
-        assert_eq!(app.diff_cursor, 1, "landed on the second header");
-        assert!(app.expanded_files.contains(&(9, "img.png".to_string())), "landed-on collapsed file opens");
+        assert_eq!(app.diff.cursor, 1, "landed on the second header");
+        assert!(app.diff.expanded_files.contains(&(9, "img.png".to_string())), "landed-on collapsed file opens");
         // Unfolding the second file shows its binary note.
         let both = frame_text(&mut app);
         assert!(both.contains("binary or large file"), "{both}");
@@ -3693,98 +3693,98 @@ mod render_smoke {
         for _ in 0..6 {
             handle_key(&mut app, key(KeyCode::Up));
         }
-        let row = app.body_rows.iter().position(|l| l.starts_with("▾ ")).unwrap();
-        let (bx, by) = (app.body_area.x, app.body_area.y);
+        let row = app.hits.body_rows.iter().position(|l| l.starts_with("▾ ")).unwrap();
+        let (bx, by) = (app.hits.body_area.x, app.hits.body_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), bx + 1, by + row as u16));
-        assert!(!app.expanded_files.contains(&(9, "src/a.rs".to_string())));
-        assert_eq!(app.diff_cursor, 0);
+        assert!(!app.diff.expanded_files.contains(&(9, "src/a.rs".to_string())));
+        assert_eq!(app.diff.cursor, 0);
     }
 
     #[test]
     fn arrows_walk_diff_lines() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
             DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 2, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
         ]);
         app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
         // The cursor anchors to the first header without expanding it.
-        let h0 = app.diff_headers[0];
-        assert_eq!(app.diff_line, Some(h0));
-        assert!(app.expanded_files.is_empty());
+        let h0 = app.diff.headers[0];
+        assert_eq!(app.diff.line, Some(h0));
+        assert!(app.diff.expanded_files.is_empty());
         // Down steps one row at a time and never touches the selection.
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.diff_line, Some(h0 + 1));
-        assert_eq!(app.current, Some(9), "selection untouched");
+        assert_eq!(app.diff.line, Some(h0 + 1));
+        assert_eq!(app.nav.current, Some(9), "selection untouched");
         // Walking onto the second header and rendering resolves the file
         // and unfolds it: two blank/rule rows then the header.
         handle_key(&mut app, key(KeyCode::Down));
         handle_key(&mut app, key(KeyCode::Down));
         let _ = frame_text(&mut app);
-        assert_eq!(app.diff_cursor, 1);
-        assert!(app.expanded_files.contains(&(9, "src/b.rs".to_string())));
+        assert_eq!(app.diff.cursor, 1);
+        assert!(app.diff.expanded_files.contains(&(9, "src/b.rs".to_string())));
         // Up steps back a single row.
-        let back = app.diff_line.unwrap();
+        let back = app.diff.line.unwrap();
         handle_key(&mut app, key(KeyCode::Up));
-        assert_eq!(app.diff_line, Some(back - 1));
+        assert_eq!(app.diff.line, Some(back - 1));
         // j/k stays with the side panes: in Issues it walks issues only.
         app.show_issue(7);
-        app.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::app::Pane::Issues;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.diff_cursor, 0);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.diff.cursor, 0);
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
     fn shift_jk_jumps_between_diff_files() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
+        app.diff.pending.remove(&9);
         // Long expanded first file: the second header starts off-screen,
         // so the jump must scroll, not just hop visible headers.
         let patch_a =
             format!("@@ -1 +1 @@\n{}", (0..60).map(|i| format!("+line{i}")).collect::<Vec<_>>().join("\n"));
-        app.diffs.insert(9, vec![
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 60, deletions: 0, patch: patch_a },
             DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
         ]);
-        app.expanded_files.insert((9, "src/a.rs".into()));
+        app.diff.expanded_files.insert((9, "src/a.rs".into()));
         app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
-        assert_eq!(app.diff_cursor, 0);
-        let top = app.scroll;
+        assert_eq!(app.diff.cursor, 0);
+        let top = app.nav.scroll;
         // J lands the second header at the top and opens it.
         handle_key(&mut app, key(KeyCode::Char('J')));
-        assert_eq!(app.diff_cursor, 1, "J moves the file cursor before render");
-        assert!(app.scroll > top, "off-screen header scrolls into view");
+        assert_eq!(app.diff.cursor, 1, "J moves the file cursor before render");
+        assert!(app.nav.scroll > top, "off-screen header scrolls into view");
         let _ = frame_text(&mut app);
-        assert_eq!(app.diff_cursor, 1, "render keeps the jumped file");
-        assert!(app.expanded_files.contains(&(9, "src/b.rs".to_string())), "jumped-on file opens");
+        assert_eq!(app.diff.cursor, 1, "render keeps the jumped file");
+        assert!(app.diff.expanded_files.contains(&(9, "src/b.rs".to_string())), "jumped-on file opens");
         assert!(
-            app.body_rows.first().is_some_and(|l| l.contains("src/b.rs")),
+            app.hits.body_rows.first().is_some_and(|l| l.contains("src/b.rs")),
             "header lands at top: {:?}",
-            app.body_rows.first()
+            app.hits.body_rows.first()
         );
         // J at the last file is a no-op.
-        let held = app.scroll;
+        let held = app.nav.scroll;
         handle_key(&mut app, key(KeyCode::Char('J')));
         let _ = frame_text(&mut app);
-        assert_eq!((app.diff_cursor, app.scroll), (1, held), "clamped at the last file");
+        assert_eq!((app.diff.cursor, app.nav.scroll), (1, held), "clamped at the last file");
         // K jumps back to the first header.
         handle_key(&mut app, key(KeyCode::Char('K')));
         let _ = frame_text(&mut app);
-        assert_eq!(app.diff_cursor, 0);
+        assert_eq!(app.diff.cursor, 0);
         assert!(
-            app.body_rows.first().is_some_and(|l| l.contains("src/a.rs")),
+            app.hits.body_rows.first().is_some_and(|l| l.contains("src/a.rs")),
             "first header back at top: {:?}",
-            app.body_rows.first()
+            app.hits.body_rows.first()
         );
     }
 
@@ -3792,10 +3792,10 @@ mod render_smoke {
     fn diff_active_line_highlights_and_yanks() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
         app.set_tab(Tab::Visual);
@@ -3803,10 +3803,10 @@ mod render_smoke {
         // Unfold, then step onto the deletion line.
         handle_key(&mut app, key(KeyCode::Char(' ')));
         let _ = frame_text(&mut app);
-        let h0 = app.diff_headers[0];
+        let h0 = app.diff.headers[0];
         handle_key(&mut app, key(KeyCode::Down));
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.diff_line, Some(h0 + 2));
+        assert_eq!(app.diff.line, Some(h0 + 2));
         let _ = frame_text(&mut app);
         // The active line yanks with its file and PR identity.
         assert_eq!(
@@ -3819,7 +3819,7 @@ mod render_smoke {
         terminal.draw(|f| render(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         let vis = h0 + 2;
-        let cell = &buf[(app.body_area.x + 1, app.body_area.y + vis as u16)];
+        let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y + vis as u16)];
         assert_eq!(cell.bg, crate::theme::amber(), "active line highlighted");
     }
 
@@ -3828,29 +3828,29 @@ mod render_smoke {
         use crate::app::Pane;
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
         app.set_tab(Tab::Visual);
         let _ = frame_text(&mut app);
-        let row = app.body_rows.iter().position(|l| l.starts_with("▸ ")).unwrap();
-        let (bx, by) = (app.body_area.x, app.body_area.y);
+        let row = app.hits.body_rows.iter().position(|l| l.starts_with("▸ ")).unwrap();
+        let (bx, by) = (app.hits.body_area.x, app.hits.body_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), bx + 1, by + row as u16));
-        assert_eq!(app.pane, Pane::Main, "click takes body focus");
-        assert_eq!(app.diff_cursor, 0);
+        assert_eq!(app.nav.pane, Pane::Main, "click takes body focus");
+        assert_eq!(app.diff.cursor, 0);
         // The click parks the line; render resolves the file and expands it.
         let _ = frame_text(&mut app);
-        assert!(app.expanded_files.contains(&(9, "src/a.rs".to_string())));
+        assert!(app.diff.expanded_files.contains(&(9, "src/a.rs".to_string())));
         // The expanded header renders with the accent background.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
-        let hrow = app.diff_headers[0];
-        let cell = &buf[(app.body_area.x + 1, app.body_area.y + hrow as u16)];
+        let hrow = app.diff.headers[0];
+        let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y + hrow as u16)];
         assert_eq!(cell.bg, crate::theme::amber(), "expanded row highlighted");
     }
 
@@ -3909,25 +3909,25 @@ mod render_smoke {
         // on the `2 …` tab. The split follows `TAB_SPLIT_X`.
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
-        let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
+        let (tx, y) = (app.hits.tabs_area.x, app.hits.tabs_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 8, y));
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 12, y));
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 14, y));
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 22, y));
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 30, y));
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 31, y));
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
     }
 
     #[test]
     fn section_headers_show_nerd_icons() {
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
         app.show_issue(7);
         let text = frame_text(&mut app);
         // Font Awesome: fa-exclamation-circle, fa-code-fork, fa-link.
@@ -3952,16 +3952,16 @@ mod render_smoke {
     fn issue_header_renders_above_tabs_not_in_body() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
-        assert!(!app.header_rows.is_empty());
+        assert!(!app.hits.header_rows.is_empty());
         // The header block starts at the meta lines: state and author
         // render there, while the `#N title` lives only in the masthead.
-        assert!(app.header_rows.iter().any(|l| l.contains("OPEN")));
-        assert!(!app.header_rows.iter().any(|l| l.contains("#7")));
-        assert!(app.header_area.y + app.header_area.height <= app.tabs_area.y);
+        assert!(app.hits.header_rows.iter().any(|l| l.contains("OPEN")));
+        assert!(!app.hits.header_rows.iter().any(|l| l.contains("#7")));
+        assert!(app.hits.header_area.y + app.hits.header_area.height <= app.hits.tabs_area.y);
         // The meta/label block left the scrollable body: meta text like
         // the state and assignees no longer appear in body rows.
-        assert!(!app.body_rows.iter().any(|l| l.contains("assignees:")), "{:?}", app.body_rows);
-        assert!(!app.body_rows.iter().any(|l| l.contains("OPEN")), "{:?}", app.body_rows);
+        assert!(!app.hits.body_rows.iter().any(|l| l.contains("assignees:")), "{:?}", app.hits.body_rows);
+        assert!(!app.hits.body_rows.iter().any(|l| l.contains("OPEN")), "{:?}", app.hits.body_rows);
     }
 
     #[test]
@@ -3970,11 +3970,11 @@ mod render_smoke {
         // through the meta lines now: the issue URL line opens its link.
         // (The test `open_url` stub notifies instead of opening a browser.)
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().url = "https://example.com/note".to_string();
+        app.issues.data.get_mut(&7).unwrap().url = "https://example.com/note".to_string();
         let _ = frame_text(&mut app);
-        let idx = app.header_rows.iter().position(|l| l.contains("example.com")).expect("url row");
-        let col = app.header_area.x + app.header_rows[idx].find("example.com").expect("url col") as u16;
-        let row_y = app.header_area.y + idx as u16;
+        let idx = app.hits.header_rows.iter().position(|l| l.contains("example.com")).expect("url row");
+        let col = app.hits.header_area.x + app.hits.header_rows[idx].find("example.com").expect("url col") as u16;
+        let row_y = app.hits.header_area.y + idx as u16;
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, row_y));
         assert!(app.message.contains("opened https://example.com/note"), "{}", app.message);
     }
@@ -3983,7 +3983,7 @@ mod render_smoke {
     fn narrow_header_wraps_without_clipping_labels() {
         use crate::model::Label;
         let mut app = loaded_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.labels = vec![Label { name: "modernization".to_string() }, Label { name: "new-modernization".to_string() }];
         let backend = TestBackend::new(70, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
@@ -3995,20 +3995,20 @@ mod render_smoke {
         assert!(text.contains("https://github.com/o/"), "{text}");
         assert!(text.contains("r/issues/7"), "{text}");
         // One logical meta line became several wrapped rows.
-        assert!(app.header_rows.len() > 3, "{:?}", app.header_rows);
+        assert!(app.hits.header_rows.len() > 3, "{:?}", app.hits.header_rows);
     }
 
     #[test]
     fn filter_dialog_shows_nerd_icons() {
         let mut app = loaded_app();
-        app.filter_open = true;
+        app.sidebar.filter_open = true;
         let text = frame_text(&mut app);
         // Font Awesome: fa-filter title, fa-clock-o window row. All four
         // toggles default on, so the checked box renders.
         assert!(text.contains('\u{f0b0}'), "title: {text}");
         assert!(text.contains('\u{f017}'), "window: {text}");
         assert!(text.contains('\u{f14a}'), "checked: {text}");
-        app.show_closed_issues = false;
+        app.sidebar.show_closed_issues = false;
         let text = frame_text(&mut app);
         assert!(text.contains('\u{f096}'), "unchecked: {text}");
     }
@@ -4033,9 +4033,9 @@ mod render_smoke {
     #[test]
     fn pinned_row_uses_tack_icon() {
         let mut app = loaded_app();
-        app.pin_order = vec![7];
-        app.pinned = [7].into_iter().collect();
-        app.recent = vec![7, 9];
+        app.nav.pin_order = vec![7];
+        app.nav.pinned = [7].into_iter().collect();
+        app.nav.recent = vec![7, 9];
         assert!(app.issue_rows().iter().any(|r| r.number() == Some(7)));
         let text = frame_text(&mut app);
         assert!(text.contains('\u{f08d}'), "{text}");
@@ -4045,10 +4045,10 @@ mod render_smoke {
     fn diff_summary_shows_file_icon() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
             DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
         ]);
@@ -4060,7 +4060,7 @@ mod render_smoke {
     #[test]
     fn status_bar_shows_repo_project_and_pinned_hint() {
         let mut app = loaded_app();
-        app.statuses.insert(7, vec![("ghit demo".into(), Some("Todo".into()))]);
+        app.issues.statuses.insert(7, vec![("ghit demo".into(), Some("Todo".into()))]);
         let text = frame_text(&mut app);
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("o/r"), "{line}");
@@ -4072,7 +4072,7 @@ mod render_smoke {
     #[test]
     fn focused_input_replaces_status_and_positions_cursor() {
         let mut app = loaded_app();
-        app.focus = crate::app::Focus::Bar;
+        app.nav.focus = crate::app::Focus::Bar;
         app.bar = "123".into();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|f| render(f, &mut app)).unwrap();
@@ -4139,7 +4139,7 @@ mod render_smoke {
         // Diff file context follows the file cursor, folded by default.
         let mut app = loaded_app();
         app.show_issue(9);
-        app.diffs.insert(9, vec![
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
         app.set_tab(crate::app::Tab::Visual);
@@ -4148,21 +4148,21 @@ mod render_smoke {
             "#9 Fix the thing — src/a.rs (modified +1 -1) — https://github.com/o/r/issues/9"
         );
         // Expanded files add the hunk header for agents.
-        app.expanded_files.insert((9, "src/a.rs".to_string()));
+        app.diff.expanded_files.insert((9, "src/a.rs".to_string()));
         assert!(app.yank_text().unwrap().contains("@@ -1 +1 @@"), "{}", app.yank_text().unwrap());
         // Refs context names the raw body line and the ticket.
         let mut app = loaded_app();
-        app.data.get_mut(&7).unwrap().body = "intro\nsee #9 here\n".to_string();
-        app.ref_numbers = vec![9];
-        app.pane = Pane::Refs;
-        app.ref_highlight = Some(9);
+        app.issues.data.get_mut(&7).unwrap().body = "intro\nsee #9 here\n".to_string();
+        app.refs.numbers = vec![9];
+        app.nav.pane = Pane::Refs;
+        app.refs.highlight = Some(9);
         let text = app.yank_text().unwrap();
         assert!(text.contains("#7 refs #9 (body line 2)"), "{text}");
         assert!(text.contains("https://github.com/o/r/issues/9"), "{text}");
         // No selection to yank.
         let mut app = loaded_app();
-        app.pane = Pane::Refs;
-        app.ref_highlight = None;
+        app.nav.pane = Pane::Refs;
+        app.refs.highlight = None;
         assert!(app.yank_text().is_none());
     }
 
@@ -4197,10 +4197,10 @@ mod render_smoke {
     #[test]
     fn diff_tab_shows_loading_while_pending() {
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diffs.remove(&9);
-        app.diff_pending.insert(9);
+        app.diff.files.remove(&9);
+        app.diff.pending.insert(9);
         app.set_tab(Tab::Visual);
         assert!(frame_text(&mut app).contains("Fetching diff"), "loading state");
     }
@@ -4210,48 +4210,48 @@ mod render_smoke {
         use crate::app::poll_diffs;
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
         let files = vec![DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() }];
-        app.diff_tx.send((9, Ok(files))).unwrap();
+        app.diff.tx.send((9, Ok(files))).unwrap();
         poll_diffs(&mut app);
-        assert!(!app.diff_pending.contains(&9));
-        assert_eq!(app.diffs.get(&9).unwrap().len(), 1);
-        assert_eq!(app.current, Some(9));
+        assert!(!app.diff.pending.contains(&9));
+        assert_eq!(app.diff.files.get(&9).unwrap().len(), 1);
+        assert_eq!(app.nav.current, Some(9));
     }
 
     #[test]
     fn number_keys_switch_content_tabs() {
         let mut app = loaded_app();
         handle_key(&mut app, key(KeyCode::Char('3')));
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('4')));
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('1')));
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('2')));
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
     }
 
     #[test]
     fn mouse_click_reaches_diff_tab() {
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
-        let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
+        let (tx, y) = (app.hits.tabs_area.x, app.hits.tabs_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 24, y));
-        assert_eq!(app.tab, Tab::Visual);
+        assert_eq!(app.nav.tab, Tab::Visual);
     }
 
     fn diff_loaded_app() -> App {
         use crate::model::DiffFile;
         let mut app = loaded_app();
-        app.data.insert(9, diff_pr(9));
+        app.issues.data.insert(9, diff_pr(9));
         app.show_issue(9);
-        app.diff_pending.remove(&9);
-        app.diffs.insert(9, vec![
+        app.diff.pending.remove(&9);
+        app.diff.files.insert(9, vec![
             DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         ]);
-        app.expanded_files.insert((9, "src/a.rs".to_string()));
+        app.diff.expanded_files.insert((9, "src/a.rs".to_string()));
         app.set_tab(Tab::Visual);
         app
     }
@@ -4259,7 +4259,7 @@ mod render_smoke {
     #[test]
     fn split_mode_pairs_old_and_new_side_by_side() {
         let mut app = diff_loaded_app();
-        app.diff_split = true;
+        app.diff.split = true;
         let text = frame_text(&mut app);
         assert!(text.contains("split (s: unified)"), "{text}");
         assert!(text.contains("│"), "{text}");
@@ -4280,14 +4280,14 @@ mod render_smoke {
     fn s_toggles_split_only_on_diff_tab() {
         let mut app = diff_loaded_app();
         handle_key(&mut app, key(KeyCode::Char('s')));
-        assert!(app.diff_split);
+        assert!(app.diff.split);
         assert!(app.message.contains("split"));
         handle_key(&mut app, key(KeyCode::Char('s')));
-        assert!(!app.diff_split);
+        assert!(!app.diff.split);
         assert!(app.message.contains("unified"));
         app.set_tab(Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('s')));
-        assert!(!app.diff_split, "s outside Diff does nothing");
+        assert!(!app.diff.split, "s outside Diff does nothing");
     }
 
     fn graph_node(number: u64, title: &str, state: &str) -> GraphNode {
@@ -4324,15 +4324,15 @@ mod render_smoke {
                 (graph_node(10, "Plain ref", "CLOSED"), GraphEdgeKind::ReferencedBy),
             ],
         );
-        app.graphs.insert(7, data);
+        app.graph.data.insert(7, data);
         app
     }
 
     #[test]
     fn graph_tab_shows_skeleton_while_pending() {
         let mut app = loaded_app();
-        app.tab = Tab::Visual;
-        app.graph_pending.insert(7);
+        app.nav.tab = Tab::Visual;
+        app.graph.pending.insert(7);
         let text = frame_text(&mut app);
         assert!(text.contains("Graph"), "tab label: {text}");
         assert!(text.contains("Fetching graph"), "skeleton: {text}");
@@ -4355,9 +4355,9 @@ mod render_smoke {
         let mut app = graph_app();
         let center = graph_node(7, "Center", "OPEN");
         let neighbors = (20..30).map(|n| (graph_node(n, "Neighbor", "OPEN"), GraphEdgeKind::References)).collect();
-        app.graphs.insert(7, crate::model::build_graph(center, neighbors));
+        app.graph.data.insert(7, crate::model::build_graph(center, neighbors));
         app.set_tab(Tab::Visual);
-        let text = super::graph_text(&app, app.data.get(&7).unwrap()).lines.iter().map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+        let text = super::graph_text(&app, app.issues.data.get(&7).unwrap()).lines.iter().map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
         assert_eq!(text.matches('╭').count(), 8, "{text}");
         assert!(text.contains("+3 more"), "{text}");
         assert_eq!(app.graph_order_numbers().len(), 8);
@@ -4366,64 +4366,64 @@ mod render_smoke {
     #[test]
     fn four_opens_graph_and_keys_stay_tab_scoped() {
         let mut app = graph_app();
-        app.pane = crate::app::Pane::Main;
+        app.nav.pane = crate::app::Pane::Main;
         // j on Body scrolls; the graph cursor never moves.
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.graph_cursor, 0);
-        assert!(app.scroll > 0);
+        assert_eq!(app.graph.cursor, 0);
+        assert!(app.nav.scroll > 0);
         // `4` opens the tab; arrows/hjkl move between nodes.
         handle_key(&mut app, key(KeyCode::Char('2')));
-        assert_eq!(app.tab, Tab::Visual);
-        let scroll = app.scroll;
+        assert_eq!(app.nav.tab, Tab::Visual);
+        let scroll = app.nav.scroll;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.graph_cursor, 1);
-        assert_eq!(app.scroll, scroll, "graph takes the arrows, not scroll");
+        assert_eq!(app.graph.cursor, 1);
+        assert_eq!(app.nav.scroll, scroll, "graph takes the arrows, not scroll");
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.graph_cursor, 2);
+        assert_eq!(app.graph.cursor, 2);
         handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.graph_cursor, 1);
+        assert_eq!(app.graph.cursor, 1);
         handle_key(&mut app, key(KeyCode::Char('h')));
-        assert_eq!(app.graph_cursor, 0);
+        assert_eq!(app.graph.cursor, 0);
         handle_key(&mut app, key(KeyCode::Char('l')));
-        assert_eq!(app.graph_cursor, 1);
+        assert_eq!(app.graph.cursor, 1);
         handle_key(&mut app, key(KeyCode::Up));
-        assert_eq!(app.graph_cursor, 0);
+        assert_eq!(app.graph.cursor, 0);
         handle_key(&mut app, key(KeyCode::Up));
-        assert_eq!(app.graph_cursor, 0, "clamped at the top");
+        assert_eq!(app.graph.cursor, 0, "clamped at the top");
     }
 
     #[test]
     fn graph_enter_opens_selected_issue_per_issue() {
         use crate::model::DiffFile;
         let mut app = graph_app();
-        app.pane = crate::app::Pane::Main;
+        app.nav.pane = crate::app::Pane::Main;
         // Switching issues on the Graph tab refetches per issue: cache #9's
         // graph and diff so the open stays synchronous with no fetch.
-        app.graphs.insert(9, crate::model::build_graph(graph_node(9, "Blocked work", "OPEN"), vec![]));
-        app.diffs.insert(9, Vec::<DiffFile>::new());
+        app.graph.data.insert(9, crate::model::build_graph(graph_node(9, "Blocked work", "OPEN"), vec![]));
+        app.diff.files.insert(9, Vec::<DiffFile>::new());
         handle_key(&mut app, key(KeyCode::Char('2')));
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.graph_cursor, 1);
+        assert_eq!(app.graph.cursor, 1);
         handle_key(&mut app, key(KeyCode::Enter));
-        assert_eq!(app.current, Some(9));
-        assert_eq!(app.graph_cursor, 0, "issue switch resets the cursor");
-        assert!(app.graphs.contains_key(&9), "per-issue graph");
+        assert_eq!(app.nav.current, Some(9));
+        assert_eq!(app.graph.cursor, 0, "issue switch resets the cursor");
+        assert!(app.graph.data.contains_key(&9), "per-issue graph");
         // Tab switch away and back keeps the graph and the cursor.
         handle_key(&mut app, key(KeyCode::Char('1')));
-        assert_eq!(app.tab, Tab::Details);
+        assert_eq!(app.nav.tab, Tab::Details);
         handle_key(&mut app, key(KeyCode::Char('2')));
-        assert_eq!(app.tab, Tab::Visual);
-        assert!(app.graphs.contains_key(&9));
+        assert_eq!(app.nav.tab, Tab::Visual);
+        assert!(app.graph.data.contains_key(&9));
     }
 
     #[test]
     fn graph_fetch_lands_without_touching_selection() {
         use crate::app::poll_graphs;
         let mut app = loaded_app();
-        app.graph_tx.send((7, Ok(crate::model::build_graph(graph_node(7, "seven", "OPEN"), vec![])))).unwrap();
+        app.graph.tx.send((7, Ok(crate::model::build_graph(graph_node(7, "seven", "OPEN"), vec![])))).unwrap();
         poll_graphs(&mut app);
-        assert!(!app.graph_pending.contains(&7));
-        assert!(app.graphs.contains_key(&7));
-        assert_eq!(app.current, Some(7));
+        assert!(!app.graph.pending.contains(&7));
+        assert!(app.graph.data.contains_key(&7));
+        assert_eq!(app.nav.current, Some(7));
     }
 }
