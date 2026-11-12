@@ -1098,7 +1098,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Length(header.len() as u16),
             Constraint::Length(1),
             Constraint::Length(2),
@@ -1106,30 +1106,34 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         ])
         .split(area);
 
-    // rows[0] masthead, rows[1] meta/labels, rows[2] breathing room,
-    // rows[3] tabs, rows[4] pane.
+    // rows[0] masthead (brand line, then the issue line), rows[1]
+    // meta/labels, rows[2] breathing room, rows[3] tabs, rows[4] pane.
     app.tabs_area = rows[3];
     // Nerd Font Font Awesome fa-git brands the wordmark; repo and number
     // stay plain text so identifiers scan without a patched font. The PR
-    // head-commit CI glyph rides the masthead title, the single title
-    // source now that the header block starts at the meta lines.
-    let mast = match app.current.and_then(|n| app.data.get(&n)) {
+    // head-commit CI glyph rides the issue line, the single title source
+    // now that the header block starts at the meta lines.
+    let mast: Vec<Line> = match app.current.and_then(|n| app.data.get(&n)) {
         Some(d) => {
-            let mut spans = vec![
-                Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
-                Span::styled(format!("{repo}  "), Style::new().fg(muted())),
+            let mut title = vec![
                 Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
                 Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
             ];
             if let Some(check) = check_span(d) {
-                spans.push(check);
+                title.push(check);
             }
-            Line::from(spans)
+            vec![
+                Line::from(vec![
+                    Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
+                    Span::styled(repo, Style::new().fg(muted())),
+                ]),
+                Line::from(title),
+            ]
         }
-        None => Line::from(vec![
+        None => vec![Line::from(vec![
             Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
             Span::styled(repo, Style::new().fg(muted())),
-        ]),
+        ])],
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
@@ -2562,14 +2566,17 @@ mod render_smoke {
         }
     }
 
-    /// Masthead row only (first row of the main pane), so masthead
+    /// Masthead rows only (brand line plus the issue line), so masthead
     /// assertions cannot pass off sidebar rows as the title source.
     fn masthead_text(app: &mut App) -> String {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, app)).expect("draw");
         let buf = terminal.backend().buffer();
-        (44..120).map(|x| buf[(x, 0)].symbol()).collect()
+        (0..2)
+            .map(|y| (44..120).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -2758,6 +2765,18 @@ mod render_smoke {
         assert!(text.contains("#7"), "issue number");
         assert!(text.contains("Body"), "tab label");
         assert!(text.contains("hello"), "markdown body");
+    }
+
+    #[test]
+    fn masthead_splits_brand_and_issue_lines() {
+        let mut app = loaded_app();
+        let mast = masthead_text(&mut app);
+        let mut lines = mast.lines();
+        let brand = lines.next().unwrap_or_default();
+        let issue = lines.next().unwrap_or_default();
+        assert!(brand.contains("ghit"), "brand line keeps the wordmark: {brand}");
+        assert!(!brand.contains("#7"), "number leaves the brand line: {brand}");
+        assert!(issue.contains("#7"), "issue line keeps the number: {issue}");
     }
 
     #[test]

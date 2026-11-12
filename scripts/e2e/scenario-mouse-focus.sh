@@ -12,7 +12,7 @@ R=$(grep -n "Pull requests" "$E2E_FRAMES/mouse-boot.txt" | head -1 | cut -d: -f1
 CLICKROW=$((R + 2))
 e2e_key -l "$(printf '\x1b[<0;4;%dM' "$CLICKROW")"
 e2e_key -l "$(printf '\x1b[<3;4;%dm' "$CLICKROW")"
-e2e_wait "gh-ghit  #19" 20 || fail "mouse never selected #19"
+e2e_wait "/pull/19" 20 || fail "mouse never selected #19"
 e2e_shot mouse-select
 e2e_key Tab
 [ "$(e2e_markers)" -le 1 ] || fail "marker leak after Tab"
