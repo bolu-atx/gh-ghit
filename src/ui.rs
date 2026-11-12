@@ -1269,6 +1269,60 @@ fn wrap_lines<'a>(lines: Vec<Line<'a>>, width: usize) -> Vec<Line<'a>> {
     out
 }
 
+/// Paint every clickable ref and URL in link style (underlined, colored
+/// by kind: issue, PR, or URL), using the same detection the click
+/// handler resolves, so what looks like a link is exactly what opens.
+/// `is_pr` answers for loaded numbers; unknown refs keep the URL color.
+/// Spans split at range edges.
+fn style_links(lines: &mut [Line<'_>], repo: Option<&str>, is_pr: impl Fn(u64) -> Option<bool>) {
+    use crate::theme::{issue_ref, pr_ref, teal};
+    for line in lines.iter_mut() {
+        let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let ranges: Vec<(usize, usize, Style)> = model::link_ranges(&plain, repo)
+            .into_iter()
+            .map(|(a, b, target)| {
+                let fg = match target {
+                    model::LinkTarget::Issue(n) => match is_pr(n) {
+                        Some(true) => pr_ref(),
+                        Some(false) => issue_ref(),
+                        None => teal(),
+                    },
+                    model::LinkTarget::Url(_) => teal(),
+                };
+                (a, b, Style::new().fg(fg).underlined())
+            })
+            .collect();
+        if ranges.is_empty() {
+            continue;
+        }
+        let mut out: Vec<Span<'_>> = Vec::with_capacity(line.spans.len() + ranges.len() * 2);
+        let mut offset = 0;
+        for span in std::mem::take(&mut line.spans) {
+            let (start, end) = (offset, offset + span.content.len());
+            offset = end;
+            // Cut points inside this span: every range edge that lands here.
+            let mut cuts: Vec<usize> = ranges
+                .iter()
+                .flat_map(|&(a, b, _)| [a, b])
+                .filter(|&c| c > start && c < end)
+                .collect();
+            cuts.sort_unstable();
+            cuts.dedup();
+            let mut from = start;
+            for to in cuts.into_iter().chain(std::iter::once(end)) {
+                let piece = &span.content[from - start..to - start];
+                let style = match ranges.iter().find(|&&(a, b, _)| from >= a && to <= b) {
+                    Some(&(_, _, link)) => span.style.patch(link),
+                    None => span.style,
+                };
+                out.push(Span::styled(piece.to_string(), style));
+                from = to;
+            }
+        }
+        line.spans = out;
+    }
+}
+
 /// Light up every line that mentions issue `n`, for refs-row selection.
 fn highlight_mentions(lines: &mut [Line<'_>], n: u64, repo: Option<&str>) {
     use crate::theme::{amber, ink};
@@ -1429,6 +1483,15 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
         ),
     };
+    // Clickable refs and URLs read as links in the body and the graph.
+    if app.nav.tab == Tab::Details || app.visual_graph() {
+        // Kind comes from loaded issue data, then the current graph's nodes.
+        let graph = app.nav.current.and_then(|n| app.graph.data.get(&n));
+        let is_pr = |n: u64| {
+            app.issues.data.get(&n).map(|d| d.is_pr).or_else(|| graph?.nodes.iter().find(|g| g.number == n).map(|g| g.is_pr))
+        };
+        style_links(&mut text.lines, app.repo_key().as_deref(), is_pr);
+    }
     // A refs-row selection lights up the mentioning line instead of opening
     // the issue. Body tab only: the mentions come from the body markdown
     // (and the header above the tabs).
@@ -2050,6 +2113,31 @@ mod render_smoke {
     use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn style_links_colors_refs_across_span_edges() {
+        use crate::theme::{issue_ref, pr_ref, teal};
+        use ratatui::text::{Line, Span};
+        let mut lines = vec![Line::from(vec![Span::raw("fixes #1"), Span::raw("2 and #5 via https://x.io, #8")])];
+        super::style_links(&mut lines, None, |n| match n {
+            12 => Some(false),
+            5 => Some(true),
+            _ => None,
+        });
+        let linked: Vec<(&str, _)> = lines[0]
+            .spans
+            .iter()
+            .filter(|s| s.style.fg.is_some())
+            .map(|s| (s.content.as_ref(), s.style.fg.unwrap()))
+            .collect();
+        assert_eq!(
+            linked,
+            [("#1", issue_ref()), ("2", issue_ref()), ("#5", pr_ref()), ("https://x.io", teal()), ("#8", teal())],
+            "issue, PR, URL, and unknown ref each take their color"
+        );
+        let all: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(all, "fixes #12 and #5 via https://x.io, #8", "text survives the split");
+    }
 
     fn board_app(n_cards: usize) -> App {
         let mut app = App::new(Some("o/r".to_string()));
