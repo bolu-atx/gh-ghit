@@ -489,6 +489,30 @@ impl App {
         }
     }
 
+    /// Startup hydration: paint the last persisted sidebar instantly so a
+    /// cold start shows previous state. The background refresh landing in
+    /// `poll_sections` updates these rows in place, so hydration only
+    /// changes when rows first appear. Missing or expired cache is a
+    /// no-op and startup behaves as before. Startup-only: refreshes must
+    /// never resurrect evicted rows, so nothing else calls this.
+    fn hydrate_cached_sections(&mut self) {
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
+        let Some(rows) = github::cached_sections(&repo, self.merged_window_hours) else { return };
+        for row in rows {
+            let n = row.issue.number;
+            if self.data.contains_key(&n) {
+                continue;
+            }
+            if !row.complete {
+                self.partial.insert(n);
+            }
+            self.data.insert(n, row.issue);
+            self.statuses.insert(n, row.statuses);
+            self.board_details.insert(n, row.detail);
+            self.ensure_recent(n);
+        }
+    }
+
     /// Pull recent issues plus open/windowed-merged PRs into the sidebar.
     /// Offline or out of a repo this is a no-op: clicked rows still list.
     pub(crate) fn merge_recent_sections(&mut self) {
@@ -1976,6 +2000,7 @@ fn poll_bootstrap(app: &mut App) {
             app.ensure_visited(n);
             app.load_issue(n, false);
         }
+        app.hydrate_cached_sections();
         app.merge_recent_sections();
     } else {
         for n in numbers { app.load_issue(n, false); }
@@ -2188,6 +2213,92 @@ mod tests {
         app.current = numbers.first().copied();
         app.sync_selection();
         app
+    }
+
+    /// On-disk name of the o/r sections cache at the default window.
+    /// Mirrors `github::sections_cache_name("o/r", 24)`; update together.
+    const SECTIONS_CACHE: &str = "sections-o__r-24";
+
+    fn cached_row(number: u64, complete: bool) -> crate::api::Row {
+        crate::api::Row {
+            issue: issue(number, "2026-01-05T00:00:00Z"),
+            statuses: vec![],
+            detail: crate::model::BoardDetail {
+                created: "2026-01-01".to_string(),
+                updated: "2026-01-05".to_string(),
+                comments: 0,
+            },
+            complete,
+            window_at: None,
+        }
+    }
+
+    fn temp_xdg() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir, Option<String>) {
+        let guard = crate::cache::test_env_lock().lock().unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let saved = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        (guard, dir, saved)
+    }
+
+    fn restore_xdg(saved: Option<String>) {
+        match saved {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+
+    #[test]
+    fn startup_hydrates_sidebar_from_sections_cache() {
+        let (_guard, _dir, saved) = temp_xdg();
+        cache::cache_put(SECTIONS_CACHE, &vec![cached_row(7, false), cached_row(9, true)]);
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.hydrate_cached_sections();
+        assert_eq!(app.recent, vec![7, 9], "cached order becomes sidebar order");
+        assert!(app.data.contains_key(&7) && app.data.contains_key(&9));
+        assert!(app.partial.contains(&7), "slim rows stay partial so open runs the full fetch");
+        assert!(!app.partial.contains(&9));
+        assert!(app.statuses.contains_key(&7) && app.board_details.contains_key(&7));
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn startup_hydration_leaves_present_rows_alone() {
+        let (_guard, _dir, saved) = temp_xdg();
+        cache::cache_put(SECTIONS_CACHE, &vec![cached_row(7, false), cached_row(9, false)]);
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        let mut kept = issue(7, "2026-01-05T00:00:00Z");
+        kept.title = "kept".to_string();
+        app.data.insert(7, kept);
+        app.hydrate_cached_sections();
+        assert_eq!(app.data[&7].title, "kept", "CLI-opened rows win over the cache");
+        assert!(app.data.contains_key(&9));
+        assert_eq!(app.recent, vec![9], "present rows are not re-added to recent");
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn startup_hydration_ignores_missing_and_expired_cache() {
+        let (_guard, dir, saved) = temp_xdg();
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.hydrate_cached_sections();
+        assert!(app.recent.is_empty() && app.data.is_empty(), "no cache means no rows");
+        cache::cache_put(SECTIONS_CACHE, &vec![cached_row(7, false)]);
+        let path = dir.path().join("ghit").join("cache").join(format!("{SECTIONS_CACHE}.json"));
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        payload["fetched_at"] = serde_json::json!(now - crate::cache::CACHE_TTL_SECS - 1);
+        std::fs::write(&path, serde_json::to_string(&payload).unwrap()).unwrap();
+        app.hydrate_cached_sections();
+        assert!(app.recent.is_empty() && app.data.is_empty(), "expired cache reads as a miss");
+        restore_xdg(saved);
     }
 
     #[test]
