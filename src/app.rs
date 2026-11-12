@@ -2150,12 +2150,25 @@ impl App {
         c.sending = true;
         let (number, target, body) = (c.number, c.target.clone(), c.body.clone());
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        // A REST reply names a numeric comment id, not the GraphQL
+        // thread id the cursor carries: resolve it from the loaded
+        // thread before sending.
+        let reply_comment_id = match &target {
+            ComposeTarget::Reply { thread_id } => self
+                .data
+                .get(&number)
+                .and_then(|d| model::thread_reply_comment_id(&d.review_threads, thread_id)),
+            _ => None,
+        };
         let tx = self.compose_tx.clone();
         rt().spawn(async move {
             let result = match &target {
                 ComposeTarget::Thread => github::post_thread_comment(&repo, number, &body).await,
                 ComposeTarget::Line { path, line } => github::post_line_comment(&repo, number, &body, path, *line).await,
-                ComposeTarget::Reply { thread_id } => github::post_thread_reply(thread_id, &body).await,
+                ComposeTarget::Reply { .. } => match reply_comment_id {
+                    Some(comment_id) => github::post_thread_reply(&repo, number, comment_id, &body).await,
+                    None => Err("reply needs a review comment: refresh the PR to reload its threads".to_string()),
+                },
             };
             let _ = tx.send((number, result));
         });

@@ -392,6 +392,10 @@ fn absorb_page(
 /// last persisted payload: it enables the per-section overlap and page
 /// stops in `absorb_page`. `None` (cache miss) walks every page like
 /// before.
+/// GraphQL kept: REST has no equivalent for the Projects v2 status
+/// (`projectItems … fieldValueByName(name: "Status")`); probe
+/// `gh api repos/bolu-atx/gh-ghit/pulls/116` returns no project-status
+/// field at all. Batch win too: one query pages all four sections.
 pub async fn sections(
     repo: &str,
     hours: u64,
@@ -463,6 +467,10 @@ pub fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chron
 }
 
 /// Fetch details for the actual board cards, including cards outside the sections window.
+///
+/// GraphQL kept: batch win — one aliased query for every card replaces
+/// one REST `issues/{n}` call per card (probe: the REST fields used
+/// here are per-number only; there is no multi-number REST read).
 pub async fn board_details(cards: &[(String, u64)], bearer: &str) -> Result<Vec<Option<BoardDetail>>, String> {
     let mut fields = String::new();
     for (i, (repo, number)) in cards.iter().enumerate() {
@@ -679,7 +687,7 @@ pub async fn issue(
     let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
-    let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id author { login } body state } } } }" } else { "" };
+    let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id databaseId author { login } body state } } } }" } else { "" };
     // Will-close counterparts: an issue lists its closing PRs, a PR lists
     // the issues it will close. Never body mentions.
     let paired_field = if is_pr {
@@ -687,6 +695,15 @@ pub async fn issue(
     } else {
         "closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number state } }"
     };
+    // GraphQL kept for this follow-up only (the issue itself is REST
+    // above): REST has no equivalent for any of its three fields.
+    // Probes: REST review comments (rust-lang/rust PR 165882,
+    // `pulls/{n}/comments`) carry id/path/line/in_reply_to_id but no
+    // thread grouping or `isResolved`; REST `pulls/116` has no closing
+    // field and the #114 timeline `cross-referenced` event has no
+    // will-close flag, so `closingIssuesReferences` /
+    // `closedByPullRequestsReferences` have no REST equivalent; and
+    // Projects v2 status is GraphQL-only (see `sections`).
     let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ {threads_field} {paired_field} projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
     let url = if host == "github.com" { "https://api.github.com/graphql".to_owned() } else { format!("https://{host}/api/graphql") };
     // Project statuses stay best-effort: a failed lookup yields none,
@@ -721,9 +738,8 @@ fn graph_query(with_blockers: bool) -> String {
     q.push_str(" parent { number title state ");
     q.push_str(GRAPH_META);
     q.push_str(" closedByPullRequestsReferences(first: 3, includeClosedPrs: true) { nodes { number state } } } ");
-    q.push_str("subIssues(first: 10) { nodes { number title state ");
-    q.push_str(GRAPH_META);
-    q.push_str(" closedByPullRequestsReferences(first: 3, includeClosedPrs: true) { nodes { number state } } } totalCount } ");
+    // Sub-issues are not here: they load through REST
+    // `issues/{n}/sub_issues` in `graph` (confirmed equivalent, #117).
     if with_blockers {
         for conn in ["blockedBy", "blocking"] {
             q.push_str(&format!("{conn}(first: 10) {{ nodes {{ number title state "));
@@ -845,7 +861,6 @@ fn parse_graph_neighbors(issue: &Value) -> Vec<(GraphNode, GraphEdgeKind)> {
             out.push((node, GraphEdgeKind::Parent));
         }
     }
-    push_graph_conn(issue, "/subIssues/nodes", GraphEdgeKind::Child, &mut out);
     for n in issue
         .pointer("/closedByPullRequestsReferences/nodes")
         .and_then(Value::as_array)
@@ -884,10 +899,71 @@ fn graph_issue(value: &Value) -> Result<&Value, String> {
 }
 
 /// The full graph: center plus every neighbor, capped by `build_graph`.
+/// Test-only since `graph` splices REST sub-issues in before building.
+#[cfg(test)]
 fn parse_graph(value: &Value) -> Result<GraphData, String> {
+    let (center, neighbors) = parse_graph_parts(value)?;
+    Ok(model::build_graph(center, neighbors))
+}
+
+/// Center plus GraphQL neighbors, before the REST sub-issues join.
+fn parse_graph_parts(value: &Value) -> Result<(GraphNode, Vec<(GraphNode, GraphEdgeKind)>), String> {
     let issue = graph_issue(value)?;
     let center = parse_graph_issue(issue)?;
-    Ok(model::build_graph(center, parse_graph_neighbors(issue)))
+    Ok((center, parse_graph_neighbors(issue)))
+}
+
+/// REST API base honoring `GH_HOST`, shared by the REST ports below.
+fn rest_base() -> String {
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") }
+}
+
+/// One REST sub-issue object as a graph node. REST state is lowercase,
+/// graph state is the GraphQL uppercase form; REST carries no project
+/// status or closing-PR list, so those stay empty — the same fields
+/// every REST issue payload in this file already lacks.
+fn sub_issue_node(v: &Value) -> Option<GraphNode> {
+    let labels = v.get("labels").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|l| l.get("name").and_then(Value::as_str).or_else(|| l.as_str()).map(|s| Label { name: s.to_owned() }))
+        .collect();
+    Some(GraphNode {
+        number: v.get("number")?.as_u64()?,
+        title: v.get("title").and_then(Value::as_str).unwrap_or("").to_owned(),
+        state: v.get("state").and_then(Value::as_str).unwrap_or("").to_uppercase(),
+        is_pr: false,
+        labels,
+        project_status: None,
+        linked_prs: vec![],
+    })
+}
+
+/// Sub-issue nodes out of a REST `issues/{n}/sub_issues` payload.
+/// Malformed entries skip, like every other list parser here.
+pub fn parse_sub_issues(value: &Value) -> Vec<GraphNode> {
+    value.as_array().into_iter().flatten().filter_map(sub_issue_node).collect()
+}
+
+/// Splice REST sub-issues into GraphQL neighbors at their pane
+/// priority slot: after blockers and parent, before every other kind,
+/// so a duplicate number still wins as a child (`build_graph` keeps
+/// the first edge).
+fn with_sub_issues(mut neighbors: Vec<(GraphNode, GraphEdgeKind)>, subs: Vec<GraphNode>) -> Vec<(GraphNode, GraphEdgeKind)> {
+    let at = neighbors.iter()
+        .take_while(|(_, k)| matches!(k, GraphEdgeKind::Blocks | GraphEdgeKind::BlockedBy | GraphEdgeKind::Parent))
+        .count();
+    let children = subs.into_iter().map(|n| (n, GraphEdgeKind::Child));
+    neighbors.splice(at..at, children);
+    neighbors
+}
+
+/// Sub-issues through REST `GET issues/{n}/sub_issues`, capped at the
+/// old GraphQL `first: 10`. Ported in #117: probe
+/// `gh api repos/bolu-atx/gh-ghit/issues/117/sub_issues` returns 200
+/// with the same issue objects REST returns everywhere else.
+async fn fetch_sub_issues(client: &reqwest::Client, base: &str, repo: &str, number: u64, bearer: &str) -> Result<Vec<GraphNode>, String> {
+    let value = get(client, &format!("{base}/repos/{repo}/issues/{number}/sub_issues?per_page=10"), bearer).await?;
+    Ok(parse_sub_issues(&value))
 }
 
 /// True when the fetch failed on the blocker connections (schema hides
@@ -922,6 +998,11 @@ fn parse_graph_fallback_parts(
 }
 
 /// Resolve fallback `#` refs to display nodes in one aliased query.
+///
+/// GraphQL kept: batch win — one aliased query for every missing
+/// number replaces one REST `issues/{n}` call per number, and it
+/// carries the per-node Projects v2 status REST has no equivalent
+/// for (see `sections`).
 async fn resolve_graph_refs(
     client: &reqwest::Client,
     url: &str,
@@ -958,6 +1039,17 @@ async fn resolve_graph_refs(
 /// linked and closing PRs, cross-references. When the token or repo hides
 /// the blocked-by/blocking fields the fetch retries without them and
 /// derives reference edges from body `#` refs instead.
+///
+/// GraphQL kept for the star itself: batch win — one query replaces a
+/// REST call per relation per node, and several relations have no
+/// REST equivalent at all. Probes (#117): `issues/117/tracked` 404s
+/// (no tracked-issues endpoint), the REST timeline has no
+/// `willCloseTarget` (see `issue`), and every node carries Projects
+/// v2 status (GraphQL-only, see `sections`). Sub-issues are the one
+/// confirmed equivalent and load through REST below. Follow-up worth
+/// probing: REST `issues/{n}/dependencies/blocked_by|blocking`
+/// returned 200 on #117, but plain issue objects without project
+/// status or closing-PR refs, so they stay in this query for now.
 pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
@@ -967,6 +1059,7 @@ pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, S
         format!("https://{host}/api/graphql")
     };
     let client = client();
+    let base = rest_base();
     let value = post_json(
         &client,
         &url,
@@ -974,8 +1067,11 @@ pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, S
         &json!({"query": graph_query(true), "variables": {"owner": owner, "repo": name, "num": number}}),
     )
     .await?;
-    match parse_graph(&value) {
-        Ok(data) => Ok(data),
+    match parse_graph_parts(&value) {
+        Ok((center, neighbors)) => {
+            let subs = fetch_sub_issues(&client, &base, repo, number, bearer).await?;
+            Ok(model::build_graph(center, with_sub_issues(neighbors, subs)))
+        }
         Err(e) if is_blocker_field_error(&e) => {
             let value = post_json(
                 &client,
@@ -988,7 +1084,8 @@ pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, S
             for node in resolve_graph_refs(&client, &url, bearer, owner, name, &missing).await? {
                 neighbors.push((node, GraphEdgeKind::References));
             }
-            let mut data = model::build_graph(center, neighbors);
+            let subs = fetch_sub_issues(&client, &base, repo, number, bearer).await?;
+            let mut data = model::build_graph(center, with_sub_issues(neighbors, subs));
             data.from_references = true;
             Ok(data)
         }
@@ -996,7 +1093,8 @@ pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, S
     }
 }
 
-/// GraphQL endpoint honoring `GH_HOST`, shared by every mutation below.
+/// GraphQL endpoint honoring `GH_HOST`, shared by the GraphQL calls
+/// below that REST cannot cover (see their keep-comments).
 fn graphql_url() -> String {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     if host == "github.com" {
@@ -1027,9 +1125,28 @@ pub async fn add_comment(repo: &str, number: u64, body: &str, bearer: &str) -> R
     Ok(())
 }
 
-/// Post a single-shot line comment on a PR through
-/// `addPullRequestReviewThread`: no review flow, one thread per call.
-/// Needs the PR's node ID, so it resolves `number` first, then mutates.
+/// Head-commit SHA out of a REST `pulls/{n}` payload: the
+/// `commit_id` a REST review comment anchors to.
+fn parse_head_sha(v: &Value) -> Result<String, String> {
+    v.pointer("/head/sha")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "PR not found: line comments need a pull request".to_string())
+}
+
+/// REST review-comment body for one new line comment.
+fn review_comment_payload(body: &str, commit_id: &str, path: &str, line: u64) -> Value {
+    json!({"body": body, "commit_id": commit_id, "path": path, "line": line, "side": "RIGHT"})
+}
+
+/// Post a single-shot line comment on a PR through REST
+/// `POST pulls/{n}/comments`: no review flow, one thread per call.
+/// Ported from the GraphQL `addPullRequestReviewThread` mutation in
+/// #117 (probe: REST review comments on rust-lang/rust PR 165882
+/// carry the same path/line/side fields); this also drops the old
+/// GraphQL node-id lookup — REST needs the head SHA, which
+/// `GET pulls/{n}` returns as `head.sha` (probed on PR 116).
 pub async fn add_review_thread(repo: &str, number: u64, body: &str, path: &str, line: u64, bearer: &str) -> Result<(), String> {
     if body.trim().is_empty() {
         return Err("comment is empty: write something first".to_string());
@@ -1037,21 +1154,23 @@ pub async fn add_review_thread(repo: &str, number: u64, body: &str, path: &str, 
     if path.is_empty() || line == 0 {
         return Err("line comment needs a file and a new-side line".to_string());
     }
-    let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
-    let url = graphql_url();
+    repo.split_once('/').ok_or("repository must be owner/repo")?;
+    let base = rest_base();
     let client = client();
-    let id_query = "query($owner:String!, $repo:String!, $num:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$num) { id } } }";
-    let id_value = post_json(&client, &url, bearer, &json!({"query": id_query, "variables": {"owner": owner, "repo": name, "num": number}})).await?;
-    let pr_id = graphql_data(&id_value)?.pointer("/repository/pullRequest/id").and_then(Value::as_str).ok_or("PR not found: line comments need a pull request")?;
-    let mutation = "mutation($prId:ID!, $path:String!, $line:Int!, $body:String!) { addPullRequestReviewThread(input:{pullRequestId:$prId, path:$path, line:$line, side:RIGHT, body:$body}) { thread { id } } }";
-    let out = post_json(&client, &url, bearer, &json!({"query": mutation, "variables": {"prId": pr_id, "path": path, "line": line, "body": body}})).await?;
-    graphql_data(&out)?.pointer("/addPullRequestReviewThread/thread/id").and_then(Value::as_str).ok_or("line comment failed: no thread returned")?;
+    let pr = get(&client, &format!("{base}/repos/{repo}/pulls/{number}"), bearer).await?;
+    let commit_id = parse_head_sha(&pr)?;
+    let out = post_json(&client, &format!("{base}/repos/{repo}/pulls/{number}/comments"), bearer, &review_comment_payload(body, &commit_id, path, line)).await?;
+    out.get("id").and_then(Value::as_u64).ok_or("line comment failed: no comment returned")?;
     Ok(())
 }
 
 /// Submit the viewer's pending review on a PR. `addPullRequestReviewThread`
 /// lands in a pending review by design, so line comments stay invisible
 /// until this runs with a COMMENT event.
+///
+/// GraphQL kept: this mutation postdates the #117 audit and the REST
+/// list-reviews probe came back empty, so no equivalent is confirmed
+/// yet — re-probe before porting (follow-up).
 pub async fn submit_pending_review(repo: &str, number: u64, bearer: &str) -> Result<(), String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let url = graphql_url();
@@ -1065,19 +1184,30 @@ pub async fn submit_pending_review(repo: &str, number: u64, bearer: &str) -> Res
     Ok(())
 }
 
-/// Reply inside an existing review thread. Wired end to end, but the
-/// compose modal never targets it yet: picking the thread under the
-/// cursor waits on #11, so callers surface its absence instead.
-pub async fn add_thread_reply(thread_id: &str, body: &str, bearer: &str) -> Result<(), String> {
+/// REST review-comment body for a reply inside an existing thread:
+/// `in_reply_to` is the numeric id of a comment already in it.
+fn review_reply_payload(body: &str, comment_id: u64) -> Value {
+    json!({"body": body, "in_reply_to": comment_id})
+}
+
+/// Reply inside an existing review thread through REST
+/// `POST pulls/{n}/comments` with `in_reply_to`. Ported from the
+/// GraphQL `addPullRequestReviewThreadReply` mutation in #117:
+/// probe shows REST review comments carry numeric `id` and
+/// `in_reply_to_id` (rust-lang/rust PR 165882), so the first
+/// comment's numeric id names the thread. Callers resolve it from
+/// the thread under the cursor (`model::thread_reply_comment_id`).
+pub async fn add_thread_reply(repo: &str, number: u64, comment_id: u64, body: &str, bearer: &str) -> Result<(), String> {
     if body.trim().is_empty() {
         return Err("comment is empty: write something first".to_string());
     }
-    if thread_id.is_empty() {
+    if comment_id == 0 {
         return Err("reply needs a thread: open the thread first".to_string());
     }
-    let mutation = "mutation($threadId:ID!, $body:String!) { addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId, body:$body}) { comment { id } } }";
-    let out = post_json(&client(), &graphql_url(), bearer, &json!({"query": mutation, "variables": {"threadId": thread_id, "body": body}})).await?;
-    graphql_data(&out)?.pointer("/addPullRequestReviewThreadReply/comment/id").and_then(Value::as_str).ok_or("reply failed: no comment returned")?;
+    repo.split_once('/').ok_or("repository must be owner/repo")?;
+    let base = rest_base();
+    let out = post_json(&client(), &format!("{base}/repos/{repo}/pulls/{number}/comments"), bearer, &review_reply_payload(body, comment_id)).await?;
+    out.get("id").and_then(Value::as_u64).ok_or("reply failed: no comment returned")?;
     Ok(())
 }
 
@@ -1440,7 +1570,6 @@ mod tests {
             "parent": {"number": 1, "title": "parent", "state": "CLOSED",
                 "labels": {"nodes": []}, "projectItems": {"nodes": []},
                 "closedByPullRequestsReferences": {"nodes": []}},
-            "subIssues": {"nodes": [graph_node(8, "child")], "totalCount": 1},
             "blockedBy": {"nodes": [graph_node(9, "blocker")], "totalCount": 1},
             "blocking": {"nodes": [graph_node(10, "blocked")], "totalCount": 1},
             "trackedIssues": {"nodes": [], "totalCount": 0},
@@ -1459,16 +1588,18 @@ mod tests {
     #[test]
     fn graph_query_carries_every_relation() {
         let full = graph_query(true);
-        for field in ["parent", "subIssues", "blockedBy", "blocking", "trackedIssues",
+        for field in ["parent", "blockedBy", "blocking", "trackedIssues",
             "trackedInIssues", "closedByPullRequestsReferences", "timelineItems",
             "CROSS_REFERENCED_EVENT", "labels", "projectItems"]
         {
             assert!(full.contains(field), "missing {field}");
         }
+        // Sub-issues load through REST `issues/{n}/sub_issues` (#117).
+        assert!(!full.contains("subIssues"), "{full}");
         let slim = graph_query(false);
         assert!(!slim.contains("blockedBy"), "{slim}");
         assert!(!slim.contains("blocking"), "{slim}");
-        assert!(slim.contains("subIssues"), "{slim}");
+        assert!(!slim.contains("subIssues"), "{slim}");
     }
 
     #[test]
@@ -1487,8 +1618,53 @@ mod tests {
         let data = parse_graph(&graph_payload()).unwrap();
         assert_eq!(data.center, 7);
         assert!(!data.from_references);
-        // Center + parent + child + blocker + blocked + 2 timeline = 7 nodes.
-        assert_eq!(data.nodes.len(), 7);
+        // Center + parent + blocker + blocked + 2 timeline = 6 nodes.
+        // Sub-issues join from REST, not this payload (next test).
+        assert_eq!(data.nodes.len(), 6);
+        let kinds: Vec<GraphEdgeKind> = data.edges.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                GraphEdgeKind::Blocks,
+                GraphEdgeKind::BlockedBy,
+                GraphEdgeKind::Parent,
+                GraphEdgeKind::ReferencedBy,
+                GraphEdgeKind::Closes,
+            ]
+        );
+        let blocker = data.nodes.iter().find(|n| n.number == 9).unwrap();
+        assert_eq!(blocker.labels[0].name, "bug");
+        assert_eq!(blocker.project_status.as_deref(), Some("Todo"));
+        assert_eq!(blocker.linked_prs, vec![GraphLinkedPr { number: 44, state: "MERGED".to_string() }]);
+        let closer = data.nodes.iter().find(|n| n.number == 12).unwrap();
+        assert!(closer.is_pr);
+        assert!(!data.nodes.iter().find(|n| n.number == 11).unwrap().is_pr);
+        // The center blocks #10, so only it (and #7's edge) counts as blocking.
+        assert!(model::graph_blocks_something(&data, 7));
+        assert!(!model::graph_blocks_something(&data, 11));
+        assert!(parse_graph(&json!({"errors": [{"message": "denied"}]})).is_err());
+    }
+
+    #[test]
+    fn rest_sub_issues_parse_and_join_as_children() {
+        let subs = parse_sub_issues(&json!([
+            {"number": 8, "title": "child", "state": "open", "labels": [{"name": "bug"}]},
+            {"number": 9, "title": "also blocker", "state": "closed", "labels": []},
+            {"title": "no number"},
+            null,
+        ]));
+        assert_eq!(subs.len(), 2);
+        assert_eq!((subs[0].number, &*subs[0].title, &*subs[0].state), (8, "child", "OPEN"));
+        assert_eq!(subs[0].labels[0].name, "bug");
+        assert_eq!(subs[0].project_status, None);
+        assert!(subs[0].linked_prs.is_empty());
+        assert_eq!(subs[1].state, "CLOSED");
+        assert!(parse_sub_issues(&json!({"not": "a list"})).is_empty());
+
+        // Children splice after blockers/parent and win on duplicates:
+        // #9 stays the blocker the GraphQL query already found.
+        let (center, neighbors) = parse_graph_parts(&graph_payload()).unwrap();
+        let data = model::build_graph(center, with_sub_issues(neighbors, subs));
         let kinds: Vec<GraphEdgeKind> = data.edges.iter().map(|e| e.kind).collect();
         assert_eq!(
             kinds,
@@ -1502,16 +1678,8 @@ mod tests {
             ]
         );
         let child = data.nodes.iter().find(|n| n.number == 8).unwrap();
-        assert_eq!(child.labels[0].name, "bug");
-        assert_eq!(child.project_status.as_deref(), Some("Todo"));
-        assert_eq!(child.linked_prs, vec![GraphLinkedPr { number: 44, state: "MERGED".to_string() }]);
-        let closer = data.nodes.iter().find(|n| n.number == 12).unwrap();
-        assert!(closer.is_pr);
-        assert!(!data.nodes.iter().find(|n| n.number == 11).unwrap().is_pr);
-        // The center blocks #10, so only it (and #7's edge) counts as blocking.
-        assert!(model::graph_blocks_something(&data, 7));
-        assert!(!model::graph_blocks_something(&data, 8));
-        assert!(parse_graph(&json!({"errors": [{"message": "denied"}]})).is_err());
+        assert_eq!(child.title, "child");
+        assert!(data.edges.iter().any(|e| e.kind == GraphEdgeKind::Child && e.to == 8));
     }
 
     #[test]
@@ -1527,9 +1695,9 @@ mod tests {
         issue["body"] = json!("follow up in #9 and #10, dup of #9");
         let (center, neighbors, missing) = parse_graph_fallback_parts(&slim, "o/r").unwrap();
         assert_eq!(center.number, 7);
-        // Deduped in first-seen order; the sub-issue (#8) is already known.
+        // Deduped in first-seen order.
         assert_eq!(missing, vec![9, 10]);
-        assert!(neighbors.iter().any(|(n, _)| n.number == 8));
+        assert!(neighbors.iter().any(|(n, _)| n.number == 1), "parent still resolves");
     }
 
     #[test]
@@ -1538,8 +1706,8 @@ mod tests {
         let issue = slim.pointer_mut("/data/repository/issue").unwrap();
         issue.as_object_mut().unwrap().remove("blockedBy");
         issue.as_object_mut().unwrap().remove("blocking");
-        // #8 is already a sub-issue and #7 is the center: only #9 stays missing.
-        issue["body"] = json!("follow up in #8 and #9, self #7");
+        // #7 is the center: only #9 stays missing.
+        issue["body"] = json!("follow up in #9, self #7");
         let (center, neighbors, missing) = parse_graph_fallback_parts(&slim, "o/r").unwrap();
         assert_eq!(center.number, 7);
         assert_eq!(missing, vec![9]);
@@ -1569,11 +1737,27 @@ mod tests {
     }
 
     #[test]
-    fn graphql_errors_reject_and_data_unwraps() {
-        let ok = json!({"data": {"addPullRequestReviewThread": {"thread": {"id": "t"}}}});
-        assert_eq!(graphql_data(&ok).unwrap().pointer("/addPullRequestReviewThread/thread/id").and_then(Value::as_str), Some("t"));
-        assert!(graphql_data(&json!({"errors": [{"message": "denied"}]})).is_err());
-        assert!(graphql_data(&json!({"data": null})).is_err());
+    fn rest_review_comment_payloads_carry_the_anchor_fields() {
+        // New line comment: head SHA + path/line on the new side.
+        let p = review_comment_payload("note", "abc123", "src/a.rs", 42);
+        assert_eq!(p, json!({"body": "note", "commit_id": "abc123", "path": "src/a.rs", "line": 42, "side": "RIGHT"}));
+        // Reply: the numeric id of a comment already in the thread.
+        assert_eq!(review_reply_payload("re", 99), json!({"body": "re", "in_reply_to": 99}));
+        // The head SHA comes off the REST PR payload, not a GraphQL id.
+        assert_eq!(parse_head_sha(&json!({"head": {"sha": "abc123"}})).unwrap(), "abc123");
+        assert!(parse_head_sha(&json!({"head": {}})).is_err());
+        assert!(parse_head_sha(&json!({})).is_err());
+    }
+
+    #[tokio::test]
+    async fn rest_review_mutations_validate_before_the_network() {
+        assert!(add_review_thread("o/r", 1, "  ", "a.rs", 1, "t").await.is_err());
+        assert!(add_review_thread("o/r", 1, "hi", "", 1, "t").await.is_err());
+        assert!(add_review_thread("o/r", 1, "hi", "a.rs", 0, "t").await.is_err());
+        assert!(add_review_thread("badrepo", 1, "hi", "a.rs", 1, "t").await.is_err());
+        assert!(add_thread_reply("o/r", 1, 99, "  ", "t").await.is_err());
+        assert!(add_thread_reply("o/r", 1, 0, "hi", "t").await.is_err());
+        assert!(add_thread_reply("badrepo", 1, 99, "hi", "t").await.is_err());
     }
     #[test]
     fn diff_file_maps_patch_and_binary() {
