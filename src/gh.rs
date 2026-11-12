@@ -4,7 +4,7 @@
 //! through `github.rs`. Only the project board still lives here until it is
 //! ported to GraphQL — do not add new callers.
 
-use crate::cache;
+use crate::cache::{self, Key};
 use crate::model::{BoardData, BoardItem};
 
 fn gh(args: &[&str]) -> Result<serde_json::Value, String> {
@@ -60,7 +60,7 @@ fn parse_milestone(item: &serde_json::Value) -> Option<String> {
 /// one shim so the call site stays visible.
 #[deprecated(note = "port the board to GraphQL in api.rs, then remove")]
 pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
-    let key = format!("board-{}", owner.to_lowercase());
+    let key = Key::Board { owner: owner.to_string() }.name();
     if let Some(cached) = cache::cache_get::<BoardData>(&key) {
         return Ok(cached);
     }

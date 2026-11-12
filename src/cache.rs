@@ -41,9 +41,43 @@ pub fn cache_put<T: serde::Serialize>(name: &str, data: &T) {
     let _ = std::fs::write(p, serde_json::to_string(&payload).unwrap_or_default());
 }
 
-pub fn comment_cache_name(repo: &str, number: u64) -> String {
-    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
-    format!("comments-{}-{}-{number}", host.to_lowercase().replace('/', "__"), repo.to_lowercase().replace('/', "__"))
+fn host() -> String {
+    std::env::var("GH_HOST")
+        .unwrap_or_else(|_| "github.com".to_owned())
+        .to_lowercase()
+        .replace('/', "__")
+}
+
+fn slug(repo: &str) -> String {
+    repo.to_lowercase().replace('/', "__")
+}
+
+/// Typed cache key. Every variant includes the host so a GitHub
+/// Enterprise repo never shares entries with a github.com repo of the
+/// same slug.
+pub enum Key {
+    Issue { repo: String, number: u64 },
+    Status { repo: String, number: u64 },
+    Comments { repo: String, number: u64 },
+    Diff { repo: String, number: u64 },
+    Graph { repo: String, number: u64 },
+    Sections { repo: String, hours: u64 },
+    Board { owner: String },
+}
+
+impl Key {
+    pub fn name(&self) -> String {
+        let h = host();
+        match self {
+            Key::Issue { repo, number } => format!("issue-{h}-{}-{number}", slug(repo)),
+            Key::Status { repo, number } => format!("status-{h}-{}-{number}", slug(repo)),
+            Key::Comments { repo, number } => format!("comments-{h}-{}-{number}", slug(repo)),
+            Key::Diff { repo, number } => format!("diff-{h}-{}-{number}", slug(repo)),
+            Key::Graph { repo, number } => format!("graph-{h}-{}-{number}", slug(repo)),
+            Key::Sections { repo, hours } => format!("sections-{h}-{}-{hours}", slug(repo)),
+            Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
+        }
+    }
 }
 
 pub fn cache_drop(name: &str) {
@@ -101,6 +135,43 @@ pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_include_host_and_differ_across_hosts() {
+        let _guard = test_env_lock().lock().unwrap();
+        let saved = std::env::var("GH_HOST").ok();
+        let variants = |repo: &str| {
+            [
+                Key::Issue { repo: repo.to_string(), number: 7 }.name(),
+                Key::Status { repo: repo.to_string(), number: 7 }.name(),
+                Key::Comments { repo: repo.to_string(), number: 7 }.name(),
+                Key::Diff { repo: repo.to_string(), number: 7 }.name(),
+                Key::Graph { repo: repo.to_string(), number: 7 }.name(),
+                Key::Sections { repo: repo.to_string(), hours: 24 }.name(),
+                Key::Board { owner: "octo".to_string() }.name(),
+            ]
+        };
+        std::env::set_var("GH_HOST", "github.com");
+        let dotcom = variants("o/r");
+        for name in &dotcom {
+            assert!(name.contains("github.com"), "key includes host: {name}");
+        }
+        let distinct: std::collections::HashSet<&str> =
+            dotcom.iter().map(|s| s.as_str()).collect();
+        assert_eq!(distinct.len(), dotcom.len(), "variants differ from each other");
+        std::env::set_var("GH_HOST", "ghe.corp");
+        let ghe = variants("o/r");
+        for name in &ghe {
+            assert!(name.contains("ghe.corp"), "key includes host: {name}");
+        }
+        for (a, b) in dotcom.iter().zip(ghe.iter()) {
+            assert_ne!(a, b, "same slug differs across hosts");
+        }
+        match saved {
+            Some(v) => std::env::set_var("GH_HOST", v),
+            None => std::env::remove_var("GH_HOST"),
+        }
+    }
 
     #[test]
     fn pins_roundtrip() {
