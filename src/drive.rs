@@ -167,7 +167,7 @@ pub(crate) fn capture_frame(
         rows.push(line.trim_end().to_string());
     }
     let cursor = terminal.get_cursor_position().ok().map(|p| [p.x, p.y]);
-    ServerMsg::Frame { tick: app.tick, current: app.current, rows, width, height, cursor, quit: app.quit }
+    ServerMsg::Frame { tick: app.tick, current: app.nav.current, rows, width, height, cursor, quit: app.quit }
 }
 
 fn send_msg(stream: &mut std::os::unix::net::UnixStream, msg: &ServerMsg) -> std::io::Result<()> {
@@ -242,10 +242,10 @@ pub(crate) fn run_drive(
 /// suspend for `$EDITOR`, so the run degrades to naming the limitation
 /// and the draft stays open. True when it fired.
 pub(crate) fn land_editor_request_drive(app: &mut crate::app::App) -> bool {
-    if !app.editor_requested {
+    if !app.compose.editor_requested {
         return false;
     }
-    app.editor_requested = false;
+    app.compose.editor_requested = false;
     app.notify("external editor needs the terminal UI, not drive mode".to_string());
     true
 }
@@ -290,9 +290,9 @@ pub(crate) fn serve(
         crate::app::poll_all(app);
         // Drive mode has no terminal to suspend for `gh auth refresh`,
         // so an accepted prompt degrades to naming the command.
-        if app.reauth_requested {
-            app.reauth_requested = false;
-            app.auth_prompt = None;
+        if app.auth.reauth_requested {
+            app.auth.reauth_requested = false;
+            app.auth.prompt = None;
             app.notify(format!("re-auth by hand: {}", crate::github::reauth_command()));
         }
         land_editor_request_drive(app);
@@ -447,9 +447,9 @@ mod tests {
         let mut app = crate::app::App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         for n in [7, 9] {
-            app.data.insert(n, issue(n));
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, issue(n));
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         app.show_issue(7);
         app
@@ -469,11 +469,11 @@ mod tests {
         let mut app = driven_app();
         let mut terminal = drive_on(&mut app, 120, 40);
         let mut size = (120, 40);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
         dispatch(&mut app, &key("j"), &mut terminal, &mut size);
-        assert_eq!(app.current, Some(9), "j walks the Issues pane");
+        assert_eq!(app.nav.current, Some(9), "j walks the Issues pane");
         dispatch(&mut app, &key("k"), &mut terminal, &mut size);
-        assert_eq!(app.current, Some(7), "k walks back");
+        assert_eq!(app.nav.current, Some(7), "k walks back");
         assert!(!app.quit);
         dispatch(&mut app, &key("q"), &mut terminal, &mut size);
         assert!(app.quit, "q quits drive mode too");
@@ -497,16 +497,16 @@ mod tests {
         send(&mut app, "h", false, false);
         send(&mut app, "i", false, false);
         send(&mut app, "a", true, false);
-        assert_eq!(app.compose.as_ref().unwrap().cursor, 0, "ctrl-a over the socket");
+        assert_eq!(app.compose.draft.as_ref().unwrap().cursor, 0, "ctrl-a over the socket");
         send(&mut app, "f", false, true);
-        assert_eq!(app.compose.as_ref().unwrap().cursor, 2, "alt-f over the socket");
+        assert_eq!(app.compose.draft.as_ref().unwrap().cursor, 2, "alt-f over the socket");
         send(&mut app, "a", true, false);
         send(&mut app, "k", true, false);
-        assert!(app.compose.as_ref().unwrap().body.is_empty(), "ctrl-k over the socket");
+        assert!(app.compose.draft.as_ref().unwrap().body.is_empty(), "ctrl-k over the socket");
         // No terminal exists to suspend here, so the armed run degrades.
-        app.editor_requested = true;
+        app.compose.editor_requested = true;
         assert!(super::land_editor_request_drive(&mut app));
-        assert!(!app.editor_requested);
+        assert!(!app.compose.editor_requested);
         assert!(app.message.contains("terminal UI"));
         assert!(app.compose_open(), "draft survives");
         assert!(!super::land_editor_request_drive(&mut app), "nothing armed, nothing fired");

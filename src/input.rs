@@ -11,18 +11,18 @@ use crate::core;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     // Auth prompt captures everything: y re-auths, n/Esc dismisses.
-    if app.auth_prompt.is_some() {
+    if app.auth.prompt.is_some() {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.reauth_requested = true;
+                app.auth.reauth_requested = true;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 let cmd = crate::github::reauth_command();
-                app.auth_prompt = None;
-                app.auth_dismissed = true;
+                app.auth.prompt = None;
+                app.auth.dismissed = true;
                 // Back to Main so the hint renders: the bar keeps input
                 // focus otherwise and swallows the toast.
-                app.focus = crate::app::Focus::Main;
+                app.nav.focus = crate::app::Focus::Main;
                 app.notify(format!("auth dismissed — re-auth by hand: {cmd}"));
             }
             _ => {}
@@ -53,7 +53,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
 
     // Filter dialog captures everything: over the board it filters cards,
     // over the main view it keeps its window/query/toggle keys.
-    if app.filter_open {
+    if app.sidebar.filter_open {
         handle_filter_key(app, key);
         return;
     }
@@ -62,16 +62,16 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     if board_open(app) {
         match key.code {
             KeyCode::Char('q') => {
-                app.board = None;
-                app.board_loading = false;
+                app.board.data = None;
+                app.board.loading = false;
             }
             KeyCode::Esc => {
                 // Esc first clears an active filter, then closes the board.
                 if app.board_filtered() {
                     app.clear_board_filter();
                 } else {
-                    app.board = None;
-                    app.board_loading = false;
+                    app.board.data = None;
+                    app.board.loading = false;
                 }
             }
             KeyCode::Char('f') => app.open_board_filter(),
@@ -85,12 +85,12 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.notify(format!("theme: {}", crate::theme::cycle()));
             }
             KeyCode::Char(' ') => {
-                let pos = (app.board_col, app.board_row);
-                app.board_expanded = if app.board_expanded == Some(pos) { None } else { Some(pos) };
+                let pos = (app.board.col, app.board.row);
+                app.board.expanded = if app.board.expanded == Some(pos) { None } else { Some(pos) };
             }
             KeyCode::Enter => {
                 if let Some(n) = board_selected_number(app) {
-                    app.board = None;
+                    app.board.data = None;
                     app.open_issue(n);
                 }
             }
@@ -99,16 +99,16 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
 
-    if app.focus == Focus::Bar {
+    if app.nav.focus == Focus::Bar {
         match key.code {
             KeyCode::Esc => {
-                app.focus = Focus::Main;
-                app.searching = false;
+                app.nav.focus = Focus::Main;
+                app.sidebar.searching = false;
                 app.bar.clear();
-                app.search.clear();
+                app.sidebar.search.clear();
             }
             KeyCode::Enter => {
-                if app.searching {
+                if app.sidebar.searching {
                     app.commit_search();
                     return;
                 }
@@ -123,15 +123,15 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                     app.quit = true;
                     return;
                 }
-                if app.searching {
-                    app.search.push(c);
+                if app.sidebar.searching {
+                    app.sidebar.search.push(c);
                 } else {
                     app.bar.push(c);
                 }
             }
             KeyCode::Backspace => {
-                if app.searching {
-                    app.search.pop();
+                if app.sidebar.searching {
+                    app.sidebar.search.pop();
                 } else {
                     app.bar.pop();
                 }
@@ -159,8 +159,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('b') => app.open_board(),
         KeyCode::Char('c') => app.open_compose(),
         KeyCode::Char('f') => {
-            app.filter_open = true;
-            app.query_edit = false;
+            app.sidebar.filter_open = true;
+            app.sidebar.query_edit = false;
         }
         KeyCode::Char('j') => {
             if graph_focused(app) {
@@ -197,7 +197,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Enter => {
             if graph_focused(app) {
                 app.open_graph_selection();
-            } else if app.pane == Pane::Refs {
+            } else if app.nav.pane == Pane::Refs {
                 app.open_selected_ref();
             }
         }
@@ -209,7 +209,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             } else if app.visual_diff() {
                 move_diff_cursor(app, 1);
             } else {
-                app.scroll = app.scroll.saturating_add(3);
+                app.nav.scroll = app.nav.scroll.saturating_add(3);
             }
         }
         KeyCode::Up => {
@@ -218,28 +218,28 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             } else if app.visual_diff() {
                 move_diff_cursor(app, -1);
             } else {
-                app.scroll = app.scroll.saturating_sub(3);
+                app.nav.scroll = app.nav.scroll.saturating_sub(3);
             }
         }
         KeyCode::PageDown => {
-            app.scroll = app.scroll.saturating_add(12);
+            app.nav.scroll = app.nav.scroll.saturating_add(12);
         }
         KeyCode::PageUp => {
-            app.scroll = app.scroll.saturating_sub(12);
+            app.nav.scroll = app.nav.scroll.saturating_sub(12);
         }
         KeyCode::Char(':') => {
-            app.searching = false;
-            app.focus = Focus::Bar;
+            app.sidebar.searching = false;
+            app.nav.focus = Focus::Bar;
         }
         KeyCode::Char('/') => {
-            app.searching = true;
-            app.search.clear();
-            app.focus = Focus::Bar;
+            app.sidebar.searching = true;
+            app.sidebar.search.clear();
+            app.nav.focus = Focus::Bar;
         }
         KeyCode::Char('n') => jump_search_hit(app, 1),
         KeyCode::Char('N') => jump_search_hit(app, -1),
         KeyCode::Char('o') => {
-            if let Some(n) = app.current {
+            if let Some(n) = app.nav.current {
                 app.open_number(n);
             } else {
                 app.notify("view an issue first".to_string());
@@ -251,24 +251,24 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('e') => app.toggle_refs(),
         // Sidebar-only: a cycles the row sort, A flips its direction, and
         // x evicts the highlighted row. Diff keeps s for split.
-        KeyCode::Char('a') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.cycle_sort(),
-        KeyCode::Char('A') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.toggle_sort_dir(),
-        KeyCode::Char('x') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
+        KeyCode::Char('a') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.cycle_sort(),
+        KeyCode::Char('A') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.toggle_sort_dir(),
+        KeyCode::Char('x') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
         KeyCode::Char('s') if app.visual_diff() => app.toggle_diff_split(),
         KeyCode::Char('S') => app.submit_pending_review(),
         KeyCode::Char(' ') if app.visual_diff() => app.toggle_diff_file(),
 
         KeyCode::Char(' ') => app.toggle_row_expansion(),
         KeyCode::Char('w') => {
-            app.merged_window_hours = core::cycle_window(app.merged_window_hours);
+            app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
             app.refetch_recent();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Esc => {
             app.bar.clear();
-            app.searching = false;
-            app.search.clear();
-            app.ref_highlight = None;
+            app.sidebar.searching = false;
+            app.sidebar.search.clear();
+            app.refs.highlight = None;
         }
         KeyCode::Tab => {
             app.cycle_pane();
@@ -382,14 +382,14 @@ pub(crate) fn handle_compose_key(app: &mut App, key: crossterm::event::KeyEvent)
 /// hjkl move between nodes, Enter loads the selected issue. Anywhere
 /// else those keys keep their existing meaning.
 pub(crate) fn graph_focused(app: &App) -> bool {
-    app.visual_graph() && app.pane == Pane::Main && app.focus == Focus::Main
+    app.visual_graph() && app.nav.pane == Pane::Main && app.nav.focus == Focus::Main
 }
 
 /// j/k walks one sidebar list: issues or PRs, never crossing over.
 /// Starts from the wheel hover when one names a row here, so keyboard
 /// and wheel continue from the same place; the visit clears the hover.
 fn move_in_list(app: &mut App, order: Vec<u64>, delta: isize) {
-    let base = app.hover.filter(|n| order.contains(n)).or(app.current);
+    let base = app.nav.hover.filter(|n| order.contains(n)).or(app.nav.current);
     if let Some(n) = core::next_in_order(&order, base, delta) {
         app.request_issue(n);
     }
@@ -399,17 +399,17 @@ fn move_in_list(app: &mut App, order: Vec<u64>, delta: isize) {
 /// and refs moves the source highlight. The body scrolls instead; the Diff
 /// tab moves its line cursor with the arrow keys.
 fn pane_down(app: &mut App, delta: isize) {
-    match app.pane {
+    match app.nav.pane {
         Pane::Issues => move_in_list(app, app.issue_numbers(), delta),
         Pane::PRs => move_in_list(app, app.pr_numbers(), delta),
         Pane::Refs => {
-            let next = core::next_in_order(&app.ref_order(), app.ref_highlight, delta);
-            if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
+            let next = core::next_in_order(&app.ref_order(), app.refs.highlight, delta);
+            if let Some(n) = next.filter(|n| Some(*n) != app.refs.highlight) {
                 app.select_ref(n);
             }
         }
         Pane::Main => {
-            app.scroll = app.scroll.saturating_add_signed(delta as i16 * 3);
+            app.nav.scroll = app.nav.scroll.saturating_add_signed(delta as i16 * 3);
         }
     }
 }
@@ -423,18 +423,18 @@ fn move_diff_cursor(app: &mut App, delta: isize) {
     if !app.visual_diff() {
         return;
     }
-    let height = app.body_area.height as usize;
+    let height = app.hits.body_area.height as usize;
     if height == 0 {
         return;
     }
-    let base = app.body_base as usize;
-    let scroll = app.scroll as usize;
-    let mut abs = match app.diff_line {
+    let base = app.hits.body_base as usize;
+    let scroll = app.nav.scroll as usize;
+    let mut abs = match app.diff.line {
         Some(a) => a.clamp(scroll, scroll + height.saturating_sub(1)),
         None => {
             // Anchor to the first header when no cursor yet; render fills
             // in the file without expanding it.
-            if let Some(&h) = app.diff_headers.first() {
+            if let Some(&h) = app.diff.headers.first() {
                 base + h
             } else {
                 return;
@@ -443,7 +443,7 @@ fn move_diff_cursor(app: &mut App, delta: isize) {
     };
     if delta > 0 {
         let vis = abs.saturating_sub(base);
-        let rows = &app.body_rows;
+        let rows = &app.hits.body_rows;
         if vis + 1 < rows.len() {
             // A blank target with only blanks below is past the content.
             let target_blank = rows[vis + 1].trim().is_empty();
@@ -453,14 +453,14 @@ fn move_diff_cursor(app: &mut App, delta: isize) {
             }
             abs += 1;
         } else {
-            app.scroll = app.scroll.saturating_add(1);
+            app.nav.scroll = app.nav.scroll.saturating_add(1);
             abs += 1;
         }
     } else if delta < 0 {
         if abs > scroll {
             abs -= 1;
         } else if scroll > 0 {
-            app.scroll -= 1;
+            app.nav.scroll -= 1;
             abs -= 1;
         } else {
             return;
@@ -468,8 +468,8 @@ fn move_diff_cursor(app: &mut App, delta: isize) {
     } else {
         return;
     }
-    app.diff_line = Some(abs);
-    app.diff_touched = true;
+    app.diff.line = Some(abs);
+    app.diff.touched = true;
 }
 
 /// n/N jumps between `/` search hits, wrapping at the ends.
@@ -479,7 +479,7 @@ fn jump_search_hit(app: &mut App, delta: isize) {
         app.notify("no search: press /".to_string());
         return;
     }
-    if let Some(n) = core::next_in_order(&hits, app.current, delta) {
+    if let Some(n) = core::next_in_order(&hits, app.nav.current, delta) {
         app.request_issue(n);
     }
 }
@@ -490,30 +490,30 @@ fn jump_search_hit(app: &mut App, delta: isize) {
 /// the cursor, typing on the text row starts editing it, `Enter` applies,
 /// and `Esc` clears the whole filter.
 fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    if app.query_edit {
+    if app.sidebar.query_edit {
         match key.code {
             KeyCode::Esc => {
                 // Revert the draft; the dialog stays open.
-                app.query_draft = app.board_filter.clone();
-                app.query_edit = false;
+                app.sidebar.query_draft = app.board.filter.clone();
+                app.sidebar.query_edit = false;
             }
             KeyCode::Enter => {
-                app.query_edit = false;
-                app.filter_open = false;
-                app.filter_focus = 0;
+                app.sidebar.query_edit = false;
+                app.sidebar.filter_open = false;
+                app.board.filter_focus = 0;
                 app.apply_board_filter();
             }
             KeyCode::Up => {
-                app.query_edit = false;
+                app.sidebar.query_edit = false;
                 app.board_filter_step(-1);
             }
             KeyCode::Down => {
-                app.query_edit = false;
+                app.sidebar.query_edit = false;
                 app.board_filter_step(1);
             }
-            KeyCode::Char(c) => app.query_draft.push(c),
+            KeyCode::Char(c) => app.sidebar.query_draft.push(c),
             KeyCode::Backspace => {
-                app.query_draft.pop();
+                app.sidebar.query_draft.pop();
             }
             _ => {}
         }
@@ -521,29 +521,29 @@ fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
     match key.code {
         KeyCode::Esc => {
-            app.filter_open = false;
-            app.filter_focus = 0;
+            app.sidebar.filter_open = false;
+            app.board.filter_focus = 0;
             app.clear_board_filter();
         }
         KeyCode::Enter => {
-            app.filter_open = false;
-            app.filter_focus = 0;
+            app.sidebar.filter_open = false;
+            app.board.filter_focus = 0;
             app.apply_board_filter();
         }
-        KeyCode::Char(' ') if app.filter_focus > 0 => toggle_board_pill(app),
+        KeyCode::Char(' ') if app.board.filter_focus > 0 => toggle_board_pill(app),
         KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('l') | KeyCode::Right => {
             app.board_filter_step(1);
         }
         KeyCode::Char('k') | KeyCode::Up | KeyCode::Char('h') | KeyCode::Left => {
             app.board_filter_step(-1);
         }
-        KeyCode::Backspace if app.filter_focus == 0 => {
-            app.query_draft.pop();
+        KeyCode::Backspace if app.board.filter_focus == 0 => {
+            app.sidebar.query_draft.pop();
         }
-        KeyCode::Char(c) if app.filter_focus == 0 => {
+        KeyCode::Char(c) if app.board.filter_focus == 0 => {
             // Typing on the text row starts editing, like the old dialog.
-            app.query_edit = true;
-            app.query_draft.push(c);
+            app.sidebar.query_edit = true;
+            app.sidebar.query_draft.push(c);
         }
         _ => {}
     }
@@ -552,11 +552,11 @@ fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
 /// Toggle the milestone pill under the dialog cursor in the draft.
 fn toggle_board_pill(app: &mut App) {
     let pills = app.board_pills();
-    let Some(pill) = pills.get(app.filter_focus.saturating_sub(1)) else {
+    let Some(pill) = pills.get(app.board.filter_focus.saturating_sub(1)) else {
         return;
     };
-    if !app.filter_milestone_draft.remove(pill) {
-        app.filter_milestone_draft.insert(pill.clone());
+    if !app.board.milestone_draft.remove(pill) {
+        app.board.milestone_draft.insert(pill.clone());
     }
 }
 
@@ -572,12 +572,12 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         handle_board_filter_key(app, key);
         return;
     }
-    if app.query_edit {
+    if app.sidebar.query_edit {
         match key.code {
             KeyCode::Esc => {
                 // Revert the draft; the dialog stays open.
-                app.query_draft = app.query_active.clone();
-                app.query_edit = false;
+                app.sidebar.query_draft = app.sidebar.query_active.clone();
+                app.sidebar.query_edit = false;
             }
             KeyCode::Enter => match app.commit_query_draft() {
                 QueryAction::Run(q) => app.run_gh_search(q),
@@ -586,9 +586,9 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
                     app.notify("back to recent".to_string());
                 }
             },
-            KeyCode::Char(c) => app.query_draft.push(c),
+            KeyCode::Char(c) => app.sidebar.query_draft.push(c),
             KeyCode::Backspace => {
-                app.query_draft.pop();
+                app.sidebar.query_draft.pop();
             }
             _ => {}
         }
@@ -596,33 +596,33 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
     match key.code {
         KeyCode::Char('f') | KeyCode::Esc | KeyCode::Char('q') => {
-            app.filter_open = false;
+            app.sidebar.filter_open = false;
         }
         KeyCode::Char('e') => app.start_query_edit(),
         KeyCode::Char('1') => {
-            app.merged_window_hours = 1;
+            app.sections.merged_window_hours = 1;
             app.refetch_recent();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Char('2') => {
-            app.merged_window_hours = 24;
+            app.sections.merged_window_hours = 24;
             app.refetch_recent();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Char('3') => {
-            app.merged_window_hours = 168;
+            app.sections.merged_window_hours = 168;
             app.refetch_recent();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Char('w') => {
-            app.merged_window_hours = core::cycle_window(app.merged_window_hours);
+            app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
             app.refetch_recent();
             app.notify(format!("merged window: {}", app.window_label()));
         }
-        KeyCode::Char('o') => app.show_open_prs = !app.show_open_prs,
-        KeyCode::Char('m') => app.show_merged_prs = !app.show_merged_prs,
-        KeyCode::Char('i') => app.show_open_issues = !app.show_open_issues,
-        KeyCode::Char('c') => app.show_closed_issues = !app.show_closed_issues,
+        KeyCode::Char('o') => app.sidebar.show_open_prs = !app.sidebar.show_open_prs,
+        KeyCode::Char('m') => app.sidebar.show_merged_prs = !app.sidebar.show_merged_prs,
+        KeyCode::Char('i') => app.sidebar.show_open_issues = !app.sidebar.show_open_issues,
+        KeyCode::Char('c') => app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues,
         _ => {}
     }
 }
@@ -718,11 +718,11 @@ pub(crate) enum WheelTarget {
 }
 
 pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
-    if in_rect(app.side_issue_area, x, y) {
+    if in_rect(app.hits.side_issue_area, x, y) {
         WheelTarget::Issues
-    } else if in_rect(app.side_pr_area, x, y) {
+    } else if in_rect(app.hits.side_pr_area, x, y) {
         WheelTarget::PRs
-    } else if app.refs_visible() && in_rect(app.refs_area, x, y) {
+    } else if app.refs_visible() && in_rect(app.hits.refs_area, x, y) {
         WheelTarget::Refs
     } else {
         WheelTarget::Main
@@ -734,9 +734,9 @@ pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
 /// stay exactly where they were. Landing back on `current` clears the
 /// hover since there is nothing left to distinguish.
 fn wheel_hover(app: &mut App, order: Vec<u64>, delta: isize) {
-    let base = app.hover.filter(|n| order.contains(n)).or(app.current);
+    let base = app.nav.hover.filter(|n| order.contains(n)).or(app.nav.current);
     if let Some(n) = core::next_in_order(&order, base, delta) {
-        app.hover = if Some(n) == app.current { None } else { Some(n) };
+        app.nav.hover = if Some(n) == app.nav.current { None } else { Some(n) };
     }
 }
 
@@ -749,19 +749,19 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
         WheelTarget::Issues => wheel_hover(app, app.issue_numbers(), delta),
         WheelTarget::PRs => wheel_hover(app, app.pr_numbers(), delta),
         WheelTarget::Refs => {
-            let next = core::next_in_order(&app.ref_order(), app.ref_highlight, delta);
-            if let Some(n) = next.filter(|n| Some(*n) != app.ref_highlight) {
-                app.ref_highlight = Some(n);
+            let next = core::next_in_order(&app.ref_order(), app.refs.highlight, delta);
+            if let Some(n) = next.filter(|n| Some(*n) != app.refs.highlight) {
+                app.refs.highlight = Some(n);
             }
         }
         WheelTarget::Main => {
-            app.scroll = app.scroll.saturating_add_signed(delta as i16 * 3);
+            app.nav.scroll = app.nav.scroll.saturating_add_signed(delta as i16 * 3);
         }
     }
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
-    if app.auth_prompt.is_some() { return; }
+    if app.auth.prompt.is_some() { return; }
     if app.confirm_open() { return; }
     if app.shortcuts_open { return; }
     // The compose modal steals all mouse focus: clicks and wheel never
@@ -797,7 +797,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // Header icons first: they sit outside every card cell.
-            if let Some((rect, url)) = app
+            if let Some((rect, url)) = app.hits
                 .board_links
                 .iter()
                 .find(|(rect, _)| in_rect(*rect, m.column, m.row))
@@ -807,7 +807,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                 open_url(&url, app);
                 return;
             }
-            let hit = app
+            let hit = app.hits
                 .board_cells
                 .iter()
                 .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
@@ -815,10 +815,10 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
             if let Some((rect, c, r)) = hit {
                 app.note_click(rect);
                 // Clicking the URL line of an expanded card opens it.
-                if app.board_expanded == Some((c, r)) && m.row - rect.y == 3 {
-                    if let Some(board) = &app.board {
+                if app.board.expanded == Some((c, r)) && m.row - rect.y == 3 {
+                    if let Some(board) = &app.board.data {
                         let cols =
-                            crate::app::board_columns(board, &app.board_filter, &app.board_milestones);
+                            crate::app::board_columns(board, &app.board.filter, &app.board.milestones);
                         if let Some(url) = cols
                             .get(c)
                             .and_then(|(_, cards)| cards.get(r))
@@ -829,28 +829,28 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                         }
                     }
                 }
-                if app.board_col == c && app.board_row == r {
+                if app.board.col == c && app.board.row == r {
                     if let Some(n) = board_selected_number(app) {
-                        app.board = None;
-                        app.board_expanded = None;
+                        app.board.data = None;
+                        app.board.expanded = None;
                         app.open_issue(n);
                     }
                 } else {
-                    app.board_col = c;
-                    app.board_row = r;
-                    app.board_expanded = None;
+                    app.board.col = c;
+                    app.board.row = r;
+                    app.board.expanded = None;
                 }
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            let hit = app
+            let hit = app.hits
                 .board_cells
                 .iter()
                 .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
                 .map(|(rect, c, r)| (*rect, *c, *r));
             if let Some((rect, c, r)) = hit {
-                app.board_col = c;
-                app.board_row = r;
+                app.board.col = c;
+                app.board.row = r;
                 app.note_click(rect);
             }
         }
@@ -870,9 +870,9 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
 /// record a click flash; release stays a no-op at the call site.
 #[allow(clippy::too_many_lines)]
 fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
-    if in_rect(app.bar_area, x, y) {
+    if in_rect(app.hits.bar_area, x, y) {
         if !drag {
-            app.focus = Focus::Bar;
+            app.nav.focus = Focus::Bar;
             app.note_click(Rect::new(x, y, 1, 1));
         }
         return;
@@ -880,36 +880,36 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     // Hit-test against the render-cached pane rows by borrow: computed
     // once per frame in `render`, reused here with no clone.
     let issue_hit = sidebar_hit(
-        app.side_issue_area,
-        &app.side_issue_rows,
-        &app.data,
-        &app.expanded_rows,
+        app.hits.side_issue_area,
+        &app.hits.side_issue_rows,
+        &app.issues.data,
+        &app.diff.expanded_rows,
         x,
         y,
     );
     if let Some(n) = issue_hit {
         let flash = sidebar_row_rect(
-            app.side_issue_area,
-            &app.side_issue_rows,
-            &app.data,
-            &app.expanded_rows,
+            app.hits.side_issue_area,
+            &app.hits.side_issue_rows,
+            &app.issues.data,
+            &app.diff.expanded_rows,
             n,
         );
         // A press on the already-visible row files it under requested
         // (first press previews, second promotes); a drag only hovers.
         // The focus/pane guard reads pre-click state, as before.
         if !drag
-            && app.focus == Focus::Main
-            && app.pane == Pane::Issues
-            && app.current == Some(n)
-            && app.effective(&app.side_issue_rows) == Some(n)
+            && app.nav.focus == Focus::Main
+            && app.nav.pane == Pane::Issues
+            && app.nav.current == Some(n)
+            && app.effective(&app.hits.side_issue_rows) == Some(n)
         {
             app.ensure_visited(n);
         }
-        app.focus = Focus::Main;
-        app.pane = Pane::Issues;
+        app.nav.focus = Focus::Main;
+        app.nav.pane = Pane::Issues;
         if drag {
-            app.hover = if Some(n) == app.current { None } else { Some(n) };
+            app.nav.hover = if Some(n) == app.nav.current { None } else { Some(n) };
         } else {
             app.request_issue(n);
         }
@@ -919,33 +919,33 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         return;
     }
     let pr_hit = sidebar_hit(
-        app.side_pr_area,
-        &app.side_pr_rows,
-        &app.data,
-        &app.expanded_rows,
+        app.hits.side_pr_area,
+        &app.hits.side_pr_rows,
+        &app.issues.data,
+        &app.diff.expanded_rows,
         x,
         y,
     );
     if let Some(n) = pr_hit {
         let flash = sidebar_row_rect(
-            app.side_pr_area,
-            &app.side_pr_rows,
-            &app.data,
-            &app.expanded_rows,
+            app.hits.side_pr_area,
+            &app.hits.side_pr_rows,
+            &app.issues.data,
+            &app.diff.expanded_rows,
             n,
         );
         if !drag
-            && app.focus == Focus::Main
-            && app.pane == Pane::PRs
-            && app.current == Some(n)
-            && app.effective(&app.side_pr_rows) == Some(n)
+            && app.nav.focus == Focus::Main
+            && app.nav.pane == Pane::PRs
+            && app.nav.current == Some(n)
+            && app.effective(&app.hits.side_pr_rows) == Some(n)
         {
             app.ensure_visited(n);
         }
-        app.focus = Focus::Main;
-        app.pane = Pane::PRs;
+        app.nav.focus = Focus::Main;
+        app.nav.pane = Pane::PRs;
         if drag {
-            app.hover = if Some(n) == app.current { None } else { Some(n) };
+            app.nav.hover = if Some(n) == app.nav.current { None } else { Some(n) };
         } else {
             app.request_issue(n);
         }
@@ -957,26 +957,26 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     // Mention rows only highlight their source line; paired rows
     // open their counterpart like sidebar rows.
     let ref_hit = sidebar_hit(
-        app.refs_area,
-        &app.ref_rows,
-        &app.data,
-        &app.expanded_rows,
+        app.hits.refs_area,
+        &app.hits.ref_rows,
+        &app.issues.data,
+        &app.diff.expanded_rows,
         x,
         y,
     );
     if let Some(n) = ref_hit {
         let flash = sidebar_row_rect(
-            app.refs_area,
-            &app.ref_rows,
-            &app.data,
-            &app.expanded_rows,
+            app.hits.refs_area,
+            &app.hits.ref_rows,
+            &app.issues.data,
+            &app.diff.expanded_rows,
             n,
         );
-        app.focus = Focus::Main;
-        app.pane = Pane::Refs;
+        app.nav.focus = Focus::Main;
+        app.nav.pane = Pane::Refs;
         if drag {
-            app.ref_highlight = Some(n);
-        } else if app.ref_paired.contains(&n) {
+            app.refs.highlight = Some(n);
+        } else if app.refs.paired.contains(&n) {
             app.open_issue(n);
         } else {
             app.select_ref(n);
@@ -986,10 +986,10 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         }
         return;
     }
-    if in_rect(app.tabs_area, x, y) {
+    if in_rect(app.hits.tabs_area, x, y) {
         if !drag {
-            app.pane = Pane::Main;
-            let rel = x.saturating_sub(app.tabs_area.x);
+            app.nav.pane = Pane::Main;
+            let rel = x.saturating_sub(app.hits.tabs_area.x);
             app.set_tab(if rel < crate::app::TAB_SPLIT_X { Tab::Details } else { Tab::Visual });
             app.note_click(Rect::new(x, y, 1, 1));
         }
@@ -997,12 +997,12 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     }
     // The meta/label block above the tabs resolves refs and URLs
     // exactly like body lines; only the body folds diff files.
-    let in_body = in_rect(app.body_area, x, y);
-    let in_header = !in_body && in_rect(app.header_area, x, y);
+    let in_body = in_rect(app.hits.body_area, x, y);
+    let in_header = !in_body && in_rect(app.hits.header_area, x, y);
     if in_body || in_header {
-        app.focus = Focus::Main;
-        app.pane = Pane::Main;
-        let area = if in_body { app.body_area } else { app.header_area };
+        app.nav.focus = Focus::Main;
+        app.nav.pane = Pane::Main;
+        let area = if in_body { app.hits.body_area } else { app.hits.header_area };
         let row = (y - area.y) as usize;
         app.note_click(Rect::new(area.x, y, area.width, 1));
         if drag {
@@ -1013,22 +1013,22 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             // the file and expands a collapsed header. Clicking an
             // expanded header folds it back instead. Other rows fall
             // through to link resolution below so refs still open.
-            let abs = app.body_base as usize + row;
-            app.diff_line = Some(abs);
-            app.diff_touched = true;
-            let is_header = app.diff_headers.iter().any(|&r| r == row);
+            let abs = app.hits.body_base as usize + row;
+            app.diff.line = Some(abs);
+            app.diff.touched = true;
+            let is_header = app.diff.headers.iter().any(|&r| r == row);
             if is_header {
-                if let Some(f) = app.diff_row_files.get(row).copied().flatten() {
-                    app.diff_cursor = f;
-                    let expanded = app.current.and_then(|n| {
-                        app.diffs.get(&n).and_then(|fs| {
+                if let Some(f) = app.diff.row_files.get(row).copied().flatten() {
+                    app.diff.cursor = f;
+                    let expanded = app.nav.current.and_then(|n| {
+                        app.diff.files.get(&n).and_then(|fs| {
                             fs.get(f).map(|file| {
-                                app.expanded_files.contains(&(n, file.filename.clone()))
+                                app.diff.expanded_files.contains(&(n, file.filename.clone()))
                             })
                         })
                     });
                     if expanded == Some(true) {
-                        app.diff_touched = false;
+                        app.diff.touched = false;
                         app.toggle_diff_file();
                         return;
                     }
@@ -1037,7 +1037,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             }
         }
         let line = {
-            let rows = if in_body { &app.body_rows } else { &app.header_rows };
+            let rows = if in_body { &app.hits.body_rows } else { &app.hits.header_rows };
             rows.get(row).cloned()
         };
         if let Some(line) = line {
@@ -1054,7 +1054,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         }
         return;
     }
-    app.focus = Focus::Main;
+    app.nav.focus = Focus::Main;
 }
 
 /// Open a URL in the browser. Stubbed in tests so suites never launch one.
@@ -1103,31 +1103,31 @@ mod tests {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         for n in [7, 9] {
-            app.data.insert(n, sample(n));
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, sample(n));
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         let rows = app.issue_rows();
         assert_eq!(rows, vec![SideRow::Item(7), SideRow::Item(9)]);
 
         let area = Rect::new(0, 0, 40, 40);
         let inner_width = (area.width as usize) - 2;
-        let detail = crate::ui::expanded_row_height(app.data.get(&7).unwrap(), inner_width);
+        let detail = crate::ui::expanded_row_height(app.issues.data.get(&7).unwrap(), inner_width);
         assert!(detail > 3, "detail block is tall enough to span a row: {detail}");
 
         // Collapsed geometry still applies: row 7 hits its own summary.
-        assert_eq!(sidebar_hit(area, &rows, &app.data, &app.expanded_rows, 5, area.y + 2), Some(7));
+        assert_eq!(sidebar_hit(area, &rows, &app.issues.data, &app.diff.expanded_rows, 5, area.y + 2), Some(7));
 
-        app.expanded_rows.insert(7);
+        app.diff.expanded_rows.insert(7);
         // Every line of the detail block belongs to the expanded row.
         let detail_top = area.y + 4;
         for y in detail_top..detail_top + detail as u16 {
-            assert_eq!(sidebar_hit(area, &rows, &app.data, &app.expanded_rows, 5, y), Some(7), "detail line {y}");
+            assert_eq!(sidebar_hit(area, &rows, &app.issues.data, &app.diff.expanded_rows, 5, y), Some(7), "detail line {y}");
         }
         // Row 9 starts only after the detail block plus the item's blank tail.
         let row9_top = area.y + 2 + 3 + detail as u16;
         for y in row9_top..row9_top + 3 {
-            assert_eq!(sidebar_hit(area, &rows, &app.data, &app.expanded_rows, 5, y), Some(9), "row 9 line {y}");
+            assert_eq!(sidebar_hit(area, &rows, &app.issues.data, &app.diff.expanded_rows, 5, y), Some(9), "row 9 line {y}");
         }
     }
 
@@ -1140,19 +1140,19 @@ mod tests {
         pr2.is_pr = true;
         for d in [sample(7), sample(8), pr1, pr2] {
             let n = d.number;
-            app.data.insert(n, d);
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, d);
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
-        app.side_issue_area = Rect::new(0, 0, 30, 20);
-        app.side_pr_area = Rect::new(0, 20, 30, 20);
-        app.refs_area = Rect::new(90, 0, 30, 40);
-        app.body_area = Rect::new(30, 0, 60, 40);
+        app.hits.side_issue_area = Rect::new(0, 0, 30, 20);
+        app.hits.side_pr_area = Rect::new(0, 20, 30, 20);
+        app.hits.refs_area = Rect::new(90, 0, 30, 40);
+        app.hits.body_area = Rect::new(30, 0, 60, 40);
         app.show_issue(7);
         // `show_issue` recomputes refs from the body, so seed the pane after.
-        app.ref_numbers = vec![21, 22];
-        app.pane = crate::app::Pane::Main;
-        app.scroll = 0;
+        app.refs.numbers = vec![21, 22];
+        app.nav.pane = crate::app::Pane::Main;
+        app.nav.scroll = 0;
         app
     }
 
@@ -1167,10 +1167,10 @@ mod tests {
             app.repo_slug = Some("o/r".to_string());
             let mut recent = sample(9);
             recent.is_pr = is_pr;
-            app.data.insert(7, sample(7));
-            app.data.insert(9, recent);
-            app.statuses.insert(7, vec![]);
-            app.statuses.insert(9, vec![]);
+            app.issues.data.insert(7, sample(7));
+            app.issues.data.insert(9, recent);
+            app.issues.statuses.insert(7, vec![]);
+            app.issues.statuses.insert(9, vec![]);
             app.ensure_visited(7);
             app.ensure_recent(9);
             app.show_issue(7);
@@ -1180,23 +1180,23 @@ mod tests {
             let y = area.y + 2 + rows[..row_index].iter()
                 .map(|row| if row.number().is_some() { 3 } else { 1 }).sum::<u16>();
             if is_pr {
-                app.side_pr_area = area;
-                app.side_pr_rows = rows.clone();
+                app.hits.side_pr_area = area;
+                app.hits.side_pr_rows = rows.clone();
             } else {
-                app.side_issue_area = area;
-                app.side_issue_rows = rows.clone();
+                app.hits.side_issue_area = area;
+                app.hits.side_issue_rows = rows.clone();
             }
             let click = wheel(MouseEventKind::Down(MouseButton::Left), 5, y);
 
             handle_mouse(&mut app, click);
-            assert_eq!(app.pane, pane);
-            assert_eq!(app.current, Some(9));
-            assert!(!app.visited.contains(&9));
+            assert_eq!(app.nav.pane, pane);
+            assert_eq!(app.nav.current, Some(9));
+            assert!(!app.nav.visited.contains(&9));
             assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);
 
             handle_mouse(&mut app, click);
-            assert!(app.visited.contains(&9));
-            assert_eq!(app.current, Some(9));
+            assert!(app.nav.visited.contains(&9));
+            assert_eq!(app.nav.current, Some(9));
             assert_eq!(app.side_counts(is_pr), (0, 1 + usize::from(!is_pr), 0));
         }
     }
@@ -1213,7 +1213,7 @@ mod tests {
     #[test]
     fn wheel_router_hidden_refs_falls_through_to_main() {
         let mut app = wheel_app();
-        app.show_refs = false;
+        app.refs.show = false;
         assert!(!app.refs_visible());
         assert_eq!(wheel_target(&app, 95, 5), WheelTarget::Main);
     }
@@ -1222,30 +1222,30 @@ mod tests {
     fn wheel_over_issues_hovers_without_visiting() {
         let mut app = wheel_app();
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
-        assert_eq!(app.hover, Some(8));
-        assert_eq!(app.current, Some(7), "wheel never visits");
-        assert_eq!(app.pane, crate::app::Pane::Main);
-        assert_eq!(app.scroll, 0, "body scroll untouched");
+        assert_eq!(app.nav.hover, Some(8));
+        assert_eq!(app.nav.current, Some(7), "wheel never visits");
+        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.scroll, 0, "body scroll untouched");
         // Wheeling back onto the current row dissolves the hover.
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 5));
-        assert_eq!(app.hover, None);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.hover, None);
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
     fn wheel_over_prs_hovers_pr_rows_only() {
         let mut app = wheel_app();
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
-        assert_eq!(app.hover, Some(9));
-        assert_eq!(app.current, Some(7), "main content untouched");
+        assert_eq!(app.nav.hover, Some(9));
+        assert_eq!(app.nav.current, Some(7), "main content untouched");
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
-        assert_eq!(app.hover, Some(11));
-        assert_eq!(app.current, Some(7));
-        assert_eq!(app.pane, crate::app::Pane::Main);
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.nav.hover, Some(11));
+        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.scroll, 0);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 25));
-        assert_eq!(app.hover, Some(9));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.hover, Some(9));
+        assert_eq!(app.nav.current, Some(7));
     }
 
     #[test]
@@ -1253,45 +1253,45 @@ mod tests {
         let mut app = wheel_app();
         // A mentioning line below the viewport: the old click-style jump
         // would move body scroll here; the wheel must not.
-        app.body_rows = vec!["unrelated".to_string(), "context".to_string(), "fixes #22".to_string()];
-        app.body_base = 5;
-        app.scroll = 9;
-        assert_eq!(app.ref_highlight, None);
+        app.hits.body_rows = vec!["unrelated".to_string(), "context".to_string(), "fixes #22".to_string()];
+        app.hits.body_base = 5;
+        app.nav.scroll = 9;
+        assert_eq!(app.refs.highlight, None);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
-        assert_eq!(app.ref_highlight, Some(21));
-        assert_eq!(app.scroll, 9, "body stays where it was");
+        assert_eq!(app.refs.highlight, Some(21));
+        assert_eq!(app.nav.scroll, 9, "body stays where it was");
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
-        assert_eq!(app.ref_highlight, Some(22));
-        assert_eq!(app.scroll, 9, "mention jump is click-only");
-        assert_eq!(app.pane, crate::app::Pane::Main);
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.refs.highlight, Some(22));
+        assert_eq!(app.nav.scroll, 9, "mention jump is click-only");
+        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.current, Some(7));
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 95, 5));
-        assert_eq!(app.ref_highlight, Some(21));
-        assert_eq!(app.scroll, 9);
+        assert_eq!(app.refs.highlight, Some(21));
+        assert_eq!(app.nav.scroll, 9);
     }
 
     #[test]
     fn jk_promotes_hover_to_current() {
         let mut app = wheel_app();
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
-        assert_eq!(app.hover, Some(8));
-        app.pane = crate::app::Pane::Issues;
+        assert_eq!(app.nav.hover, Some(8));
+        app.nav.pane = crate::app::Pane::Issues;
         handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()));
-        assert_eq!(app.current, Some(7), "k walks back from the hover");
-        assert_eq!(app.hover, None, "visiting clears the hover");
+        assert_eq!(app.nav.current, Some(7), "k walks back from the hover");
+        assert_eq!(app.nav.hover, None, "visiting clears the hover");
     }
 
     #[test]
     fn wheel_over_body_scrolls_and_keeps_issue() {
         let mut app = wheel_app();
-        app.hover = Some(8);
+        app.nav.hover = Some(8);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 40, 5));
-        assert_eq!(app.scroll, 3);
-        assert_eq!(app.current, Some(7));
-        assert_eq!(app.hover, Some(8), "body wheel leaves the hover alone");
-        assert_eq!(app.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.scroll, 3);
+        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.nav.hover, Some(8), "body wheel leaves the hover alone");
+        assert_eq!(app.nav.pane, crate::app::Pane::Main);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 40, 5));
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.nav.scroll, 0);
     }
 
     #[test]
@@ -1299,12 +1299,12 @@ mod tests {
         let mut app = wheel_app();
         // Only PRs show a diff; issues show the graph tab instead.
         app.show_issue(9);
-        app.tab = crate::app::Tab::Visual;
+        app.nav.tab = crate::app::Tab::Visual;
         assert!(app.visual_diff());
-        app.diff_line = Some(5);
+        app.diff.line = Some(5);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 40, 5));
-        assert_eq!(app.scroll, 3);
-        assert_eq!(app.diff_line, Some(5));
+        assert_eq!(app.nav.scroll, 3);
+        assert_eq!(app.diff.line, Some(5));
     }
 
     fn ctrl_key(code: KeyCode) -> crossterm::event::KeyEvent {
@@ -1320,34 +1320,34 @@ mod tests {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         for n in [7, 9] {
-            app.data.insert(n, sample(n));
-            app.statuses.insert(n, vec![]);
+            app.issues.data.insert(n, sample(n));
+            app.issues.statuses.insert(n, vec![]);
         }
         app.ensure_visited(7);
         app.load_issue(7, false);
         app.ensure_visited(9);
         app.load_issue(9, false);
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
 
         handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
 
         // Ctrl+I arrives as Tab on terminals without the kitty protocol.
         handle_key(&mut app, ctrl_key(KeyCode::Tab));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
 
         handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
         handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.current, Some(9));
 
         // Plain Tab (no Ctrl) still cycles panes instead of redoing.
-        app.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::app::Pane::Issues;
         handle_key(
             &mut app,
             crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
         );
-        assert_eq!(app.pane, crate::app::Pane::PRs);
-        assert_eq!(app.current, Some(9));
+        assert_eq!(app.nav.pane, crate::app::Pane::PRs);
+        assert_eq!(app.nav.current, Some(9));
     }
 
     fn plain_key(code: KeyCode) -> crossterm::event::KeyEvent {
@@ -1357,9 +1357,9 @@ mod tests {
     fn compose_app() -> App {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
-        app.data.insert(7, sample(7));
-        app.statuses.insert(7, vec![]);
-        app.visited.push(7);
+        app.issues.data.insert(7, sample(7));
+        app.issues.statuses.insert(7, vec![]);
+        app.nav.visited.push(7);
         app.show_issue(7);
         app
     }
@@ -1370,7 +1370,7 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Char('c')));
         assert!(app.compose_open());
         handle_key(&mut app, plain_key(KeyCode::Char('x')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "x");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "x");
         handle_key(&mut app, plain_key(KeyCode::Esc));
         assert!(!app.compose_open());
     }
@@ -1381,7 +1381,7 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Char('c')));
         handle_key(&mut app, ctrl_key(KeyCode::Char('s')));
         assert!(app.compose_open(), "empty draft never sends");
-        assert!(!app.compose.as_ref().unwrap().sending);
+        assert!(!app.compose.draft.as_ref().unwrap().sending);
         assert!(app.message.contains("empty"));
     }
 
@@ -1401,7 +1401,7 @@ mod tests {
     }
 
     fn compose_cursor(app: &App) -> usize {
-        app.compose.as_ref().expect("compose").cursor
+        app.compose.draft.as_ref().expect("compose").cursor
     }
 
     #[test]
@@ -1443,15 +1443,15 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Char('c')));
         type_text(&mut app, "hello world");
         handle_key(&mut app, ctrl_key(KeyCode::Char('w')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "hello ");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hello ");
         handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "hello world");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hello world");
         assert_eq!(compose_cursor(&app), 11);
         handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
         handle_key(&mut app, ctrl_key(KeyCode::Char('k')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "");
         handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "hello world");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hello world");
     }
 
     #[test]
@@ -1461,10 +1461,10 @@ mod tests {
         type_text(&mut app, "foo bar");
         handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
         handle_key(&mut app, alt_key(KeyCode::Char('d')));
-        assert_eq!(app.compose.as_ref().unwrap().body, " bar");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, " bar");
         assert_eq!(compose_cursor(&app), 0, "cursor stays put");
         handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "foo bar");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "foo bar");
     }
 
     #[test]
@@ -1475,7 +1475,7 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Left));
         handle_key(&mut app, plain_key(KeyCode::Left));
         handle_key(&mut app, ctrl_key(KeyCode::Char('u')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "lo");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "lo");
         assert_eq!(compose_cursor(&app), 0);
     }
 
@@ -1487,7 +1487,7 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Left));
         handle_key(&mut app, plain_key(KeyCode::Left));
         handle_key(&mut app, ctrl_key(KeyCode::Char('d')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "ac");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "ac");
         assert_eq!(compose_cursor(&app), 1);
     }
 
@@ -1497,7 +1497,7 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Char('c')));
         type_text(&mut app, "ab");
         handle_key(&mut app, ctrl_key(KeyCode::Char('t')));
-        assert_eq!(app.compose.as_ref().unwrap().body, "ba");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "ba");
     }
 
     #[test]
@@ -1511,7 +1511,7 @@ mod tests {
         assert_eq!(compose_cursor(&app), 2, "end jumps to line end");
         handle_key(&mut app, plain_key(KeyCode::Left));
         handle_key(&mut app, plain_key(KeyCode::Delete));
-        assert_eq!(app.compose.as_ref().unwrap().body, "h");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "h");
     }
 
     #[test]
@@ -1521,8 +1521,8 @@ mod tests {
         type_text(&mut app, "a");
         handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
         type_text(&mut app, "b");
-        assert_eq!(app.compose.as_ref().unwrap().body, "a\tb");
-        assert_eq!(app.current, Some(7), "tab never leaves the modal");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "a\tb");
+        assert_eq!(app.nav.current, Some(7), "tab never leaves the modal");
         assert!(app.compose_open());
     }
 
@@ -1536,13 +1536,13 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Char('c')));
         type_text(&mut app, "draft");
         handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
-        assert!(!app.editor_requested, "nothing to run without an editor");
+        assert!(!app.compose.editor_requested, "nothing to run without an editor");
         assert!(app.message.contains("EDITOR"), "toast names the fix: {}", app.message);
         assert!(app.compose_open(), "draft survives");
 
         std::env::set_var("EDITOR", "true");
         handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
-        assert!(app.editor_requested, "ctrl-o arms the editor run");
+        assert!(app.compose.editor_requested, "ctrl-o arms the editor run");
         assert!(app.compose_open(), "draft survives until the run lands");
         match prior {
             Some(v) => std::env::set_var("EDITOR", v),
@@ -1552,10 +1552,10 @@ mod tests {
 
     fn pending_dialog_app() -> App {
         let mut app = compose_app();
-        app.data.insert(9, sample(9));
-        app.statuses.insert(9, vec![]);
-        app.visited.push(9);
-        let d = app.data.get_mut(&7).unwrap();
+        app.issues.data.insert(9, sample(9));
+        app.issues.statuses.insert(9, vec![]);
+        app.nav.visited.push(9);
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.is_pr = true;
         d.review_threads = vec![crate::model::ReviewThread {
             id: "t1".into(),
@@ -1575,25 +1575,25 @@ mod tests {
         let mut app = pending_dialog_app();
         handle_key(&mut app, plain_key(KeyCode::Char('d')));
         assert!(!app.confirm_open());
-        assert_eq!(app.current, Some(9));
-        assert!(app.review_submitting.is_empty());
+        assert_eq!(app.nav.current, Some(9));
+        assert!(app.compose.submitting.is_empty());
         // Submit navigates and submits.
         let mut app = pending_dialog_app();
         handle_key(&mut app, plain_key(KeyCode::Char('s')));
         assert!(!app.confirm_open());
-        assert_eq!(app.current, Some(9));
-        assert!(app.review_submitting.contains(&7));
+        assert_eq!(app.nav.current, Some(9));
+        assert!(app.compose.submitting.contains(&7));
         // Enter picks the first choice (Submit).
         let mut app = pending_dialog_app();
         handle_key(&mut app, plain_key(KeyCode::Enter));
         assert!(!app.confirm_open());
-        assert!(app.review_submitting.contains(&7));
+        assert!(app.compose.submitting.contains(&7));
         // Esc cancels: no navigation, nothing sent.
         let mut app = pending_dialog_app();
         handle_key(&mut app, plain_key(KeyCode::Esc));
         assert!(!app.confirm_open());
-        assert_eq!(app.current, Some(7));
-        assert!(app.review_submitting.is_empty());
+        assert_eq!(app.nav.current, Some(7));
+        assert!(app.compose.submitting.is_empty());
         // Quit never escapes the dialog.
         let mut app = pending_dialog_app();
         handle_key(&mut app, plain_key(KeyCode::Char('q')));
@@ -1604,7 +1604,7 @@ mod tests {
     #[test]
     fn shift_s_submits_pending_review() {
         let mut app = compose_app();
-        let d = app.data.get_mut(&7).unwrap();
+        let d = app.issues.data.get_mut(&7).unwrap();
         d.is_pr = true;
         d.review_threads = vec![crate::model::ReviewThread {
             id: "t1".into(),
@@ -1614,19 +1614,19 @@ mod tests {
             ..Default::default()
         }];
         handle_key(&mut app, plain_key(KeyCode::Char('S')));
-        assert!(app.review_submitting.contains(&7), "S starts the submit");
+        assert!(app.compose.submitting.contains(&7), "S starts the submit");
     }
 
     fn step_app() -> App {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         for n in [7u64, 8] {
-            app.data.insert(n, sample(n));
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, sample(n));
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         app.show_issue(7);
-        app.pane = Pane::Main;
+        app.nav.pane = Pane::Main;
         app
     }
 
@@ -1634,12 +1634,12 @@ mod tests {
     fn hl_steps_between_neighbors_on_main() {
         let mut app = step_app();
         handle_key(&mut app, plain_key(KeyCode::Char('l')));
-        assert_eq!(app.current, Some(8), "l opens the next issue");
-        assert_eq!(app.issue_state.selected(), Some(2));
+        assert_eq!(app.nav.current, Some(8), "l opens the next issue");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(2));
         handle_key(&mut app, plain_key(KeyCode::Char('h')));
-        assert_eq!(app.current, Some(7), "h opens the previous issue");
-        assert_eq!(app.issue_state.selected(), Some(1));
-        assert_eq!(app.step_pending, None, "cached steps never linger");
+        assert_eq!(app.nav.current, Some(7), "h opens the previous issue");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(1));
+        assert_eq!(app.nav.step_pending, None, "cached steps never linger");
     }
 
     #[test]
@@ -1649,13 +1649,13 @@ mod tests {
         // outside Graph.
         let mut app = step_app();
         for pane in [Pane::Main, Pane::Issues, Pane::PRs, Pane::Refs] {
-            app.pane = pane;
+            app.nav.pane = pane;
             app.message.clear();
             handle_key(&mut app, plain_key(KeyCode::Char('l')));
-            assert_eq!(app.current, Some(8), "l steps from {pane:?}");
-            assert_eq!(app.step_pending, None, "cached steps never linger");
+            assert_eq!(app.nav.current, Some(8), "l steps from {pane:?}");
+            assert_eq!(app.nav.step_pending, None, "cached steps never linger");
             handle_key(&mut app, plain_key(KeyCode::Char('h')));
-            assert_eq!(app.current, Some(7), "h steps back from {pane:?}");
+            assert_eq!(app.nav.current, Some(7), "h steps back from {pane:?}");
             assert!(app.message.is_empty(), "no toast on a live neighbor");
         }
     }
@@ -1664,59 +1664,59 @@ mod tests {
     fn hl_on_main_without_an_issue_toasts() {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
-        app.pane = Pane::Main;
+        app.nav.pane = Pane::Main;
         handle_key(&mut app, plain_key(KeyCode::Char('h')));
         assert_eq!(app.message, "view an issue first");
-        assert!(app.issue_pending.is_empty(), "no fetch without an issue");
+        assert!(app.issues.pending.is_empty(), "no fetch without an issue");
     }
 
     #[test]
     fn bar_filter_and_board_keep_their_h_and_l() {
         let mut app = step_app();
         // The command bar types the keys as text.
-        app.focus = crate::app::Focus::Bar;
+        app.nav.focus = crate::app::Focus::Bar;
         handle_key(&mut app, plain_key(KeyCode::Char('h')));
         handle_key(&mut app, plain_key(KeyCode::Char('l')));
         assert_eq!(app.bar, "hl");
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
         // The filter dialog swallows them.
-        app.focus = crate::app::Focus::Main;
-        app.filter_open = true;
+        app.nav.focus = crate::app::Focus::Main;
+        app.sidebar.filter_open = true;
         handle_key(&mut app, plain_key(KeyCode::Char('h')));
         handle_key(&mut app, plain_key(KeyCode::Char('l')));
-        assert_eq!(app.current, Some(7));
-        assert_eq!(app.step_pending, None);
+        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.nav.step_pending, None);
         // The board modal moves columns instead of stepping issues.
-        app.filter_open = false;
-        app.board_loading = true;
+        app.sidebar.filter_open = false;
+        app.board.loading = true;
         handle_key(&mut app, plain_key(KeyCode::Char('h')));
         handle_key(&mut app, plain_key(KeyCode::Char('l')));
-        assert_eq!(app.current, Some(7), "board keeps h/l");
-        assert_eq!(app.step_pending, None);
-        assert!(app.board_loading, "board stays open");
+        assert_eq!(app.nav.current, Some(7), "board keeps h/l");
+        assert_eq!(app.nav.step_pending, None);
+        assert!(app.board.loading, "board stays open");
     }
 
     #[test]
     fn auth_prompt_y_requests_reauth_and_n_dismisses() {
         let mut app = step_app();
-        app.auth_prompt = Some(crate::app::AuthPrompt {
+        app.auth.prompt = Some(crate::app::AuthPrompt {
             missing: vec!["project".to_string()],
             cause: "token lacks scopes ghit needs".to_string(),
             scopes_known: true,
         });
         handle_key(&mut app, plain_key(KeyCode::Char('y')));
-        assert!(app.reauth_requested, "y arms the refresh");
-        assert!(app.auth_prompt.is_some(), "loop clears the modal after running");
+        assert!(app.auth.reauth_requested, "y arms the refresh");
+        assert!(app.auth.prompt.is_some(), "loop clears the modal after running");
         let mut app = step_app();
-        app.auth_prompt = Some(crate::app::AuthPrompt {
+        app.auth.prompt = Some(crate::app::AuthPrompt {
             missing: vec![],
             cause: "GitHub auth check failed: 401 Unauthorized".to_string(),
             scopes_known: false,
         });
         handle_key(&mut app, plain_key(KeyCode::Char('n')));
-        assert!(!app.reauth_requested, "n never refreshes");
-        assert!(app.auth_prompt.is_none(), "n dismisses");
-        assert!(matches!(app.focus, crate::app::Focus::Main), "hint must render");
+        assert!(!app.auth.reauth_requested, "n never refreshes");
+        assert!(app.auth.prompt.is_none(), "n dismisses");
+        assert!(matches!(app.nav.focus, crate::app::Focus::Main), "hint must render");
         assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
     }
 }

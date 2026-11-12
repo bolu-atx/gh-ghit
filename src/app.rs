@@ -191,32 +191,97 @@ pub(crate) enum QueryAction {
     Refetch,
 }
 
-pub(crate) struct App {
-    pub(crate) repo_flag: Option<String>,
-    pub(crate) repo_slug: Option<String>,
-    pub(crate) bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
-    pub(crate) initial_numbers: Vec<u64>,
-    pub(crate) section_rx: Option<std::sync::mpsc::Receiver<github::SectionEvent>>,
-    last_sections_fetch: Instant,
-    auto_refresh_interval: Duration,
-    section_auto_refresh: bool,
-    /// Section page progress: rows fetched vs the row cap, while pages
-    /// remain. Cleared when the terminal result lands.
-    pub(crate) section_progress: Option<(usize, usize)>,
+/// Issues owned by the app: fetched payloads plus the fetch channel
+/// triplet (sender, receiver, in-flight set) and per-issue page progress.
+pub(crate) struct IssueStore {
+    pub(crate) data: HashMap<u64, IssueData>,
+    pub(crate) statuses: HashMap<u64, Vec<(String, Option<String>)>>,
     pub(crate) partial: HashSet<u64>,
-    pub(crate) issue_tx: std::sync::mpsc::Sender<(u64, github::IssueEvent)>,
-    pub(crate) issue_rx: std::sync::mpsc::Receiver<(u64, github::IssueEvent)>,
-    pub(crate) issue_pending: HashSet<u64>,
+    pub(crate) tx: std::sync::mpsc::Sender<(u64, github::IssueEvent)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(u64, github::IssueEvent)>,
+    pub(crate) pending: HashSet<u64>,
     /// Comment-page progress per issue: pages done vs total. Cleared when
     /// the terminal result lands.
-    pub(crate) issue_progress: HashMap<u64, (usize, usize)>,
+    pub(crate) progress: HashMap<u64, (usize, usize)>,
+}
+
+impl IssueStore {
+    pub(crate) fn new(
+        tx: std::sync::mpsc::Sender<(u64, github::IssueEvent)>,
+        rx: std::sync::mpsc::Receiver<(u64, github::IssueEvent)>,
+    ) -> Self {
+        Self { data: HashMap::new(), statuses: HashMap::new(), partial: HashSet::new(),
+            tx, rx, pending: HashSet::new(), progress: HashMap::new() }
+    }
+}
+
+/// Background section feed: the recent/search listing channel plus its
+/// refresh cadence, auto-refresh state, page progress, replace-vs-append
+/// mode, and the merged-PR window.
+pub(crate) struct SectionFeed {
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<github::SectionEvent>>,
+    pub(crate) last_fetch: Instant,
+    pub(crate) auto_refresh_interval: Duration,
+    pub(crate) auto_refresh: bool,
+    /// Section page progress: rows fetched vs the row cap, while pages
+    /// remain. Cleared when the terminal result lands.
+    pub(crate) progress: Option<(usize, usize)>,
+    /// The next section payload replaces (search) instead of appending.
+    pub(crate) replace: bool,
+    pub(crate) merged_window_hours: u64,
+}
+
+impl SectionFeed {
+    pub(crate) fn new() -> Self {
+        Self { rx: None, last_fetch: Instant::now(),
+            auto_refresh_interval: auto_refresh_interval_default(),
+            auto_refresh: false, progress: None, replace: false, merged_window_hours: 24 }
+    }
+}
+
+/// Sidebar state: `/` search text and editing flag, client-side sort,
+/// the `f` filter dialog (open toggles, query draft/active), and the two
+/// pane list states.
+pub(crate) struct Sidebar {
+    pub(crate) search: String,
+    pub(crate) searching: bool,
+    pub(crate) sort: core::SideSort,
+    pub(crate) sort_desc: bool,
+    pub(crate) show_open_prs: bool,
+    pub(crate) show_merged_prs: bool,
+    pub(crate) show_open_issues: bool,
+    pub(crate) show_closed_issues: bool,
+    pub(crate) query_edit: bool,
+    pub(crate) query_draft: String,
+    pub(crate) query_active: String,
+    /// Filter dialog (`f`) state.
+    pub(crate) filter_open: bool,
+    pub(crate) issue_state: ListState,
+    pub(crate) pr_state: ListState,
+}
+
+impl Sidebar {
+    pub(crate) fn new() -> Self {
+        Self { search: String::new(), searching: false, sort: core::SideSort::Default,
+            sort_desc: false, show_open_prs: true, show_merged_prs: true,
+            show_open_issues: true, show_closed_issues: true, query_edit: false,
+            query_draft: String::new(), query_active: String::new(), filter_open: false,
+            issue_state: ListState::default(), pr_state: ListState::default() }
+    }
+}
+
+/// Navigation state: where the user is and how they got there. `current`
+/// is the open issue, `requested`/`step_pending` are in-flight fetches,
+/// `visited`/`recent` feed the sidebar sections, `history`/`future` are
+/// the Ctrl+O/Ctrl+I stacks, `pinned`/`pin_order` are user pins, and
+/// `tab`/`focus`/`pane`/`scroll`/`hover` place the cursor.
+pub(crate) struct Nav {
+    pub(crate) current: Option<u64>,
     pub(crate) requested: Option<u64>,
     /// h/l neighbor-step fetch awaiting its result. While set, a 404 for
     /// that number toasts "no #N" instead of the raw error; any other
     /// error keeps the existing error path. Cleared on landing.
     pub(crate) step_pending: Option<u64>,
-    pub(crate) data: HashMap<u64, IssueData>,
-    pub(crate) statuses: HashMap<u64, Vec<(String, Option<String>)>>,
     /// Numbers the user explicitly asked for or clicked, in first-seen
     /// order. Merely viewing a recent row never lands here.
     pub(crate) visited: Vec<u64>,
@@ -230,36 +295,206 @@ pub(crate) struct App {
     pub(crate) future: Vec<u64>,
     pub(crate) pinned: HashSet<u64>,
     pub(crate) pin_order: Vec<u64>,
-    pub(crate) current: Option<u64>,
     pub(crate) tab: Tab,
     pub(crate) focus: Focus,
     pub(crate) pane: Pane,
-    pub(crate) bar: String,
-    /// `/` search text. Persists after commit so matches stay highlighted;
-    /// `searching` is true only while editing it in the bar.
-    pub(crate) search: String,
-    pub(crate) searching: bool,
-    /// Client-side sort for both sidebar panes: key plus direction.
-    pub(crate) sort: core::SideSort,
-    pub(crate) sort_desc: bool,
-    /// Filter dialog (`f`) state.
-    pub(crate) shortcuts_open: bool,
-    pub(crate) filter_open: bool,
-    pub(crate) query_edit: bool,
-    pub(crate) query_draft: String,
-    pub(crate) query_active: String,
-    pub(crate) show_open_prs: bool,
-    pub(crate) show_merged_prs: bool,
-    pub(crate) show_open_issues: bool,
-    pub(crate) show_closed_issues: bool,
-    /// The next section payload replaces (search) instead of appending.
-    pub(crate) section_replace: bool,
     pub(crate) scroll: u16,
-    pub(crate) message: String,
-    pub(crate) message_at: Option<std::time::Instant>,
-    pub(crate) issue_state: ListState,
-    pub(crate) pr_state: ListState,
-    pub(crate) quit: bool,
+    /// Wheel-selected sidebar row: transient preview, never a visit and
+    /// never the active highlight. Click/Enter/j/k/h/l promote it to
+    /// `current` and clear it; the highlight always follows `current`
+    /// through `sync_selection`. While it moves, `current`, body scroll,
+    /// and the other panes stay untouched.
+    pub(crate) hover: Option<u64>,
+}
+
+impl Nav {
+    pub(crate) fn new() -> Self {
+        Self { current: None, requested: None, step_pending: None, visited: vec![],
+            recent: vec![], history: vec![], future: vec![], pinned: HashSet::new(),
+            pin_order: vec![], tab: Tab::Details, focus: Focus::Main, pane: Pane::Issues,
+            scroll: 0, hover: None }
+    }
+}
+
+/// Board modal state: the loaded project payload, its fetch channel,
+/// per-column list states, cursor, text/milestone filters, and the card
+/// detail cache plus its fetch triplet.
+pub(crate) struct BoardView {
+    pub(crate) data: Option<BoardData>,
+    pub(crate) loading: bool,
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
+    pub(crate) states: Vec<ListState>,
+    pub(crate) expanded: Option<(usize, usize)>,
+    /// Board text filter (`f` while the board is open): label, card title,
+    /// or `#num`. Milestones filter through the pills below, never this
+    /// text. Empty shows every card.
+    pub(crate) filter: String,
+    /// Board milestone pills: the selected milestones. Empty selects every
+    /// card; `None` is the "(no milestone)" pill.
+    pub(crate) milestones: HashSet<Option<String>>,
+    /// Active widget in the board filter dialog: 0 is the text row, the
+    /// rest are milestone pills in `model::board_milestones` order.
+    pub(crate) filter_focus: usize,
+    /// Milestone draft edited in the dialog; Enter applies it.
+    pub(crate) milestone_draft: HashSet<Option<String>>,
+    pub(crate) col: usize,
+    pub(crate) row: usize,
+    pub(crate) details: HashMap<u64, model::BoardDetail>,
+    pub(crate) detail_pending: HashSet<u64>,
+    pub(crate) detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
+    pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
+}
+
+impl BoardView {
+    pub(crate) fn new(
+        detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
+        detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
+    ) -> Self {
+        Self { data: None, loading: false, rx: None, states: Vec::new(), expanded: None,
+            filter: String::new(), milestones: HashSet::new(), filter_focus: 0,
+            milestone_draft: HashSet::new(), col: 0, row: 0, details: HashMap::new(),
+            detail_pending: HashSet::new(), detail_tx, detail_rx }
+    }
+}
+
+/// Diff tab state: fetched per-issue file lists, the line cursor and its
+/// render bookkeeping, folded-file state, and the fetch triplet.
+pub(crate) struct DiffView {
+    pub(crate) files: HashMap<u64, Vec<model::DiffFile>>,
+    pub(crate) cursor: usize,
+    /// Active diff line as an absolute body-buffer row. `None` until the
+    /// next render anchors it to the first file header. Steps one row at a
+    /// time so wrapped rows just work; render resolves the owning file and
+    /// auto-expands collapsed files from the fresh capture.
+    pub(crate) line: Option<usize>,
+    /// Set when input moved the line cursor: render then resolves the file
+    /// and expands a landed-on collapsed file. Stays false for the lazy
+    /// init anchor so opening a Diff never unfolds the first file.
+    pub(crate) touched: bool,
+    /// Owning file per visible body row, parallel to `body_rows` and only
+    /// meaningful on the Diff tab. Rows before the first header map to
+    /// `None`; blank/rule rows inherit the previous header's file.
+    pub(crate) row_files: Vec<Option<usize>>,
+    /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
+    pub(crate) expanded_files: HashSet<(u64, String)>,
+    /// Issue numbers whose sidebar row shows its detail block. Keyed by
+    /// number, so the state is sticky across cursor moves and shared by the
+    /// Issues, PRs, and Refs panes.
+    pub(crate) expanded_rows: HashSet<u64>,
+    /// Visible buffer rows of the diff file headers, in file order.
+    pub(crate) headers: Vec<usize>,
+    pub(crate) pending: HashSet<u64>,
+    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
+    pub(crate) split: bool,
+}
+
+impl DiffView {
+    pub(crate) fn new(
+        tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
+        rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
+    ) -> Self {
+        Self { files: HashMap::new(), cursor: 0, line: None, touched: false,
+            row_files: vec![], expanded_files: HashSet::new(), expanded_rows: HashSet::new(),
+            headers: vec![], pending: HashSet::new(), tx, rx, split: false }
+    }
+}
+
+/// Graph tab state: fetched per-issue graph payloads, the fetch triplet,
+/// and the cursor into the current graph order.
+pub(crate) struct GraphView {
+    pub(crate) data: HashMap<u64, model::GraphData>,
+    pub(crate) pending: HashSet<u64>,
+    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<model::GraphData, String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<model::GraphData, String>)>,
+    /// Cursor into `graph_order_numbers` for the current issue. Reset on
+    /// issue switch; tab switches keep it so going back restores place.
+    pub(crate) cursor: usize,
+}
+
+impl GraphView {
+    pub(crate) fn new(
+        tx: std::sync::mpsc::Sender<(u64, Result<model::GraphData, String>)>,
+        rx: std::sync::mpsc::Receiver<(u64, Result<model::GraphData, String>)>,
+    ) -> Self {
+        Self { data: HashMap::new(), pending: HashSet::new(), tx, rx, cursor: 0 }
+    }
+}
+
+/// Refs pane: related issues mentioned in the current body, with its
+/// highlight selection and list state.
+pub(crate) struct RefsPane {
+    /// Related issues mentioned in the current body. Hidden when empty.
+    pub(crate) show: bool,
+    pub(crate) numbers: Vec<u64>,
+    /// Will-close counterparts of the current issue/PR, listed under a
+    /// `Paired` divider. Kept disjoint from `numbers` so a row has one
+    /// behavior: paired rows open, mention rows only highlight.
+    pub(crate) paired: Vec<u64>,
+    /// Click-selected refs row: highlights its source line instead of opening it.
+    pub(crate) highlight: Option<u64>,
+    pub(crate) state: ListState,
+}
+
+impl RefsPane {
+    pub(crate) fn new() -> Self {
+        Self { show: true, numbers: vec![], paired: vec![], highlight: None,
+            state: ListState::default() }
+    }
+}
+
+/// Auth state: the startup bootstrap channel, the re-auth probe channel,
+/// the pending scope prompt, and its dismissal/re-probe bookkeeping.
+#[derive(Default)]
+pub(crate) struct AuthState {
+    pub(crate) bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    /// Early auth probe in flight (`bootstrap` started it).
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
+    /// Pending re-auth question: the token is dead or lacks scopes.
+    /// A modal until the user answers; `y` runs `gh auth refresh`.
+    pub(crate) prompt: Option<AuthPrompt>,
+    /// Set by input; the event loop runs the refresh outside the TUI.
+    pub(crate) reauth_requested: bool,
+    /// The user dismissed the prompt: later auth failures notify only,
+    /// never re-modal. Cleared by a successful re-auth.
+    pub(crate) dismissed: bool,
+    /// The repo-scoped access probe fired once the repo resolved.
+    pub(crate) repo_probed: bool,
+}
+
+/// Compose slot: the open comment draft, the `$EDITOR` handoff flag, the
+/// submit channel, and the per-PR review-submit channel plus its
+/// in-flight set.
+pub(crate) struct ComposeSlot {
+    pub(crate) draft: Option<ComposeState>,
+    /// Set by input; the event loop suspends the TUI and runs `$EDITOR`
+    /// on the draft outside it, then lands the edited text.
+    pub(crate) editor_requested: bool,
+    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+    // Pending review submit (`S`): PRs with pending line comments, plus
+    // its background channel. One in-flight submit per PR.
+    pub(crate) review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
+    pub(crate) review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+    pub(crate) submitting: HashSet<u64>,
+}
+
+impl ComposeSlot {
+    pub(crate) fn new(
+        tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
+        rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+        review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
+        review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+    ) -> Self {
+        Self { draft: None, editor_requested: false, tx, rx, review_tx, review_rx,
+            submitting: HashSet::new() }
+    }
+}
+
+/// Last-rendered hit areas for mouse clicks. The row maps hold the
+/// display order per pane, `None` marking a divider slot.
+#[derive(Default)]
+pub(crate) struct HitAreas {
     pub(crate) body_area: Rect,
     pub(crate) body_rows: Vec<String>,
     /// Title/label block rendered above the content tabs. Clicks here
@@ -268,100 +503,12 @@ pub(crate) struct App {
     pub(crate) header_rows: Vec<String>,
     /// Scroll offset `body_rows` was captured at; selections add to this.
     pub(crate) body_base: u16,
-    pub(crate) board_loading: bool,
-    pub(crate) board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
-    /// Early auth probe in flight (`bootstrap` started it).
-    pub(crate) auth_rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
-    /// Pending re-auth question: the token is dead or lacks scopes.
-    /// A modal until the user answers; `y` runs `gh auth refresh`.
-    pub(crate) auth_prompt: Option<AuthPrompt>,
-    /// Generic confirm modal plus its deferred decision. While set, all
-    /// keys and clicks route to the dialog until it resolves.
-    pub(crate) confirm: Option<ConfirmDialog>,
-    /// Set by input; the event loop runs the refresh outside the TUI.
-    pub(crate) reauth_requested: bool,
-    /// The user dismissed the prompt: later auth failures notify only,
-    /// never re-modal. Cleared by a successful re-auth.
-    pub(crate) auth_dismissed: bool,
-    /// The repo-scoped access probe fired once the repo resolved.
-    pub(crate) auth_repo_probed: bool,
-    pub(crate) board_states: Vec<ListState>,
-    pub(crate) board_expanded: Option<(usize, usize)>,
-    /// Board text filter (`f` while the board is open): label, card title,
-    /// or `#num`. Milestones filter through the pills below, never this
-    /// text. Empty shows every card.
-    pub(crate) board_filter: String,
-    /// Board milestone pills: the selected milestones. Empty selects every
-    /// card; `None` is the "(no milestone)" pill.
-    pub(crate) board_milestones: HashSet<Option<String>>,
-    /// Active widget in the board filter dialog: 0 is the text row, the
-    /// rest are milestone pills in `model::board_milestones` order.
-    pub(crate) filter_focus: usize,
-    /// Milestone draft edited in the dialog; Enter applies it.
-    pub(crate) filter_milestone_draft: HashSet<Option<String>>,
-    pub(crate) merged_window_hours: u64,
-    pub(crate) board_details: HashMap<u64, model::BoardDetail>,
-    pub(crate) detail_pending: HashSet<u64>,
-    pub(crate) detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
-    pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
-    pub(crate) diffs: HashMap<u64, Vec<model::DiffFile>>,
-    pub(crate) diff_cursor: usize,
-    /// Active diff line as an absolute body-buffer row. `None` until the
-    /// next render anchors it to the first file header. Steps one row at a
-    /// time so wrapped rows just work; render resolves the owning file and
-    /// auto-expands collapsed files from the fresh capture.
-    pub(crate) diff_line: Option<usize>,
-    /// Set when input moved the line cursor: render then resolves the file
-    /// and expands a landed-on collapsed file. Stays false for the lazy
-    /// init anchor so opening a Diff never unfolds the first file.
-    pub(crate) diff_touched: bool,
-    /// Owning file per visible body row, parallel to `body_rows` and only
-    /// meaningful on the Diff tab. Rows before the first header map to
-    /// `None`; blank/rule rows inherit the previous header's file.
-    pub(crate) diff_row_files: Vec<Option<usize>>,
-    /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
-    pub(crate) expanded_files: HashSet<(u64, String)>,
-    /// Issue numbers whose sidebar row shows its detail block. Keyed by
-    /// number, so the state is sticky across cursor moves and shared by
-    /// the Issues, PRs, and Refs panes.
-    pub(crate) expanded_rows: HashSet<u64>,
-    /// Visible buffer rows of the diff file headers, in file order.
-    pub(crate) diff_headers: Vec<usize>,
-    pub(crate) diff_pending: HashSet<u64>,
-    pub(crate) diff_tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
-    pub(crate) diff_rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
-    pub(crate) diff_split: bool,
-    pub(crate) graphs: HashMap<u64, model::GraphData>,
-    pub(crate) graph_pending: HashSet<u64>,
-    pub(crate) graph_tx: std::sync::mpsc::Sender<(u64, Result<model::GraphData, String>)>,
-    pub(crate) graph_rx: std::sync::mpsc::Receiver<(u64, Result<model::GraphData, String>)>,
-    /// Cursor into `graph_order_numbers` for the current issue. Reset on
-    /// issue switch; tab switches keep it so going back restores place.
-    pub(crate) graph_cursor: usize,
-    // Last-rendered hit areas for mouse clicks. The row maps hold the
-    // display order per pane, `None` marking a divider slot.
     pub(crate) side_issue_area: Rect,
     pub(crate) side_pr_area: Rect,
     pub(crate) side_issue_rows: Vec<model::SideRow>,
     pub(crate) side_pr_rows: Vec<model::SideRow>,
-    /// Related issues mentioned in the current body. Hidden when empty.
-    pub(crate) show_refs: bool,
-    pub(crate) ref_numbers: Vec<u64>,
-    /// Will-close counterparts of the current issue/PR, listed under a
-    /// `Paired` divider. Kept disjoint from `ref_numbers` so a row has one
-    /// behavior: paired rows open, mention rows only highlight.
-    pub(crate) ref_paired: Vec<u64>,
-    /// Click-selected refs row: highlights its source line instead of opening it.
-    pub(crate) ref_highlight: Option<u64>,
-    /// Wheel-selected sidebar row: transient preview, never a visit and
-    /// never the active highlight. Click/Enter/j/k/h/l promote it to
-    /// `current` and clear it; the highlight always follows `current`
-    /// through `sync_selection`. While it moves, `current`, body scroll,
-    /// and the other panes stay untouched.
-    pub(crate) hover: Option<u64>,
     pub(crate) refs_area: Rect,
     pub(crate) ref_rows: Vec<model::SideRow>,
-    pub(crate) refs_state: ListState,
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
@@ -372,25 +519,34 @@ pub(crate) struct App {
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
     pub(crate) last_click: Option<(Rect, Instant)>,
-    // Compose modal (`c`) plus its background submit channel.
-    pub(crate) compose: Option<ComposeState>,
-    /// Set by input; the event loop suspends the TUI and runs `$EDITOR`
-    /// on the draft outside it, then lands the edited text.
-    pub(crate) editor_requested: bool,
-    pub(crate) compose_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
-    pub(crate) compose_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
-    // Pending review submit (`S`): PRs with pending line comments, plus
-    // its background channel. One in-flight submit per PR.
-    pub(crate) review_submit_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
-    pub(crate) review_submit_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
-    pub(crate) review_submitting: HashSet<u64>,
-    // Board modal.
-    pub(crate) board: Option<BoardData>,
+}
+
+pub(crate) struct App {
+    pub(crate) issues: IssueStore,
+    pub(crate) sections: SectionFeed,
+    pub(crate) sidebar: Sidebar,
+    pub(crate) nav: Nav,
+    pub(crate) board: BoardView,
+    pub(crate) diff: DiffView,
+    pub(crate) graph: GraphView,
+    pub(crate) refs: RefsPane,
+    pub(crate) auth: AuthState,
+    pub(crate) compose: ComposeSlot,
+    pub(crate) hits: HitAreas,
+    pub(crate) repo_flag: Option<String>,
+    pub(crate) repo_slug: Option<String>,
+    pub(crate) initial_numbers: Vec<u64>,
+    pub(crate) bar: String,
+    pub(crate) shortcuts_open: bool,
+    pub(crate) message: String,
+    pub(crate) message_at: Option<std::time::Instant>,
+    pub(crate) quit: bool,
+    /// Generic confirm modal plus its deferred decision. While set, all
+    /// keys and clicks route to the dialog until it resolves.
+    pub(crate) confirm: Option<ConfirmDialog>,
     /// Frame counter, bumped once per event-loop pass. Drives the status
     /// bar spinner; cheap because the loop already redraws every pass.
     pub(crate) tick: u64,
-    pub(crate) board_col: usize,
-    pub(crate) board_row: usize,
 }
 
 impl App {
@@ -404,117 +560,25 @@ impl App {
         Self {
             repo_flag,
             repo_slug: None,
-            bootstrap_rx: None,
+            auth: AuthState::default(),
             initial_numbers: vec![],
-            section_rx: None,
-            last_sections_fetch: Instant::now(),
-            auto_refresh_interval: auto_refresh_interval_default(),
-            section_auto_refresh: false,
-            section_progress: None,
-            partial: HashSet::new(),
-            issue_tx, issue_rx, issue_pending: HashSet::new(), issue_progress: HashMap::new(), requested: None, step_pending: None,
-            data: HashMap::new(),
-            statuses: HashMap::new(),
-            visited: vec![],
-            recent: vec![],
-            history: vec![],
-            future: vec![],
-            pinned: HashSet::new(),
-            pin_order: vec![],
-            current: None,
-            tab: Tab::Details,
-            focus: Focus::Main,
-            pane: Pane::Issues,
+            sections: SectionFeed::new(),
+            issues: IssueStore::new(issue_tx, issue_rx),
+            nav: Nav::new(),
             bar: String::new(),
-            search: String::new(),
-            searching: false,
-            sort: core::SideSort::Default,
-            sort_desc: false,
+            sidebar: Sidebar::new(),
             shortcuts_open: false,
-            filter_open: false,
-            query_edit: false,
-            query_draft: String::new(),
-            query_active: String::new(),
-            show_open_prs: true,
-            show_merged_prs: true,
-            show_open_issues: true,
-            show_closed_issues: true,
-            section_replace: false,
-            scroll: 0,
             message: String::new(),
             message_at: None,
-            issue_state: ListState::default(),
-            pr_state: ListState::default(),
-            board: None,
-            auth_rx: None,
-            auth_prompt: None,
             confirm: None,
-            reauth_requested: false,
-            auth_dismissed: false,
-            auth_repo_probed: false,
-            compose: None,
-            editor_requested: false,
-            compose_tx,
-            compose_rx,
-            review_submit_tx,
-            review_submit_rx,
-            review_submitting: HashSet::new(),
+            compose: ComposeSlot::new(compose_tx, compose_rx, review_submit_tx, review_submit_rx),
             tick: 0,
-            board_col: 0,
-            board_row: 0,
-            board_loading: false,
-            board_rx: None,
-            board_states: Vec::new(),
-            board_expanded: None,
-            board_filter: String::new(),
-            board_milestones: HashSet::new(),
-            filter_focus: 0,
-            filter_milestone_draft: HashSet::new(),
-            merged_window_hours: 24,
-            board_details: HashMap::new(),
-            detail_pending: HashSet::new(),
-            detail_tx,
-            detail_rx,
-            diffs: HashMap::new(),
-            diff_cursor: 0,
-            diff_line: None,
-            diff_touched: false,
-            diff_row_files: vec![],
-            expanded_files: HashSet::new(),
-            expanded_rows: HashSet::new(),
-            diff_headers: vec![],
-            diff_pending: HashSet::new(),
-            diff_tx,
-            diff_rx,
-            diff_split: false,
-            graphs: HashMap::new(),
-            graph_pending: HashSet::new(),
-            graph_tx,
-            graph_rx,
-            graph_cursor: 0,
+            board: BoardView::new(detail_tx, detail_rx),
+            diff: DiffView::new(diff_tx, diff_rx),
+            graph: GraphView::new(graph_tx, graph_rx),
             quit: false,
-            body_area: Rect::default(),
-            body_rows: Vec::new(),
-            header_area: Rect::default(),
-            header_rows: vec![],
-            body_base: 0,
-            side_issue_area: Rect::default(),
-            side_pr_area: Rect::default(),
-            side_issue_rows: vec![],
-            side_pr_rows: vec![],
-            show_refs: true,
-            ref_numbers: vec![],
-            ref_paired: vec![],
-            ref_highlight: None,
-            hover: None,
-            refs_area: Rect::default(),
-            ref_rows: vec![],
-            refs_state: ListState::default(),
-            tabs_area: Rect::default(),
-            bar_area: Rect::default(),
-            board_cells: Vec::new(),
-            board_links: Vec::new(),
-            last_click: None,
+            hits: HitAreas::default(),
+            refs: RefsPane::new(),
         }
     }
 
@@ -535,18 +599,18 @@ impl App {
     /// Record a click flash: the pressed rect inverts on the next frames
     /// until `CLICK_FLASH_MS` elapses.
     pub(crate) fn note_click(&mut self, area: Rect) {
-        self.last_click = Some((area, Instant::now()));
+        self.hits.last_click = Some((area, Instant::now()));
     }
 
     /// The flash still owes frames: visible now, or expired and owed one
     /// last draw to clear it.
     pub(crate) fn flash_live(&self) -> bool {
-        self.last_click.is_some()
+        self.hits.last_click.is_some()
     }
 
     /// The flash currently paints: inside `CLICK_FLASH_MS`.
     pub(crate) fn flash_visible(&self) -> bool {
-        matches!(self.last_click, Some((_, at)) if at.elapsed() < Duration::from_millis(CLICK_FLASH_MS))
+        matches!(self.hits.last_click, Some((_, at)) if at.elapsed() < Duration::from_millis(CLICK_FLASH_MS))
     }
 
     /// Anything animates the status bar: a live fetch or a visible
@@ -567,18 +631,18 @@ impl App {
     /// derivation decides what shows; this only gathers the counts.
     pub(crate) fn fetch_state(&self) -> core::FetchState {
         // Concurrent comment fetches report separately: sum what is known.
-        let (done, total) = self.issue_progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
+        let (done, total) = self.issues.progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
         core::FetchState {
-            issues: self.issue_pending.len(),
-            diffs: self.diff_pending.len(),
-            graphs: self.graph_pending.len(),
-            details: self.detail_pending.len(),
-            sections_live: self.section_rx.is_some(),
-            bootstrap_live: self.bootstrap_rx.is_some(),
-            board: self.board_loading,
+            issues: self.issues.pending.len(),
+            diffs: self.diff.pending.len(),
+            graphs: self.graph.pending.len(),
+            details: self.board.detail_pending.len(),
+            sections_live: self.sections.rx.is_some(),
+            bootstrap_live: self.auth.bootstrap_rx.is_some(),
+            board: self.board.loading,
             message_visible: self.message_visible(),
-            issue_progress: if self.issue_progress.is_empty() { None } else { Some((done, total)) },
-            section_progress: self.section_progress,
+            issue_progress: if self.issues.progress.is_empty() { None } else { Some((done, total)) },
+            section_progress: self.sections.progress,
         }
     }
 
@@ -601,8 +665,8 @@ impl App {
     /// for Ctrl+O and drops the forward chain, so history follows exactly
     /// the rows filed here.
     pub(crate) fn ensure_visited(&mut self, number: u64) {
-        self.history = core::history_push(&self.history, self.current, number);
-        self.future.clear();
+        self.nav.history = core::history_push(&self.nav.history, self.nav.current, number);
+        self.nav.future.clear();
         self.file_visited(number);
     }
 
@@ -610,8 +674,8 @@ impl App {
     /// History restores (Ctrl+O / Ctrl+I) use this: re-recording the
     /// jump would corrupt both stacks.
     fn file_visited(&mut self, number: u64) {
-        if !self.visited.contains(&number) {
-            self.visited.push(number);
+        if !self.nav.visited.contains(&number) {
+            self.nav.visited.push(number);
         }
         self.sync_selection();
     }
@@ -619,8 +683,8 @@ impl App {
     /// File `number` under recent rows (background fetch). Requested rows
     /// never repeat here; see `sections`.
     pub(crate) fn ensure_recent(&mut self, number: u64) {
-        if !self.recent.contains(&number) {
-            self.recent.push(number);
+        if !self.nav.recent.contains(&number) {
+            self.nav.recent.push(number);
         }
     }
 
@@ -632,18 +696,18 @@ impl App {
     /// never resurrect evicted rows, so nothing else calls this.
     fn hydrate_cached_sections(&mut self) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
-        let Some(rows) = github::cached_sections(&repo, self.merged_window_hours) else { return };
+        let Some(rows) = github::cached_sections(&repo, self.sections.merged_window_hours) else { return };
         for row in rows {
             let n = row.issue.number;
-            if self.data.contains_key(&n) {
+            if self.issues.data.contains_key(&n) {
                 continue;
             }
             if !row.complete {
-                self.partial.insert(n);
+                self.issues.partial.insert(n);
             }
-            self.data.insert(n, row.issue);
-            self.statuses.insert(n, row.statuses);
-            self.board_details.insert(n, row.detail);
+            self.issues.data.insert(n, row.issue);
+            self.issues.statuses.insert(n, row.statuses);
+            self.board.details.insert(n, row.detail);
             self.ensure_recent(n);
         }
     }
@@ -652,11 +716,11 @@ impl App {
     /// Offline or out of a repo this is a no-op: clicked rows still list.
     pub(crate) fn merge_recent_sections(&mut self) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
-        self.last_sections_fetch = Instant::now();
-        self.section_auto_refresh = false;
-        let hours = self.merged_window_hours;
+        self.sections.last_fetch = Instant::now();
+        self.sections.auto_refresh = false;
+        let hours = self.sections.merged_window_hours;
         let (tx, rx) = std::sync::mpsc::channel();
-        self.section_rx = Some(rx);
+        self.sections.rx = Some(rx);
         rt().spawn(async move {
             let result = github::fetch_recent_sections(&repo, hours, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
@@ -664,20 +728,20 @@ impl App {
     }
 
     fn auto_refresh_recent(&mut self, now: Instant) {
-        if now.duration_since(self.last_sections_fetch) < self.auto_refresh_interval
-            || self.section_rx.is_some()
+        if now.duration_since(self.sections.last_fetch) < self.sections.auto_refresh_interval
+            || self.sections.rx.is_some()
             || board_open(self)
-            || self.compose.is_some()
+            || self.compose.draft.is_some()
             || self.confirm.is_some()
-            || self.filter_open
+            || self.sidebar.filter_open
             || self.shortcuts_open
-            || self.focus == Focus::Bar
+            || self.nav.focus == Focus::Bar
         {
             return;
         }
         self.merge_recent_sections();
-        if self.section_rx.is_some() {
-            self.section_auto_refresh = true;
+        if self.sections.rx.is_some() {
+            self.sections.auto_refresh = true;
         }
     }
 
@@ -686,24 +750,24 @@ impl App {
     /// opened rows keep their data and stay listed.
     pub(crate) fn refetch_recent(&mut self) {
         self.drop_unvisited_background();
-        self.query_active.clear();
-        self.query_draft.clear();
+        self.sidebar.query_active.clear();
+        self.sidebar.query_draft.clear();
         self.merge_recent_sections();
     }
 
     /// Server-side GitHub search scoped to the repo. Results replace the
-    /// recent list when they land; see `section_replace`.
+    /// recent list when they land; see `sections.replace`.
     pub(crate) fn run_gh_search(&mut self, query: String) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
             self.notify("search needs a repo: use -R or run inside one".to_string());
             return;
         };
-        self.last_sections_fetch = Instant::now();
-        self.section_auto_refresh = false;
-        self.section_replace = true;
+        self.sections.last_fetch = Instant::now();
+        self.sections.auto_refresh = false;
+        self.sections.replace = true;
         self.notify(format!("searching: {query}"));
         let (tx, rx) = std::sync::mpsc::channel();
-        self.section_rx = Some(rx);
+        self.sections.rx = Some(rx);
         rt().spawn(async move {
             // Server search is a single request: indeterminate, no progress.
             let _ = tx.send(github::SectionEvent::Done(github::search_repo(&repo, &query).await));
@@ -712,12 +776,12 @@ impl App {
 
     /// Drop background rows the user never opened, with their cached data.
     fn drop_unvisited_background(&mut self) {
-        let keep: HashSet<u64> = self.visited.iter().copied()
-            .chain(self.pin_order.iter().copied())
-            .chain(self.pinned.iter().copied())
+        let keep: HashSet<u64> = self.nav.visited.iter().copied()
+            .chain(self.nav.pin_order.iter().copied())
+            .chain(self.nav.pinned.iter().copied())
             .collect();
-        self.recent.retain(|n| keep.contains(n));
-        for n in self.partial.iter().copied().collect::<Vec<_>>() {
+        self.nav.recent.retain(|n| keep.contains(n));
+        for n in self.issues.partial.iter().copied().collect::<Vec<_>>() {
             if !keep.contains(&n) {
                 self.drop_cached(n);
             }
@@ -726,15 +790,15 @@ impl App {
 
     /// Remove every cached payload for `n` so a revisit fetches again.
     fn drop_cached(&mut self, n: u64) {
-        self.partial.remove(&n);
-        self.issue_progress.remove(&n);
-        self.data.remove(&n);
-        self.statuses.remove(&n);
-        self.board_details.remove(&n);
-        self.diffs.remove(&n);
-        self.diff_pending.remove(&n);
-        self.graphs.remove(&n);
-        self.graph_pending.remove(&n);
+        self.issues.partial.remove(&n);
+        self.issues.progress.remove(&n);
+        self.issues.data.remove(&n);
+        self.issues.statuses.remove(&n);
+        self.board.details.remove(&n);
+        self.diff.files.remove(&n);
+        self.diff.pending.remove(&n);
+        self.graph.data.remove(&n);
+        self.graph.pending.remove(&n);
     }
 
     /// Evict the highlighted sidebar row: drop it from the pane lists and
@@ -748,28 +812,28 @@ impl App {
     }
 
     fn evict_current_inner(&mut self) {
-        if !matches!(self.pane, Pane::Issues | Pane::PRs) {
+        if !matches!(self.nav.pane, Pane::Issues | Pane::PRs) {
             return;
         }
-        let Some(n) = self.current else {
+        let Some(n) = self.nav.current else {
             self.notify("no row to evict".to_string());
             return;
         };
-        if self.pinned.contains(&n) || self.pin_order.contains(&n) {
+        if self.nav.pinned.contains(&n) || self.nav.pin_order.contains(&n) {
             self.notify(format!("#{n} is pinned — unpin with p first"));
             return;
         }
-        let order = match self.pane {
+        let order = match self.nav.pane {
             Pane::Issues => self.issue_numbers(),
             Pane::PRs => self.pr_numbers(),
             _ => return,
         };
         let Some(pos) = order.iter().position(|x| *x == n) else { return };
-        self.visited.retain(|x| *x != n);
-        self.recent.retain(|x| *x != n);
-        self.expanded_rows.remove(&n);
-        if self.ref_highlight == Some(n) {
-            self.ref_highlight = None;
+        self.nav.visited.retain(|x| *x != n);
+        self.nav.recent.retain(|x| *x != n);
+        self.diff.expanded_rows.remove(&n);
+        if self.refs.highlight == Some(n) {
+            self.refs.highlight = None;
         }
         self.drop_cached(n);
         let next = order
@@ -779,11 +843,11 @@ impl App {
         match next {
             Some(next) => self.show_issue(next),
             None => {
-                self.current = None;
-                self.requested = None;
-                self.ref_numbers.clear();
-                self.ref_paired.clear();
-                self.scroll = 0;
+                self.nav.current = None;
+                self.nav.requested = None;
+                self.refs.numbers.clear();
+                self.refs.paired.clear();
+                self.nav.scroll = 0;
                 self.sync_selection();
             }
         }
@@ -791,19 +855,19 @@ impl App {
     }
 
     pub(crate) fn window_label(&self) -> String {
-        core::window_label(self.merged_window_hours)
+        core::window_label(self.sections.merged_window_hours)
     }
 
     pub(crate) fn load_issue(&mut self, number: u64, force: bool) {
-        self.requested = Some(number);
-        if !force && self.data.contains_key(&number) && !self.partial.contains(&number) {
+        self.nav.requested = Some(number);
+        if !force && self.issues.data.contains_key(&number) && !self.issues.partial.contains(&number) {
             self.show_issue(number);
             self.bar.clear();
-            self.focus = Focus::Main;
+            self.nav.focus = Focus::Main;
             return;
         }
-        if !self.issue_pending.insert(number) { return; }
-        let tx = self.issue_tx.clone();
+        if !self.issues.pending.insert(number) { return; }
+        let tx = self.issues.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         rt().spawn(async move {
             let result = github::fetch_number(&repo, number, force, Some(tx.clone())).await;
@@ -813,19 +877,19 @@ impl App {
 
     /// Sidebar split: pinned | requested | recent, pins never duplicated.
     pub(crate) fn sections(&self) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
-        core::section_split(&self.pin_order, &self.visited, &self.recent, &self.pinned)
+        core::section_split(&self.nav.pin_order, &self.nav.visited, &self.nav.recent, &self.nav.pinned)
     }
 
     /// Row title for search, empty when the row is still loading.
     fn row_title(&self, n: u64) -> String {
-        self.data.get(&n).map(|d| d.title.clone()).unwrap_or_default()
+        self.issues.data.get(&n).map(|d| d.title.clone()).unwrap_or_default()
     }
 
     /// Client-side `/` row match over already-fetched rows: title,
     /// number, label names, and author login. Rows still loading fall
     /// back to title/number only.
     fn row_matches(&self, n: u64, query: &str) -> bool {
-        match self.data.get(&n) {
+        match self.issues.data.get(&n) {
             Some(d) => {
                 let labels: Vec<&str> = d.labels.iter().map(|l| l.name.as_str()).collect();
                 core::matches_search(n, &d.title, &labels, &d.author.login, query)
@@ -837,21 +901,21 @@ impl App {
     /// True for issues, false for PRs and rows still loading (filed with
     /// issues until their data arrives and re-files them).
     fn is_pr(&self, n: u64) -> bool {
-        self.data.get(&n).map(|d| d.is_pr).unwrap_or(false)
+        self.issues.data.get(&n).map(|d| d.is_pr).unwrap_or(false)
     }
 
     /// Recent-row visibility under the `f` state toggles. Pins and
     /// requested rows always show: filters thin the firehose, never rows
     /// the user explicitly opened.
     fn recent_visible(&self, n: u64) -> bool {
-        let Some(d) = self.data.get(&n) else { return true };
+        let Some(d) = self.issues.data.get(&n) else { return true };
         let closed = matches!(d.state.as_str(), "CLOSED" | "MERGED");
         if d.is_pr {
-            if closed { self.show_merged_prs } else { self.show_open_prs }
+            if closed { self.sidebar.show_merged_prs } else { self.sidebar.show_open_prs }
         } else if closed {
-            self.show_closed_issues
+            self.sidebar.show_closed_issues
         } else {
-            self.show_open_issues
+            self.sidebar.show_open_issues
         }
     }
 
@@ -861,7 +925,7 @@ impl App {
     /// section order but is sorted by the active client-side key.
     pub(crate) fn pane_groups(&self, want_pr: bool, filtered: bool) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
         let (p, v, r) = self.sections();
-        let q = self.search.clone();
+        let q = self.sidebar.search.clone();
         let pick = |list: Vec<u64>| -> Vec<u64> {
             list.into_iter()
                 .filter(|n| {
@@ -871,7 +935,7 @@ impl App {
                 .collect()
         };
         let sorted = |list: Vec<u64>| -> Vec<u64> {
-            core::sort_rows(list, self.sort, self.sort_desc, &self.data)
+            core::sort_rows(list, self.sidebar.sort, self.sidebar.sort_desc, &self.issues.data)
         };
         let pinned = sorted(pick(p));
         let requested = sorted(pick(v));
@@ -883,31 +947,31 @@ impl App {
     /// One key cycles the sort key; each key starts in its natural
     /// direction (updated newest first, text A→Z).
     pub(crate) fn cycle_sort(&mut self) {
-        self.sort = self.sort.next();
-        self.sort_desc = self.sort.natural_desc();
+        self.sidebar.sort = self.sidebar.sort.next();
+        self.sidebar.sort_desc = self.sidebar.sort.natural_desc();
     }
 
     /// Flip the active sort direction. Default order has nothing to flip.
     pub(crate) fn toggle_sort_dir(&mut self) {
-        if self.sort != core::SideSort::Default {
-            self.sort_desc = !self.sort_desc;
+        if self.sidebar.sort != core::SideSort::Default {
+            self.sidebar.sort_desc = !self.sidebar.sort_desc;
         }
     }
 
     /// `/` bar hint label for the active sort.
     pub(crate) fn sort_label(&self) -> String {
-        self.sort.label(self.sort_desc)
+        self.sidebar.sort.label(self.sidebar.sort_desc)
     }
 
     /// Display rows for the Issues pane, dividers marking group slots.
     pub(crate) fn issue_rows(&self) -> Vec<model::SideRow> {
-        let (p, v, r) = self.pane_groups(false, self.searching);
+        let (p, v, r) = self.pane_groups(false, self.sidebar.searching);
         core::pane_order(&p, &v, &r)
     }
 
     /// Display rows for the Pull requests pane, dividers marking groups.
     pub(crate) fn pr_rows(&self) -> Vec<model::SideRow> {
-        let (p, v, r) = self.pane_groups(true, self.searching);
+        let (p, v, r) = self.pane_groups(true, self.sidebar.searching);
         core::pane_order(&p, &v, &r)
     }
 
@@ -925,12 +989,12 @@ impl App {
 
     /// Flat order limited to `/` search hits, for Enter / n / N jumps.
     pub(crate) fn search_hits(&self) -> Vec<u64> {
-        if self.search.trim().is_empty() {
+        if self.sidebar.search.trim().is_empty() {
             return vec![];
         }
         let (ip, iv, ir) = self.pane_groups(false, false);
         let (pp, pv, pr) = self.pane_groups(true, false);
-        let q = self.search.clone();
+        let q = self.sidebar.search.clone();
         ip.into_iter()
             .chain(iv).chain(ir).chain(pp).chain(pv).chain(pr)
             .filter(|n| self.row_matches(*n, &q))
@@ -940,8 +1004,8 @@ impl App {
     /// Commit `/` search: jump to the first hit, keep the highlight.
     /// An explicit open, so the row files under requested.
     pub(crate) fn commit_search(&mut self) {
-        self.searching = false;
-        self.focus = Focus::Main;
+        self.sidebar.searching = false;
+        self.nav.focus = Focus::Main;
         if let Some(n) = self.search_hits().first().copied() {
             self.open_issue(n);
         }
@@ -949,19 +1013,19 @@ impl App {
 
     /// Start editing the GitHub query in the filter dialog.
     pub(crate) fn start_query_edit(&mut self) {
-        self.query_draft = self.query_active.clone();
-        self.query_edit = true;
+        self.sidebar.query_draft = self.sidebar.query_active.clone();
+        self.sidebar.query_edit = true;
     }
 
     /// What committing the query draft means. Pure for tests: the caller
     /// performs the fetch. Non-empty runs a search, empty clears back to
     /// the window listing.
     pub(crate) fn commit_query_draft(&mut self) -> QueryAction {
-        self.query_edit = false;
-        self.filter_open = false;
-        self.focus = Focus::Main;
-        let q = self.query_draft.trim().to_string();
-        self.query_active = q.clone();
+        self.sidebar.query_edit = false;
+        self.sidebar.filter_open = false;
+        self.nav.focus = Focus::Main;
+        let q = self.sidebar.query_draft.trim().to_string();
+        self.sidebar.query_active = q.clone();
         if q.is_empty() { QueryAction::Refetch } else { QueryAction::Run(q) }
     }
 
@@ -969,16 +1033,16 @@ impl App {
     /// search query. Renders in the PR footer, never the title, so all
     /// pane titles share one shape.
     pub(crate) fn filter_context(&self) -> String {
-        if self.query_active.trim().is_empty() {
+        if self.sidebar.query_active.trim().is_empty() {
             self.window_label()
         } else {
-            format!("\"{}\"", self.query_active)
+            format!("\"{}\"", self.sidebar.query_active)
         }
     }
 
     /// Group counts for one sidebar pane, matching the displayed rows.
     pub(crate) fn side_counts(&self, want_pr: bool) -> (usize, usize, usize) {
-        let (p, v, r) = self.pane_groups(want_pr, self.searching);
+        let (p, v, r) = self.pane_groups(want_pr, self.sidebar.searching);
         (p.len(), v.len(), r.len())
     }
 
@@ -1002,13 +1066,13 @@ impl App {
 
     /// Title subtitle for Refs: mention/pair counts (Refs has no sort).
     pub(crate) fn refs_subtitle(&self) -> String {
-        if self.ref_paired.is_empty() {
-            format!("{} mentioned", self.ref_numbers.len())
+        if self.refs.paired.is_empty() {
+            format!("{} mentioned", self.refs.numbers.len())
         } else {
             format!(
                 "{} mentioned · {} paired",
-                self.ref_numbers.len(),
-                self.ref_paired.len()
+                self.refs.numbers.len(),
+                self.refs.paired.len()
             )
         }
     }
@@ -1017,8 +1081,8 @@ impl App {
     pub(crate) fn refs_footer(&self) -> String {
         format!(
             "mentioned ({}) · paired ({})",
-            self.ref_numbers.len(),
-            self.ref_paired.len()
+            self.refs.numbers.len(),
+            self.refs.paired.len()
         )
     }
 
@@ -1028,7 +1092,7 @@ impl App {
     /// transient preview (j/k continue from it, a commit promotes it) and
     /// can never present as the active highlight.
     pub(crate) fn effective(&self, rows: &[model::SideRow]) -> Option<u64> {
-        self.current
+        self.nav.current
             .filter(|n| rows.iter().any(|r| r.number() == Some(*n)))
     }
 
@@ -1042,33 +1106,33 @@ impl App {
     fn sync_selection(&mut self) {
         let issue_rows = self.issue_rows();
         let pr_rows = self.pr_rows();
-        match self.current {
+        match self.nav.current {
             Some(n) if issue_rows.iter().any(|r| r.number() == Some(n)) => {
-                self.issue_state.select(Self::selected_index(&issue_rows, self.current));
-                self.pr_state.select(None);
+                self.sidebar.issue_state.select(Self::selected_index(&issue_rows, self.nav.current));
+                self.sidebar.pr_state.select(None);
             }
             Some(n) if pr_rows.iter().any(|r| r.number() == Some(n)) => {
-                self.issue_state.select(None);
-                self.pr_state.select(Self::selected_index(&pr_rows, self.current));
+                self.sidebar.issue_state.select(None);
+                self.sidebar.pr_state.select(Self::selected_index(&pr_rows, self.nav.current));
             }
             _ => {}
         }
     }
 
     pub(crate) fn show_issue(&mut self, n: u64) {
-        self.requested = Some(n);
-        if self.partial.contains(&n) { self.load_issue(n, false); }
-        self.current = Some(n);
-        if self.step_pending == Some(n) {
-            self.step_pending = None;
+        self.nav.requested = Some(n);
+        if self.issues.partial.contains(&n) { self.load_issue(n, false); }
+        self.nav.current = Some(n);
+        if self.nav.step_pending == Some(n) {
+            self.nav.step_pending = None;
         }
-        self.scroll = 0;
-        self.diff_cursor = 0;
-        self.diff_line = None;
-        self.diff_touched = false;
-        self.ref_highlight = None;
-        self.hover = None;
-        self.graph_cursor = 0;
+        self.nav.scroll = 0;
+        self.diff.cursor = 0;
+        self.diff.line = None;
+        self.diff.touched = false;
+        self.refs.highlight = None;
+        self.nav.hover = None;
+        self.graph.cursor = 0;
         self.sync_selection();
         self.load_diff(n, false);
         if self.visual_graph() {
@@ -1087,13 +1151,13 @@ impl App {
     }
 
     fn go_back_inner(&mut self) {
-        let Some(prev) = self.history.pop() else {
+        let Some(prev) = self.nav.history.pop() else {
             self.notify("no older issue".to_string());
             return;
         };
-        if let Some(cur) = self.current {
-            if self.future.last() != Some(&cur) {
-                self.future.push(cur);
+        if let Some(cur) = self.nav.current {
+            if self.nav.future.last() != Some(&cur) {
+                self.nav.future.push(cur);
             }
         }
         self.file_visited(prev);
@@ -1110,11 +1174,11 @@ impl App {
     }
 
     fn go_forward_inner(&mut self) {
-        let Some(next) = self.future.pop() else {
+        let Some(next) = self.nav.future.pop() else {
             self.notify("no newer issue".to_string());
             return;
         };
-        self.history = core::history_push(&self.history, self.current, next);
+        self.nav.history = core::history_push(&self.nav.history, self.nav.current, next);
         self.file_visited(next);
         self.load_issue(next, false);
     }
@@ -1132,7 +1196,7 @@ impl App {
     }
 
     fn step_issue_inner(&mut self, delta: isize) {
-        let Some(cur) = self.current else {
+        let Some(cur) = self.nav.current else {
             self.notify("view an issue first".to_string());
             return;
         };
@@ -1141,7 +1205,7 @@ impl App {
             self.notify(format!("no #{next}"));
             return;
         }
-        self.step_pending = Some(next);
+        self.nav.step_pending = Some(next);
         self.ensure_visited(next);
         self.load_issue(next, false);
     }
@@ -1150,21 +1214,21 @@ impl App {
     /// instead of opening it. Clicking the same row again clears it.
     /// Tab cycles Issues → PRs → Refs, so the pane keeps focus until then.
     pub(crate) fn select_ref(&mut self, n: u64) {
-        self.hover = None;
-        if self.ref_highlight == Some(n) {
-            self.ref_highlight = None;
+        self.nav.hover = None;
+        if self.refs.highlight == Some(n) {
+            self.refs.highlight = None;
             return;
         }
-        self.ref_highlight = Some(n);
+        self.refs.highlight = Some(n);
         // Scroll the body pane so the first mentioning row sits at the top.
         // `body_rows` is the visible slice taken at `body_base`.
         let repo = self.repo_key();
-        if let Some(row) = self.body_rows.iter().position(|line| {
+        if let Some(row) = self.hits.body_rows.iter().position(|line| {
             model::links_in_line(line, repo.as_deref())
                 .iter()
                 .any(|(_, t)| *t == model::LinkTarget::Issue(n))
         }) {
-            self.scroll = self.body_base.saturating_add(row as u16);
+            self.nav.scroll = self.hits.body_base.saturating_add(row as u16);
         }
     }
 
@@ -1172,15 +1236,15 @@ impl App {
     /// is keyed by issue number, so expansion sticks across cursor moves.
     /// The body has no row selection, so there the key is a no-op.
     pub(crate) fn toggle_row_expansion(&mut self) {
-        let selected = match self.pane {
-            Pane::Issues => self.current.filter(|n| self.issue_numbers().contains(n)),
-            Pane::PRs => self.current.filter(|n| self.pr_numbers().contains(n)),
-            Pane::Refs => self.ref_highlight,
+        let selected = match self.nav.pane {
+            Pane::Issues => self.nav.current.filter(|n| self.issue_numbers().contains(n)),
+            Pane::PRs => self.nav.current.filter(|n| self.pr_numbers().contains(n)),
+            Pane::Refs => self.refs.highlight,
             Pane::Main => None,
         };
         let Some(n) = selected else { return };
-        if !self.expanded_rows.remove(&n) {
-            self.expanded_rows.insert(n);
+        if !self.diff.expanded_rows.remove(&n) {
+            self.diff.expanded_rows.insert(n);
         }
     }
 
@@ -1190,19 +1254,19 @@ impl App {
     /// (the header row itself never moves); expanding leaves the cursor
     /// where it is because new rows only appear below the header.
     pub(crate) fn toggle_diff_file(&mut self) {
-        let Some(n) = self.current else { return };
-        self.pane = Pane::Main;
-        let Some(files) = self.diffs.get(&n) else { return };
+        let Some(n) = self.nav.current else { return };
+        self.nav.pane = Pane::Main;
+        let Some(files) = self.diff.files.get(&n) else { return };
         let count = files.len().min(crate::ui::MAX_DIFF_FILES);
         if count == 0 {
             return;
         }
-        let fi = self.diff_file_at_cursor().unwrap_or(self.diff_cursor).min(count - 1);
-        self.diff_cursor = fi;
-        self.diff_touched = false;
+        let fi = self.diff_file_at_cursor().unwrap_or(self.diff.cursor).min(count - 1);
+        self.diff.cursor = fi;
+        self.diff.touched = false;
         let key = (n, files[fi].filename.clone());
-        if !self.expanded_files.remove(&key) {
-            self.expanded_files.insert(key);
+        if !self.diff.expanded_files.remove(&key) {
+            self.diff.expanded_files.insert(key);
         } else {
             self.anchor_cursor_to_header(fi);
         }
@@ -1217,37 +1281,37 @@ impl App {
         if !self.visual_diff() {
             return;
         }
-        let Some(n) = self.current else { return };
-        let count = self.diffs.get(&n).map(|f| f.len().min(crate::ui::MAX_DIFF_FILES)).unwrap_or(0);
+        let Some(n) = self.nav.current else { return };
+        let count = self.diff.files.get(&n).map(|f| f.len().min(crate::ui::MAX_DIFF_FILES)).unwrap_or(0);
         if count == 0 {
             return;
         }
-        let cur = self.diff_file_at_cursor().unwrap_or(self.diff_cursor).min(count - 1);
+        let cur = self.diff_file_at_cursor().unwrap_or(self.diff.cursor).min(count - 1);
         let next = (cur as isize + delta).clamp(0, count as isize - 1) as usize;
         if next == cur {
             return;
         }
         // Update the file state first: the summary names the cursor file,
         // so the measured offsets must come from the post-jump text.
-        self.diff_cursor = next;
-        self.pane = Pane::Main;
-        if let Some(files) = self.diffs.get(&n) {
+        self.diff.cursor = next;
+        self.nav.pane = Pane::Main;
+        if let Some(files) = self.diff.files.get(&n) {
             if let Some(f) = files.get(next) {
-                self.expanded_files.insert((n, f.filename.clone()));
+                self.diff.expanded_files.insert((n, f.filename.clone()));
             }
         }
         if let Some(off) = crate::ui::diff_header_offset(self, next, delta) {
-            self.scroll = off;
-            self.diff_line = Some(usize::from(off));
-            self.diff_touched = true;
+            self.nav.scroll = off;
+            self.diff.line = Some(usize::from(off));
+            self.diff.touched = true;
             return;
         }
         // Fallback: the next visible header in this direction (headers run
         // in file order, so it owns the adjacent file), else a page scroll
         // toward it. The next render re-resolves the file from the line.
-        let base = usize::from(self.body_base);
-        let cur_vis = self.diff_line.map(|abs| abs.saturating_sub(base));
-        let mut headers = self.diff_headers.clone();
+        let base = usize::from(self.hits.body_base);
+        let cur_vis = self.diff.line.map(|abs| abs.saturating_sub(base));
+        let mut headers = self.diff.headers.clone();
         headers.sort_unstable();
         let target = if delta > 0 {
             cur_vis.and_then(|v| headers.iter().copied().find(|&h| h > v))
@@ -1255,14 +1319,14 @@ impl App {
             cur_vis.and_then(|v| headers.iter().copied().rev().find(|&h| h < v))
         };
         if let Some(h) = target {
-            self.diff_line = Some(base + h);
-            self.diff_touched = true;
+            self.diff.line = Some(base + h);
+            self.diff.touched = true;
         } else {
-            let page = self.body_area.height;
+            let page = self.hits.body_area.height;
             if delta > 0 {
-                self.scroll = self.scroll.saturating_add(page);
+                self.nav.scroll = self.nav.scroll.saturating_add(page);
             } else {
-                self.scroll = self.scroll.saturating_sub(page);
+                self.nav.scroll = self.nav.scroll.saturating_sub(page);
             }
         }
     }
@@ -1270,53 +1334,53 @@ impl App {
     /// Owning file of the active diff line from the last render capture.
     /// `None` when the cursor is unset, stale, or on a pre-header row.
     pub(crate) fn diff_file_at_cursor(&self) -> Option<usize> {
-        let abs = self.diff_line?;
-        let vis = abs.checked_sub(self.body_base as usize)?;
-        self.diff_row_files.get(vis).copied().flatten()
+        let abs = self.diff.line?;
+        let vis = abs.checked_sub(self.hits.body_base as usize)?;
+        self.diff.row_files.get(vis).copied().flatten()
     }
 
     /// Move the line cursor to file `fi`'s header when it is on screen.
     /// Used after collapsing: rows below the header vanish, so a cursor
     /// inside the old content would point at the wrong region.
     fn anchor_cursor_to_header(&mut self, fi: usize) {
-        let base = self.body_base as usize;
-        let found = match self.current.and_then(|n| self.diffs.get(&n)) {
-            Some(files) => self.body_rows.iter().enumerate().find_map(|(vis, line)| {
+        let base = self.hits.body_base as usize;
+        let found = match self.nav.current.and_then(|n| self.diff.files.get(&n)) {
+            Some(files) => self.hits.body_rows.iter().enumerate().find_map(|(vis, line)| {
                 (model::header_file_index(line, files) == Some(fi)).then_some(vis)
             }),
             None => return,
         };
         if let Some(vis) = found {
-            self.diff_line = Some(base + vis);
+            self.diff.line = Some(base + vis);
         }
     }
 
     /// The right refs pane shows only when toggled on and non-empty.
     pub(crate) fn refs_visible(&self) -> bool {
-        self.show_refs && !(self.ref_numbers.is_empty() && self.ref_paired.is_empty())
+        self.refs.show && !(self.refs.numbers.is_empty() && self.refs.paired.is_empty())
     }
 
     /// Display rows for the refs pane: mentioned numbers, then a `Paired`
     /// divider with the will-close counterparts. Empty sections collapse.
     pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
-        let mut rows: Vec<model::SideRow> = self.ref_numbers.iter().copied().map(model::SideRow::Item).collect();
-        if !self.ref_paired.is_empty() {
+        let mut rows: Vec<model::SideRow> = self.refs.numbers.iter().copied().map(model::SideRow::Item).collect();
+        if !self.refs.paired.is_empty() {
             rows.push(model::SideRow::Divider("Paired"));
-            rows.extend(self.ref_paired.iter().copied().map(model::SideRow::Item));
+            rows.extend(self.refs.paired.iter().copied().map(model::SideRow::Item));
         }
         rows
     }
 
     /// j/k order for the refs pane, skipping the divider.
     pub(crate) fn ref_order(&self) -> Vec<u64> {
-        self.ref_numbers.iter().chain(self.ref_paired.iter()).copied().collect()
+        self.refs.numbers.iter().chain(self.refs.paired.iter()).copied().collect()
     }
 
     /// Enter on a refs row: paired rows open like sidebar rows; mention
     /// rows stay highlight-only, so they are a no-op here.
     pub(crate) fn open_selected_ref(&mut self) {
-        let Some(n) = self.ref_highlight else { return };
-        if !self.ref_paired.contains(&n) {
+        let Some(n) = self.refs.highlight else { return };
+        if !self.refs.paired.contains(&n) {
             return;
         }
         self.open_issue(n);
@@ -1324,17 +1388,17 @@ impl App {
 
     /// Flip the right refs pane, keeping the current issue in place.
     pub(crate) fn toggle_refs(&mut self) {
-        self.show_refs = !self.show_refs;
-        if !self.show_refs && self.pane == Pane::Refs {
-            self.pane = Pane::Main;
+        self.refs.show = !self.refs.show;
+        if !self.refs.show && self.nav.pane == Pane::Refs {
+            self.nav.pane = Pane::Main;
         }
-        self.notify(if self.show_refs { "refs: shown".to_string() } else { "refs: hidden".to_string() });
+        self.notify(if self.refs.show { "refs: shown".to_string() } else { "refs: hidden".to_string() });
     }
 
     /// Tab cycles Issues → PRs → Refs, skipping Refs while it is hidden.
     /// The body keeps its dedicated keys so it never takes Tab focus.
     pub(crate) fn cycle_pane(&mut self) {
-        self.pane = match self.pane {
+        self.nav.pane = match self.nav.pane {
             Pane::Issues => Pane::PRs,
             Pane::PRs if self.refs_visible() => Pane::Refs,
             _ => Pane::Issues,
@@ -1345,14 +1409,14 @@ impl App {
     /// background fetches for rows we have never loaded. Never changes
     /// `current`.
     pub(crate) fn refresh_refs(&mut self) {
-        let Some(n) = self.current else {
-            self.ref_numbers.clear();
-            self.ref_paired.clear();
+        let Some(n) = self.nav.current else {
+            self.refs.numbers.clear();
+            self.refs.paired.clear();
             return;
         };
-        let Some(d) = self.data.get(&n) else {
-            self.ref_numbers.clear();
-            self.ref_paired.clear();
+        let Some(d) = self.issues.data.get(&n) else {
+            self.refs.numbers.clear();
+            self.refs.paired.clear();
             return;
         };
         // Pairs win over mentions so each row has one behavior: the
@@ -1363,12 +1427,12 @@ impl App {
             .into_iter()
             .filter(|m| *m != n && !paired.contains(m))
             .collect();
-        self.ref_numbers = nums;
-        self.ref_paired = paired;
-        let tx = self.issue_tx.clone();
+        self.refs.numbers = nums;
+        self.refs.paired = paired;
+        let tx = self.issues.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         for m in self.ref_order() {
-            if self.data.contains_key(&m) || !self.issue_pending.insert(m) {
+            if self.issues.data.contains_key(&m) || !self.issues.pending.insert(m) {
                 continue;
             }
             let tx = tx.clone();
@@ -1381,11 +1445,11 @@ impl App {
     }
 
     pub(crate) fn visual_diff(&self) -> bool {
-        self.tab == Tab::Visual && self.current.and_then(|n| self.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Diff)
+        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Diff)
     }
 
     pub(crate) fn visual_graph(&self) -> bool {
-        self.tab == Tab::Visual && self.current.and_then(|n| self.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Graph)
+        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Graph)
     }
 
     /// Switch tabs, resetting scroll. Selecting Diff on a PR or Graph on
@@ -1396,17 +1460,17 @@ impl App {
     }
 
     fn set_tab_inner(&mut self, tab: Tab) {
-        self.tab = tab;
-        self.scroll = 0;
-        self.diff_line = None;
-        self.diff_touched = false;
+        self.nav.tab = tab;
+        self.nav.scroll = 0;
+        self.diff.line = None;
+        self.diff.touched = false;
         if self.visual_diff() {
-            if let Some(n) = self.current {
+            if let Some(n) = self.nav.current {
                 self.load_diff(n, false);
             }
         }
         if self.visual_graph() {
-            if let Some(n) = self.current {
+            if let Some(n) = self.nav.current {
                 self.load_graph(n, false);
             }
         }
@@ -1415,27 +1479,27 @@ impl App {
     /// Flip the Diff tab between unified and side-by-side rendering,
     /// back at the top so the new layout starts visible.
     pub(crate) fn toggle_diff_split(&mut self) {
-        self.diff_split = !self.diff_split;
-        self.diff_line = None;
-        self.diff_touched = false;
-        self.scroll = 0;
-        self.notify(if self.diff_split { "diff: split".to_string() } else { "diff: unified".to_string() });
+        self.diff.split = !self.diff.split;
+        self.diff.line = None;
+        self.diff.touched = false;
+        self.nav.scroll = 0;
+        self.notify(if self.diff.split { "diff: split".to_string() } else { "diff: unified".to_string() });
     }
 
     /// Queue a diff fetch for PR `number`. No-op for issues, cached rows,
     /// and rows already in flight.
     pub(crate) fn load_diff(&mut self, number: u64, force: bool) {
-        let Some(d) = self.data.get(&number) else { return };
+        let Some(d) = self.issues.data.get(&number) else { return };
         if !d.is_pr {
             return;
         }
-        if !force && self.diffs.contains_key(&number) {
+        if !force && self.diff.files.contains_key(&number) {
             return;
         }
-        if !self.diff_pending.insert(number) {
+        if !self.diff.pending.insert(number) {
             return;
         }
-        let tx = self.diff_tx.clone();
+        let tx = self.diff.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         rt().spawn(async move {
             let _ = tx.send((number, github::fetch_diff(&repo, number, force).await));
@@ -1446,13 +1510,13 @@ impl App {
     /// already in flight. One cache entry per issue, so switching issues
     /// refetches per issue and the tab shows a skeleton meanwhile.
     pub(crate) fn load_graph(&mut self, number: u64, force: bool) {
-        if !force && self.graphs.contains_key(&number) {
+        if !force && self.graph.data.contains_key(&number) {
             return;
         }
-        if !self.graph_pending.insert(number) {
+        if !self.graph.pending.insert(number) {
             return;
         }
-        let tx = self.graph_tx.clone();
+        let tx = self.graph.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         rt().spawn(async move {
             let _ = tx.send((number, github::fetch_graph(&repo, number, force).await));
@@ -1462,29 +1526,29 @@ impl App {
     /// Flat navigation order for the graph tab: the center first, then
     /// neighbors section by section. Empty without a loaded graph.
     pub(crate) fn graph_order_numbers(&self) -> Vec<u64> {
-        let Some(n) = self.current else { return vec![] };
-        let Some(data) = self.graphs.get(&n) else { return vec![] };
+        let Some(n) = self.nav.current else { return vec![] };
+        let Some(data) = self.graph.data.get(&n) else { return vec![] };
         model::graph_order(data).into_iter().take(8).map(|i| data.nodes[i].number).collect()
     }
 
     /// Move the graph cursor, clamped at the ends. No-op without a graph.
     pub(crate) fn graph_move(&mut self, delta: isize) {
         let order = self.graph_order_numbers();
-        if let Some(next) = core::graph_select(order.len(), Some(self.graph_cursor), delta) {
-            self.graph_cursor = next;
+        if let Some(next) = core::graph_select(order.len(), Some(self.graph.cursor), delta) {
+            self.graph.cursor = next;
         }
     }
 
     /// Open the graph node under the cursor in the viewer.
     pub(crate) fn open_graph_selection(&mut self) {
         let order = self.graph_order_numbers();
-        if let Some(&n) = order.get(self.graph_cursor) {
+        if let Some(&n) = order.get(self.graph.cursor) {
             self.open_issue(n);
         }
     }
 
     pub(crate) fn toggle_pin(&mut self) {
-        let Some(n) = self.current else {
+        let Some(n) = self.nav.current else {
             self.notify("view an issue first".to_string());
             return;
         };
@@ -1496,19 +1560,19 @@ impl App {
         let was_pinned = loaded.contains(&n);
         let pins = core::toggle_pin(&loaded, n);
         if was_pinned {
-            self.pinned.remove(&n);
+            self.nav.pinned.remove(&n);
             self.notify(format!("unpinned #{n}"));
         } else {
-            self.pinned.insert(n);
+            self.nav.pinned.insert(n);
             self.notify(format!("pinned #{n}"));
         }
-        self.pin_order = pins.clone();
+        self.nav.pin_order = pins.clone();
         github::save_pins(&key, &pins);
         self.show_issue(n);
     }
 
     pub(crate) fn refresh_current(&mut self) {
-        let Some(n) = self.current else {
+        let Some(n) = self.nav.current else {
             self.notify("view an issue first".to_string());
             return;
         };
@@ -1521,17 +1585,17 @@ impl App {
         self.load_graph(n, true);
         // A search listing refreshes from the server; a window listing
         // re-appends (idempotent through the contains checks in polling).
-        if self.query_active.trim().is_empty() {
+        if self.sidebar.query_active.trim().is_empty() {
             self.merge_recent_sections();
         } else {
-            let q = self.query_active.clone();
+            let q = self.sidebar.query_active.clone();
             self.run_gh_search(q);
         }
         self.notify(format!("refreshed #{n}"));
     }
 
     pub(crate) fn open_number(&mut self, n: u64) {
-        if let Some(d) = self.data.get(&n) {
+        if let Some(d) = self.issues.data.get(&n) {
             open::that(&d.url).ok();
         } else if let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) {
             let url = format!("https://github.com/{repo}/issues/{n}");
@@ -1546,12 +1610,12 @@ impl App {
     /// Refs highlight wins, then the Diff file cursor, else the current
     /// issue/PR. `None` means `yank` should explain instead of copying.
     pub(crate) fn yank_text(&self) -> Option<String> {
-        let current = self.current?;
-        let d = self.data.get(&current)?;
+        let current = self.nav.current?;
+        let d = self.issues.data.get(&current)?;
         let repo = self.repo_key();
-        if self.pane == Pane::Refs {
-            let t = self.ref_highlight?;
-            let target = self.data.get(&t);
+        if self.nav.pane == Pane::Refs {
+            let t = self.refs.highlight?;
+            let target = self.issues.data.get(&t);
             if let Some(text) = core::yank_ref_text(
                 current,
                 t,
@@ -1567,17 +1631,17 @@ impl App {
             }
             return Some(format!("#{t}"));
         }
-        if self.tab == Tab::Visual && d.is_pr {
-            let files = self.diffs.get(&current)?;
+        if self.nav.tab == Tab::Visual && d.is_pr {
+            let files = self.diff.files.get(&current)?;
             if files.is_empty() {
                 return None;
             }
             // A patch content row under the active line yanks that line;
             // headers, blanks, and rules fall back to the file summary.
-            if let Some(abs) = self.diff_line {
-                let vis = abs.saturating_sub(self.body_base as usize);
+            if let Some(abs) = self.diff.line {
+                let vis = abs.saturating_sub(self.hits.body_base as usize);
                 if let (Some(line), Some(fi)) =
-                    (self.body_rows.get(vis), self.diff_file_at_cursor())
+                    (self.hits.body_rows.get(vis), self.diff_file_at_cursor())
                 {
                     let is_header = line.starts_with("▸ ") || line.starts_with("▾ ");
                     let trimmed = line.trim();
@@ -1597,8 +1661,8 @@ impl App {
                     }
                 }
             }
-            let file = &files[self.diff_cursor.min(files.len() - 1)];
-            let expanded = self.expanded_files.contains(&(current, file.filename.clone()));
+            let file = &files[self.diff.cursor.min(files.len() - 1)];
+            let expanded = self.diff.expanded_files.contains(&(current, file.filename.clone()));
             let hunk = if expanded {
                 core::first_hunk(&file.patch)
             } else {
@@ -1630,11 +1694,11 @@ impl App {
                 }
             }
             None => {
-                if self.current.is_none() {
+                if self.nav.current.is_none() {
                     self.notify("view an issue first".to_string());
-                } else if self.pane == Pane::Refs {
+                } else if self.nav.pane == Pane::Refs {
                     self.notify("no ref selected".to_string());
-                } else if self.tab == Tab::Visual {
+                } else if self.nav.tab == Tab::Visual {
                     self.notify("no diff loaded yet".to_string());
                 } else {
                     self.notify("nothing to yank".to_string());
@@ -1654,7 +1718,7 @@ impl App {
                 }
             }
             core::BarCommand::OpenCurrent => {
-                if let Some(n) = self.current {
+                if let Some(n) = self.nav.current {
                     self.open_number(n);
                 } else {
                     self.notify("view an issue first".to_string());
@@ -1663,7 +1727,7 @@ impl App {
             core::BarCommand::Open(n) => self.open_number(n),
             core::BarCommand::Quit => {}
             core::BarCommand::Dismiss => {
-                self.focus = Focus::Main;
+                self.nav.focus = Focus::Main;
             }
             core::BarCommand::Hint => self.message = "type an issue number, o, or q".to_string(),
         }
@@ -1680,13 +1744,13 @@ impl App {
             self.notify("board needs a repo: use -R or run inside one".to_string());
             return;
         };
-        self.board_loading = true;
-        self.board_col = 0;
-        self.board_row = 0;
-        self.board_filter.clear();
-        self.board_milestones.clear();
+        self.board.loading = true;
+        self.board.col = 0;
+        self.board.row = 0;
+        self.board.filter.clear();
+        self.board.milestones.clear();
         let (tx, rx) = std::sync::mpsc::channel();
-        self.board_rx = Some(rx);
+        self.board.rx = Some(rx);
         // `gh` subprocesses block: keep them off the async workers.
         rt().spawn_blocking(move || {
             let _ = tx.send(board_via_gh(&owner));
@@ -1697,38 +1761,38 @@ impl App {
     /// navigate mode with the active text and pills prefilled; the board
     /// stays up behind it.
     pub(crate) fn open_board_filter(&mut self) {
-        self.query_draft = self.board_filter.clone();
-        self.filter_milestone_draft = self.board_milestones.clone();
-        self.filter_focus = 0;
-        self.query_edit = false;
-        self.filter_open = true;
+        self.sidebar.query_draft = self.board.filter.clone();
+        self.board.milestone_draft = self.board.milestones.clone();
+        self.board.filter_focus = 0;
+        self.sidebar.query_edit = false;
+        self.sidebar.filter_open = true;
     }
 
     /// Apply the dialog drafts and keep the cursor inside the narrowed
     /// grid. Positions move under a new filter: never keep a stale
     /// expansion.
     pub(crate) fn apply_board_filter(&mut self) {
-        self.board_filter = self.query_draft.trim().to_string();
-        self.board_milestones = self.filter_milestone_draft.clone();
-        self.board_expanded = None;
+        self.board.filter = self.sidebar.query_draft.trim().to_string();
+        self.board.milestones = self.board.milestone_draft.clone();
+        self.board.expanded = None;
         self.clamp_board_cursor();
     }
 
     pub(crate) fn clear_board_filter(&mut self) {
-        self.board_filter.clear();
-        self.board_milestones.clear();
-        self.board_expanded = None;
+        self.board.filter.clear();
+        self.board.milestones.clear();
+        self.board.expanded = None;
         self.clamp_board_cursor();
     }
 
     /// True when any board filter is active: text or milestone pills.
     pub(crate) fn board_filtered(&self) -> bool {
-        !self.board_filter.trim().is_empty() || !self.board_milestones.is_empty()
+        !self.board.filter.trim().is_empty() || !self.board.milestones.is_empty()
     }
 
     /// Milestone pills for the dialog, in display order.
     pub(crate) fn board_pills(&self) -> Vec<Option<String>> {
-        match &self.board {
+        match &self.board.data {
             Some(board) => model::board_milestones(&board.items),
             None => vec![],
         }
@@ -1737,21 +1801,21 @@ impl App {
     /// Step the dialog focus across the text row plus pills, wrapping.
     pub(crate) fn board_filter_step(&mut self, delta: isize) {
         let n = self.board_pills().len() + 1;
-        self.filter_focus = (self.filter_focus as isize + delta).rem_euclid(n as isize) as usize;
+        self.board.filter_focus = (self.board.filter_focus as isize + delta).rem_euclid(n as isize) as usize;
     }
 
     fn clamp_board_cursor(&mut self) {
-        let Some(board) = &self.board else { return };
-        let cols = board_columns(board, &self.board_filter, &self.board_milestones);
-        let col = self.board_col.min(cols.len().saturating_sub(1));
+        let Some(board) = &self.board.data else { return };
+        let cols = board_columns(board, &self.board.filter, &self.board.milestones);
+        let col = self.board.col.min(cols.len().saturating_sub(1));
         let rows = cols.get(col).map(|(_, cards)| cards.len()).unwrap_or(0);
-        self.board_col = col;
-        self.board_row = self.board_row.min(rows.saturating_sub(1));
+        self.board.col = col;
+        self.board.row = self.board.row.min(rows.saturating_sub(1));
     }
 
     /// The compose modal is up, whether drafting or sending.
     pub(crate) fn compose_open(&self) -> bool {
-        self.compose.is_some()
+        self.compose.draft.is_some()
     }
 
     /// Open the compose modal, deriving the target from context: on the
@@ -1759,16 +1823,16 @@ impl App {
     /// line comment, everywhere else a thread comment. Split diffs fall
     /// back to a thread comment since paired rows carry no single line.
     pub(crate) fn open_compose(&mut self) {
-        let Some(n) = self.current else {
+        let Some(n) = self.nav.current else {
             self.notify("view an issue first".to_string());
             return;
         };
-        if !self.data.contains_key(&n) {
+        if !self.issues.data.contains_key(&n) {
             self.notify("still loading: wait for the issue first".to_string());
             return;
         }
         let target = self.compose_target().unwrap_or(ComposeTarget::Thread);
-        self.compose = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new() });
+        self.compose.draft = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new() });
     }
 
     /// Comment target for the active diff line, or `None` for a plain
@@ -1776,23 +1840,23 @@ impl App {
     /// cursor, or no new-side line at the cursor. A cursor inside a
     /// rendered review-thread block answers a reply to that thread.
     fn compose_target(&self) -> Option<ComposeTarget> {
-        if !self.visual_diff() || self.diff_split {
+        if !self.visual_diff() || self.diff.split {
             return None;
         }
-        let n = self.current?;
-        let files = self.diffs.get(&n)?;
+        let n = self.nav.current?;
+        let files = self.diff.files.get(&n)?;
         let fi = self.diff_file_at_cursor()?;
         let file = files.get(fi)?;
-        let abs = self.diff_line?;
-        let vis = abs.checked_sub(self.body_base as usize)?;
-        let header = self.body_rows.iter().enumerate()
+        let abs = self.diff.line?;
+        let vis = abs.checked_sub(self.hits.body_base as usize)?;
+        let header = self.hits.body_rows.iter().enumerate()
             .find_map(|(i, line)| (model::header_file_index(line, files) == Some(fi)).then_some(i))?;
         if vis <= header {
             return None;
         }
-        let section: Vec<String> = self.body_rows[header + 1..].to_vec();
+        let section: Vec<String> = self.hits.body_rows[header + 1..].to_vec();
         let cursor = vis - (header + 1);
-        let d = self.data.get(&n)?;
+        let d = self.issues.data.get(&n)?;
         if let Some(thread_id) = model::thread_at_cursor(&section, cursor, file, &d.review_threads) {
             return Some(ComposeTarget::Reply { thread_id });
         }
@@ -1802,7 +1866,7 @@ impl App {
 
     /// Discard the draft, whatever it holds. Quiet: Esc means gone.
     pub(crate) fn discard_compose(&mut self) {
-        self.compose = None;
+        self.compose.draft = None;
     }
 
     /// Byte offset of a char index, clamped to the end.
@@ -1813,7 +1877,7 @@ impl App {
     /// Type a char at the cursor. Locked while sending so the in-flight
     /// body never changes under the request.
     pub(crate) fn compose_insert(&mut self, c: char) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending {
             return;
         }
@@ -1825,7 +1889,7 @@ impl App {
 
     /// Delete the char before the cursor.
     pub(crate) fn compose_backspace(&mut self) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending || s.cursor == 0 {
             return;
         }
@@ -1838,14 +1902,14 @@ impl App {
 
     /// Step the cursor one char left or right.
     pub(crate) fn compose_step(&mut self, delta: isize) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         let len = s.body.chars().count();
         s.cursor = s.cursor.saturating_add_signed(delta).min(len);
     }
 
     /// Step the cursor one visual line up or down, keeping the column.
     pub(crate) fn compose_line(&mut self, delta: isize) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         let cursor = s.cursor.min(s.body.chars().count());
         let chars: Vec<char> = s.body.chars().collect();
         let head: String = chars[..cursor].iter().collect();
@@ -1918,7 +1982,7 @@ impl App {
     /// Drain `[start, end)` (char indices), stashing the cut text in the
     /// kill ring. Locked while sending so the in-flight body never changes.
     fn compose_cut(&mut self, start: usize, end: usize) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending {
             return;
         }
@@ -1937,7 +2001,7 @@ impl App {
 
     /// Jump to the line start (`Ctrl+A`, `Home`).
     pub(crate) fn compose_home(&mut self) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending {
             return;
         }
@@ -1946,7 +2010,7 @@ impl App {
 
     /// Jump to the line end (`Ctrl+E`, `End`).
     pub(crate) fn compose_end(&mut self) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending {
             return;
         }
@@ -1955,7 +2019,7 @@ impl App {
 
     /// Jump one word back (`Alt+B`).
     pub(crate) fn compose_word_back(&mut self) {
-        let (body, cursor, sending) = match self.compose.as_ref() {
+        let (body, cursor, sending) = match self.compose.draft.as_ref() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -1963,14 +2027,14 @@ impl App {
             return;
         }
         let at = Self::compose_word_back_from(&body, cursor);
-        if let Some(s) = self.compose.as_mut() {
+        if let Some(s) = self.compose.draft.as_mut() {
             s.cursor = at;
         }
     }
 
     /// Jump one word forward (`Alt+F`).
     pub(crate) fn compose_word_forward(&mut self) {
-        let (body, cursor, sending) = match self.compose.as_ref() {
+        let (body, cursor, sending) = match self.compose.draft.as_ref() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -1978,7 +2042,7 @@ impl App {
             return;
         }
         let at = Self::compose_word_forward_from(&body, cursor);
-        if let Some(s) = self.compose.as_mut() {
+        if let Some(s) = self.compose.draft.as_mut() {
             s.cursor = at;
         }
     }
@@ -1986,7 +2050,7 @@ impl App {
     /// Kill to the line end (`Ctrl+K`); at the end of a line the newline
     /// itself is the kill, joining the lines like bash does.
     pub(crate) fn compose_kill_to_end(&mut self) {
-        let (body, cursor, sending) = match self.compose.as_ref() {
+        let (body, cursor, sending) = match self.compose.draft.as_ref() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -2004,7 +2068,7 @@ impl App {
 
     /// Kill back to the line start (`Ctrl+U`).
     pub(crate) fn compose_kill_to_start(&mut self) {
-        let (body, cursor, sending) = match self.compose.as_ref() {
+        let (body, cursor, sending) = match self.compose.draft.as_ref() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -2019,7 +2083,7 @@ impl App {
     /// a kill: the kill ring keeps its text for yank. Never discards: an
     /// empty draft has nothing to delete.
     pub(crate) fn compose_delete_forward(&mut self) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending {
             return;
         }
@@ -2036,7 +2100,7 @@ impl App {
 
     /// Delete the word behind (`Ctrl+W`).
     pub(crate) fn compose_delete_word_back(&mut self) {
-        let (body, cursor, sending) = match self.compose.as_ref() {
+        let (body, cursor, sending) = match self.compose.draft.as_ref() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -2049,7 +2113,7 @@ impl App {
 
     /// Delete the word ahead (`Alt+D`); the cursor stays put.
     pub(crate) fn compose_delete_word_forward(&mut self) {
-        let (body, cursor, len, sending) = match self.compose.as_ref() {
+        let (body, cursor, len, sending) = match self.compose.draft.as_ref() {
             Some(s) => (s.body.clone(), s.cursor, s.body.chars().count(), s.sending),
             None => return,
         };
@@ -2061,7 +2125,7 @@ impl App {
         if end == cursor {
             return;
         }
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         let killed: String = s.body.chars().skip(cursor).take(end - cursor).collect();
         let byte_start = Self::compose_byte(&s.body, cursor);
         let byte_end = Self::compose_byte(&s.body, end);
@@ -2072,7 +2136,7 @@ impl App {
 
     /// Paste the kill ring back (`Ctrl+Y`).
     pub(crate) fn compose_yank(&mut self) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending || s.kill.is_empty() {
             return;
         }
@@ -2086,7 +2150,7 @@ impl App {
     /// Swap the char before the cursor with the one under it (`Ctrl+T`);
     /// at the draft end that swaps the last two chars.
     pub(crate) fn compose_transpose(&mut self) {
-        let Some(s) = self.compose.as_mut() else { return };
+        let Some(s) = self.compose.draft.as_mut() else { return };
         if s.sending {
             return;
         }
@@ -2116,7 +2180,7 @@ impl App {
     /// `$EDITOR` there is nothing to run, so the draft stays and the
     /// toast names the fix.
     pub(crate) fn request_compose_editor(&mut self) {
-        let sending = self.compose.as_ref().map(|c| c.sending).unwrap_or(true);
+        let sending = self.compose.draft.as_ref().map(|c| c.sending).unwrap_or(true);
         if sending {
             return;
         }
@@ -2124,13 +2188,13 @@ impl App {
             self.notify("no $EDITOR set: export EDITOR to edit comments outside ghit".to_string());
             return;
         }
-        self.editor_requested = true;
+        self.compose.editor_requested = true;
     }
 
     /// Land the external editor run: the file text replaces the draft
     /// verbatim and the cursor parks at the end.
     pub(crate) fn land_editor_text(&mut self, text: String, editor: &str) {
-        let Some(c) = self.compose.as_mut() else { return };
+        let Some(c) = self.compose.draft.as_mut() else { return };
         c.body = text;
         c.cursor = c.body.chars().count();
         self.notify(format!("edited in {editor}"));
@@ -2139,7 +2203,7 @@ impl App {
     /// Submit the draft on a background thread; the loop never blocks.
     /// Empty drafts stay open with a status-line error, never a send.
     pub(crate) fn submit_compose(&mut self) {
-        let Some(c) = self.compose.as_mut() else { return };
+        let Some(c) = self.compose.draft.as_mut() else { return };
         if c.sending {
             return;
         }
@@ -2155,12 +2219,13 @@ impl App {
         // thread before sending.
         let reply_comment_id = match &target {
             ComposeTarget::Reply { thread_id } => self
+                .issues
                 .data
                 .get(&number)
                 .and_then(|d| model::thread_reply_comment_id(&d.review_threads, thread_id)),
             _ => None,
         };
-        let tx = self.compose_tx.clone();
+        let tx = self.compose.tx.clone();
         rt().spawn(async move {
             let result = match &target {
                 ComposeTarget::Thread => github::post_thread_comment(&repo, number, &body).await,
@@ -2177,28 +2242,28 @@ impl App {
 
     /// Pending review threads on the current PR, if any.
     pub(crate) fn pending_threads(&self) -> usize {
-        let Some(n) = self.current else { return 0 };
-        let Some(d) = self.data.get(&n) else { return 0 };
+        let Some(n) = self.nav.current else { return 0 };
+        let Some(d) = self.issues.data.get(&n) else { return 0 };
         d.review_threads.iter().filter(|t| t.has_pending()).count()
     }
 
     /// Submit the viewer's pending review so pending line comments go
     /// live. No pending threads means a status-line note, never a send.
     pub(crate) fn submit_pending_review(&mut self) {
-        let Some(n) = self.current else {
+        let Some(n) = self.nav.current else {
             self.notify("view an issue first".to_string());
             return;
         };
-        if self.review_submitting.contains(&n) {
+        if self.compose.submitting.contains(&n) {
             return;
         }
         if self.pending_threads() == 0 {
             self.notify("no pending comments to submit".to_string());
             return;
         }
-        self.review_submitting.insert(n);
+        self.compose.submitting.insert(n);
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        let tx = self.review_submit_tx.clone();
+        let tx = self.compose.review_tx.clone();
         rt().spawn(async move {
             let result = github::submit_pending_review(&repo, n).await;
             let _ = tx.send((n, result));
@@ -2251,7 +2316,7 @@ impl App {
     /// keys. Discard only navigates — the comments stay pending on
     /// GitHub, nothing is deleted.
     pub(crate) fn open_pending_nav(&mut self, intent: NavIntent) {
-        let Some(n) = self.current else { return };
+        let Some(n) = self.nav.current else { return };
         let count = self.pending_threads();
         self.confirm = Some(ConfirmDialog {
             title: "Unsubmitted comments".to_string(),
@@ -2282,7 +2347,7 @@ impl App {
     /// switches without filing the row, so cursor walks and first-press
     /// previews never relocate rows between groups.
     pub(crate) fn request_issue(&mut self, n: u64) {
-        if self.current == Some(n) {
+        if self.nav.current == Some(n) {
             self.show_issue(n);
             return;
         }
@@ -2295,13 +2360,13 @@ impl App {
     /// row under requested before switching, like the bar, board Enter,
     /// and paired-refs opens always did.
     pub(crate) fn open_issue(&mut self, n: u64) {
-        if self.current == Some(n) {
+        if self.nav.current == Some(n) {
             self.show_issue(n);
             // Already viewing still completes the submit tail: the bar
             // clears and focus returns to Main, or later keys land as
             // bar text. Matches the cached fast path in `load_issue`.
             self.bar.clear();
-            self.focus = Focus::Main;
+            self.nav.focus = Focus::Main;
             return;
         }
         if !self.guard_nav(NavIntent::Issue(n)) {
@@ -2316,7 +2381,7 @@ impl App {
 
     /// User-initiated tab switch through the pending guard.
     pub(crate) fn request_tab(&mut self, tab: Tab) {
-        if self.tab == tab {
+        if self.nav.tab == tab {
             return;
         }
         if !self.guard_nav(NavIntent::Tab(tab)) {
@@ -2328,8 +2393,8 @@ impl App {
     /// `body_base` records the scroll offset the snapshot was taken at, so
     /// selections map visible rows back without accumulating across clicks.
     pub(crate) fn capture_body_rows(&mut self, buf: &ratatui::buffer::Buffer) {
-        let area = self.body_area;
-        self.body_rows = (0..area.height)
+        let area = self.hits.body_area;
+        self.hits.body_rows = (0..area.height)
             .map(|r| {
                 let y = area.y + r;
                 (area.x..area.x + area.width)
@@ -2337,7 +2402,7 @@ impl App {
                     .collect::<String>()
             })
             .collect();
-        self.body_base = self.scroll;
+        self.hits.body_base = self.nav.scroll;
     }
 }
 
@@ -2350,7 +2415,7 @@ fn board_via_gh(owner: &str) -> Result<BoardData, String> {
 
 /// The board modal is up, whether still fetching or fully loaded.
 pub(crate) fn board_open(app: &App) -> bool {
-    app.board.is_some() || app.board_loading
+    app.board.data.is_some() || app.board.loading
 }
 
 /// Board columns narrowed by the active filter: milestone pills select
@@ -2383,40 +2448,40 @@ pub(crate) fn board_columns<'a>(
 }
 
 pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
-    app.board_expanded = None;
-    let Some(board) = &app.board else { return };
-    let cols = board_columns(board, &app.board_filter, &app.board_milestones);
+    app.board.expanded = None;
+    let Some(board) = &app.board.data else { return };
+    let cols = board_columns(board, &app.board.filter, &app.board.milestones);
     if cols.is_empty() {
         return;
     }
-    let col = (app.board_col as isize + dx).clamp(0, cols.len() as isize - 1) as usize;
+    let col = (app.board.col as isize + dx).clamp(0, cols.len() as isize - 1) as usize;
     let rows = cols[col].1.len();
-    (app.board_col, app.board_row) =
-        core::board_cursor(cols.len(), rows, app.board_col, app.board_row, dx, dy);
+    (app.board.col, app.board.row) =
+        core::board_cursor(cols.len(), rows, app.board.col, app.board.row, dx, dy);
 }
 
 pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
-    let board = app.board.as_ref()?;
-    let cols = board_columns(board, &app.board_filter, &app.board_milestones);
-    cols.get(app.board_col)?.1.get(app.board_row)?.number
+    let board = app.board.data.as_ref()?;
+    let cols = board_columns(board, &app.board.filter, &app.board.milestones);
+    cols.get(app.board.col)?.1.get(app.board.row)?.number
 }
 
 /// Fetch missing board card details together without blocking the event loop.
 fn kick_off_details(app: &mut App) {
-    let Some(board) = &app.board else { return };
+    let Some(board) = &app.board.data else { return };
     let mut cards = Vec::new();
     for item in &board.items {
         let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else { continue };
-        if app.board_details.contains_key(&n) || app.detail_pending.contains(&n) { continue; }
-        if let Some(d) = app.data.get(&n) {
-            app.board_details.insert(n, model::BoardDetail::from_issue(d));
+        if app.board.details.contains_key(&n) || app.board.detail_pending.contains(&n) { continue; }
+        if let Some(d) = app.issues.data.get(&n) {
+            app.board.details.insert(n, model::BoardDetail::from_issue(d));
             continue;
         }
-        app.detail_pending.insert(n);
+        app.board.detail_pending.insert(n);
         cards.push((repo, n));
     }
     if cards.is_empty() { return; }
-    let tx = app.detail_tx.clone();
+    let tx = app.board.detail_tx.clone();
     rt().spawn(async move {
         match github::fetch_board_details(&cards).await {
             Ok(details) => {
@@ -2437,12 +2502,12 @@ fn kick_off_details(app: &mut App) {
 }
 
 pub(crate) fn poll_details(app: &mut App) -> bool {
-    let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.detail_rx.try_iter().collect();
+    let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.board.detail_rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, res) in ready {
-        app.detail_pending.remove(&n);
+        app.board.detail_pending.remove(&n);
         match res {
-            Ok(d) => { app.board_details.insert(n, d); }
+            Ok(d) => { app.board.details.insert(n, d); }
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
@@ -2452,10 +2517,10 @@ pub(crate) fn poll_details(app: &mut App) -> bool {
 /// Land a pending-review submit: success refetches the issue so the
 /// Diff tab shows submitted threads; failure just names the cause.
 pub(crate) fn poll_review_submit(app: &mut App) -> bool {
-    let ready: Vec<(u64, Result<(), String>)> = app.review_submit_rx.try_iter().collect();
+    let ready: Vec<(u64, Result<(), String>)> = app.compose.review_rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, res) in ready {
-        app.review_submitting.remove(&n);
+        app.compose.submitting.remove(&n);
         match res {
             Ok(()) => {
                 app.notify(format!("pending review submitted on #{n}"));
@@ -2474,13 +2539,13 @@ pub(crate) fn poll_review_submit(app: &mut App) -> bool {
 /// status line, and refetches the issue so the Comments tab shows the
 /// new comment; failure keeps the draft and names the cause.
 pub(crate) fn poll_compose(app: &mut App) -> bool {
-    let ready: Vec<(u64, Result<(), String>)> = app.compose_rx.try_iter().collect();
+    let ready: Vec<(u64, Result<(), String>)> = app.compose.rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, res) in ready {
         match res {
             Ok(()) => {
-                let pending = matches!(app.compose.as_ref().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
-                app.compose = None;
+                let pending = matches!(app.compose.draft.as_ref().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
+                app.compose.draft = None;
                 if pending {
                     app.notify(format!("line comment pending on #{n} — press S to submit"));
                 } else {
@@ -2489,7 +2554,7 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
                 app.load_issue(n, true);
             }
             Err(e) => {
-                if let Some(c) = app.compose.as_mut() {
+                if let Some(c) = app.compose.draft.as_mut() {
                     c.sending = false;
                 }
                 auth_failure(app, &e);
@@ -2501,20 +2566,20 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
 }
 
 pub(crate) fn poll_board(app: &mut App) -> bool {
-    if !app.board_loading {
+    if !app.board.loading {
         return false;
     }
-    let res = app.board_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+    let res = app.board.rx.as_ref().and_then(|rx| rx.try_recv().ok());
     let Some(res) = res else { return false };
-    app.board_rx = None;
-    app.board_loading = false;
+    app.board.rx = None;
+    app.board.loading = false;
     match res {
         Ok(data) => {
-            app.board = Some(data);
-            app.board_col = 0;
-            app.board_row = 0;
-            app.board_states.clear();
-            app.board_expanded = None;
+            app.board.data = Some(data);
+            app.board.col = 0;
+            app.board.row = 0;
+            app.board.states.clear();
+            app.board.expanded = None;
             kick_off_details(app);
         }
         Err(e) => { auth_failure(app, &e); app.notify(e); }
@@ -2532,7 +2597,7 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     app.initial_numbers = numbers.to_vec();
     let repo = app.repo_flag.clone();
     let (tx, rx) = std::sync::mpsc::channel();
-    app.bootstrap_rx = Some(rx);
+    app.auth.bootstrap_rx = Some(rx);
     // `git` and `gh` subprocesses block: keep them off the async workers.
     rt().spawn_blocking(move || {
         let mut worker = App::new(repo);
@@ -2544,7 +2609,7 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     // dead one prompts before the first real fetch fails into an empty
     // sidebar. Scopes need a repo and follow in `poll_bootstrap`.
     let (atx, arx) = std::sync::mpsc::channel();
-    app.auth_rx = Some(arx);
+    app.auth.rx = Some(arx);
     rt().spawn(async move {
         let _ = atx.send(github::check_auth().await);
     });
@@ -2553,12 +2618,12 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
 /// Land an auth probe: a dead token or missing scopes raises the
 /// re-auth modal; a covered token stays silent.
 pub(crate) fn poll_auth(app: &mut App) -> bool {
-    let Some(result) = app.auth_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
-    app.auth_rx = None;
+    let Some(result) = app.auth.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
+    app.auth.rx = None;
     match result {
         Ok(missing) if missing.is_empty() => {}
         Ok(missing) => {
-            app.auth_prompt = Some(AuthPrompt {
+            app.auth.prompt = Some(AuthPrompt {
                 cause: "token lacks scopes ghit needs".to_string(),
                 missing,
                 scopes_known: true,
@@ -2567,7 +2632,7 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
         // Only auth-class failures rise to the modal: re-auth can fix
         // those, while a rate limit or outage just needs a status line.
         Err(e) if crate::github::is_auth_error(&e) => {
-            app.auth_prompt = Some(AuthPrompt { cause: e, missing: vec![], scopes_known: false });
+            app.auth.prompt = Some(AuthPrompt { cause: e, missing: vec![], scopes_known: false });
         }
         Err(e) => app.notify(e),
     }
@@ -2579,11 +2644,11 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
 /// fetch gets the same question. A dismissed prompt never re-rises;
 /// the caller still notifies as before.
 pub(crate) fn auth_failure(app: &mut App, e: &str) {
-    if app.auth_dismissed || app.auth_prompt.is_some() {
+    if app.auth.dismissed || app.auth.prompt.is_some() {
         return;
     }
     if crate::github::is_auth_error(e) {
-        app.auth_prompt = Some(AuthPrompt {
+        app.auth.prompt = Some(AuthPrompt {
             cause: e.to_string(),
             missing: vec![],
             scopes_known: false,
@@ -2610,7 +2675,7 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     match status {
         Ok(s) if s.success() => {
             crate::github::forget_token();
-            app.auth_dismissed = false;
+            app.auth.dismissed = false;
             app.notify("re-auth ok: re-checking token…".to_string());
         }
         _ => app.notify(format!("re-auth failed — run by hand: {cmd}")),
@@ -2618,11 +2683,11 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     let _ = enable_raw_mode();
     let _ = terminal.backend_mut().execute(EnterAlternateScreen);
     let _ = terminal.clear();
-    app.auth_prompt = None;
-    app.reauth_requested = false;
+    app.auth.prompt = None;
+    app.auth.reauth_requested = false;
     // Re-probe so the modal returns if the refresh did not cover it.
     let (atx, arx) = std::sync::mpsc::channel();
-    app.auth_rx = Some(arx);
+    app.auth.rx = Some(arx);
     rt().spawn(async move {
         let _ = atx.send(github::check_auth().await);
     });
@@ -2635,12 +2700,12 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
 pub(crate) fn run_compose_editor(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) {
     use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
     use crossterm::ExecutableCommand;
-    app.editor_requested = false;
+    app.compose.editor_requested = false;
     let Some(editor) = App::compose_editor() else {
         app.notify("no $EDITOR set: export EDITOR to edit comments outside ghit".to_string());
         return;
     };
-    let drafting = app.compose.as_ref().map(|c| !c.sending).unwrap_or(false);
+    let drafting = app.compose.draft.as_ref().map(|c| !c.sending).unwrap_or(false);
     if !drafting {
         return;
     }
@@ -2651,7 +2716,7 @@ pub(crate) fn run_compose_editor(app: &mut App, terminal: &mut Terminal<Crosster
         .unwrap_or(0);
     let mut path = std::env::temp_dir();
     path.push(format!("ghit-comment-{}-{stamp}.md", std::process::id()));
-    if std::fs::write(&path, &app.compose.as_ref().expect("draft").body).is_err() {
+    if std::fs::write(&path, &app.compose.draft.as_ref().expect("draft").body).is_err() {
         app.notify("editor needs a writable temp dir".to_string());
         return;
     }
@@ -2678,9 +2743,9 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= poll_bootstrap(app);
     landed |= poll_auth(app);
     landed |= poll_sections(app);
-    let had_fetch = app.section_rx.is_some();
+    let had_fetch = app.sections.rx.is_some();
     app.auto_refresh_recent(Instant::now());
-    landed |= had_fetch != app.section_rx.is_some();
+    landed |= had_fetch != app.sections.rx.is_some();
     landed |= poll_issues(app);
     landed |= poll_diffs(app);
     landed |= poll_graphs(app);
@@ -2758,11 +2823,11 @@ fn event_loop(
             }
         }
         let poll_dirty = poll_all(app);
-        if app.reauth_requested {
+        if app.auth.reauth_requested {
             run_reauth(app, terminal);
             input_dirty = true;
         }
-        if app.editor_requested {
+        if app.compose.editor_requested {
             run_compose_editor(app, terminal);
             input_dirty = true;
         }
@@ -2774,16 +2839,16 @@ fn event_loop(
 }
 
 fn poll_bootstrap(app: &mut App) -> bool {
-    let Some(result) = app.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
-    app.bootstrap_rx = None;
+    let Some(result) = app.auth.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
+    app.auth.bootstrap_rx = None;
     app.repo_slug = result;
     // Repo-scoped access probe, once: the boot probe only checks the
     // token itself, while scopes need a repo to read against.
-    if !app.auth_repo_probed {
-        app.auth_repo_probed = true;
+    if !app.auth.repo_probed {
+        app.auth.repo_probed = true;
         if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
             let (tx, rx) = std::sync::mpsc::channel();
-            app.auth_rx = Some(rx);
+            app.auth.rx = Some(rx);
             rt().spawn(async move {
                 let _ = tx.send(github::check_repo_access(&repo).await);
             });
@@ -2793,8 +2858,8 @@ fn poll_bootstrap(app: &mut App) -> bool {
     if let Some(key) = app.repo_key() {
         let mut pins = github::load_pins(&key);
         pins.retain(|n| !numbers.contains(n));
-        app.pinned = pins.iter().copied().collect();
-        app.pin_order = pins.clone();
+        app.nav.pinned = pins.iter().copied().collect();
+        app.nav.pin_order = pins.clone();
         for n in pins { app.load_issue(n, false); }
         for n in numbers {
             app.ensure_visited(n);
@@ -2809,23 +2874,23 @@ fn poll_bootstrap(app: &mut App) -> bool {
 }
 
 pub(crate) fn poll_sections(app: &mut App) -> bool {
-    let Some(event) = app.section_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
+    let Some(event) = app.sections.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     match event {
         github::SectionEvent::Progress { done, total } => {
-            app.section_progress = Some((done, total));
+            app.sections.progress = Some((done, total));
         }
         github::SectionEvent::Done(result) => {
-            app.section_rx = None;
-            app.section_progress = None;
-            let auto = std::mem::take(&mut app.section_auto_refresh);
+            app.sections.rx = None;
+            app.sections.progress = None;
+            let auto = std::mem::take(&mut app.sections.auto_refresh);
             if auto {
-                app.auto_refresh_interval = if result.is_ok() {
+                app.sections.auto_refresh_interval = if result.is_ok() {
                     auto_refresh_interval_default()
                 } else {
-                    (app.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
+                    (app.sections.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
                 };
             }
-            let replace = std::mem::take(&mut app.section_replace);
+            let replace = std::mem::take(&mut app.sections.replace);
             if replace {
                 app.drop_unvisited_background();
             }
@@ -2837,7 +2902,7 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                     let mut last = None;
                     for row in rows {
                         let n = row.issue.number;
-                        if let Some(d) = app.data.get_mut(&n) {
+                        if let Some(d) = app.issues.data.get_mut(&n) {
                             // Window listings refresh display fields only.
                             // Body, comments, and review threads belong to
                             // the full fetch and stay. Search hits carry no
@@ -2847,19 +2912,19 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                                 d.title = row.issue.title;
                                 d.state = row.issue.state;
                                 d.labels = row.issue.labels;
-                                app.statuses.insert(n, row.statuses);
-                                app.board_details.insert(n, row.detail);
+                                app.issues.statuses.insert(n, row.statuses);
+                                app.board.details.insert(n, row.detail);
                             }
                         } else {
-                            if !row.complete { app.partial.insert(n); }
-                            app.data.insert(n, row.issue);
-                            app.statuses.insert(n, row.statuses);
-                            app.board_details.insert(n, row.detail);
+                            if !row.complete { app.issues.partial.insert(n); }
+                            app.issues.data.insert(n, row.issue);
+                            app.issues.statuses.insert(n, row.statuses);
+                            app.board.details.insert(n, row.detail);
                             app.ensure_recent(n);
                             last = Some(n);
                         }
                     }
-                    if !auto && app.current.is_none() && app.requested.is_none() {
+                    if !auto && app.nav.current.is_none() && app.nav.requested.is_none() {
                         if let Some(n) = last { app.load_issue(n, false); }
                     }
                 },
@@ -2879,36 +2944,36 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
 /// lands here and keeps `drop_unvisited_background` replace semantics.
 fn evict_vanished_rows(app: &mut App, rows: &[crate::github::Row]) {
     let fresh: HashSet<u64> = rows.iter().map(|r| r.issue.number).collect();
-    let keep: HashSet<u64> = app.visited.iter().copied()
-        .chain(app.pin_order.iter().copied())
-        .chain(app.pinned.iter().copied())
-        .chain(app.current)
-        .chain(app.requested)
+    let keep: HashSet<u64> = app.nav.visited.iter().copied()
+        .chain(app.nav.pin_order.iter().copied())
+        .chain(app.nav.pinned.iter().copied())
+        .chain(app.nav.current)
+        .chain(app.nav.requested)
         .collect();
-    let gone: HashSet<u64> = app.recent.iter().copied()
+    let gone: HashSet<u64> = app.nav.recent.iter().copied()
         .filter(|n| !fresh.contains(n) && !keep.contains(n))
         .collect();
     if gone.is_empty() { return; }
-    app.recent.retain(|n| !gone.contains(n));
+    app.nav.recent.retain(|n| !gone.contains(n));
     for n in gone { app.drop_cached(n); }
 }
 
 pub(crate) fn poll_issues(app: &mut App) -> bool {
-    let ready: Vec<_> = app.issue_rx.try_iter().collect();
+    let ready: Vec<_> = app.issues.rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (number, event) in ready {
         match event {
             github::IssueEvent::Progress { done, total } => {
-                app.issue_progress.insert(number, (done, total));
+                app.issues.progress.insert(number, (done, total));
             }
             github::IssueEvent::Done(result) => {
-                app.issue_progress.remove(&number);
-                app.issue_pending.remove(&number);
+                app.issues.progress.remove(&number);
+                app.issues.pending.remove(&number);
                 // An h/l step owns this number until it lands: remember
                 // before clearing so a 404 still toasts below.
-                let stepped = app.step_pending == Some(number);
+                let stepped = app.nav.step_pending == Some(number);
                 if stepped {
-                    app.step_pending = None;
+                    app.nav.step_pending = None;
                 }
                 match result {
                     Ok((data, statuses)) => {
@@ -2916,18 +2981,18 @@ pub(crate) fn poll_issues(app: &mut App) -> bool {
                         // viewing a recent row must not relocate it to
                         // requested. Explicit actions file through
                         // `ensure_visited` at their own site.
-                        app.partial.remove(&number);
-                        app.data.insert(number, data);
-                        app.statuses.insert(number, statuses);
-                        if app.current == Some(number) {
+                        app.issues.partial.remove(&number);
+                        app.issues.data.insert(number, data);
+                        app.issues.statuses.insert(number, statuses);
+                        if app.nav.current == Some(number) {
                             app.refresh_refs();
                             if app.visual_graph() { app.load_graph(number, false); }
                             if app.visual_diff() { app.load_diff(number, false); }
                         }
-                        if app.requested == Some(number) {
+                        if app.nav.requested == Some(number) {
                             app.show_issue(number);
                             app.bar.clear();
-                            app.focus = Focus::Main;
+                            app.nav.focus = Focus::Main;
                             app.message.clear();
                         }
                     }
@@ -2953,13 +3018,13 @@ pub(crate) fn poll_issues(app: &mut App) -> bool {
 }
 
 pub(crate) fn poll_diffs(app: &mut App) -> bool {
-    let ready: Vec<_> = app.diff_rx.try_iter().collect();
+    let ready: Vec<_> = app.diff.rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (number, result) in ready {
-        app.diff_pending.remove(&number);
+        app.diff.pending.remove(&number);
         match result {
             Ok(files) => {
-                app.diffs.insert(number, files);
+                app.diff.files.insert(number, files);
             }
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
@@ -2968,15 +3033,15 @@ pub(crate) fn poll_diffs(app: &mut App) -> bool {
 }
 
 pub(crate) fn poll_graphs(app: &mut App) -> bool {
-    let ready: Vec<_> = app.graph_rx.try_iter().collect();
+    let ready: Vec<_> = app.graph.rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (number, result) in ready {
-        app.graph_pending.remove(&number);
+        app.graph.pending.remove(&number);
         match result {
             Ok(data) => {
-                app.graphs.insert(number, data);
-                if app.current == Some(number) {
-                    app.graph_cursor = app.graph_cursor.min(app.graph_order_numbers().len().saturating_sub(1));
+                app.graph.data.insert(number, data);
+                if app.nav.current == Some(number) {
+                    app.graph.cursor = app.graph.cursor.min(app.graph_order_numbers().len().saturating_sub(1));
                 }
             }
             Err(e) => { auth_failure(app, &e); app.notify(e); }
@@ -3015,11 +3080,11 @@ mod tests {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         for &n in numbers {
-            app.data.insert(n, issue(n, "2026-01-05T00:00:00Z"));
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, issue(n, "2026-01-05T00:00:00Z"));
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
-        app.current = numbers.first().copied();
+        app.nav.current = numbers.first().copied();
         app.sync_selection();
         app
     }
@@ -3064,11 +3129,11 @@ mod tests {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         app.hydrate_cached_sections();
-        assert_eq!(app.recent, vec![7, 9], "cached order becomes sidebar order");
-        assert!(app.data.contains_key(&7) && app.data.contains_key(&9));
-        assert!(app.partial.contains(&7), "slim rows stay partial so open runs the full fetch");
-        assert!(!app.partial.contains(&9));
-        assert!(app.statuses.contains_key(&7) && app.board_details.contains_key(&7));
+        assert_eq!(app.nav.recent, vec![7, 9], "cached order becomes sidebar order");
+        assert!(app.issues.data.contains_key(&7) && app.issues.data.contains_key(&9));
+        assert!(app.issues.partial.contains(&7), "slim rows stay partial so open runs the full fetch");
+        assert!(!app.issues.partial.contains(&9));
+        assert!(app.issues.statuses.contains_key(&7) && app.board.details.contains_key(&7));
         restore_xdg(saved);
     }
 
@@ -3080,11 +3145,11 @@ mod tests {
         app.repo_slug = Some("o/r".to_string());
         let mut kept = issue(7, "2026-01-05T00:00:00Z");
         kept.title = "kept".to_string();
-        app.data.insert(7, kept);
+        app.issues.data.insert(7, kept);
         app.hydrate_cached_sections();
-        assert_eq!(app.data[&7].title, "kept", "CLI-opened rows win over the cache");
-        assert!(app.data.contains_key(&9));
-        assert_eq!(app.recent, vec![9], "present rows are not re-added to recent");
+        assert_eq!(app.issues.data[&7].title, "kept", "CLI-opened rows win over the cache");
+        assert!(app.issues.data.contains_key(&9));
+        assert_eq!(app.nav.recent, vec![9], "present rows are not re-added to recent");
         restore_xdg(saved);
     }
 
@@ -3094,7 +3159,7 @@ mod tests {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         app.hydrate_cached_sections();
-        assert!(app.recent.is_empty() && app.data.is_empty(), "no cache means no rows");
+        assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "no cache means no rows");
         crate::cache::cache_put(&sections_cache(), &vec![cached_row(7, false)]);
         let path = dir.path().join("ghit").join("cache").join(format!("{}.json", sections_cache()));
         let mut payload: serde_json::Value =
@@ -3106,7 +3171,7 @@ mod tests {
         payload["fetched_at"] = serde_json::json!(now - crate::cache::CACHE_TTL_SECS - 1);
         std::fs::write(&path, serde_json::to_string(&payload).unwrap()).unwrap();
         app.hydrate_cached_sections();
-        assert!(app.recent.is_empty() && app.data.is_empty(), "expired cache reads as a miss");
+        assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "expired cache reads as a miss");
         restore_xdg(saved);
     }
 
@@ -3114,53 +3179,53 @@ mod tests {
     fn toggle_row_expansion_is_sticky_and_keyed_by_number() {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
-        app.visited = vec![7, 9, 11];
-        app.current = Some(7);
-        app.pane = Pane::Issues;
+        app.nav.visited = vec![7, 9, 11];
+        app.nav.current = Some(7);
+        app.nav.pane = Pane::Issues;
 
         app.toggle_row_expansion();
-        assert!(app.expanded_rows.contains(&7), "space expands the selected row");
+        assert!(app.diff.expanded_rows.contains(&7), "space expands the selected row");
         app.toggle_row_expansion();
-        assert!(!app.expanded_rows.contains(&7), "space collapses it again");
+        assert!(!app.diff.expanded_rows.contains(&7), "space collapses it again");
 
         // Expansion sticks across cursor moves and is keyed by number:
         // expanding one row never touches another.
         app.toggle_row_expansion();
         app.show_issue(9);
-        assert!(app.expanded_rows.contains(&7), "cursor move keeps expansion");
+        assert!(app.diff.expanded_rows.contains(&7), "cursor move keeps expansion");
         app.toggle_row_expansion();
-        assert!(app.expanded_rows.contains(&9));
-        assert!(app.expanded_rows.contains(&7), "rows expand independently");
+        assert!(app.diff.expanded_rows.contains(&9));
+        assert!(app.diff.expanded_rows.contains(&7), "rows expand independently");
 
         // The refs pane toggles its highlighted row.
-        app.pane = Pane::Refs;
-        app.ref_highlight = Some(11);
+        app.nav.pane = Pane::Refs;
+        app.refs.highlight = Some(11);
         app.toggle_row_expansion();
-        assert!(app.expanded_rows.contains(&11));
+        assert!(app.diff.expanded_rows.contains(&11));
 
         // The body pane has no row selection.
-        app.pane = Pane::Main;
-        let before = app.expanded_rows.clone();
+        app.nav.pane = Pane::Main;
+        let before = app.diff.expanded_rows.clone();
         app.toggle_row_expansion();
-        assert_eq!(app.expanded_rows, before);
+        assert_eq!(app.diff.expanded_rows, before);
     }
 
     #[test]
     fn sort_cycle_orders_rows_and_restores_default() {
         let mut app = sidebar_app(&[7, 9, 11]);
-        app.data.get_mut(&7).unwrap().updated_at = "2026-01-05T00:00:00Z".to_string();
-        app.data.get_mut(&9).unwrap().updated_at = "2026-01-09T00:00:00Z".to_string();
-        app.data.get_mut(&11).unwrap().updated_at = "2026-01-01T00:00:00Z".to_string();
+        app.issues.data.get_mut(&7).unwrap().updated_at = "2026-01-05T00:00:00Z".to_string();
+        app.issues.data.get_mut(&9).unwrap().updated_at = "2026-01-09T00:00:00Z".to_string();
+        app.issues.data.get_mut(&11).unwrap().updated_at = "2026-01-01T00:00:00Z".to_string();
         assert_eq!(app.issue_numbers(), vec![7, 9, 11]);
         app.cycle_sort();
-        assert_eq!(app.sort, core::SideSort::Updated);
+        assert_eq!(app.sidebar.sort, core::SideSort::Updated);
         assert_eq!(app.issue_numbers(), vec![9, 7, 11], "newest first");
         app.toggle_sort_dir();
         assert_eq!(app.issue_numbers(), vec![11, 7, 9], "direction flips");
         for _ in 0..4 {
             app.cycle_sort();
         }
-        assert_eq!(app.sort, core::SideSort::Default);
+        assert_eq!(app.sidebar.sort, core::SideSort::Default);
         assert_eq!(app.issue_numbers(), vec![7, 9, 11], "default order is back");
     }
 
@@ -3170,9 +3235,9 @@ mod tests {
         for (n, updated) in [(13, "2026-01-03T00:00:00Z"), (15, "2026-01-08T00:00:00Z")] {
             let mut pr = issue(n, updated);
             pr.is_pr = true;
-            app.data.insert(n, pr);
-            app.statuses.insert(n, vec![]);
-            app.visited.push(n);
+            app.issues.data.insert(n, pr);
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.visited.push(n);
         }
         assert_eq!(app.pr_numbers(), vec![13, 15]);
         app.cycle_sort();
@@ -3183,57 +3248,57 @@ mod tests {
     #[test]
     fn evict_drops_row_and_cached_data_then_moves_cursor() {
         let mut app = sidebar_app(&[7, 9]);
-        app.current = Some(7);
-        app.expanded_rows.insert(7);
-        app.diffs.insert(7, vec![]);
-        app.graphs.insert(7, model::GraphData::default());
+        app.nav.current = Some(7);
+        app.diff.expanded_rows.insert(7);
+        app.diff.files.insert(7, vec![]);
+        app.graph.data.insert(7, model::GraphData::default());
         app.evict_current();
-        assert!(!app.visited.contains(&7));
-        assert!(!app.data.contains_key(&7), "data dropped");
-        assert!(!app.statuses.contains_key(&7), "status dropped");
-        assert!(!app.diffs.contains_key(&7), "diff dropped");
-        assert!(!app.graphs.contains_key(&7), "graph dropped");
-        assert!(!app.expanded_rows.contains(&7), "expansion dropped");
-        assert_eq!(app.current, Some(9), "cursor falls to the next row");
+        assert!(!app.nav.visited.contains(&7));
+        assert!(!app.issues.data.contains_key(&7), "data dropped");
+        assert!(!app.issues.statuses.contains_key(&7), "status dropped");
+        assert!(!app.diff.files.contains_key(&7), "diff dropped");
+        assert!(!app.graph.data.contains_key(&7), "graph dropped");
+        assert!(!app.diff.expanded_rows.contains(&7), "expansion dropped");
+        assert_eq!(app.nav.current, Some(9), "cursor falls to the next row");
         assert_eq!(app.issue_numbers(), vec![9]);
     }
 
     #[test]
     fn evict_refuses_pinned_rows() {
         let mut app = sidebar_app(&[7]);
-        app.current = Some(7);
-        app.pinned.insert(7);
-        app.pin_order.push(7);
+        app.nav.current = Some(7);
+        app.nav.pinned.insert(7);
+        app.nav.pin_order.push(7);
         app.evict_current();
-        assert!(app.data.contains_key(&7), "pinned row stays");
-        assert!(app.visited.contains(&7));
-        assert_eq!(app.current, Some(7));
+        assert!(app.issues.data.contains_key(&7), "pinned row stays");
+        assert!(app.nav.visited.contains(&7));
+        assert_eq!(app.nav.current, Some(7));
         assert!(app.message.contains("pinned"), "{}", app.message);
     }
 
     #[test]
     fn evict_falls_back_to_previous_row_at_the_end() {
         let mut app = sidebar_app(&[7, 9]);
-        app.current = Some(9);
+        app.nav.current = Some(9);
         app.evict_current();
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
         assert_eq!(app.issue_numbers(), vec![7]);
     }
 
     #[test]
     fn issue_progress_rides_the_issue_channel() {
         let mut app = sidebar_app(&[7]);
-        app.issue_pending.insert(9);
-        app.issue_tx.send((9, github::IssueEvent::Progress { done: 2, total: 7 })).unwrap();
+        app.issues.pending.insert(9);
+        app.issues.tx.send((9, github::IssueEvent::Progress { done: 2, total: 7 })).unwrap();
         poll_issues(&mut app);
-        assert_eq!(app.issue_progress.get(&9), Some(&(2, 7)));
-        assert!(app.issue_pending.contains(&9), "progress is not completion");
+        assert_eq!(app.issues.progress.get(&9), Some(&(2, 7)));
+        assert!(app.issues.pending.contains(&9), "progress is not completion");
         let fresh = issue(9, "2026-01-06T00:00:00Z");
-        app.issue_tx.send((9, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        app.issues.tx.send((9, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
         poll_issues(&mut app);
-        assert!(!app.issue_progress.contains_key(&9), "terminal result clears progress");
-        assert!(!app.issue_pending.contains(&9));
-        assert!(app.data.contains_key(&9));
+        assert!(!app.issues.progress.contains_key(&9), "terminal result clears progress");
+        assert!(!app.issues.pending.contains(&9));
+        assert!(app.issues.data.contains_key(&9));
     }
 
     #[test]
@@ -3253,12 +3318,12 @@ mod tests {
     #[test]
     fn auto_refresh_fires_at_interval() {
         let mut app = sidebar_app(&[7]);
-        let start = app.last_sections_fetch;
+        let start = app.sections.last_fetch;
         app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL - Duration::from_millis(1));
-        assert!(app.section_rx.is_none());
+        assert!(app.sections.rx.is_none());
         app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
-        assert!(app.section_rx.is_some());
-        assert!(app.section_auto_refresh);
+        assert!(app.sections.rx.is_some());
+        assert!(app.sections.auto_refresh);
     }
 
     #[test]
@@ -3285,19 +3350,19 @@ mod tests {
             let mut app = sidebar_app(&[7]);
             let (_tx, rx) = std::sync::mpsc::channel();
             match guard {
-                0 => app.section_rx = Some(rx),
-                1 => app.board_loading = true,
-                2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }),
-                3 => app.compose = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
-                4 => app.filter_open = true,
+                0 => app.sections.rx = Some(rx),
+                1 => app.board.loading = true,
+                2 => app.board.data = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }),
+                3 => app.compose.draft = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
+                4 => app.sidebar.filter_open = true,
                 5 => app.shortcuts_open = true,
-                6 => app.focus = Focus::Bar,
+                6 => app.nav.focus = Focus::Bar,
                 _ => unreachable!(),
             }
-            let start = app.last_sections_fetch;
+            let start = app.sections.last_fetch;
             app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
-            assert_eq!(app.last_sections_fetch, start, "guard {guard}");
-            assert!(!app.section_auto_refresh, "guard {guard}");
+            assert_eq!(app.sections.last_fetch, start, "guard {guard}");
+            assert!(!app.sections.auto_refresh, "guard {guard}");
         }
     }
 
@@ -3305,16 +3370,16 @@ mod tests {
     fn bootstrap_starts_in_main_so_auto_refresh_runs() {
         let mut app = App::new(None);
         bootstrap(&mut app, &[]);
-        assert!(matches!(app.focus, Focus::Main), "boot must not sit in the command bar");
+        assert!(matches!(app.nav.focus, Focus::Main), "boot must not sit in the command bar");
         // A Main boot leaves the refresh gate open; the Bar guard above
         // still holds once the user opens `:` or `/` on purpose.
-        let start = app.last_sections_fetch;
+        let start = app.sections.last_fetch;
         app.repo_slug = Some("o/r".to_string());
         app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
-        assert!(app.section_rx.is_some(), "startup focus must not block the refresh");
-        app.bootstrap_rx = None;
-        app.auth_rx = None;
-        app.section_rx = None;
+        assert!(app.sections.rx.is_some(), "startup focus must not block the refresh");
+        app.auth.bootstrap_rx = None;
+        app.auth.rx = None;
+        app.sections.rx = None;
     }
 
     #[test]
@@ -3324,10 +3389,10 @@ mod tests {
         // tail must still run: without it focus strands in the bar and
         // later keys (`y`, `2`) land as bar text (e2e pr/diff/refs yank).
         let mut app = sidebar_app(&[7]);
-        app.focus = Focus::Bar;
+        app.nav.focus = Focus::Bar;
         app.bar = "7".to_string();
         app.submit_bar();
-        assert!(matches!(app.focus, Focus::Main), "submit leaves the bar");
+        assert!(matches!(app.nav.focus, Focus::Main), "submit leaves the bar");
         assert!(app.bar.is_empty(), "submit clears its text");
     }
 
@@ -3336,40 +3401,40 @@ mod tests {
         let mut app = sidebar_app(&[7]);
         for expected in [10, 20, 40, 60, 60] {
             let (tx, rx) = std::sync::mpsc::channel();
-            app.section_rx = Some(rx);
-            app.section_auto_refresh = true;
+            app.sections.rx = Some(rx);
+            app.sections.auto_refresh = true;
             tx.send(github::SectionEvent::Done(Err("offline".into()))).unwrap();
             poll_sections(&mut app);
-            assert_eq!(app.auto_refresh_interval, Duration::from_secs(expected));
+            assert_eq!(app.sections.auto_refresh_interval, Duration::from_secs(expected));
         }
-        let start = app.last_sections_fetch;
+        let start = app.sections.last_fetch;
         app.auto_refresh_recent(start + Duration::from_secs(59));
-        assert!(app.section_rx.is_none());
+        assert!(app.sections.rx.is_none());
         let (tx, rx) = std::sync::mpsc::channel();
-        app.section_rx = Some(rx);
-        app.section_auto_refresh = true;
+        app.sections.rx = Some(rx);
+        app.sections.auto_refresh = true;
         tx.send(github::SectionEvent::Done(Ok(vec![]))).unwrap();
         poll_sections(&mut app);
-        assert_eq!(app.auto_refresh_interval, RECENT_REFRESH_INTERVAL);
+        assert_eq!(app.sections.auto_refresh_interval, RECENT_REFRESH_INTERVAL);
     }
 
     #[test]
     fn auto_refresh_landing_preserves_view() {
         for current in [Some(7), None] {
             let mut app = sidebar_app(&[7]);
-            app.current = current;
-            app.scroll = 12;
-            app.hover = Some(7);
+            app.nav.current = current;
+            app.nav.scroll = 12;
+            app.nav.hover = Some(7);
             let (tx, rx) = std::sync::mpsc::channel();
-            app.section_rx = Some(rx);
-            app.section_auto_refresh = true;
+            app.sections.rx = Some(rx);
+            app.sections.auto_refresh = true;
             let row = crate::github::Row { issue: issue(9, "2026-01-06T00:00:00Z"), statuses: vec![], detail: model::BoardDetail::default(), complete: true, window_at: None };
             tx.send(github::SectionEvent::Done(Ok(vec![row]))).unwrap();
             poll_sections(&mut app);
-            assert!(app.recent.contains(&9));
-            assert_eq!(app.current, current);
-            assert_eq!(app.scroll, 12);
-            assert_eq!(app.hover, Some(7));
+            assert!(app.nav.recent.contains(&9));
+            assert_eq!(app.nav.current, current);
+            assert_eq!(app.nav.scroll, 12);
+            assert_eq!(app.nav.hover, Some(7));
         }
     }
 
@@ -3385,7 +3450,7 @@ mod tests {
 
     fn land_sections(app: &mut App, rows: Vec<crate::github::Row>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        app.section_rx = Some(rx);
+        app.sections.rx = Some(rx);
         tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();
         poll_sections(app);
     }
@@ -3394,7 +3459,7 @@ mod tests {
     fn section_landing_refreshes_known_row_display_fields() {
         let mut app = sidebar_app(&[7]);
         {
-            let d = app.data.get_mut(&7).unwrap();
+            let d = app.issues.data.get_mut(&7).unwrap();
             d.title = "stale title".to_string();
             d.state = "OPEN".to_string();
             d.labels = vec![model::Label { name: "stale".to_string() }];
@@ -3412,14 +3477,14 @@ mod tests {
         };
         land_sections(&mut app, vec![row]);
 
-        let d = app.data.get(&7).unwrap();
+        let d = app.issues.data.get(&7).unwrap();
         assert_eq!(d.title, "fresh title", "stale title refreshes");
         assert_eq!(d.state, "CLOSED", "stale state refreshes");
         assert_eq!(d.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), vec!["bug"]);
-        assert_eq!(app.statuses.get(&7), Some(&vec![("Roadmap".to_string(), Some("Done".to_string()))]));
-        assert_eq!(app.board_details.get(&7).map(|d| d.comments), Some(4));
-        assert!(app.visited.contains(&7), "group membership is untouched");
-        assert!(!app.recent.contains(&7), "known rows never re-file as recent");
+        assert_eq!(app.issues.statuses.get(&7), Some(&vec![("Roadmap".to_string(), Some("Done".to_string()))]));
+        assert_eq!(app.board.details.get(&7).map(|d| d.comments), Some(4));
+        assert!(app.nav.visited.contains(&7), "group membership is untouched");
+        assert!(!app.nav.recent.contains(&7), "known rows never re-file as recent");
     }
 
     #[test]
@@ -3468,7 +3533,7 @@ mod tests {
     fn section_landing_keeps_visited_body_comments_and_threads() {
         let mut app = sidebar_app(&[7]);
         {
-            let d = app.data.get_mut(&7).unwrap();
+            let d = app.issues.data.get_mut(&7).unwrap();
             d.body = "full body".to_string();
             d.comments = vec![model::Comment {
                 author: Author { login: "reviewer".to_string() },
@@ -3488,7 +3553,7 @@ mod tests {
         fresh.review_threads = vec![];
         land_sections(&mut app, vec![section_row(fresh)]);
 
-        let d = app.data.get(&7).unwrap();
+        let d = app.issues.data.get(&7).unwrap();
         assert_eq!(d.title, "renamed", "display fields still refresh");
         assert_eq!(d.body, "full body", "full fetch body wins");
         assert_eq!(d.comments.len(), 1);
@@ -3500,49 +3565,49 @@ mod tests {
     #[test]
     fn section_landing_evicts_unvisited_rows_missing_from_the_window() {
         let mut app = sidebar_app(&[7]);
-        app.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));
-        app.statuses.insert(9, vec![]);
-        app.board_details.insert(9, model::BoardDetail::default());
-        app.partial.insert(9);
-        app.recent.push(9);
+        app.issues.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));
+        app.issues.statuses.insert(9, vec![]);
+        app.board.details.insert(9, model::BoardDetail::default());
+        app.issues.partial.insert(9);
+        app.nav.recent.push(9);
         // The fresh window carries a new row and the visited row; 9 is gone.
         land_sections(&mut app, vec![section_row(issue(11, "2026-01-06T00:00:00Z"))]);
 
-        assert!(!app.data.contains_key(&9), "vanished row data dropped");
-        assert!(!app.statuses.contains_key(&9));
-        assert!(!app.board_details.contains_key(&9));
-        assert!(!app.partial.contains(&9));
-        assert!(!app.recent.contains(&9));
-        assert!(app.data.contains_key(&7), "visited row survives its absence");
-        assert!(app.visited.contains(&7));
-        assert!(app.recent.contains(&11), "new window rows list as recent");
+        assert!(!app.issues.data.contains_key(&9), "vanished row data dropped");
+        assert!(!app.issues.statuses.contains_key(&9));
+        assert!(!app.board.details.contains_key(&9));
+        assert!(!app.issues.partial.contains(&9));
+        assert!(!app.nav.recent.contains(&9));
+        assert!(app.issues.data.contains_key(&7), "visited row survives its absence");
+        assert!(app.nav.visited.contains(&7));
+        assert!(app.nav.recent.contains(&11), "new window rows list as recent");
         assert_eq!(app.issue_numbers(), vec![7, 11]);
     }
 
     #[test]
     fn search_landing_keeps_replace_semantics() {
         let mut app = sidebar_app(&[7]);
-        app.data.get_mut(&7).unwrap().body = "full body".to_string();
+        app.issues.data.get_mut(&7).unwrap().body = "full body".to_string();
         let mut stale = issue(9, "2026-01-05T00:00:00Z");
         stale.body = "stale body".to_string();
-        app.data.insert(9, stale);
-        app.statuses.insert(9, vec![]);
-        app.partial.insert(9);
-        app.recent.push(9);
-        app.section_replace = true;
+        app.issues.data.insert(9, stale);
+        app.issues.statuses.insert(9, vec![]);
+        app.issues.partial.insert(9);
+        app.nav.recent.push(9);
+        app.sections.replace = true;
 
         let mut hit = issue(9, "2026-01-06T00:00:00Z");
         hit.title = "search hit".to_string();
         hit.body = "search body".to_string();
         land_sections(&mut app, vec![section_row(hit)]);
 
-        assert!(!app.section_replace, "replace flag is consumed");
+        assert!(!app.sections.replace, "replace flag is consumed");
         assert_eq!(
-            app.data.get(&9).unwrap().body, "search body",
+            app.issues.data.get(&9).unwrap().body, "search body",
             "search rows replace cached data instead of refreshing display fields"
         );
-        assert_eq!(app.recent.iter().filter(|n| **n == 9).count(), 1, "dedup holds");
-        let visited = app.data.get(&7).expect("visited row survives an absent search result");
+        assert_eq!(app.nav.recent.iter().filter(|n| **n == 9).count(), 1, "dedup holds");
+        let visited = app.issues.data.get(&7).expect("visited row survives an absent search result");
         assert_eq!(visited.body, "full body", "visited body is never clobbered");
     }
 
@@ -3551,51 +3616,51 @@ mod tests {
         let mut app = sidebar_app(&[7]);
         // The open row was reached by cursor walk, so it is current but
         // never filed as visited.
-        app.current = Some(9);
-        app.scroll = 12;
-        app.hover = Some(9);
-        app.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));
-        app.statuses.insert(9, vec![]);
-        app.partial.insert(9);
-        app.recent.push(9);
+        app.nav.current = Some(9);
+        app.nav.scroll = 12;
+        app.nav.hover = Some(9);
+        app.issues.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));
+        app.issues.statuses.insert(9, vec![]);
+        app.issues.partial.insert(9);
+        app.nav.recent.push(9);
         land_sections(&mut app, vec![section_row(issue(7, "2026-01-06T00:00:00Z"))]);
 
-        assert_eq!(app.current, Some(9), "current survives leaving the window");
-        assert!(app.data.contains_key(&9), "open row keeps its data");
-        assert!(app.recent.contains(&9));
-        assert_eq!(app.scroll, 12);
-        assert_eq!(app.hover, Some(9));
+        assert_eq!(app.nav.current, Some(9), "current survives leaving the window");
+        assert!(app.issues.data.contains_key(&9), "open row keeps its data");
+        assert!(app.nav.recent.contains(&9));
+        assert_eq!(app.nav.scroll, 12);
+        assert_eq!(app.nav.hover, Some(9));
     }
 
     #[test]
     fn section_progress_rides_the_section_channel() {
         let mut app = sidebar_app(&[7]);
         let (tx, rx) = std::sync::mpsc::channel();
-        app.section_rx = Some(rx);
+        app.sections.rx = Some(rx);
         tx.send(github::SectionEvent::Progress { done: 120, total: 500 }).unwrap();
         poll_sections(&mut app);
-        assert_eq!(app.section_progress, Some((120, 500)));
-        assert!(app.section_rx.is_some(), "progress keeps the receiver live");
+        assert_eq!(app.sections.progress, Some((120, 500)));
+        assert!(app.sections.rx.is_some(), "progress keeps the receiver live");
         tx.send(github::SectionEvent::Done(Ok(vec![]))).unwrap();
         poll_sections(&mut app);
-        assert_eq!(app.section_progress, None);
-        assert!(app.section_rx.is_none(), "terminal result releases the receiver");
+        assert_eq!(app.sections.progress, None);
+        assert!(app.sections.rx.is_none(), "terminal result releases the receiver");
     }
 
     #[test]
     fn evicted_row_can_be_refetched_on_revisit() {
         let mut app = sidebar_app(&[7, 9]);
-        app.current = Some(7);
+        app.nav.current = Some(7);
         app.evict_current();
-        assert!(!app.data.contains_key(&7), "cache dropped so a revisit fetches");
-        assert!(!app.issue_pending.contains(&7), "no stale in-flight marker");
+        assert!(!app.issues.data.contains_key(&7), "cache dropped so a revisit fetches");
+        assert!(!app.issues.pending.contains(&7), "no stale in-flight marker");
         app.ensure_visited(7);
         assert!(app.issue_numbers().contains(&7), "row is listable again");
         // The refetch lands through the normal poll path.
         let fresh = issue(7, "2026-01-06T00:00:00Z");
-        app.issue_tx.send((7, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        app.issues.tx.send((7, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
         poll_issues(&mut app);
-        assert!(app.data.contains_key(&7));
+        assert!(app.issues.data.contains_key(&7));
     }
 
     #[test]
@@ -3606,22 +3671,22 @@ mod tests {
         let mut slim = issue(9, "2026-01-06T00:00:00Z");
         slim.body = String::new();
         land_sections(&mut app, vec![section_row(slim)]);
-        assert!(app.partial.contains(&9), "slim row lands partial");
-        assert!(app.data.get(&9).unwrap().body.is_empty());
+        assert!(app.issues.partial.contains(&9), "slim row lands partial");
+        assert!(app.issues.data.get(&9).unwrap().body.is_empty());
 
         app.show_issue(9);
-        assert!(app.issue_pending.contains(&9), "open runs the full fetch");
-        assert!(app.ref_numbers.is_empty(), "no refs from an empty slim body");
+        assert!(app.issues.pending.contains(&9), "open runs the full fetch");
+        assert!(app.refs.numbers.is_empty(), "no refs from an empty slim body");
 
         let mut full = issue(9, "2026-01-06T00:00:00Z");
         full.body = "see #7".to_string();
         full.paired = vec![model::PairedRef { number: 12, state: "OPEN".to_string() }];
-        app.issue_tx.send((9, github::IssueEvent::Done(Ok((full, vec![]))))).unwrap();
+        app.issues.tx.send((9, github::IssueEvent::Done(Ok((full, vec![]))))).unwrap();
         poll_issues(&mut app);
-        assert!(!app.partial.contains(&9), "full fetch completes the row");
-        assert_eq!(app.data.get(&9).unwrap().body, "see #7");
-        assert_eq!(app.ref_numbers, vec![7], "refs recompute from the full body");
-        assert_eq!(app.ref_paired, vec![12]);
+        assert!(!app.issues.partial.contains(&9), "full fetch completes the row");
+        assert_eq!(app.issues.data.get(&9).unwrap().body, "see #7");
+        assert_eq!(app.refs.numbers, vec![7], "refs recompute from the full body");
+        assert_eq!(app.refs.paired, vec![12]);
     }
 
     #[test]
@@ -3634,39 +3699,39 @@ mod tests {
         app.load_issue(9, false);
         app.ensure_visited(11);
         app.load_issue(11, false);
-        assert_eq!(app.current, Some(11));
-        assert_eq!(app.history, vec![7, 9]);
+        assert_eq!(app.nav.current, Some(11));
+        assert_eq!(app.nav.history, vec![7, 9]);
 
         app.go_back();
-        assert_eq!(app.current, Some(9));
-        assert_eq!(app.history, vec![7]);
-        assert_eq!(app.future, vec![11]);
+        assert_eq!(app.nav.current, Some(9));
+        assert_eq!(app.nav.history, vec![7]);
+        assert_eq!(app.nav.future, vec![11]);
 
         app.go_back();
-        assert_eq!(app.current, Some(7));
-        assert_eq!(app.history, Vec::<u64>::new());
-        assert_eq!(app.future, vec![11, 9]);
+        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.nav.history, Vec::<u64>::new());
+        assert_eq!(app.nav.future, vec![11, 9]);
 
         // An empty back stack toasts instead of moving.
         app.go_back();
-        assert_eq!(app.current, Some(7));
+        assert_eq!(app.nav.current, Some(7));
         assert_eq!(app.message, "no older issue");
 
         app.go_forward();
-        assert_eq!(app.current, Some(9));
-        assert_eq!(app.history, vec![7]);
-        assert_eq!(app.future, vec![11]);
+        assert_eq!(app.nav.current, Some(9));
+        assert_eq!(app.nav.history, vec![7]);
+        assert_eq!(app.nav.future, vec![11]);
 
         // A new jump drops the forward chain.
         app.ensure_visited(11);
         app.load_issue(11, false);
-        assert_eq!(app.current, Some(11));
-        assert_eq!(app.history, vec![7, 9]);
-        assert_eq!(app.future, Vec::<u64>::new());
+        assert_eq!(app.nav.current, Some(11));
+        assert_eq!(app.nav.history, vec![7, 9]);
+        assert_eq!(app.nav.future, Vec::<u64>::new());
 
         // An empty forward stack toasts instead of moving.
         app.go_forward();
-        assert_eq!(app.current, Some(11));
+        assert_eq!(app.nav.current, Some(11));
         assert_eq!(app.message, "no newer issue");
     }
 
@@ -3675,12 +3740,12 @@ mod tests {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         app.open_compose();
-        assert!(app.compose.is_none());
+        assert!(app.compose.draft.is_none());
         assert_eq!(app.message, "view an issue first");
 
         let mut app = sidebar_app(&[7]);
         app.open_compose();
-        let c = app.compose.as_ref().expect("compose");
+        let c = app.compose.draft.as_ref().expect("compose");
         assert_eq!((c.number, c.body.as_str(), c.cursor), (7, "", 0));
         assert_eq!(c.target, ComposeTarget::Thread);
     }
@@ -3690,7 +3755,7 @@ mod tests {
     /// dented patch rows, then the thread block.
     fn thread_pr_app(diff_line: usize) -> App {
         let mut app = sidebar_app(&[9]);
-        let d = app.data.get_mut(&9).unwrap();
+        let d = app.issues.data.get_mut(&9).unwrap();
         d.is_pr = true;
         d.review_threads = vec![crate::model::ReviewThread {
             id: "t1".into(),
@@ -3698,7 +3763,7 @@ mod tests {
             line: Some(2),
             ..Default::default()
         }];
-        app.diffs.insert(
+        app.diff.files.insert(
             9,
             vec![crate::model::DiffFile {
                 filename: "a.rs".into(),
@@ -3706,8 +3771,8 @@ mod tests {
                 ..Default::default()
             }],
         );
-        app.tab = Tab::Visual;
-        app.body_rows = vec![
+        app.nav.tab = Tab::Visual;
+        app.hits.body_rows = vec![
             "▸ a.rs",
             "  @@ -1,2 +1,2 @@",
             "   a",
@@ -3718,9 +3783,9 @@ mod tests {
         .into_iter()
         .map(|s| s.to_string())
         .collect();
-        app.body_base = 0;
-        app.diff_line = Some(diff_line);
-        app.diff_row_files = vec![None, None, None, Some(0), Some(0), Some(0)];
+        app.hits.body_base = 0;
+        app.diff.line = Some(diff_line);
+        app.diff.row_files = vec![None, None, None, Some(0), Some(0), Some(0)];
         app
     }
 
@@ -3728,7 +3793,7 @@ mod tests {
     fn compose_on_a_thread_row_targets_the_reply() {
         let mut app = thread_pr_app(4);
         app.open_compose();
-        let c = app.compose.as_ref().expect("compose");
+        let c = app.compose.draft.as_ref().expect("compose");
         assert_eq!(c.target, ComposeTarget::Reply { thread_id: "t1".into() });
     }
 
@@ -3736,7 +3801,7 @@ mod tests {
     fn compose_on_a_code_row_still_targets_the_line() {
         let mut app = thread_pr_app(3);
         app.open_compose();
-        let c = app.compose.as_ref().expect("compose");
+        let c = app.compose.draft.as_ref().expect("compose");
         assert_eq!(c.target, ComposeTarget::Line { path: "a.rs".into(), line: 2 });
     }
 
@@ -3747,16 +3812,16 @@ mod tests {
         for ch in "hi\nok".chars() {
             app.compose_insert(ch);
         }
-        assert_eq!(app.compose.as_ref().unwrap().body, "hi\nok");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi\nok");
         app.compose_step(-3);
         app.compose_insert('!');
-        assert_eq!(app.compose.as_ref().unwrap().body, "hi!\nok");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi!\nok");
         app.compose_backspace();
-        assert_eq!(app.compose.as_ref().unwrap().body, "hi\nok");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi\nok");
         // Down keeps the column across lines.
         app.compose_line(1);
         app.compose_insert('?');
-        assert_eq!(app.compose.as_ref().unwrap().body, "hi\nok?");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi\nok?");
     }
 
     #[test]
@@ -3767,16 +3832,16 @@ mod tests {
             app.compose_insert(ch);
         }
         app.compose_step(-3);
-        assert_eq!(app.compose.as_ref().unwrap().cursor, 4);
+        assert_eq!(app.compose.draft.as_ref().unwrap().cursor, 4);
         app.compose_kill_to_end();
-        assert_eq!(app.compose.as_ref().unwrap().body, "one\n");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "one\n");
         // On the newline itself the kill eats it, joining the lines.
         app.compose_step(-1);
         app.compose_kill_to_end();
-        assert_eq!(app.compose.as_ref().unwrap().body, "one");
-        assert_eq!(app.compose.as_ref().unwrap().kill, "\n");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "one");
+        assert_eq!(app.compose.draft.as_ref().unwrap().kill, "\n");
         app.compose_yank();
-        assert_eq!(app.compose.as_ref().unwrap().body, "one\n");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "one\n");
     }
 
     #[test]
@@ -3788,8 +3853,8 @@ mod tests {
         }
         app.compose_step(-1);
         app.compose_kill_to_start();
-        assert_eq!(app.compose.as_ref().unwrap().body, "ab\nd");
-        assert_eq!(app.compose.as_ref().unwrap().kill, "c");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "ab\nd");
+        assert_eq!(app.compose.draft.as_ref().unwrap().kill, "c");
     }
 
     #[test]
@@ -3806,24 +3871,24 @@ mod tests {
         for ch in "draft ✓".chars() {
             app.compose_insert(ch);
         }
-        app.editor_requested = true;
+        app.compose.editor_requested = true;
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let mut terminal = ratatui::Terminal::new(backend).expect("headless terminal");
         run_compose_editor(&mut app, &mut terminal);
-        assert!(!app.editor_requested, "the run disarms itself");
-        assert_eq!(app.compose.as_ref().unwrap().body, "draft ✓");
+        assert!(!app.compose.editor_requested, "the run disarms itself");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
         assert!(app.message.contains("edited in true"), "toast: {}", app.message);
         // A failing editor keeps the draft.
         std::env::set_var("EDITOR", "false");
-        app.editor_requested = true;
+        app.compose.editor_requested = true;
         run_compose_editor(&mut app, &mut terminal);
-        assert_eq!(app.compose.as_ref().unwrap().body, "draft ✓");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
         assert!(app.message.contains("draft kept"), "toast: {}", app.message);
         // A missing binary names the failure and keeps the draft.
         std::env::set_var("EDITOR", "/nonexistent-ghit-editor-xyz");
-        app.editor_requested = true;
+        app.compose.editor_requested = true;
         run_compose_editor(&mut app, &mut terminal);
-        assert_eq!(app.compose.as_ref().unwrap().body, "draft ✓");
+        assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
         assert!(app.message.contains("failed to start"), "toast: {}", app.message);
         match prior {
             Some(v) => std::env::set_var("EDITOR", v),
@@ -3836,7 +3901,7 @@ mod tests {
         let mut app = sidebar_app(&[7]);
         app.open_compose();
         app.land_editor_text("edited\ntext".to_string(), "true");
-        let c = app.compose.as_ref().unwrap();
+        let c = app.compose.draft.as_ref().unwrap();
         assert_eq!((c.body.as_str(), c.cursor), ("edited\ntext", 11));
         assert!(app.message.contains("true"), "toast names the editor");
     }
@@ -3846,7 +3911,7 @@ mod tests {
         let mut app = sidebar_app(&[7]);
         app.open_compose();
         app.submit_compose();
-        let c = app.compose.as_ref().expect("draft kept");
+        let c = app.compose.draft.as_ref().expect("draft kept");
         assert!(!c.sending);
         assert!(app.message.contains("empty"), "status names the problem");
     }
@@ -3855,24 +3920,24 @@ mod tests {
     fn compose_poll_success_closes_and_refreshes() {
         let mut app = sidebar_app(&[7]);
         app.open_compose();
-        app.compose.as_mut().unwrap().body = "looks good".to_string();
-        app.compose.as_mut().unwrap().sending = true;
-        app.compose_tx.send((7, Ok(()))).unwrap();
+        app.compose.draft.as_mut().unwrap().body = "looks good".to_string();
+        app.compose.draft.as_mut().unwrap().sending = true;
+        app.compose.tx.send((7, Ok(()))).unwrap();
         poll_compose(&mut app);
-        assert!(app.compose.is_none());
+        assert!(app.compose.draft.is_none());
         assert_eq!(app.message, "comment posted to #7");
-        assert!(app.issue_pending.contains(&7), "refetch shows the new comment");
+        assert!(app.issues.pending.contains(&7), "refetch shows the new comment");
     }
 
     #[test]
     fn compose_poll_failure_keeps_the_draft() {
         let mut app = sidebar_app(&[7]);
         app.open_compose();
-        app.compose.as_mut().unwrap().body = "looks good".to_string();
-        app.compose.as_mut().unwrap().sending = true;
-        app.compose_tx.send((7, Err("token scopes deny comments".to_string()))).unwrap();
+        app.compose.draft.as_mut().unwrap().body = "looks good".to_string();
+        app.compose.draft.as_mut().unwrap().sending = true;
+        app.compose.tx.send((7, Err("token scopes deny comments".to_string()))).unwrap();
         poll_compose(&mut app);
-        let c = app.compose.as_ref().expect("draft kept");
+        let c = app.compose.draft.as_ref().expect("draft kept");
         assert!(!c.sending);
         assert_eq!(c.body, "looks good");
         assert_eq!(app.message, "token scopes deny comments");
@@ -3881,7 +3946,7 @@ mod tests {
     fn pending_nav_app() -> App {
         let mut app = sidebar_app(&[7, 9]);
         app.show_issue(9);
-        let d = app.data.get_mut(&9).unwrap();
+        let d = app.issues.data.get_mut(&9).unwrap();
         d.is_pr = true;
         d.review_threads = vec![crate::model::ReviewThread {
             id: "t1".into(),
@@ -3901,10 +3966,10 @@ mod tests {
         assert_eq!(dialog.title, "Unsubmitted comments");
         assert!(dialog.body.iter().any(|l| l.contains("#9")), "names the issue: {:?}", dialog.body);
         assert_eq!(dialog.choices.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Submit them", "Discard", "Cancel"]);
-        assert_eq!(app.current, Some(9), "no navigation while the dialog is up");
+        assert_eq!(app.nav.current, Some(9), "no navigation while the dialog is up");
         app.confirm_cancel();
         assert!(app.confirm.is_none());
-        assert_eq!(app.current, Some(9), "cancel stays put");
+        assert_eq!(app.nav.current, Some(9), "cancel stays put");
     }
 
     #[test]
@@ -3913,8 +3978,8 @@ mod tests {
         app.request_issue(7);
         app.confirm_choose(1);
         assert!(app.confirm.is_none());
-        assert_eq!(app.current, Some(7));
-        assert!(app.review_submitting.is_empty(), "discard never submits");
+        assert_eq!(app.nav.current, Some(7));
+        assert!(app.compose.submitting.is_empty(), "discard never submits");
     }
 
     #[test]
@@ -3923,8 +3988,8 @@ mod tests {
         app.request_issue(7);
         app.confirm_choose(0);
         assert!(app.confirm.is_none());
-        assert_eq!(app.current, Some(7), "submit still navigates");
-        assert!(app.review_submitting.contains(&9), "submit starts the review submit");
+        assert_eq!(app.nav.current, Some(7), "submit still navigates");
+        assert!(app.compose.submitting.contains(&9), "submit starts the review submit");
     }
 
     #[test]
@@ -3933,24 +3998,24 @@ mod tests {
         app.request_tab(crate::app::Tab::Visual);
         assert!(app.confirm.is_some(), "tab switch trips the guard");
         app.confirm_choose(1);
-        assert_eq!(app.tab, crate::app::Tab::Visual);
+        assert_eq!(app.nav.tab, crate::app::Tab::Visual);
         // Same-target requests never open the dialog.
         let mut plain = sidebar_app(&[7, 9]);
         plain.show_issue(9);
         plain.request_issue(9);
         assert!(plain.confirm.is_none());
-        plain.request_tab(plain.tab);
+        plain.request_tab(plain.nav.tab);
         assert!(plain.confirm.is_none());
         // Without pending threads everything navigates directly.
         plain.request_issue(7);
         assert!(plain.confirm.is_none());
-        assert_eq!(plain.current, Some(7));
+        assert_eq!(plain.nav.current, Some(7));
     }
 
     #[test]
     fn pending_submit_counts_threads_and_lands() {
         let mut app = sidebar_app(&[9]);
-        let d = app.data.get_mut(&9).unwrap();
+        let d = app.issues.data.get_mut(&9).unwrap();
         d.is_pr = true;
         d.review_threads = vec![crate::model::ReviewThread {
             id: "t1".into(),
@@ -3959,21 +4024,21 @@ mod tests {
             comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
             ..Default::default()
         }];
-        app.current = Some(9);
+        app.nav.current = Some(9);
         assert_eq!(app.pending_threads(), 1);
         // Landing a submit refetches so the Diff tab shows submitted threads.
-        app.review_submitting.insert(9);
-        app.review_submit_tx.send((9, Ok(()))).unwrap();
+        app.compose.submitting.insert(9);
+        app.compose.review_tx.send((9, Ok(()))).unwrap();
         assert!(poll_review_submit(&mut app));
-        assert!(!app.review_submitting.contains(&9));
+        assert!(!app.compose.submitting.contains(&9));
         assert_eq!(app.message, "pending review submitted on #9");
-        assert!(app.issue_pending.contains(&9));
+        assert!(app.issues.pending.contains(&9));
         // No pending threads means a note, never a send.
-        let d = app.data.get_mut(&9).unwrap();
+        let d = app.issues.data.get_mut(&9).unwrap();
         d.review_threads.clear();
         assert_eq!(app.pending_threads(), 0);
         app.submit_pending_review();
-        assert!(app.review_submitting.is_empty());
+        assert!(app.compose.submitting.is_empty());
         assert_eq!(app.message, "no pending comments to submit");
     }
 
@@ -3982,19 +4047,19 @@ mod tests {
         let mut app = sidebar_app(&[7, 9, 11]);
         // Click/Enter/j/k/h/l all funnel through `show_issue`.
         app.show_issue(9);
-        assert_eq!(app.current, Some(9));
-        assert_eq!(app.issue_state.selected(), Some(2));
-        assert_eq!(app.pr_state.selected(), None);
+        assert_eq!(app.nav.current, Some(9));
+        assert_eq!(app.sidebar.issue_state.selected(), Some(2));
+        assert_eq!(app.sidebar.pr_state.selected(), None);
         // A wheel hover never moves the tracked row.
-        app.hover = Some(11);
+        app.nav.hover = Some(11);
         assert_eq!(app.effective(&app.issue_rows()), Some(9));
         // Committing from the hover lands on it and clears it.
         app.ensure_visited(11);
         app.load_issue(11, false);
-        assert_eq!(app.current, Some(11));
-        assert_eq!(app.hover, None, "a commit clears the hover");
-        assert_eq!(app.issue_state.selected(), Some(3));
-        assert_eq!(app.pr_state.selected(), None);
+        assert_eq!(app.nav.current, Some(11));
+        assert_eq!(app.nav.hover, None, "a commit clears the hover");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(3));
+        assert_eq!(app.sidebar.pr_state.selected(), None);
     }
 
     #[test]
@@ -4002,17 +4067,17 @@ mod tests {
         let mut app = sidebar_app(&[589, 590, 591]);
         app.show_issue(590);
         app.step_issue(1);
-        assert_eq!(app.current, Some(591), "l opens #591");
-        assert_eq!(app.hover, None);
-        assert_eq!(app.step_pending, None, "cached landing clears the step");
-        assert!(app.visited.contains(&591), "explicit visit files the row");
-        assert_eq!(app.issue_state.selected(), Some(3));
+        assert_eq!(app.nav.current, Some(591), "l opens #591");
+        assert_eq!(app.nav.hover, None);
+        assert_eq!(app.nav.step_pending, None, "cached landing clears the step");
+        assert!(app.nav.visited.contains(&591), "explicit visit files the row");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(3));
         app.step_issue(-1);
-        assert_eq!(app.current, Some(590), "h opens #590");
-        assert_eq!(app.issue_state.selected(), Some(2));
+        assert_eq!(app.nav.current, Some(590), "h opens #590");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(2));
         app.step_issue(-1);
-        assert_eq!(app.current, Some(589), "h opens #589");
-        assert_eq!(app.issue_state.selected(), Some(1));
+        assert_eq!(app.nav.current, Some(589), "h opens #589");
+        assert_eq!(app.sidebar.issue_state.selected(), Some(1));
     }
 
     #[test]
@@ -4021,8 +4086,8 @@ mod tests {
         app.repo_slug = Some("o/r".to_string());
         app.step_issue(1);
         assert_eq!(app.message, "view an issue first");
-        assert!(app.issue_pending.is_empty(), "no fetch without an issue");
-        assert_eq!(app.step_pending, None);
+        assert!(app.issues.pending.is_empty(), "no fetch without an issue");
+        assert_eq!(app.nav.step_pending, None);
     }
 
     #[test]
@@ -4031,10 +4096,10 @@ mod tests {
         app.show_issue(1);
         app.step_issue(-1);
         assert_eq!(app.message, "no #0");
-        assert_eq!(app.current, Some(1), "nothing moves");
-        assert!(app.issue_pending.is_empty(), "h on #1 issues no fetch");
-        assert_eq!(app.requested, Some(1));
-        assert_eq!(app.step_pending, None);
+        assert_eq!(app.nav.current, Some(1), "nothing moves");
+        assert!(app.issues.pending.is_empty(), "h on #1 issues no fetch");
+        assert_eq!(app.nav.requested, Some(1));
+        assert_eq!(app.nav.step_pending, None);
     }
 
     #[test]
@@ -4042,46 +4107,46 @@ mod tests {
         let mut app = sidebar_app(&[590]);
         app.show_issue(590);
         app.step_issue(1);
-        assert_eq!(app.current, Some(590), "current waits for the fetch");
-        assert_eq!(app.requested, Some(591));
-        assert_eq!(app.step_pending, Some(591));
-        assert!(app.issue_pending.contains(&591), "neighbor fetch in flight");
-        assert!(app.visited.contains(&591), "explicit visit files the row");
+        assert_eq!(app.nav.current, Some(590), "current waits for the fetch");
+        assert_eq!(app.nav.requested, Some(591));
+        assert_eq!(app.nav.step_pending, Some(591));
+        assert!(app.issues.pending.contains(&591), "neighbor fetch in flight");
+        assert!(app.nav.visited.contains(&591), "explicit visit files the row");
         // The landing clears the step and moves the highlight.
         let fresh = issue(591, "2026-01-06T00:00:00Z");
-        app.issue_tx.send((591, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        app.issues.tx.send((591, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
         poll_issues(&mut app);
-        assert_eq!(app.current, Some(591));
-        assert_eq!(app.step_pending, None);
-        assert_eq!(app.issue_state.selected(), Some(2));
+        assert_eq!(app.nav.current, Some(591));
+        assert_eq!(app.nav.step_pending, None);
+        assert_eq!(app.sidebar.issue_state.selected(), Some(2));
     }
 
     #[test]
     fn step_404_toasts_no_number_and_stays_put() {
         let mut app = sidebar_app(&[590]);
         app.show_issue(590);
-        app.step_pending = Some(589);
-        app.requested = Some(589);
-        app.issue_tx
+        app.nav.step_pending = Some(589);
+        app.nav.requested = Some(589);
+        app.issues.tx
             .send((589, github::IssueEvent::Done(Err(
                 "GitHub request failed: HTTP status client error (404 Not Found) for url (https://api.github.com/repos/o/r/issues/589)".to_string(),
             ))))
             .unwrap();
         poll_issues(&mut app);
         assert_eq!(app.message, "no #589");
-        assert_eq!(app.current, Some(590), "nothing moves past the end");
-        assert_eq!(app.step_pending, None);
+        assert_eq!(app.nav.current, Some(590), "nothing moves past the end");
+        assert_eq!(app.nav.step_pending, None);
     }
 
     #[test]
     fn auto_refresh_failures_notify_instead_of_going_silent() {
         let mut app = App::new(Some("o/r".to_string()));
         let (tx, rx) = std::sync::mpsc::channel();
-        app.section_rx = Some(rx);
-        app.section_auto_refresh = true;
+        app.sections.rx = Some(rx);
+        app.sections.auto_refresh = true;
         tx.send(github::SectionEvent::Done(Err("GitHub request failed: 403".to_string()))).unwrap();
         poll_sections(&mut app);
-        assert!(app.section_rx.is_none(), "terminal result clears the channel");
+        assert!(app.sections.rx.is_none(), "terminal result clears the channel");
         assert!(app.message.contains("403"), "auto error surfaces: {}", app.message);
     }
 
@@ -4096,12 +4161,12 @@ mod tests {
             (Err("GitHub auth check failed: 401 Unauthorized".to_string()), true),
         ] {
             let (tx, rx) = std::sync::mpsc::channel();
-            app.auth_rx = Some(rx);
+            app.auth.rx = Some(rx);
             tx.send(result).unwrap();
             poll_auth(&mut app);
-            assert!(app.auth_rx.is_none(), "probe lands once");
-            assert_eq!(app.auth_prompt.is_some(), expect_prompt);
-            app.auth_prompt = None;
+            assert!(app.auth.rx.is_none(), "probe lands once");
+            assert_eq!(app.auth.prompt.is_some(), expect_prompt);
+            app.auth.prompt = None;
         }
     }
 
@@ -4109,15 +4174,15 @@ mod tests {
     fn auth_failure_prompts_once_then_stays_quiet() {
         let mut app = App::new(Some("o/r".to_string()));
         auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
-        let prompt = app.auth_prompt.as_ref().expect("first auth failure prompts");
+        let prompt = app.auth.prompt.as_ref().expect("first auth failure prompts");
         assert!(!prompt.scopes_known, "fetch failures cannot name the gap");
-        app.auth_prompt = None;
-        app.auth_dismissed = true;
+        app.auth.prompt = None;
+        app.auth.dismissed = true;
         auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
-        assert!(app.auth_prompt.is_none(), "dismissed stays dismissed");
-        app.auth_dismissed = false;
+        assert!(app.auth.prompt.is_none(), "dismissed stays dismissed");
+        app.auth.dismissed = false;
         auth_failure(&mut app, "bad search payload");
-        assert!(app.auth_prompt.is_none(), "non-auth never prompts");
+        assert!(app.auth.prompt.is_none(), "non-auth never prompts");
     }
 
     #[test]
@@ -4126,10 +4191,10 @@ mod tests {
         // re-auth modal.
         let mut app = App::new(Some("o/r".to_string()));
         let (tx, rx) = std::sync::mpsc::channel();
-        app.auth_rx = Some(rx);
+        app.auth.rx = Some(rx);
         tx.send(Err("GitHub auth check failed: 403 Forbidden for https://api.github.com/user: rate limit".to_string())).unwrap();
         poll_auth(&mut app);
-        assert!(app.auth_prompt.is_none(), "no modal for quota errors");
+        assert!(app.auth.prompt.is_none(), "no modal for quota errors");
         assert!(app.message.contains("403"), "still surfaces: {}", app.message);
     }
 
@@ -4137,13 +4202,13 @@ mod tests {
     fn step_other_error_keeps_the_existing_error_path() {
         let mut app = sidebar_app(&[590]);
         app.show_issue(590);
-        app.step_pending = Some(591);
-        app.requested = Some(591);
+        app.nav.step_pending = Some(591);
+        app.nav.requested = Some(591);
         let raw = "GitHub request failed: error sending request for url (https://api.github.com/repos/o/r/issues/591)".to_string();
-        app.issue_tx.send((591, github::IssueEvent::Done(Err(raw.clone())))).unwrap();
+        app.issues.tx.send((591, github::IssueEvent::Done(Err(raw.clone())))).unwrap();
         poll_issues(&mut app);
         assert_eq!(app.message, raw, "network errors pass through unchanged");
-        assert_eq!(app.current, Some(590), "nothing moves on error");
-        assert_eq!(app.step_pending, None);
+        assert_eq!(app.nav.current, Some(590), "nothing moves on error");
+        assert_eq!(app.nav.step_pending, None);
     }
 }
