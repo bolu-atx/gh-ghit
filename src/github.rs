@@ -18,7 +18,7 @@ pub type IssueBundle = (IssueData, Vec<(String, Option<String>)>);
 #[derive(Debug)]
 pub enum IssueEvent {
     Progress { done: usize, total: usize },
-    Done(Result<IssueBundle, String>),
+    Done(Result<Box<IssueBundle>, String>),
 }
 
 /// Section-fetch traffic on the existing section channel: rows fetched

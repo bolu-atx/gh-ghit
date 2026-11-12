@@ -248,13 +248,14 @@ fn is_blocker_field_error(e: &str) -> bool {
     e.contains("blockedBy") || e.contains("blocking")
 }
 
+/// Center plus neighbors plus unresolved body refs from a blocker-free
+/// payload.
+type GraphFallbackParts = (GraphNode, Vec<(GraphNode, GraphEdgeKind)>, Vec<u64>);
+
 /// Fallback center plus neighbors from a blocker-free payload, with the
 /// body-referenced numbers still to resolve. Pure so tests pin it without
 /// the network.
-fn parse_graph_fallback_parts(
-    value: &Value,
-    repo: &str,
-) -> Result<(GraphNode, Vec<(GraphNode, GraphEdgeKind)>, Vec<u64>), String> {
+fn parse_graph_fallback_parts(value: &Value, repo: &str) -> Result<GraphFallbackParts, String> {
     let issue = graph_issue(value)?;
     let center = parse_graph_issue(issue)?;
     let neighbors = parse_graph_neighbors(issue);

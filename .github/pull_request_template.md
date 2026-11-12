@@ -4,7 +4,7 @@ Closes #
 
 ## Verification
 
-<!-- Commands run and what was observed (`cargo test`, live drive, …). -->
+<!-- Commands run and what was observed (`cargo clippy --all-targets -- -D warnings`, `cargo test`, live drive, …). -->
 
 ## Merge readiness
 

@@ -21,8 +21,9 @@ Cross-layer changes (e.g. a new data field shown in the UI) go data-first:
 ## Review loop
 
 1. `cargo build` — zero warnings or stop.
-2. `cargo test` — full suite, zero failures.
-3. Live drive for anything interactive (below). Fix what you see, then
+2. `cargo clippy --all-targets -- -D warnings` — zero lints or stop.
+3. `cargo test` — full suite, zero failures.
+4. Live drive for anything interactive (below). Fix what you see, then
    re-run from step 1.
 
 ## Live drive procedure

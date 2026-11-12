@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::model::IssueData;
+use crate::model::{DiffFile, IssueData};
 
 /// What the command bar text means. Parsing never touches state.
 #[derive(Debug, PartialEq, Eq)]
@@ -460,18 +460,19 @@ pub fn yank_diff_text(
     number: u64,
     title: &str,
     url: &str,
-    filename: &str,
-    status: &str,
-    adds: usize,
-    dels: usize,
+    file: &DiffFile,
     first_hunk: Option<&str>,
 ) -> String {
     let hunk = first_hunk
         .map(|h| format!(" {}", collapse_single_line(h)))
         .unwrap_or_default();
     format!(
-        "#{number} {} — {filename} ({status} +{adds} -{dels}{hunk}) — {url}",
-        collapse_single_line(title)
+        "#{number} {} — {} ({} +{} -{}{hunk}) — {url}",
+        collapse_single_line(title),
+        file.filename,
+        file.status,
+        file.additions,
+        file.deletions
     )
 }
 
@@ -922,21 +923,32 @@ mod tests {
 
     #[test]
     fn yank_diff_names_file_and_hunk() {
+        let file = DiffFile {
+            filename: "src/a.rs".to_string(),
+            status: "modified".to_string(),
+            additions: 10,
+            deletions: 2,
+            patch: String::new(),
+        };
         let text = yank_diff_text(
             9,
             "Add thing",
             "https://example.com/pull/9",
-            "src/a.rs",
-            "modified",
-            10,
-            2,
+            &file,
             Some("@@ -1 +1 @@"),
         );
         assert_eq!(
             text,
             "#9 Add thing — src/a.rs (modified +10 -2 @@ -1 +1 @@) — https://example.com/pull/9"
         );
-        let folded = yank_diff_text(9, "Add thing", "u", "src/a.rs", "added", 5, 0, None);
+        let folded_file = DiffFile {
+            filename: "src/a.rs".to_string(),
+            status: "added".to_string(),
+            additions: 5,
+            deletions: 0,
+            patch: String::new(),
+        };
+        let folded = yank_diff_text(9, "Add thing", "u", &folded_file, None);
         assert_eq!(folded, "#9 Add thing — src/a.rs (added +5 -0) — u");
     }
 

@@ -1016,7 +1016,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             let abs = app.hits.body_base as usize + row;
             app.diff.line = Some(abs);
             app.diff.touched = true;
-            let is_header = app.diff.headers.iter().any(|&r| r == row);
+            let is_header = app.diff.headers.contains(&row);
             if is_header {
                 if let Some(f) = app.diff.row_files.get(row).copied().flatten() {
                     app.diff.cursor = f;

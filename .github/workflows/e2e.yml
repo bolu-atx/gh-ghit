@@ -37,8 +37,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: command -v python3 && python3 --version
+      # Lint and unit gates run inside this job so the required check
+      # covers them without a ruleset change.
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
       - run: cargo build
       # Drive mode boots headless on a Unix socket: no terminal, no X,
       # no tmux, no clipboard tools. Yank scenarios copy through a shim

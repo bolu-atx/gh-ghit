@@ -8,5 +8,6 @@ Style rules live in [docs/code-style.md](docs/code-style.md);
 task routing and the live-verification procedure in [docs/routers.md](docs/routers.md).
 
 Standing rules: `cargo build` after every change (it refreshes the debug
-target). `cargo test` green with zero warnings before every push.
+target). `cargo clippy --all-targets -- -D warnings` clean and `cargo test` green
+with zero warnings before every push (CI enforces both).
 Never regress the frame-snapshot tests in `render_smoke`.
