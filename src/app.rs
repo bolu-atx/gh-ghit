@@ -3274,7 +3274,7 @@ mod tests {
             match guard {
                 0 => app.section_rx = Some(rx),
                 1 => app.board_loading = true,
-                2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![] }),
+                2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }),
                 3 => app.compose = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
                 4 => app.filter_open = true,
                 5 => app.shortcuts_open = true,

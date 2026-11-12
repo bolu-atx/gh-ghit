@@ -5,13 +5,40 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.3.2). Must match the Cargo.toml version."
+        required: true
+      tldr:
+        description: "TL;DR of what is going out. Overrides the annotated tag message; prepended above the auto-generated changelog."
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 jobs:
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Tag matches Cargo.toml version
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="$(grep '^version' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "v$version" != "$tag" ]; then
+            echo "tag $tag != Cargo.toml version $version; bump Cargo.toml first"
+            exit 1
+          fi
+          echo "releasing $tag (Cargo.toml $version)"
+
   build:
     name: build (${{ matrix.os }}-${{ matrix.arch }})
+    needs: preflight
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -40,6 +67,8 @@ jobs:
             exe: .exe
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -64,10 +93,14 @@ jobs:
   publish:
     name: publish
     needs: build
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: annotated tag message lookup needs the tag object.
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -75,11 +108,31 @@ jobs:
       - name: Attach binaries to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          TLDR_INPUT: ${{ inputs.tldr }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
+          # TL;DR header: dispatch input wins, else the annotated tag
+          # message (written by scripts/release.sh). Empty either way
+          # means generated changelog only. Lightweight tags carry no
+          # message (their "contents" would be a commit message), so
+          # only annotated tag objects count.
+          tldr="$TLDR_INPUT"
+          if [ -z "$tldr" ] && [ "$(git cat-file -t "$tag")" = "tag" ]; then
+            tldr="$(git tag -l --format='%(contents:strip)' "$tag")"
+          fi
+          gen="$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$tag" --jq .body)"
+          if [ -n "$tldr" ]; then
+            printf '%s\n\n---\n\n%s\n' "$tldr" "$gen" > notes.md
+          else
+            printf '%s\n' "$gen" > notes.md
+          fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
             flags=()
             if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
-            gh release create "$tag" --title "$tag" --generate-notes "${flags[@]}"
+            gh release create "$tag" --title "$tag" --notes-file notes.md "${flags[@]}"
+          elif [ -n "$tldr" ]; then
+            gh release edit "$tag" --notes-file notes.md
           fi
           gh release upload "$tag" dist/* --clobber
