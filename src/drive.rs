@@ -238,6 +238,18 @@ pub(crate) fn run_drive(
     serve(app, stream, width, height)
 }
 
+/// Drive-mode landing for an armed editor run: no terminal exists to
+/// suspend for `$EDITOR`, so the run degrades to naming the limitation
+/// and the draft stays open. True when it fired.
+pub(crate) fn land_editor_request_drive(app: &mut crate::app::App) -> bool {
+    if !app.editor_requested {
+        return false;
+    }
+    app.editor_requested = false;
+    app.notify("external editor needs the terminal UI, not drive mode".to_string());
+    true
+}
+
 /// Serve one connected client: hello first, then a frame per draw.
 /// Split from `run_drive` so tests can drive the wire protocol over
 /// an already-connected stream with no filesystem bind.
@@ -283,6 +295,7 @@ pub(crate) fn serve(
             app.auth_prompt = None;
             app.notify(format!("re-auth by hand: {}", crate::api::reauth_command()));
         }
+        land_editor_request_drive(app);
         if app.quit {
             app.tick = app.tick.wrapping_add(1);
             terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| format!("{e:?}"))?;
@@ -466,6 +479,39 @@ mod tests {
     }
 
     #[test]
+    fn drive_compose_edits_with_bash_chords() {
+        let mut app = driven_app();
+        let mut terminal = drive_on(&mut app, 120, 40);
+        let mut size = (120, 40);
+        let mut send = |app: &mut crate::app::App, key: &str, ctrl: bool, alt: bool| {
+            dispatch(
+                app,
+                &ClientMsg::Key { key: key.into(), ctrl, alt, shift: false },
+                &mut terminal,
+                &mut size,
+            );
+        };
+        send(&mut app, "c", false, false);
+        assert!(app.compose_open());
+        send(&mut app, "h", false, false);
+        send(&mut app, "i", false, false);
+        send(&mut app, "a", true, false);
+        assert_eq!(app.compose.as_ref().unwrap().cursor, 0, "ctrl-a over the socket");
+        send(&mut app, "f", false, true);
+        assert_eq!(app.compose.as_ref().unwrap().cursor, 2, "alt-f over the socket");
+        send(&mut app, "a", true, false);
+        send(&mut app, "k", true, false);
+        assert!(app.compose.as_ref().unwrap().body.is_empty(), "ctrl-k over the socket");
+        // No terminal exists to suspend here, so the armed run degrades.
+        app.editor_requested = true;
+        assert!(super::land_editor_request_drive(&mut app));
+        assert!(!app.editor_requested);
+        assert!(app.message.contains("terminal UI"));
+        assert!(app.compose_open(), "draft survives");
+        assert!(!super::land_editor_request_drive(&mut app), "nothing armed, nothing fired");
+    }
+
+    #[test]
     fn drive_ctrl_c_quits_like_the_terminal() {
         let mut app = driven_app();
         let mut terminal = drive_on(&mut app, 120, 40);
@@ -560,13 +606,8 @@ mod tests {
         }
         assert!(seen, "seeded issue renders over the socket");
 
-        // `j` moves the selection; a later frame reports the new issue.
-        // A fresh boot lands focus in the command bar (same as the
-        // terminal loop), so exit it first like a user would.
-        send_msg_client(&mut writer, &key("Escape"));
-        for _ in 0..3 {
-            read_frame(&mut reader);
-        }
+        // `j` moves the selection on a fresh boot: startup stays in
+        // Main so keys act at once, with no Escape preamble.
         send_msg_client(&mut writer, &key("j"));
         let mut moved = false;
         for _ in 0..200 {

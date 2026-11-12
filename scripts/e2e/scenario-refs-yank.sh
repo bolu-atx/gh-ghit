@@ -12,7 +12,9 @@ e2e_shot refs-focus
 e2e_key j
 e2e_wait "█" 10 || fail "highlight never landed"
 e2e_shot refs-highlight
-[ "$(e2e_markers)" -eq 1 ] || fail "refs marker count $(e2e_markers)"
+# Sidebar keeps the current-issue marker while refs focus holds the
+# highlight: one for the active row, one for the highlighted ref.
+[ "$(e2e_markers)" -eq 2 ] || fail "refs marker count $(e2e_markers)"
 e2e_key y
 e2e_shot refs-yank
 e2e_toast | grep -q "refs #" || fail "refs yank toast: $(e2e_toast)"

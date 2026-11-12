@@ -293,6 +293,14 @@ pub async fn post_line_comment(repo: &str, number: u64, body: &str, path: &str, 
     api::add_review_thread(repo, number, body, path, line, &token).await
 }
 
+/// Submit the viewer's pending review on a PR so pending line comments
+/// go live. Same error contract as `post_thread_comment`.
+pub async fn submit_pending_review(repo: &str, number: u64) -> Result<(), String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::submit_pending_review(repo, number, &token).await
+}
+
 /// Reply inside an existing review thread. Phase 4 of #31: wired but
 /// untargeted until #11 gives the cursor a thread to point at.
 pub async fn post_thread_reply(thread_id: &str, body: &str) -> Result<(), String> {
