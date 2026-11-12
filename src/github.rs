@@ -7,6 +7,8 @@
 use crate::{api, cache, model};
 use crate::model::IssueData;
 
+pub use crate::api::{Row, REQUIRED_SCOPES, forget_token, is_auth_error, reauth_command, token};
+
 /// `(issue, [(project title, status|None)])`.
 pub type IssueBundle = (IssueData, Vec<(String, Option<String>)>);
 
