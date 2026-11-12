@@ -37,6 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: command -v python3 && python3 --version
       - run: cargo build
       # Drive mode boots headless on a Unix socket: no terminal, no X,
