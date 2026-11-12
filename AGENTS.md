@@ -11,6 +11,7 @@ cargo build   # refreshes target/debug/ghit (also your PATH binary via symlink)
 cargo test    # unit + headless frame tests, must be green with zero warnings
 cargo build 2>&1 | grep -cE "^warning|^error"   # expect 0
 cargo clippy --all-targets -- -D warnings          # lint gate, same as CI
+# Toolchain is pinned in rust-toolchain.toml; rustup installs it on first use.
 ```
 
 Run the app with isolated state so pins/cache writes don't touch real data:

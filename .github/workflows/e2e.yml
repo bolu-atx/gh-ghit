@@ -27,24 +27,40 @@ jobs:
           BAD=$(gh api "repos/${{ github.repository }}/commits/$HEAD/check-runs" --jq '[.check_runs[] | select(.status != "completed" or .conclusion != "success")] | length' 2>/dev/null || echo 1)
           TOTAL=$(gh api "repos/${{ github.repository }}/commits/$HEAD/check-runs" --jq '.total_count' 2>/dev/null || echo 0)
           if [ "$TOTAL" -ge 1 ] && [ "$BAD" = "0" ]; then echo "skip=true" >>"$GITHUB_OUTPUT"; else echo "skip=false" >>"$GITHUB_OUTPUT"; fi
-  # Job keeps the historic tmux-drive name: the main-branch ruleset
-  # requires exactly that check, and drive mode needs no tmux at all.
-  tmux-drive:
+  # Fast gate: lint and unit tests fail in about a minute, before the
+  # slower e2e job spends a runner.
+  check:
     needs: tip-check
     if: needs.tip-check.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # Installs the toolchain and components pinned in rust-toolchain.toml.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: command -v python3 && python3 --version
-      # Lint and unit gates run inside this job so the required check
-      # covers them without a ruleset change.
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+  # Job keeps the historic tmux-drive name: the main-branch ruleset
+  # requires exactly that check, and drive mode needs no tmux at all.
+  # It waits for `check` and stops at once if lint or unit tests failed.
+  # It fails instead of skipping because a skipped required check counts
+  # as passed.
+  tmux-drive:
+    needs: [tip-check, check]
+    if: always() && needs.tip-check.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Stop when lint or unit tests failed
+        if: needs.check.result != 'success'
+        run: |
+          echo "check job result: ${{ needs.check.result }}; e2e not run"
+          exit 1
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: command -v python3 && python3 --version
       - run: cargo build
       # Drive mode boots headless on a Unix socket: no terminal, no X,
       # no tmux, no clipboard tools. Yank scenarios copy through a shim
