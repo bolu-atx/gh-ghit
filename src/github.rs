@@ -7,6 +7,8 @@
 use crate::{api, cache, model};
 use crate::model::IssueData;
 
+pub use crate::api::{Row, REQUIRED_SCOPES, forget_token, is_auth_error, reauth_command, token};
+
 /// `(issue, [(project title, status|None)])`.
 pub type IssueBundle = (IssueData, Vec<(String, Option<String>)>);
 
@@ -315,11 +317,12 @@ pub async fn submit_pending_review(repo: &str, number: u64) -> Result<(), String
     api::submit_pending_review(repo, number, &token).await
 }
 
-/// Reply inside an existing review thread. Phase 4 of #31: wired but
-/// untargeted until #11 gives the cursor a thread to point at.
-pub async fn post_thread_reply(thread_id: &str, body: &str) -> Result<(), String> {
+/// Reply inside an existing review thread: `comment_id` is the
+/// numeric REST id of a comment in the thread (`in_reply_to`).
+pub async fn post_thread_reply(repo: &str, number: u64, comment_id: u64, body: &str) -> Result<(), String> {
+    require_repo(repo)?;
     let token = require_token()?;
-    api::add_thread_reply(thread_id, body, &token).await
+    api::add_thread_reply(repo, number, comment_id, body, &token).await
 }
 
 #[cfg(test)]

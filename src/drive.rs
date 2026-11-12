@@ -293,7 +293,7 @@ pub(crate) fn serve(
         if app.reauth_requested {
             app.reauth_requested = false;
             app.auth_prompt = None;
-            app.notify(format!("re-auth by hand: {}", crate::api::reauth_command()));
+            app.notify(format!("re-auth by hand: {}", crate::github::reauth_command()));
         }
         land_editor_request_drive(app);
         if app.quit {

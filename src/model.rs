@@ -33,6 +33,11 @@ fn default_review_comment_state() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct ReviewComment {
     pub id: String,
+    /// Numeric REST id (`databaseId` in GraphQL). A reply posts through
+    /// REST `in_reply_to`, which needs this, not the GraphQL node id.
+    /// Defaulted so old file caches without it still parse.
+    #[serde(default)]
+    pub database_id: Option<u64>,
     #[serde(default)]
     pub author: Option<Author>,
     #[serde(default)]
@@ -61,6 +66,18 @@ pub struct ReviewThread {
     pub line: Option<u64>,
     pub is_resolved: bool,
     pub comments: Vec<ReviewComment>,
+}
+
+/// Numeric REST id of a thread's first comment: the `in_reply_to`
+/// target for a REST reply inside that thread. `None` when the thread
+/// carries no comment with a numeric id (for example an old cache).
+pub fn thread_reply_comment_id(threads: &[ReviewThread], thread_id: &str) -> Option<u64> {
+    threads
+        .iter()
+        .find(|t| t.id == thread_id)?
+        .comments
+        .first()?
+        .database_id
 }
 
 pub fn parse_review_threads(value: &serde_json::Value) -> Vec<ReviewThread> {
@@ -1089,6 +1106,19 @@ mod tests {
         let old = threads.iter().find(|t| t.id == "t2").unwrap();
         assert!(!old.has_pending());
         assert_eq!(old.comments[0].state, "SUBMITTED");
+    }
+
+    #[test]
+    fn reply_target_is_the_first_comments_numeric_id() {
+        let input = serde_json::json!({"reviewThreads":{"nodes":[
+            {"id":"t1","path":"a.rs","line":1,"isResolved":false,"comments":{"nodes":[{"id":"c1","databaseId":99,"body":"hi"},{"id":"c2","databaseId":100,"body":"re"}]}},
+            {"id":"t2","path":"a.rs","line":2,"isResolved":false,"comments":{"nodes":[{"id":"c3","body":"no numeric id"}]}}
+        ]}});
+        let threads = parse_review_threads(&input);
+        assert_eq!(thread_reply_comment_id(&threads, "t1"), Some(99));
+        assert_eq!(thread_reply_comment_id(&threads, "t2"), None);
+        assert_eq!(thread_reply_comment_id(&threads, "missing"), None);
+        assert_eq!(thread_reply_comment_id(&[], "t1"), None);
     }
 
     #[test]
