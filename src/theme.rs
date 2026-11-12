@@ -23,6 +23,9 @@ pub struct Palette {
     pub red: Color,
     pub green: Color,
     pub violet: Color,
+    /// Link colors by kind: issue refs and PR refs. URLs use `teal`.
+    pub issue_ref: Color,
+    pub pr_ref: Color,
 }
 
 pub const MIRAGE: Palette = Palette {
@@ -35,6 +38,8 @@ pub const MIRAGE: Palette = Palette {
     red: Color::Rgb(0xFF, 0x66, 0x66),
     green: Color::Rgb(0x87, 0xD9, 0x6C),
     violet: Color::Rgb(0xDF, 0xBF, 0xFF),
+    issue_ref: Color::Rgb(0x73, 0xD0, 0xFF),
+    pr_ref: Color::Rgb(0xFF, 0xA7, 0x59),
 };
 
 pub const DARK: Palette = Palette {
@@ -47,6 +52,8 @@ pub const DARK: Palette = Palette {
     red: Color::Rgb(0xD9, 0x57, 0x57),
     green: Color::Rgb(0x7F, 0xD9, 0x62),
     violet: Color::Rgb(0xD2, 0xA6, 0xFF),
+    issue_ref: Color::Rgb(0x59, 0xC2, 0xFF),
+    pr_ref: Color::Rgb(0xFF, 0x8F, 0x40),
 };
 
 pub const LIGHT: Palette = Palette {
@@ -59,6 +66,8 @@ pub const LIGHT: Palette = Palette {
     red: Color::Rgb(0xD1, 0x24, 0x2C),
     green: Color::Rgb(0x1A, 0x7F, 0x37),
     violet: Color::Rgb(0x82, 0x50, 0xDF),
+    issue_ref: Color::Rgb(0x05, 0x50, 0xAE),
+    pr_ref: Color::Rgb(0xBC, 0x4C, 0x00),
 };
 
 /// System theme: no hardcoded colors. Backgrounds and body text stay on
@@ -74,6 +83,8 @@ pub const SYSTEM: Palette = Palette {
     red: Color::Red,
     green: Color::Green,
     violet: Color::Magenta,
+    issue_ref: Color::Blue,
+    pr_ref: Color::LightMagenta,
 };
 
 pub const THEMES: &[(&str, Palette)] =
@@ -143,6 +154,12 @@ pub fn green() -> Color {
 }
 pub fn violet() -> Color {
     pal().violet
+}
+pub fn issue_ref() -> Color {
+    pal().issue_ref
+}
+pub fn pr_ref() -> Color {
+    pal().pr_ref
 }
 
 pub fn base() -> Style {

@@ -418,13 +418,32 @@ fn same_repo(cap: &regex::Captures, repo: Option<&str>) -> bool {
 /// destination becomes `Url`. Positions are byte offsets for click
 /// disambiguation: the nearest to the click column wins.
 pub fn links_in_line(line: &str, repo: Option<&str>) -> Vec<(usize, LinkTarget)> {
-    let mut hits: Vec<(usize, LinkTarget)> = vec![];
+    link_spans(line, repo).into_iter().map(|(start, _, t)| (start, t)).collect()
+}
+
+/// Byte ranges and targets of everything `links_in_line` would resolve,
+/// so the renderer colors exactly what a click opens.
+pub fn link_ranges(line: &str, repo: Option<&str>) -> Vec<(usize, usize, LinkTarget)> {
+    // Match offsets skip the `#` of a bare ref and the scheme of a
+    // same-repo URL; widen back over them so the whole token colors.
+    link_spans(line, repo)
+        .into_iter()
+        .map(|(start, end, target)| {
+            let head = &line[..start];
+            let lead = ["https://", "http://", "#"].iter().find(|p| head.ends_with(**p)).map_or(0, |p| p.len());
+            (start - lead, end, target)
+        })
+        .collect()
+}
+
+fn link_spans(line: &str, repo: Option<&str>) -> Vec<(usize, usize, LinkTarget)> {
+    let mut hits: Vec<(usize, usize, LinkTarget)> = vec![];
     let mut taken: Vec<(usize, usize)> = vec![];
-    let claim = |start: usize, end: usize, target: LinkTarget, hits: &mut Vec<(usize, LinkTarget)>, taken: &mut Vec<(usize, usize)>| {
+    let claim = |start: usize, end: usize, target: LinkTarget, hits: &mut Vec<(usize, usize, LinkTarget)>, taken: &mut Vec<(usize, usize)>| {
         if taken.iter().any(|&(s, e)| start < e && s < end) {
             return;
         }
-        hits.push((start, target));
+        hits.push((start, end, target));
         taken.push((start, end));
     };
     for cap in ref_url_re().captures_iter(line) {
@@ -451,10 +470,10 @@ pub fn links_in_line(line: &str, repo: Option<&str>) -> Vec<(usize, LinkTarget)>
             if url.is_empty() {
                 continue;
             }
-            claim(m.start(), m.end(), LinkTarget::Url(url), &mut hits, &mut taken);
+            claim(m.start(), m.start() + url.len(), LinkTarget::Url(url), &mut hits, &mut taken);
         }
     }
-    hits.sort_by_key(|(idx, _)| *idx);
+    hits.sort_by_key(|(idx, _, _)| *idx);
     hits.dedup();
     hits
 }
@@ -1226,6 +1245,13 @@ mod tests {
 
     fn targets(line: &str, repo: Option<&str>) -> Vec<LinkTarget> {
         links_in_line(line, repo).into_iter().map(|(_, t)| t).collect()
+    }
+
+    #[test]
+    fn link_ranges_cover_the_whole_token() {
+        let line = "see #12, https://example.com/x. and https://github.com/o/r/pull/7 (C#9)";
+        let got: Vec<&str> = link_ranges(line, Some("o/r")).into_iter().map(|(a, b, _)| &line[a..b]).collect();
+        assert_eq!(got, ["#12", "https://example.com/x", "https://github.com/o/r/pull/7"]);
     }
 
     #[test]
