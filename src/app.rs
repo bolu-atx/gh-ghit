@@ -28,9 +28,13 @@ pub(crate) const SPIN_FRAME_MS: u64 = 100;
 /// issues exactly one sections fetch per boot instead of hammering
 /// the API every 5s. Zero or garbage falls back to the default.
 fn auto_refresh_interval_default() -> Duration {
-    std::env::var("GHIT_AUTO_REFRESH_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
+    refresh_interval_from(std::env::var("GHIT_AUTO_REFRESH_SECS").ok().as_deref())
+}
+
+/// Parse the override value. Pure, so tests never mutate the process
+/// env, which `App::new` in parallel tests also reads.
+fn refresh_interval_from(raw: Option<&str>) -> Duration {
+    raw.and_then(|s| s.parse::<u64>().ok())
         .filter(|&n| n > 0)
         .map(Duration::from_secs)
         .unwrap_or(RECENT_REFRESH_INTERVAL)
@@ -3363,16 +3367,11 @@ mod tests {
 
     #[test]
     fn auto_refresh_interval_env_override() {
-        let _guard = crate::cache::test_env_lock();
-        std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
-        assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL);
-        std::env::set_var("GHIT_AUTO_REFRESH_SECS", "3600");
-        assert_eq!(auto_refresh_interval_default(), Duration::from_secs(3600));
+        assert_eq!(refresh_interval_from(None), RECENT_REFRESH_INTERVAL);
+        assert_eq!(refresh_interval_from(Some("3600")), Duration::from_secs(3600));
         for bad in ["0", "nope", ""] {
-            std::env::set_var("GHIT_AUTO_REFRESH_SECS", bad);
-            assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL, "reject {bad}");
+            assert_eq!(refresh_interval_from(Some(bad)), RECENT_REFRESH_INTERVAL, "reject {bad}");
         }
-        std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
     }
 
     #[test]
