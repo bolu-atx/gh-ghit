@@ -219,8 +219,8 @@ pub struct BoardItem {
     pub labels: Vec<Label>,
     #[serde(default)]
     pub repo: Option<String>,
-    /// Milestone title, when the card carries one. `gh project item-list`
-    /// ships it at the item top level; defaulted so old board caches parse.
+    /// Milestone title, when the card carries one. Defaulted so old
+    /// board caches without the field still parse.
     #[serde(default)]
     pub milestone: Option<String>,
     #[serde(default)]
@@ -255,7 +255,7 @@ pub struct BoardData {
     pub order: Vec<String>,
     #[serde(default)]
     pub items: Vec<BoardItem>,
-    /// Project page URL from `gh project list` (`url`), or the
+    /// Project page URL from the board query, or the
     /// `orgs/{owner}/projects/{number}` fallback. Defaulted so old
     /// board caches without the field still parse.
     #[serde(default)]
