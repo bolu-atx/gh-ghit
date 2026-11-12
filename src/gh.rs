@@ -2,7 +2,11 @@
 //!
 //! All issue/PR fetching moved to the HTTPS client in `api.rs`, called
 //! through `github.rs`. Only the project board still lives here until it is
-//! ported to GraphQL — do not add new callers.
+//! ported to GraphQL — do not add new callers. That future port stays
+//! GraphQL by necessity (#117): Projects v2 item data (status field
+//! values, field values by name) has no REST equivalent — REST project
+//! endpoints do not expose per-item field values — so it is a kept
+//! GraphQL call site, not a REST port candidate.
 
 use crate::cache;
 use crate::model::{BoardData, BoardItem};
