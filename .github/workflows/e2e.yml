@@ -67,7 +67,6 @@ jobs:
       # (see scripts/e2e/run.sh) so the toasts assert on content.
       - run: bash scripts/e2e/run.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           E2E_FAKE_CLIPBOARD: 1
       - uses: actions/upload-artifact@v4
         if: failure()

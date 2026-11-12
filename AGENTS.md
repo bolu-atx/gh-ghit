@@ -15,6 +15,8 @@ cargo clippy --all-targets -- -D warnings          # lint gate, same as CI
 # Toolchain is pinned in rust-toolchain.toml; rustup installs it on first use.
 ```
 
+`GHIT_API_BASE` overrides REST and GraphQL endpoints for the local e2e fixture server.
+
 Run the app with isolated state so pins/cache writes don't touch real data:
 
 ```bash

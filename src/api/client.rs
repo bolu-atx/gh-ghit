@@ -214,21 +214,25 @@ fn gh_host() -> String {
     std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned())
 }
 
-/// REST API base honoring `GH_HOST`, shared by the REST ports.
-pub(super) fn rest_base() -> String {
-    let host = gh_host();
-    if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") }
+/// `GHIT_API_BASE` overrides both API endpoints for the local e2e fixture server.
+fn api_endpoints(host: &str, base: Option<&str>) -> (String, String) {
+    if let Some(base) = base.map(str::trim).filter(|base| !base.is_empty()) {
+        let base = base.trim_end_matches('/');
+        return (base.to_owned(), format!("{base}/graphql"));
+    }
+    if host == "github.com" {
+        ("https://api.github.com".to_owned(), "https://api.github.com/graphql".to_owned())
+    } else {
+        (format!("https://{host}/api/v3"), format!("https://{host}/api/graphql"))
+    }
 }
 
-/// GraphQL endpoint honoring `GH_HOST`, shared by the GraphQL calls
-/// below that REST cannot cover (see their keep-comments).
+pub(super) fn rest_base() -> String {
+    api_endpoints(&gh_host(), std::env::var("GHIT_API_BASE").ok().as_deref()).0
+}
+
 pub(super) fn graphql_url() -> String {
-    let host = gh_host();
-    if host == "github.com" {
-        "https://api.github.com/graphql".to_owned()
-    } else {
-        format!("https://{host}/api/graphql")
-    }
+    api_endpoints(&gh_host(), std::env::var("GHIT_API_BASE").ok().as_deref()).1
 }
 
 /// Unwrap a GraphQL response: transport errors already surfaced, so a
@@ -244,6 +248,20 @@ pub(super) fn graphql_data(value: &Value) -> Result<&Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn api_base_override_wins_over_host() {
+        assert_eq!(api_endpoints("invalid.example", Some("http://127.0.0.1:1234/")),
+            ("http://127.0.0.1:1234".into(), "http://127.0.0.1:1234/graphql".into()));
+        for base in [Some(""), Some("  \t ")] {
+            assert_eq!(api_endpoints("github.com", base), api_endpoints("github.com", None));
+        }
+        assert_eq!(api_endpoints("github.com", None),
+            ("https://api.github.com".into(), "https://api.github.com/graphql".into()));
+        assert_eq!(api_endpoints("enterprise.example", None),
+            ("https://enterprise.example/api/v3".into(),
+             "https://enterprise.example/api/graphql".into()));
+    }
+
     #[test]
     fn auth_failures_carry_the_reauth_command() {
         for e in [

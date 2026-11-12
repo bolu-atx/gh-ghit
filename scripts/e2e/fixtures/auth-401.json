@@ -1,0 +1,14 @@
+{
+  "GET /rate_limit": {
+    "status": 401,
+    "body": {
+      "message": "Bad credentials"
+    }
+  },
+  "GET /repos/bolu-atx/gh-ghit": {
+    "status": 401,
+    "body": {
+      "message": "Bad credentials"
+    }
+  }
+}
