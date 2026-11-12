@@ -59,11 +59,11 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             }
             KeyCode::Esc => {
                 // Esc first clears an active filter, then closes the board.
-                if app.board_filter.trim().is_empty() {
+                if app.board_filtered() {
+                    app.clear_board_filter();
+                } else {
                     app.board = None;
                     app.board_loading = false;
-                } else {
-                    app.clear_board_filter();
                 }
             }
             KeyCode::Char('f') => app.open_board_filter(),
@@ -399,24 +399,32 @@ fn jump_search_hit(app: &mut App, delta: isize) {
     }
 }
 
-/// Filter dialog keys. Over the board the whole dialog is one query box:
-/// Enter applies the draft, Esc clears the filter. Everywhere else window
-/// presets refetch, toggles only hide recent rows, and `e` edits the
-/// server-side GitHub query.
-fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    use crate::app::QueryAction;
-    if board_open(app) {
+/// Board filter form keys. While the text row edits, keys type into it
+/// (`Esc` backs out to navigate mode, `Enter` applies); otherwise `j`/`k`
+/// and the arrows move the active widget, `space` toggles the pill under
+/// the cursor, typing on the text row starts editing it, `Enter` applies,
+/// and `Esc` clears the whole filter.
+fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    if app.query_edit {
         match key.code {
             KeyCode::Esc => {
+                // Revert the draft; the dialog stays open.
+                app.query_draft = app.board_filter.clone();
                 app.query_edit = false;
-                app.filter_open = false;
-                app.clear_board_filter();
             }
             KeyCode::Enter => {
-                let draft = app.query_draft.clone();
                 app.query_edit = false;
                 app.filter_open = false;
-                app.set_board_filter(draft);
+                app.filter_focus = 0;
+                app.apply_board_filter();
+            }
+            KeyCode::Up => {
+                app.query_edit = false;
+                app.board_filter_step(-1);
+            }
+            KeyCode::Down => {
+                app.query_edit = false;
+                app.board_filter_step(1);
             }
             KeyCode::Char(c) => app.query_draft.push(c),
             KeyCode::Backspace => {
@@ -424,6 +432,59 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
             }
             _ => {}
         }
+        return;
+    }
+    match key.code {
+        KeyCode::Esc => {
+            app.filter_open = false;
+            app.filter_focus = 0;
+            app.clear_board_filter();
+        }
+        KeyCode::Enter => {
+            app.filter_open = false;
+            app.filter_focus = 0;
+            app.apply_board_filter();
+        }
+        KeyCode::Char(' ') if app.filter_focus > 0 => toggle_board_pill(app),
+        KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('l') | KeyCode::Right => {
+            app.board_filter_step(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up | KeyCode::Char('h') | KeyCode::Left => {
+            app.board_filter_step(-1);
+        }
+        KeyCode::Backspace if app.filter_focus == 0 => {
+            app.query_draft.pop();
+        }
+        KeyCode::Char(c) if app.filter_focus == 0 => {
+            // Typing on the text row starts editing, like the old dialog.
+            app.query_edit = true;
+            app.query_draft.push(c);
+        }
+        _ => {}
+    }
+}
+
+/// Toggle the milestone pill under the dialog cursor in the draft.
+fn toggle_board_pill(app: &mut App) {
+    let pills = app.board_pills();
+    let Some(pill) = pills.get(app.filter_focus.saturating_sub(1)) else {
+        return;
+    };
+    if !app.filter_milestone_draft.remove(pill) {
+        app.filter_milestone_draft.insert(pill.clone());
+    }
+}
+
+/// Filter dialog keys. Over the board the dialog is a form: the text row
+/// plus one milestone pill per milestone on the board. `j`/`k` and the
+/// arrows move the active widget, `space` toggles the pill under the
+/// cursor, typing on the text row edits it, Enter applies, Esc clears the
+/// filter. Everywhere else window presets refetch, toggles only hide
+/// recent rows, and `e` edits the server-side GitHub query.
+fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    use crate::app::QueryAction;
+    if board_open(app) {
+        handle_board_filter_key(app, key);
         return;
     }
     if app.query_edit {
@@ -646,6 +707,17 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
 fn handle_board_mouse(app: &mut App, m: MouseEvent) {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
+            // Header icons first: they sit outside every card cell.
+            if let Some((rect, url)) = app
+                .board_links
+                .iter()
+                .find(|(rect, _)| in_rect(*rect, m.column, m.row))
+                .map(|(rect, url)| (*rect, url.clone()))
+            {
+                app.note_click(rect);
+                open_url(&url, app);
+                return;
+            }
             let hit = app
                 .board_cells
                 .iter()
@@ -656,7 +728,8 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                 // Clicking the URL line of an expanded card opens it.
                 if app.board_expanded == Some((c, r)) && m.row - rect.y == 3 {
                     if let Some(board) = &app.board {
-                        let cols = crate::app::board_columns(board, &app.board_filter);
+                        let cols =
+                            crate::app::board_columns(board, &app.board_filter, &app.board_milestones);
                         if let Some(url) = cols
                             .get(c)
                             .and_then(|(_, cards)| cards.get(r))
@@ -934,6 +1007,7 @@ mod tests {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: None,
             is_pr: false,
         }
     }

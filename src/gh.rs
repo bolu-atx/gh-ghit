@@ -72,6 +72,13 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
     };
     let num = first.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
     let title = first.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    // `gh project list` ships the web URL; fall back to the org path so
+    // the board header link always has somewhere to point.
+    let url = first
+        .get("url")
+        .and_then(|u| u.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("https://github.com/orgs/{owner}/projects/{num}"));
     num_s = num.to_string();
 
     let fields = gh(&["project", "field-list", &num_s, "--owner", owner, "--format", "json"])?;
@@ -109,7 +116,7 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
         })
         .collect();
 
-    let data = BoardData { title, order, items };
+    let data = BoardData { title, order, items, url };
     cache::cache_put(&key, &data);
     Ok(data)
 }

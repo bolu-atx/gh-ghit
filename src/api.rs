@@ -159,6 +159,7 @@ pub fn forget_token() {
 const PR_FIELDS: &str = r#"
  number title state author { login } labels(first: 100) { nodes { name } }
  assignees(first: 100) { nodes { login } } createdAt updatedAt url
+ milestone { title }
  comments(first: 1) { totalCount } mergedAt
  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
@@ -168,6 +169,7 @@ const PR_FIELDS: &str = r#"
 const ISSUE_FIELDS: &str = r#"
  number title state author { login } labels(first: 100) { nodes { name } }
  assignees(first: 100) { nodes { login } } createdAt updatedAt url
+ milestone { title }
  comments(first: 1) { totalCount }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
@@ -239,7 +241,8 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
             // Slim listing row: body and review threads load on open
             // through the full fetch, so they stay empty here even when a
             // payload carries them.
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), is_pr }, statuses, detail, complete: false, window_at });
+            let milestone = n.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
+            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, is_pr }, statuses, detail, complete: false, window_at });
             }
         }
     }
@@ -525,6 +528,7 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: v.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned),
             is_pr,
         },
         statuses: vec![],
@@ -668,6 +672,10 @@ pub async fn issue(
     };
     v["comments"] = json!(comments);
     v["isPr"] = json!(is_pr);
+    // REST ships `milestone` as an object; flatten to its title so the
+    // `Option<String>` field parses. Absent or null stays `None`.
+    let milestone = v.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
+    v["milestone"] = milestone.map(Value::String).unwrap_or(Value::Null);
     let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
@@ -1278,7 +1286,7 @@ mod tests {
                 author: Author::default(), labels: vec![], assignees: vec![],
                 created_at: String::new(), updated_at: String::new(),
                 url: String::new(), body: String::new(), comments: vec![],
-                is_pr, review_threads: vec![], paired: vec![], checks: None,
+                is_pr, review_threads: vec![], paired: vec![], checks: None, milestone: None,
             },
             statuses: vec![],
             detail: BoardDetail::default(),

@@ -228,9 +228,18 @@ pub(crate) struct App {
     pub(crate) auth_repo_probed: bool,
     pub(crate) board_states: Vec<ListState>,
     pub(crate) board_expanded: Option<(usize, usize)>,
-    /// Board filter (`f` while the board is open): milestone, label, card
-    /// title, or `#num`. Empty shows every card.
+    /// Board text filter (`f` while the board is open): label, card title,
+    /// or `#num`. Milestones filter through the pills below, never this
+    /// text. Empty shows every card.
     pub(crate) board_filter: String,
+    /// Board milestone pills: the selected milestones. Empty selects every
+    /// card; `None` is the "(no milestone)" pill.
+    pub(crate) board_milestones: HashSet<Option<String>>,
+    /// Active widget in the board filter dialog: 0 is the text row, the
+    /// rest are milestone pills in `model::board_milestones` order.
+    pub(crate) filter_focus: usize,
+    /// Milestone draft edited in the dialog; Enter applies it.
+    pub(crate) filter_milestone_draft: HashSet<Option<String>>,
     pub(crate) merged_window_hours: u64,
     pub(crate) board_details: HashMap<u64, model::BoardDetail>,
     pub(crate) detail_pending: HashSet<u64>,
@@ -297,6 +306,9 @@ pub(crate) struct App {
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
     pub(crate) board_cells: Vec<(Rect, usize, usize)>,
+    /// Board header link hit areas (top-right icons): rect plus the URL
+    /// to open. Rebuilt every frame in `render_board`, like `board_cells`.
+    pub(crate) board_links: Vec<(Rect, String)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
@@ -382,6 +394,9 @@ impl App {
             board_states: Vec::new(),
             board_expanded: None,
             board_filter: String::new(),
+            board_milestones: HashSet::new(),
+            filter_focus: 0,
+            filter_milestone_draft: HashSet::new(),
             merged_window_hours: 24,
             board_details: HashMap::new(),
             detail_pending: HashSet::new(),
@@ -425,6 +440,7 @@ impl App {
             tabs_area: Rect::default(),
             bar_area: Rect::default(),
             board_cells: Vec::new(),
+            board_links: Vec::new(),
             last_click: None,
         }
     }
@@ -1508,6 +1524,7 @@ impl App {
         self.board_col = 0;
         self.board_row = 0;
         self.board_filter.clear();
+        self.board_milestones.clear();
         let (tx, rx) = std::sync::mpsc::channel();
         self.board_rx = Some(rx);
         // `gh` subprocesses block: keep them off the async workers.
@@ -1516,31 +1533,56 @@ impl App {
         });
     }
 
-    /// Open the filter dialog against the board cards. It starts in edit
-    /// mode with the active filter prefilled; the board stays up behind it.
+    /// Open the filter dialog against the board cards. It opens in
+    /// navigate mode with the active text and pills prefilled; the board
+    /// stays up behind it.
     pub(crate) fn open_board_filter(&mut self) {
         self.query_draft = self.board_filter.clone();
-        self.query_edit = true;
+        self.filter_milestone_draft = self.board_milestones.clone();
+        self.filter_focus = 0;
+        self.query_edit = false;
         self.filter_open = true;
     }
 
-    /// Apply a board filter and keep the cursor inside the narrowed grid.
-    pub(crate) fn set_board_filter(&mut self, query: String) {
-        self.board_filter = query.trim().to_string();
-        // Positions move under a new filter: never keep a stale expansion.
+    /// Apply the dialog drafts and keep the cursor inside the narrowed
+    /// grid. Positions move under a new filter: never keep a stale
+    /// expansion.
+    pub(crate) fn apply_board_filter(&mut self) {
+        self.board_filter = self.query_draft.trim().to_string();
+        self.board_milestones = self.filter_milestone_draft.clone();
         self.board_expanded = None;
         self.clamp_board_cursor();
     }
 
     pub(crate) fn clear_board_filter(&mut self) {
         self.board_filter.clear();
+        self.board_milestones.clear();
         self.board_expanded = None;
         self.clamp_board_cursor();
     }
 
+    /// True when any board filter is active: text or milestone pills.
+    pub(crate) fn board_filtered(&self) -> bool {
+        !self.board_filter.trim().is_empty() || !self.board_milestones.is_empty()
+    }
+
+    /// Milestone pills for the dialog, in display order.
+    pub(crate) fn board_pills(&self) -> Vec<Option<String>> {
+        match &self.board {
+            Some(board) => model::board_milestones(&board.items),
+            None => vec![],
+        }
+    }
+
+    /// Step the dialog focus across the text row plus pills, wrapping.
+    pub(crate) fn board_filter_step(&mut self, delta: isize) {
+        let n = self.board_pills().len() + 1;
+        self.filter_focus = (self.filter_focus as isize + delta).rem_euclid(n as isize) as usize;
+    }
+
     fn clamp_board_cursor(&mut self) {
         let Some(board) = &self.board else { return };
-        let cols = board_columns(board, &self.board_filter);
+        let cols = board_columns(board, &self.board_filter, &self.board_milestones);
         let col = self.board_col.min(cols.len().saturating_sub(1));
         let rows = cols.get(col).map(|(_, cards)| cards.len()).unwrap_or(0);
         self.board_col = col;
@@ -1711,14 +1753,16 @@ pub(crate) fn board_open(app: &App) -> bool {
     app.board.is_some() || app.board_loading
 }
 
-/// Board columns narrowed by the active filter. An empty filter returns
-/// every card.
+/// Board columns narrowed by the active filter: milestone pills select
+/// (empty selects all) plus the text query over title, label, `#num`.
+/// An empty filter returns every card.
 pub(crate) fn board_columns<'a>(
     board: &'a BoardData,
     filter: &str,
+    milestones: &HashSet<Option<String>>,
 ) -> Vec<(String, Vec<&'a model::BoardItem>)> {
     let cols = model::board_columns(&board.items, &board.order);
-    if filter.trim().is_empty() {
+    if filter.trim().is_empty() && milestones.is_empty() {
         return cols;
     }
     cols.into_iter()
@@ -1726,14 +1770,11 @@ pub(crate) fn board_columns<'a>(
             let cards = cards
                 .into_iter()
                 .filter(|c| {
+                    if !milestones.is_empty() && !milestones.contains(&c.milestone) {
+                        return false;
+                    }
                     let labels: Vec<&str> = c.labels.iter().map(|l| l.name.as_str()).collect();
-                    core::matches_board_filter(
-                        c.number,
-                        &c.title,
-                        &labels,
-                        c.milestone.as_deref(),
-                        filter,
-                    )
+                    core::matches_board_filter(c.number, &c.title, &labels, filter)
                 })
                 .collect();
             (name, cards)
@@ -1744,7 +1785,7 @@ pub(crate) fn board_columns<'a>(
 pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
     app.board_expanded = None;
     let Some(board) = &app.board else { return };
-    let cols = board_columns(board, &app.board_filter);
+    let cols = board_columns(board, &app.board_filter, &app.board_milestones);
     if cols.is_empty() {
         return;
     }
@@ -1756,7 +1797,7 @@ pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
 
 pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
     let board = app.board.as_ref()?;
-    let cols = board_columns(board, &app.board_filter);
+    let cols = board_columns(board, &app.board_filter, &app.board_milestones);
     cols.get(app.board_col)?.1.get(app.board_row)?.number
 }
 
@@ -2293,6 +2334,7 @@ mod tests {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: None,
             is_pr: false,
         }
     }
@@ -2567,7 +2609,7 @@ mod tests {
             match guard {
                 0 => app.section_rx = Some(rx),
                 1 => app.board_loading = true,
-                2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![] }),
+                2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }),
                 3 => app.compose = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false }),
                 4 => app.filter_open = true,
                 5 => app.shortcuts_open = true,
@@ -2670,6 +2712,48 @@ mod tests {
         assert_eq!(app.board_details.get(&7).map(|d| d.comments), Some(4));
         assert!(app.visited.contains(&7), "group membership is untouched");
         assert!(!app.recent.contains(&7), "known rows never re-file as recent");
+    }
+
+    #[test]
+    fn board_columns_gate_on_milestone_pills_and_text() {
+        use crate::model::BoardItem;
+        let card = |number: u64, milestone: Option<&str>| BoardItem {
+            title: format!("card {number}"),
+            number: Some(number),
+            status: Some("Todo".to_string()),
+            labels: vec![],
+            repo: None,
+            milestone: milestone.map(str::to_string),
+            content: serde_json::Value::Null,
+        };
+        let board = BoardData {
+            title: "b".to_string(),
+            order: vec!["Todo".to_string()],
+            items: vec![card(1, Some("v1")), card(2, None)],
+            url: String::new(),
+        };
+        let numbers = |cols: Vec<(String, Vec<&BoardItem>)>| {
+            cols.into_iter().flat_map(|(_, cards)| cards.into_iter().map(|c| c.number)).collect::<Vec<_>>()
+        };
+        assert_eq!(numbers(board_columns(&board, "", &HashSet::new())), vec![Some(1), Some(2)]);
+        assert_eq!(
+            numbers(board_columns(&board, "", &HashSet::from([Some("v1".to_string())]))),
+            vec![Some(1)]
+        );
+        assert_eq!(
+            numbers(board_columns(&board, "", &HashSet::from([None]))),
+            vec![Some(2)]
+        );
+        // Text still narrows within the pill selection; milestones never
+        // match the text.
+        assert_eq!(
+            numbers(board_columns(&board, "card 2", &HashSet::from([Some("v1".to_string())]))),
+            Vec::<Option<u64>>::new()
+        );
+        assert_eq!(
+            numbers(board_columns(&board, "v1", &HashSet::new())),
+            Vec::<Option<u64>>::new()
+        );
     }
 
     #[test]
