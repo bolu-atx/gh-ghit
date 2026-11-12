@@ -86,6 +86,14 @@ pub async fn check_auth() -> Result<Vec<String>, String> {
     api::check_auth(&token).await
 }
 
+/// Repo-scoped probe: reachability plus the OAuth scope gap for one
+/// slug. Same result shape as `check_auth`.
+pub async fn check_repo_access(repo: &str) -> Result<Vec<String>, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::check_repo_access(&token, repo).await
+}
+
 /// Fetch one issue/PR plus its project statuses. Failures are strings for
 /// the status line, never panics. File-cache access runs on the blocking
 /// pool so async workers never touch the disk. `progress` re-tags the

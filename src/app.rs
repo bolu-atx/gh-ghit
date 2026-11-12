@@ -62,12 +62,15 @@ pub(crate) enum Focus {
     Bar,
 }
 
-/// Pending auth-scope question: missing scopes (empty means the token
-/// itself is dead) plus the sentence that triggered the prompt.
+/// Pending auth-scope question: the sentence that triggered the prompt
+/// plus the missing scopes. `scopes_known` is true only when a probe
+/// read the granted scopes; fetch failures cannot name the gap, so a
+/// missing list there means unknown, not clean.
 #[derive(Clone, Debug)]
 pub(crate) struct AuthPrompt {
     pub(crate) missing: Vec<String>,
     pub(crate) cause: String,
+    pub(crate) scopes_known: bool,
 }
 
 /// Which pane `j`/`k` act on. Tab cycles Issues → PRs → Refs, skipping
@@ -208,6 +211,11 @@ pub(crate) struct App {
     pub(crate) auth_prompt: Option<AuthPrompt>,
     /// Set by input; the event loop runs the refresh outside the TUI.
     pub(crate) reauth_requested: bool,
+    /// The user dismissed the prompt: later auth failures notify only,
+    /// never re-modal. Cleared by a successful re-auth.
+    pub(crate) auth_dismissed: bool,
+    /// The repo-scoped access probe fired once the repo resolved.
+    pub(crate) auth_repo_probed: bool,
     pub(crate) board_states: Vec<ListState>,
     pub(crate) board_expanded: Option<(usize, usize)>,
     pub(crate) merged_window_hours: u64,
@@ -344,6 +352,8 @@ impl App {
             auth_rx: None,
             auth_prompt: None,
             reauth_requested: false,
+            auth_dismissed: false,
+            auth_repo_probed: false,
             compose: None,
             compose_tx,
             compose_rx,
@@ -1655,7 +1665,7 @@ pub(crate) fn poll_details(app: &mut App) {
         app.detail_pending.remove(&n);
         match res {
             Ok(d) => { app.board_details.insert(n, d); }
-            Err(e) => app.notify(e),
+            Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
 }
@@ -1676,6 +1686,7 @@ pub(crate) fn poll_compose(app: &mut App) {
                 if let Some(c) = app.compose.as_mut() {
                     c.sending = false;
                 }
+                auth_failure(app, &e);
                 app.notify(e);
             }
         }
@@ -1699,7 +1710,7 @@ pub(crate) fn poll_board(app: &mut App) {
             app.board_expanded = None;
             kick_off_details(app);
         }
-        Err(e) => app.notify(e),
+        Err(e) => { auth_failure(app, &e); app.notify(e); }
     }
 }
 
@@ -1722,9 +1733,9 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
         let _ = crate::api::token();
         let _ = tx.send(worker.repo_slug);
     });
-    // Early auth probe: one cheap `/user` round-trip validates the token
-    // and reads its scopes, so a dead or under-scoped token prompts
-    // before the first real fetch fails into an empty sidebar.
+    // Early auth probe: one cheap round-trip validates the token so a
+    // dead one prompts before the first real fetch fails into an empty
+    // sidebar. Scopes need a repo and follow in `poll_bootstrap`.
     let (atx, arx) = std::sync::mpsc::channel();
     app.auth_rx = Some(arx);
     rt().spawn(async move {
@@ -1732,8 +1743,8 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     });
 }
 
-/// Land the early auth probe: a dead token or missing scopes raises
-/// the re-auth modal; a covered token stays silent.
+/// Land an auth probe: a dead token or missing scopes raises the
+/// re-auth modal; a covered token stays silent.
 pub(crate) fn poll_auth(app: &mut App) {
     let Some(result) = app.auth_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
     app.auth_rx = None;
@@ -1743,14 +1754,32 @@ pub(crate) fn poll_auth(app: &mut App) {
             app.auth_prompt = Some(AuthPrompt {
                 cause: "token lacks scopes ghit needs".to_string(),
                 missing,
+                scopes_known: true,
             });
         }
         // Only auth-class failures rise to the modal: re-auth can fix
         // those, while a rate limit or outage just needs a status line.
         Err(e) if crate::api::is_auth_error(&e) => {
-            app.auth_prompt = Some(AuthPrompt { cause: e, missing: vec![] });
+            app.auth_prompt = Some(AuthPrompt { cause: e, missing: vec![], scopes_known: false });
         }
         Err(e) => app.notify(e),
+    }
+}
+
+/// Route an auth-class fetch failure at the re-auth modal: the early
+/// probes cannot see every token kind or repo, so the first failing
+/// fetch gets the same question. A dismissed prompt never re-rises;
+/// the caller still notifies as before.
+pub(crate) fn auth_failure(app: &mut App, e: &str) {
+    if app.auth_dismissed || app.auth_prompt.is_some() {
+        return;
+    }
+    if crate::api::is_auth_error(e) {
+        app.auth_prompt = Some(AuthPrompt {
+            cause: e.to_string(),
+            missing: vec![],
+            scopes_known: false,
+        });
     }
 }
 
@@ -1773,6 +1802,7 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     match status {
         Ok(s) if s.success() => {
             crate::api::forget_token();
+            app.auth_dismissed = false;
             app.notify("re-auth ok: re-checking token…".to_string());
         }
         _ => app.notify(format!("re-auth failed — run by hand: {cmd}")),
@@ -1857,6 +1887,18 @@ fn poll_bootstrap(app: &mut App) {
     let Some(result) = app.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
     app.bootstrap_rx = None;
     app.repo_slug = result;
+    // Repo-scoped access probe, once: the boot probe only checks the
+    // token itself, while scopes need a repo to read against.
+    if !app.auth_repo_probed {
+        app.auth_repo_probed = true;
+        if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.auth_rx = Some(rx);
+            rt().spawn(async move {
+                let _ = tx.send(github::check_repo_access(&repo).await);
+            });
+        }
+    }
     let numbers = std::mem::take(&mut app.initial_numbers);
     if let Some(key) = app.repo_key() {
         let mut pins = cache::load_pins(&key);
@@ -1932,7 +1974,7 @@ pub(crate) fn poll_sections(app: &mut App) {
                 // Auto-refresh failures notify too: a silent empty
                 // sidebar is how under-scoped tokens went unnoticed.
                 // The backoff above still bounds the retry rate.
-                Err(e) => { app.notify(e); },
+                Err(e) => { auth_failure(app, &e); app.notify(e); },
             }
         }
     }
@@ -2005,6 +2047,7 @@ pub(crate) fn poll_issues(app: &mut App) {
                         if stepped && e.contains("404") {
                             app.notify(format!("no #{number}"));
                         } else {
+                            auth_failure(app, &e);
                             app.notify(e);
                         }
                     }
@@ -2022,7 +2065,7 @@ pub(crate) fn poll_diffs(app: &mut App) {
             Ok(files) => {
                 app.diffs.insert(number, files);
             }
-            Err(e) => app.notify(e),
+            Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
 }
@@ -2038,7 +2081,7 @@ pub(crate) fn poll_graphs(app: &mut App) {
                     app.graph_cursor = app.graph_cursor.min(app.graph_order_numbers().len().saturating_sub(1));
                 }
             }
-            Err(e) => app.notify(e),
+            Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
     }
 }
@@ -2777,6 +2820,21 @@ mod tests {
             assert_eq!(app.auth_prompt.is_some(), expect_prompt);
             app.auth_prompt = None;
         }
+    }
+
+    #[test]
+    fn auth_failure_prompts_once_then_stays_quiet() {
+        let mut app = App::new(Some("o/r".to_string()));
+        auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
+        let prompt = app.auth_prompt.as_ref().expect("first auth failure prompts");
+        assert!(!prompt.scopes_known, "fetch failures cannot name the gap");
+        app.auth_prompt = None;
+        app.auth_dismissed = true;
+        auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
+        assert!(app.auth_prompt.is_none(), "dismissed stays dismissed");
+        app.auth_dismissed = false;
+        auth_failure(&mut app, "bad search payload");
+        assert!(app.auth_prompt.is_none(), "non-auth never prompts");
     }
 
     #[test]

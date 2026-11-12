@@ -162,7 +162,12 @@ fn render_auth(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Line::from(Span::styled(p.cause.clone(), Style::new().bg(ink()).fg(paper()))),
         Line::from(""),
     ];
-    if p.missing.is_empty() {
+    if !p.scopes_known {
+        lines.push(Line::from(Span::styled(
+            "scopes could not be read from this failure — the error above names the fix",
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    } else if p.missing.is_empty() {
         lines.push(Line::from(Span::styled(
             "the token is expired, revoked, or invalid",
             Style::new().bg(ink()).fg(muted()),
@@ -2899,6 +2904,7 @@ mod render_smoke {
         app.auth_prompt = Some(crate::app::AuthPrompt {
             missing: vec!["project".to_string()],
             cause: "token lacks scopes ghit needs".to_string(),
+            scopes_known: true,
         });
         let text = frame_text(&mut app);
         assert!(text.contains("GitHub auth"), "{text}");

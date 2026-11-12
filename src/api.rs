@@ -71,15 +71,14 @@ pub fn missing_scopes(granted: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// Early auth probe: validates the token against `GET /user` and reads
-/// the granted OAuth scopes off the response header. Returns the
-/// missing scopes, empty when the token covers everything ghit needs.
-/// A 401/403 here means the token itself is dead; fine-grained PATs
-/// carry no scopes header, so only validity is checked for those.
+/// Early auth probe: validates the token against `GET /rate_limit`.
+/// That endpoint answers for every token kind (OAuth, PAT, GitHub App
+/// installation): a dead token 401s, anything alive 200s. Scope gaps
+/// need a repo, so those wait for `check_repo_access` below.
 pub async fn check_auth(bearer: &str) -> Result<Vec<String>, String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
-    let url = format!("{base}/user");
+    let url = format!("{base}/rate_limit");
     let res = client()
         .get(&url)
         .bearer_auth(bearer)
@@ -90,14 +89,37 @@ pub async fn check_auth(bearer: &str) -> Result<Vec<String>, String> {
     if res.status().is_client_error() || res.status().is_server_error() {
         return Err(http_fail("GitHub auth check failed", &url, res).await);
     }
+    Ok(vec![])
+}
+
+/// Repo-scoped access check, run once the repo is known: a 200 proves
+/// the token reaches this repo, and the OAuth scopes header (absent on
+/// installation and fine-grained tokens) names any missing scope.
+/// Auth-class failures carry the re-auth hint; a 404 names the repo
+/// plainly, since re-auth cannot fix a wrong slug.
+pub async fn check_repo_access(bearer: &str, repo: &str) -> Result<Vec<String>, String> {
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
+    let url = format!("{base}/repos/{repo}");
+    let res = client()
+        .get(&url)
+        .bearer_auth(bearer)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub request failed: {e}"))?;
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub repo access check failed", &url, res).await);
+    }
     let granted: Vec<&str> = res
         .headers()
         .get("x-oauth-scopes")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.split(',').map(str::trim).collect())
         .unwrap_or_default();
-    // No scopes header (fine-grained token, or a blank one): validity
-    // above is all we know, and a blank list proves no gap.
+    // No scopes header (installation or fine-grained token, or a blank
+    // one): reachability above is all we know, and a blank list proves
+    // no gap.
     if granted.iter().all(|s| s.is_empty()) {
         return Ok(vec![]);
     }

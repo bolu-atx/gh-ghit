@@ -19,6 +19,10 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 let cmd = crate::api::reauth_command();
                 app.auth_prompt = None;
+                app.auth_dismissed = true;
+                // Back to Main so the hint renders: the bar keeps input
+                // focus otherwise and swallows the toast.
+                app.focus = crate::app::Focus::Main;
                 app.notify(format!("auth dismissed — re-auth by hand: {cmd}"));
             }
             _ => {}
@@ -1110,6 +1114,7 @@ mod tests {
         app.auth_prompt = Some(crate::app::AuthPrompt {
             missing: vec!["project".to_string()],
             cause: "token lacks scopes ghit needs".to_string(),
+            scopes_known: true,
         });
         handle_key(&mut app, plain_key(KeyCode::Char('y')));
         assert!(app.reauth_requested, "y arms the refresh");
@@ -1118,10 +1123,12 @@ mod tests {
         app.auth_prompt = Some(crate::app::AuthPrompt {
             missing: vec![],
             cause: "GitHub auth check failed: 401 Unauthorized".to_string(),
+            scopes_known: false,
         });
         handle_key(&mut app, plain_key(KeyCode::Char('n')));
         assert!(!app.reauth_requested, "n never refreshes");
         assert!(app.auth_prompt.is_none(), "n dismisses");
+        assert!(matches!(app.focus, crate::app::Focus::Main), "hint must render");
         assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
     }
 }
