@@ -1,6 +1,6 @@
 [package]
 name = "ghit"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "Terminal viewer for GitHub issues and PRs, backed by the gh CLI"
 license = "MIT"
