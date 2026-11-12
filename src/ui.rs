@@ -138,10 +138,6 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_compose(f, f.area(), app);
     }
-    if app.auth.prompt.is_some() {
-        dim_background(f, 0.35);
-        render_auth(f, f.area(), app);
-    }
     if app.confirm.is_some() {
         dim_background(f, 0.35);
         render_confirm(f, f.area(), app);
@@ -165,7 +161,12 @@ fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let mut lines: Vec<Line> = d.body.iter().map(|l| {
-        Line::from(Span::styled(l.clone(), Style::new().bg(ink()).fg(paper())))
+        let style = if l.emphasis {
+            Style::new().bg(ink()).fg(amber()).bold()
+        } else {
+            Style::new().bg(ink()).fg(paper())
+        };
+        Line::from(Span::styled(l.text.clone(), style))
     }).collect();
     lines.push(Line::from(""));
     let mut hints = vec![];
@@ -181,7 +182,7 @@ fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &App) {
         "Enter picks the first choice",
         Style::new().bg(ink()).fg(muted()),
     )));
-    f.render_widget(Paragraph::new(lines).style(base()), inner);
+    f.render_widget(Paragraph::new(lines).style(base()).wrap(Wrap { trim: false }), inner);
 }
 
 /// Click flash: invert the last-clicked rect for `CLICK_FLASH_MS` so the
@@ -209,57 +210,6 @@ fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
             buf[(x, y)].set_style(Style::new().reversed());
         }
     }
-}
-
-/// Auth-scope prompt (`gh` token dead or under-scoped): names the cause,
-/// the missing scopes, and the exact re-auth command. `y` suspends the
-/// TUI and runs it; `n` dismisses to a status-line hint.
-fn render_auth(f: &mut ratatui::Frame, area: Rect, app: &App) {
-    use crate::theme::{amber, ink, muted, paper, teal, base};
-    let Some(p) = app.auth.prompt.as_ref() else { return };
-    let popup = centered(area, 80, 60);
-    f.render_widget(Clear, popup);
-    let block = Block::default().borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(amber()))
-        .style(base())
-        .title(" GitHub auth ");
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
-    let mut lines = vec![
-        Line::from(Span::styled(p.cause.clone(), Style::new().bg(ink()).fg(paper()))),
-        Line::from(""),
-    ];
-    if !p.scopes_known {
-        lines.push(Line::from(Span::styled(
-            "scopes could not be read from this failure — the error above names the fix",
-            Style::new().bg(ink()).fg(muted()),
-        )));
-    } else if p.missing.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "the token is expired, revoked, or invalid",
-            Style::new().bg(ink()).fg(muted()),
-        )));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled("missing scopes: ", Style::new().bg(ink()).fg(muted())),
-            Span::styled(p.missing.join(", "), Style::new().bg(ink()).fg(amber()).bold()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("needed: ", Style::new().bg(ink()).fg(muted())),
-            Span::styled(crate::github::REQUIRED_SCOPES.join(", "), Style::new().bg(ink()).fg(teal())),
-        ]));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        crate::github::reauth_command(),
-        Style::new().bg(ink()).fg(paper()),
-    )));
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "y re-auth now · n dismiss (nothing is fetched until auth works)",
-        Style::new().bg(ink()).fg(muted()),
-    )));
-    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
@@ -3420,11 +3370,11 @@ mod render_smoke {
     #[test]
     fn auth_modal_names_scopes_and_command() {
         let mut app = loaded_app();
-        app.auth.prompt = Some(crate::app::AuthPrompt {
-            missing: vec!["project".to_string()],
-            cause: "token lacks scopes ghit needs".to_string(),
-            scopes_known: true,
-        });
+        app.open_reauth(
+            "token lacks scopes ghit needs".to_string(),
+            vec!["project".to_string()],
+            true,
+        );
         let text = frame_text(&mut app);
         assert!(text.contains("GitHub auth"), "{text}");
         assert!(text.contains("missing scopes:"), "{text}");

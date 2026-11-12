@@ -292,7 +292,9 @@ pub(crate) fn serve(
         // so an accepted prompt degrades to naming the command.
         if app.auth.reauth_requested {
             app.auth.reauth_requested = false;
-            app.auth.prompt = None;
+            if matches!(app.confirm.as_ref().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)) {
+                app.confirm = None;
+            }
             app.notify(format!("re-auth by hand: {}", crate::github::reauth_command()));
         }
         land_editor_request_drive(app);
