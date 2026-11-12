@@ -2523,6 +2523,32 @@ mod tests {
     }
 
     #[test]
+    fn slim_row_completes_on_open_with_refs_recomputed() {
+        // Slim sections rows land partial with no body; opening one runs
+        // the full fetch, which completes the row and recomputes refs.
+        let mut app = sidebar_app(&[7]);
+        let mut slim = issue(9, "2026-01-06T00:00:00Z");
+        slim.body = String::new();
+        land_sections(&mut app, vec![section_row(slim)]);
+        assert!(app.partial.contains(&9), "slim row lands partial");
+        assert!(app.data.get(&9).unwrap().body.is_empty());
+
+        app.show_issue(9);
+        assert!(app.issue_pending.contains(&9), "open runs the full fetch");
+        assert!(app.ref_numbers.is_empty(), "no refs from an empty slim body");
+
+        let mut full = issue(9, "2026-01-06T00:00:00Z");
+        full.body = "see #7".to_string();
+        full.paired = vec![model::PairedRef { number: 12, state: "OPEN".to_string() }];
+        app.issue_tx.send((9, github::IssueEvent::Done(Ok((full, vec![]))))).unwrap();
+        poll_issues(&mut app);
+        assert!(!app.partial.contains(&9), "full fetch completes the row");
+        assert_eq!(app.data.get(&9).unwrap().body, "see #7");
+        assert_eq!(app.ref_numbers, vec![7], "refs recompute from the full body");
+        assert_eq!(app.ref_paired, vec![12]);
+    }
+
+    #[test]
     fn history_back_and_forward_walk_explicit_visits() {
         let mut app = sidebar_app(&[7, 9, 11]);
 

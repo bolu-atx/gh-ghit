@@ -158,17 +158,16 @@ pub fn forget_token() {
 
 const PR_FIELDS: &str = r#"
  number title state author { login } labels(first: 100) { nodes { name } }
- assignees(first: 100) { nodes { login } } createdAt updatedAt url body
+ assignees(first: 100) { nodes { login } } createdAt updatedAt url
  comments(first: 1) { totalCount } mergedAt
  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
- reviewThreads(first: 50) { nodes { id path line isResolved comments(first: 20) { nodes { id author { login } body } } } }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
 
 const ISSUE_FIELDS: &str = r#"
  number title state author { login } labels(first: 100) { nodes { name } }
- assignees(first: 100) { nodes { login } } createdAt updatedAt url body
+ assignees(first: 100) { nodes { login } } createdAt updatedAt url
  comments(first: 1) { totalCount }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
@@ -237,7 +236,10 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
             let created = string("createdAt");
             let updated = string("updatedAt");
             let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: string("body"), comments: vec![], review_threads: crate::model::parse_review_threads(n), paired: vec![], checks: crate::model::parse_check_state(n), is_pr }, statuses, detail, complete: false, window_at });
+            // Slim listing row: body and review threads load on open
+            // through the full fetch, so they stay empty here even when a
+            // payload carries them.
+            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), is_pr }, statuses, detail, complete: false, window_at });
             }
         }
     }
@@ -1074,6 +1076,36 @@ mod tests {
         for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter", "commits(last: 1)", "statusCheckRollup"] { assert!(q.contains(field)); }
     }
     #[test]
+    fn sections_query_stays_slim_and_rows_stay_partial() {
+        // Startup fetches list-weight rows only: bodies and per-PR review
+        // threads load when a row opens through the full fetch.
+        let q = query();
+        assert!(!q.contains("reviewThreads"), "sections query carries no threads");
+        assert!(!q.contains("body"), "sections query carries no body");
+        for field in ["number", "title", "state", "author", "labels", "assignees", "createdAt", "updatedAt", "url", "projectItems", "statusCheckRollup"] { assert!(q.contains(field), "sidebar/match field missing: {field}"); }
+        let v = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":1,"title":"one","state":"OPEN","author":{"login":"bo"},"labels":{"nodes":[{"name":"bug"}]},"assignees":{"nodes":[{"login":"amy"}]},"createdAt":"2026-11-10T11:00:00Z","updatedAt":"2026-11-10T11:00:00Z","url":"https://github.com/o/r/pull/1","comments":{"totalCount":2},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]},"projectItems":{"nodes":[{"project":{"title":"P"},"status":{"name":"Todo"}}]}}]},
+            "merged":{"nodes":[]},
+            "openIssues":{"nodes":[]},
+            "closedIssues":{"nodes":[]}}}});
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let rows = parse_rows(&[v], now, 24).unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert!(row.issue.body.is_empty());
+        assert!(row.issue.review_threads.is_empty());
+        assert!(!row.complete);
+        // Sidebar render and `/` match fields survive the slimming.
+        assert_eq!(row.issue.title, "one");
+        assert_eq!(row.issue.author.login, "bo");
+        assert_eq!(row.issue.labels[0].name, "bug");
+        assert_eq!(row.issue.assignees[0].login, "amy");
+        assert_eq!(row.issue.url, "https://github.com/o/r/pull/1");
+        assert_eq!(row.statuses[0].1.as_deref(), Some("Todo"));
+        assert_eq!(row.detail.comments, 2);
+        assert_eq!(row.issue.checks, Some(crate::model::CheckState::Pass));
+    }
+    #[test]
     fn auth_failures_carry_the_reauth_command() {
         for e in [
             "GitHub request failed: 401 Unauthorized for https://api.github.com/user: {\"message\":\"Bad credentials\"}",
@@ -1144,14 +1176,12 @@ mod tests {
     }
     #[test]
     fn parses_rows_and_filters_merged_window() {
-        let v = json!({"data":{"repository":{"open":{"nodes":[{"number":1,"title":"one","state":"OPEN","labels":{"nodes":[{"name":"bug"}]},"comments":{"totalCount":3},"projectItems":{"nodes":[{"project":{"title":"P"},"status":{"name":"Todo"}}]}}]},"merged":{"nodes":[{"number":2,"mergedAt":"2026-11-10T11:30:00Z"},{"number":3,"mergedAt":"2026-11-09T10:00:00Z"}]},"openIssues":{"nodes":[{"number":7,"title":"seven","state":"OPEN"}]},"closedIssues":{"nodes":[{"number":8,"title":"eight","state":"CLOSED","updatedAt":"2026-11-10T11:00:00Z"},{"number":9,"title":"nine","state":"CLOSED","updatedAt":"2026-11-09T10:00:00Z"}]}}}});
+        let v = json!({"data":{"repository":{"open":{"nodes":[{"number":1,"title":"one","state":"OPEN","labels":{"nodes":[{"name":"bug"}]},"comments":{"totalCount":3},"projectItems":{"nodes":[{"project":{"title":"P"},"status":{"name":"Todo"}}]},"body":"listing body should stay out","reviewThreads":{"nodes":[{"id":"thread-id"}]}}]},"merged":{"nodes":[{"number":2,"mergedAt":"2026-11-10T11:30:00Z"},{"number":3,"mergedAt":"2026-11-09T10:00:00Z"}]},"openIssues":{"nodes":[{"number":7,"title":"seven","state":"OPEN"}]},"closedIssues":{"nodes":[{"number":8,"title":"eight","state":"CLOSED","updatedAt":"2026-11-10T11:00:00Z"},{"number":9,"title":"nine","state":"CLOSED","updatedAt":"2026-11-09T10:00:00Z"}]}}}});
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
-        let mut v = v;
-        v["data"]["repository"]["open"]["nodes"][0]["reviewThreads"] = json!({"nodes":[{"id":"thread-id","path":"src/a.rs","line":12,"isResolved":false,"comments":{"nodes":[{"id":"comment-id","author":{"login":"reviewer"},"body":"Please fix"}]}},{"id":"bad"}]});
         let rows = parse_rows(&[v], now, 1).unwrap();
-        assert_eq!(rows[0].issue.review_threads.len(), 1);
-        assert_eq!(rows[0].issue.review_threads[0].id, "thread-id");
-        assert_eq!(rows[0].issue.review_threads[0].comments[0].id, "comment-id");
+        assert!(rows[0].issue.body.is_empty(), "slim rows carry no body");
+        assert!(rows[0].issue.review_threads.is_empty(), "slim rows carry no threads");
+        assert!(!rows[0].complete, "slim rows stay partial so open runs the full fetch");
         assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 7, 8]);
         assert_eq!(rows[0].issue.labels[0].name, "bug");
         assert_eq!(rows[0].statuses[0].1.as_deref(), Some("Todo"));
