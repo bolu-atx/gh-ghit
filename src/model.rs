@@ -25,6 +25,10 @@ pub struct Comment {
     pub created_at: String,
 }
 
+fn default_review_comment_state() -> String {
+    "SUBMITTED".to_string()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewComment {
@@ -33,6 +37,20 @@ pub struct ReviewComment {
     pub author: Option<Author>,
     #[serde(default)]
     pub body: String,
+    #[serde(default = "default_review_comment_state")]
+    pub state: String,
+}
+
+impl ReviewComment {
+    pub fn is_pending(&self) -> bool {
+        self.state.eq_ignore_ascii_case("PENDING")
+    }
+}
+
+impl ReviewThread {
+    pub fn has_pending(&self) -> bool {
+        self.comments.iter().any(|c| c.is_pending())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1049,6 +1067,28 @@ mod tests {
         assert_eq!((&*threads[0].comments[0].id, &*threads[0].comments[0].author.as_ref().unwrap().login, &*threads[0].comments[0].body), ("c2", "bob", "**fix**"));
         assert_eq!(threads[1].line, None);
         assert!(threads[1].is_resolved);
+    }
+
+    #[test]
+    fn review_comments_track_pending_state() {
+        let input = serde_json::json!({"reviewThreads":{"nodes":[
+            {"id":"t1","path":"a.rs","line":1,"isResolved":false,"comments":{"nodes":[
+                {"id":"c1","author":{"login":"ada"},"body":"draft","state":"PENDING"},
+                {"id":"c2","author":{"login":"bob"},"body":"live","state":"SUBMITTED"}
+            ]}},
+            {"id":"t2","path":"b.rs","line":2,"isResolved":false,"comments":{"nodes":[
+                {"id":"c3","author":{"login":"cam"},"body":"old"}
+            ]}}
+        ]}});
+        let threads = parse_review_threads(&input);
+        let pending = threads.iter().find(|t| t.id == "t1").unwrap();
+        assert!(pending.has_pending());
+        assert!(pending.comments[0].is_pending());
+        assert!(!pending.comments[1].is_pending());
+        // Old caches without a state field read as submitted.
+        let old = threads.iter().find(|t| t.id == "t2").unwrap();
+        assert!(!old.has_pending());
+        assert_eq!(old.comments[0].state, "SUBMITTED");
     }
 
     #[test]

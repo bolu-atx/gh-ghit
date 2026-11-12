@@ -679,7 +679,7 @@ pub async fn issue(
     let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
-    let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id author { login } body } } } }" } else { "" };
+    let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id author { login } body state } } } }" } else { "" };
     // Will-close counterparts: an issue lists its closing PRs, a PR lists
     // the issues it will close. Never body mentions.
     let paired_field = if is_pr {
@@ -1046,6 +1046,22 @@ pub async fn add_review_thread(repo: &str, number: u64, body: &str, path: &str, 
     let mutation = "mutation($prId:ID!, $path:String!, $line:Int!, $body:String!) { addPullRequestReviewThread(input:{pullRequestId:$prId, path:$path, line:$line, side:RIGHT, body:$body}) { thread { id } } }";
     let out = post_json(&client, &url, bearer, &json!({"query": mutation, "variables": {"prId": pr_id, "path": path, "line": line, "body": body}})).await?;
     graphql_data(&out)?.pointer("/addPullRequestReviewThread/thread/id").and_then(Value::as_str).ok_or("line comment failed: no thread returned")?;
+    Ok(())
+}
+
+/// Submit the viewer's pending review on a PR. `addPullRequestReviewThread`
+/// lands in a pending review by design, so line comments stay invisible
+/// until this runs with a COMMENT event.
+pub async fn submit_pending_review(repo: &str, number: u64, bearer: &str) -> Result<(), String> {
+    let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
+    let url = graphql_url();
+    let client = client();
+    let id_query = "query($owner:String!, $repo:String!, $num:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$num) { id } } }";
+    let id_value = post_json(&client, &url, bearer, &json!({"query": id_query, "variables": {"owner": owner, "repo": name, "num": number}})).await?;
+    let pr_id = graphql_data(&id_value)?.pointer("/repository/pullRequest/id").and_then(Value::as_str).ok_or("PR not found: pending submit needs a pull request")?;
+    let mutation = "mutation($prId:ID!) { submitPullRequestReview(input:{pullRequestId:$prId, event:COMMENT}) { pullRequestReview { id state } } }";
+    let out = post_json(&client, &url, bearer, &json!({"query": mutation, "variables": {"prId": pr_id}})).await?;
+    graphql_data(&out)?.pointer("/submitPullRequestReview/pullRequestReview/id").and_then(Value::as_str).ok_or("submit failed: no review returned")?;
     Ok(())
 }
 

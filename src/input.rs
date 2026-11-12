@@ -36,6 +36,14 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
 
+    // Generic confirm modal captures everything: a listed choice key
+    // picks it, Enter picks the first choice, Esc cancels. No other key
+    // (including quit) escapes the dialog.
+    if app.confirm_open() {
+        handle_confirm_key(app, key);
+        return;
+    }
+
     // Compose modal captures everything: typing edits the draft,
     // Ctrl+S sends, Esc discards.
     if app.compose_open() {
@@ -83,8 +91,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             KeyCode::Enter => {
                 if let Some(n) = board_selected_number(app) {
                     app.board = None;
-                    app.ensure_visited(n);
-                    app.load_issue(n, false);
+                    app.open_issue(n);
                 }
             }
             _ => {}
@@ -194,6 +201,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.open_selected_ref();
             }
         }
+        KeyCode::Char('J') if app.visual_diff() => app.jump_diff_file(1),
+        KeyCode::Char('K') if app.visual_diff() => app.jump_diff_file(-1),
         KeyCode::Down => {
             if graph_focused(app) {
                 app.graph_move(1);
@@ -246,6 +255,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('A') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.toggle_sort_dir(),
         KeyCode::Char('x') if matches!(app.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
         KeyCode::Char('s') if app.visual_diff() => app.toggle_diff_split(),
+        KeyCode::Char('S') => app.submit_pending_review(),
         KeyCode::Char(' ') if app.visual_diff() => app.toggle_diff_file(),
 
         KeyCode::Char(' ') => app.toggle_row_expansion(),
@@ -267,22 +277,97 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 }
 
+/// Generic confirm dialog keys: a listed choice key picks it, Enter
+/// picks the first choice, Esc cancels. Everything else is swallowed
+/// so no navigation or quit escapes the dialog.
+pub(crate) fn handle_confirm_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.confirm_cancel(),
+        KeyCode::Enter => app.confirm_choose(0),
+        KeyCode::Char(c) => {
+            let lower = c.to_ascii_lowercase();
+            if let Some(index) = app.confirm.as_ref()
+                .and_then(|d| d.choices.iter().position(|ch| ch.key == lower))
+            {
+                app.confirm_choose(index);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Compose modal keys: printable chars edit the draft, arrows move the
-/// cursor, Ctrl+S submits, Esc discards. Ctrl+C never quits here — a
-/// lost draft would be worse than an ignored key.
+/// cursor, and every common bash/readline chord works like a terminal
+/// prompt: `Ctrl+A/E` line ends, `Ctrl+B/F/P/N` steps, `Alt+B/F` word
+/// jumps, `Ctrl+K/U/W` kills plus `Alt+D`, `Ctrl+Y` yanks, `Ctrl+D/T`
+/// delete and transpose, `Home/End/Delete` included. `Ctrl+O` opens the
+/// draft in `$EDITOR`, `Ctrl+S` submits, `Esc` discards. The modal
+/// swallows every key — `Tab` (even as `Ctrl+I`) indents, `Ctrl+C`
+/// never quits — so nothing behind it fires while it is up. A lost
+/// draft would be worse than an ignored key, and control bytes must
+/// never leak into the markdown.
 pub(crate) fn handle_compose_key(app: &mut App, key: crossterm::event::KeyEvent) {
     use crossterm::event::{KeyCode, KeyModifiers};
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    // Tab is Tab whatever the modifiers say: some terminals report it
+    // as Ctrl+I, and the modal must indent, never walk history.
+    if matches!(key.code, KeyCode::Tab) {
+        app.compose_insert('\t');
+        return;
+    }
+    if ctrl && !alt {
         match key.code {
-            KeyCode::Char('s') => app.submit_compose(),
+            KeyCode::Char('s') | KeyCode::Char('S') => app.submit_compose(),
+            KeyCode::Char('o') | KeyCode::Char('O') => app.request_compose_editor(),
+            KeyCode::Char('a') | KeyCode::Char('A') => app.compose_home(),
+            KeyCode::Char('e') | KeyCode::Char('E') => app.compose_end(),
+            KeyCode::Char('b') | KeyCode::Char('B') => app.compose_step(-1),
+            KeyCode::Char('f') | KeyCode::Char('F') => app.compose_step(1),
+            KeyCode::Char('p') | KeyCode::Char('P') => app.compose_line(-1),
+            KeyCode::Char('n') | KeyCode::Char('N') => app.compose_line(1),
+            KeyCode::Char('h') | KeyCode::Char('H') => app.compose_backspace(),
+            KeyCode::Char('d') | KeyCode::Char('D') => app.compose_delete_forward(),
+            KeyCode::Char('k') | KeyCode::Char('K') => app.compose_kill_to_end(),
+            KeyCode::Char('u') | KeyCode::Char('U') => app.compose_kill_to_start(),
+            KeyCode::Char('w') | KeyCode::Char('W') => app.compose_delete_word_back(),
+            KeyCode::Char('y') | KeyCode::Char('Y') => app.compose_yank(),
+            KeyCode::Char('t') | KeyCode::Char('T') => app.compose_transpose(),
+            KeyCode::Char('m') | KeyCode::Char('M') | KeyCode::Char('j') | KeyCode::Char('J') => {
+                app.compose_insert('\n')
+            }
+            // Ctrl+I is Tab on terminals without the kitty protocol;
+            // the global history path matches both forms, so this does.
+            KeyCode::Char('i') | KeyCode::Char('I') => app.compose_insert('\t'),
+            KeyCode::Enter => app.compose_insert('\n'),
+            // Every other control chord is swallowed: Ctrl+C never
+            // quits here and control bytes never reach the draft.
             _ => {}
         }
+        return;
+    }
+    if alt && !ctrl {
+        match key.code {
+            KeyCode::Char('b') | KeyCode::Char('B') => app.compose_word_back(),
+            KeyCode::Char('f') | KeyCode::Char('F') => app.compose_word_forward(),
+            KeyCode::Char('d') | KeyCode::Char('D') => app.compose_delete_word_forward(),
+            KeyCode::Backspace => app.compose_delete_word_back(),
+            _ => {}
+        }
+        return;
+    }
+    if ctrl && alt {
+        // Meta-control chords edit nothing: swallow them so they
+        // neither type nor escape the modal.
         return;
     }
     match key.code {
         KeyCode::Esc => app.discard_compose(),
         KeyCode::Enter => app.compose_insert('\n'),
         KeyCode::Backspace => app.compose_backspace(),
+        KeyCode::Delete => app.compose_delete_forward(),
+        KeyCode::Home => app.compose_home(),
+        KeyCode::End => app.compose_end(),
         KeyCode::Left => app.compose_step(-1),
         KeyCode::Right => app.compose_step(1),
         KeyCode::Up => app.compose_line(-1),
@@ -306,7 +391,7 @@ pub(crate) fn graph_focused(app: &App) -> bool {
 fn move_in_list(app: &mut App, order: Vec<u64>, delta: isize) {
     let base = app.hover.filter(|n| order.contains(n)).or(app.current);
     if let Some(n) = core::next_in_order(&order, base, delta) {
-        app.show_issue(n);
+        app.request_issue(n);
     }
 }
 
@@ -395,7 +480,7 @@ fn jump_search_hit(app: &mut App, delta: isize) {
         return;
     }
     if let Some(n) = core::next_in_order(&hits, app.current, delta) {
-        app.show_issue(n);
+        app.request_issue(n);
     }
 }
 
@@ -677,7 +762,11 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
     if app.auth_prompt.is_some() { return; }
+    if app.confirm_open() { return; }
     if app.shortcuts_open { return; }
+    // The compose modal steals all mouse focus: clicks and wheel never
+    // reach the panes behind it, so the draft and selection survive.
+    if app.compose_open() { return; }
     if board_open(app) {
         handle_board_mouse(app, m);
         return;
@@ -744,8 +833,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                     if let Some(n) = board_selected_number(app) {
                         app.board = None;
                         app.board_expanded = None;
-                        app.ensure_visited(n);
-                        app.load_issue(n, false);
+                        app.open_issue(n);
                     }
                 } else {
                     app.board_col = c;
@@ -823,7 +911,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         if drag {
             app.hover = if Some(n) == app.current { None } else { Some(n) };
         } else {
-            app.show_issue(n);
+            app.request_issue(n);
         }
         if let Some(rect) = flash {
             app.note_click(rect);
@@ -859,7 +947,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         if drag {
             app.hover = if Some(n) == app.current { None } else { Some(n) };
         } else {
-            app.show_issue(n);
+            app.request_issue(n);
         }
         if let Some(rect) = flash {
             app.note_click(rect);
@@ -889,8 +977,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         if drag {
             app.ref_highlight = Some(n);
         } else if app.ref_paired.contains(&n) {
-            app.ensure_visited(n);
-            app.show_issue(n);
+            app.open_issue(n);
         } else {
             app.select_ref(n);
         }
@@ -903,7 +990,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         if !drag {
             app.pane = Pane::Main;
             let rel = x.saturating_sub(app.tabs_area.x);
-            app.set_tab(if rel < 12 { Tab::Details } else { Tab::Visual });
+            app.set_tab(if rel < crate::app::TAB_SPLIT_X { Tab::Details } else { Tab::Visual });
             app.note_click(Rect::new(x, y, 1, 1));
         }
         return;
@@ -959,8 +1046,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             let links = crate::model::links_in_line(&line, repo.as_deref());
             match crate::model::nearest_link(&line, &links, rel_x) {
                 Some(crate::model::LinkTarget::Issue(n)) => {
-                    app.ensure_visited(n);
-                    app.load_issue(n, false);
+                    app.open_issue(n);
                 }
                 Some(crate::model::LinkTarget::Url(url)) => open_url(&url, app),
                 None => {}
@@ -1225,6 +1311,10 @@ mod tests {
         crossterm::event::KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
+    fn alt_key(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::ALT)
+    }
+
     #[test]
     fn ctrl_o_and_ctrl_i_walk_history() {
         let mut app = App::new(Some("o/r".to_string()));
@@ -1302,6 +1392,229 @@ mod tests {
         handle_key(&mut app, ctrl_key(KeyCode::Char('c')));
         assert!(!app.quit);
         assert!(app.compose_open(), "draft survives");
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            handle_key(app, plain_key(KeyCode::Char(ch)));
+        }
+    }
+
+    fn compose_cursor(app: &App) -> usize {
+        app.compose.as_ref().expect("compose").cursor
+    }
+
+    #[test]
+    fn compose_emacs_home_end_and_char_steps() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "hello");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
+        assert_eq!(compose_cursor(&app), 0, "ctrl-a jumps to line start");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('f')));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('f')));
+        assert_eq!(compose_cursor(&app), 2, "ctrl-f steps forward");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('e')));
+        assert_eq!(compose_cursor(&app), 5, "ctrl-e jumps to line end");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('b')));
+        assert_eq!(compose_cursor(&app), 4, "ctrl-b steps back");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('p')));
+        assert_eq!(compose_cursor(&app), 4, "ctrl-p on one line stays put");
+    }
+
+    #[test]
+    fn compose_word_jumps() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "foo bar");
+        handle_key(&mut app, alt_key(KeyCode::Char('b')));
+        assert_eq!(compose_cursor(&app), 4, "alt-b jumps to the word start");
+        handle_key(&mut app, alt_key(KeyCode::Char('b')));
+        assert_eq!(compose_cursor(&app), 0, "alt-b again jumps to the first word");
+        handle_key(&mut app, alt_key(KeyCode::Char('f')));
+        assert_eq!(compose_cursor(&app), 3, "alt-f jumps to the word end");
+        handle_key(&mut app, alt_key(KeyCode::Char('f')));
+        assert_eq!(compose_cursor(&app), 7, "alt-f again jumps past the last word");
+    }
+
+    #[test]
+    fn compose_kill_ring_kills_and_yanks() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "hello world");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('w')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "hello ");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "hello world");
+        assert_eq!(compose_cursor(&app), 11);
+        handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('k')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "hello world");
+    }
+
+    #[test]
+    fn compose_alt_d_deletes_the_word_ahead() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "foo bar");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
+        handle_key(&mut app, alt_key(KeyCode::Char('d')));
+        assert_eq!(app.compose.as_ref().unwrap().body, " bar");
+        assert_eq!(compose_cursor(&app), 0, "cursor stays put");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "foo bar");
+    }
+
+    #[test]
+    fn compose_ctrl_u_kills_to_line_start() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "hello");
+        handle_key(&mut app, plain_key(KeyCode::Left));
+        handle_key(&mut app, plain_key(KeyCode::Left));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('u')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "lo");
+        assert_eq!(compose_cursor(&app), 0);
+    }
+
+    #[test]
+    fn compose_ctrl_d_deletes_the_char_ahead() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "abc");
+        handle_key(&mut app, plain_key(KeyCode::Left));
+        handle_key(&mut app, plain_key(KeyCode::Left));
+        handle_key(&mut app, ctrl_key(KeyCode::Char('d')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "ac");
+        assert_eq!(compose_cursor(&app), 1);
+    }
+
+    #[test]
+    fn compose_ctrl_t_transposes_chars() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "ab");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('t')));
+        assert_eq!(app.compose.as_ref().unwrap().body, "ba");
+    }
+
+    #[test]
+    fn compose_home_end_and_delete_keys() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "hi");
+        handle_key(&mut app, plain_key(KeyCode::Home));
+        assert_eq!(compose_cursor(&app), 0, "home jumps to line start");
+        handle_key(&mut app, plain_key(KeyCode::End));
+        assert_eq!(compose_cursor(&app), 2, "end jumps to line end");
+        handle_key(&mut app, plain_key(KeyCode::Left));
+        handle_key(&mut app, plain_key(KeyCode::Delete));
+        assert_eq!(app.compose.as_ref().unwrap().body, "h");
+    }
+
+    #[test]
+    fn compose_ctrl_i_inserts_tab_and_never_walks_history() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "a");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
+        type_text(&mut app, "b");
+        assert_eq!(app.compose.as_ref().unwrap().body, "a\tb");
+        assert_eq!(app.current, Some(7), "tab never leaves the modal");
+        assert!(app.compose_open());
+    }
+
+    #[test]
+    fn compose_ctrl_o_arms_editor_or_names_a_missing_editor() {
+        // Serialized with every other env-mutating test process-wide.
+        let _env = crate::cache::test_env_lock().lock().unwrap();
+        let prior = std::env::var("EDITOR").ok();
+        std::env::remove_var("EDITOR");
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        type_text(&mut app, "draft");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
+        assert!(!app.editor_requested, "nothing to run without an editor");
+        assert!(app.message.contains("EDITOR"), "toast names the fix: {}", app.message);
+        assert!(app.compose_open(), "draft survives");
+
+        std::env::set_var("EDITOR", "true");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
+        assert!(app.editor_requested, "ctrl-o arms the editor run");
+        assert!(app.compose_open(), "draft survives until the run lands");
+        match prior {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+    }
+
+    fn pending_dialog_app() -> App {
+        let mut app = compose_app();
+        app.data.insert(9, sample(9));
+        app.statuses.insert(9, vec![]);
+        app.visited.push(9);
+        let d = app.data.get_mut(&7).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![crate::model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(1),
+            comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
+            ..Default::default()
+        }];
+        app.request_issue(9);
+        assert!(app.confirm_open(), "guard trips");
+        app
+    }
+
+    #[test]
+    fn confirm_dialog_keys_submit_discard_and_cancel() {
+        // Discard navigates without submitting.
+        let mut app = pending_dialog_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('d')));
+        assert!(!app.confirm_open());
+        assert_eq!(app.current, Some(9));
+        assert!(app.review_submitting.is_empty());
+        // Submit navigates and submits.
+        let mut app = pending_dialog_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('s')));
+        assert!(!app.confirm_open());
+        assert_eq!(app.current, Some(9));
+        assert!(app.review_submitting.contains(&7));
+        // Enter picks the first choice (Submit).
+        let mut app = pending_dialog_app();
+        handle_key(&mut app, plain_key(KeyCode::Enter));
+        assert!(!app.confirm_open());
+        assert!(app.review_submitting.contains(&7));
+        // Esc cancels: no navigation, nothing sent.
+        let mut app = pending_dialog_app();
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.confirm_open());
+        assert_eq!(app.current, Some(7));
+        assert!(app.review_submitting.is_empty());
+        // Quit never escapes the dialog.
+        let mut app = pending_dialog_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('q')));
+        assert!(!app.quit);
+        assert!(app.confirm_open());
+    }
+
+    #[test]
+    fn shift_s_submits_pending_review() {
+        let mut app = compose_app();
+        let d = app.data.get_mut(&7).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![crate::model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(1),
+            comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
+            ..Default::default()
+        }];
+        handle_key(&mut app, plain_key(KeyCode::Char('S')));
+        assert!(app.review_submitting.contains(&7), "S starts the submit");
     }
 
     fn step_app() -> App {

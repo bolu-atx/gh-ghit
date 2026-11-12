@@ -142,7 +142,46 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_auth(f, f.area(), app);
     }
+    if app.confirm.is_some() {
+        dim_background(f, 0.35);
+        render_confirm(f, f.area(), app);
+    }
     paint_click_flash(f, app);
+}
+
+/// Generic confirm modal: title, message lines, and one hint segment
+/// per choice (`s Submit them · d Discard`), plus `esc Cancel`. The
+/// renderer never interprets the kind — choices carry their own keys
+/// and labels, so new specializations reuse it untouched.
+fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, base, ink, muted, paper};
+    let Some(d) = app.confirm.as_ref() else { return };
+    let popup = centered(area, 64, 30);
+    f.render_widget(Clear, popup);
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(amber()))
+        .style(base())
+        .title(format!(" {} ", d.title));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let mut lines: Vec<Line> = d.body.iter().map(|l| {
+        Line::from(Span::styled(l.clone(), Style::new().bg(ink()).fg(paper())))
+    }).collect();
+    lines.push(Line::from(""));
+    let mut hints = vec![];
+    for (i, choice) in d.choices.iter().enumerate() {
+        if i > 0 {
+            hints.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+        }
+        hints.push(Span::styled(format!("{} {}", choice.key, choice.label), Style::new().bg(ink()).fg(amber()).bold()));
+    }
+    hints.push(Span::styled(" · esc Cancel", Style::new().bg(ink()).fg(muted())));
+    lines.push(Line::from(hints));
+    lines.push(Line::from(Span::styled(
+        "Enter picks the first choice",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    f.render_widget(Paragraph::new(lines).style(base()), inner);
 }
 
 /// Click flash: invert the last-clicked rect for `CLICK_FLASH_MS` so the
@@ -242,7 +281,8 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open · f filter", "",
-        "Diff", "  ↑/↓ lines · space expand · s split", "",
+        "Diff", "  ↑/↓ lines · J/K files · space expand · s split · S submit pending",
+        "Comment  c open · emacs keys · ctrl-o $EDITOR · ctrl-s send",
         "Esc / ? / q close",
     ];
     // Credit footer (display-only: the modal swallows all mouse input,
@@ -584,13 +624,15 @@ fn section_list(
             ))));
             continue;
         };
-        // The selection marker renders on the focused pane for the
-        // active issue only: `current` is the single active item, so the
-        // wheel hover never draws the active marker. Hover stays a
-        // transient preview in state (j/k continue from it); the
-        // ListState cursor underneath is untouched, so tabbing away and
-        // back restores the exact row and scroll position.
-        let sel = focused && (app.current == Some(*n) || mark == Some(*n));
+        // The selection marker follows `current` on every pane: the
+        // sidebar stays coupled to what the main pane displays, even
+        // when Main holds focus (e.g. the Diff tab). Focus still shows
+        // through the border, title, and row shade. The wheel hover
+        // never draws the marker. Hover stays a transient preview in
+        // state (j/k continue from it); the ListState cursor underneath
+        // is untouched, so tabbing away and back restores the exact row
+        // and scroll position.
+        let sel = app.current == Some(*n) || mark == Some(*n);
         let marker = if sel { "█ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
@@ -776,7 +818,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
     // wraps exactly as before.
     let mut lines = vec![Line::from(Span::styled(
         format!(
-            "\u{f15c} {} · {} (s: {}) · ↑↓ file, space fold ❯ {}",
+            "\u{f15c} {} · {} (s: {}) · ↑↓ lines · J/K files · space fold ❯ {}",
             model::diff_summary(files),
             if split { "split" } else { "unified" },
             if split { "unified" } else { "split" },
@@ -897,6 +939,84 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
     ratatui::text::Text::from(lines)
 }
 
+/// Scan cap for `J`/`K` file jumps: windows probed in one direction until
+/// the target header shows. Past this many wrapped rows the jump falls back
+/// to visible-header/page motion in `App::jump_diff_file`.
+const JUMP_SCAN_ROWS: u32 = 20000;
+
+/// Absolute scroll offset of file `fi`'s header, measured by rendering the
+/// same `diff_text` through the same `Paragraph` wrap the body uses, so a
+/// `J`/`K` landing matches the live frame exactly. Searches outward from the
+/// current viewport toward `delta` in small windows; `None` when the body
+/// never rendered, the file is out of range, its header cannot fit on one
+/// row (neither this probe nor the live render could match it), or the cap
+/// hits.
+pub(crate) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u16> {
+    if delta == 0 {
+        return None;
+    }
+    let n = app.current?;
+    let files = app.diffs.get(&n)?;
+    if fi >= files.len().min(MAX_DIFF_FILES) {
+        return None;
+    }
+    let width = u32::from(app.body_area.width);
+    let height = u32::from(app.body_area.height);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    // A header row leads with `▸ `/`▾ ` plus an icon; when even the bare
+    // filename cannot fit beside them, the header never matches.
+    if files.get(fi).map(|f| f.filename.len() + 5 > width as usize).unwrap_or(true) {
+        return None;
+    }
+    let d = app.data.get(&n)?;
+    let text = diff_text(app, d, width as usize);
+    use ratatui::buffer::Buffer;
+    use ratatui::widgets::Widget;
+    let window = height.max(1) * 2;
+    let area = Rect::new(0, 0, width as u16, window.min(u16::MAX as u32) as u16);
+    let start = u32::from(app.scroll);
+    let mut scanned: u32 = 0;
+    let mut k: u32 = 0;
+    loop {
+        let s = if delta > 0 {
+            start.saturating_add(k.saturating_mul(window))
+        } else {
+            start.saturating_sub(k.saturating_mul(window))
+        };
+        let mut buf = Buffer::empty(area);
+        Paragraph::new(text.clone())
+            .wrap(Wrap { trim: false })
+            .scroll((s.min(u16::MAX as u32) as u16, 0))
+            .render(area, &mut buf);
+        let mut blank = true;
+        for y in 0..window as u16 {
+            let mut row = String::new();
+            for x in 0..width as u16 {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            if !row.trim().is_empty() {
+                blank = false;
+            }
+            if model::header_file_index(&row, files) == Some(fi) {
+                return Some(s.saturating_add(u32::from(y)) as u16);
+            }
+        }
+        if delta < 0 && s == 0 {
+            return None;
+        }
+        if delta > 0 && blank {
+            return None;
+        }
+        scanned = scanned.saturating_add(window);
+        if scanned > JUMP_SCAN_ROWS {
+            return None;
+        }
+        k = k.saturating_add(1);
+    }
+}
+
 fn append_review_threads(lines: &mut Vec<Line<'static>>, d: &IssueData, path: &str) {
     for thread in d.review_threads.iter().filter(|thread| thread.path == path) {
         append_review_thread(lines, thread, false);
@@ -908,10 +1028,12 @@ fn append_review_thread(lines: &mut Vec<Line<'static>>, thread: &model::ReviewTh
     let line = thread.line.map(|n| format!("line {n}")).unwrap_or_else(|| "line unavailable".to_string());
     let state = if thread.is_resolved { "resolved" } else { "unresolved" };
     let color = if thread.is_resolved { crate::theme::muted() } else { crate::theme::amber() };
-    lines.push(Line::from(Span::styled(format!("{indent}\u{f075} {line} · {state}"), Style::new().bg(crate::theme::ink()).fg(color).bold())));
+    let pending = if thread.has_pending() { " · pending" } else { "" };
+    lines.push(Line::from(Span::styled(format!("{indent}\u{f075} {line} · {state}{pending}"), Style::new().bg(crate::theme::ink()).fg(color).bold())));
     for comment in &thread.comments {
         let author = comment.author.as_ref().map(|a| a.login.as_str()).unwrap_or("unknown");
-        lines.push(Line::from(Span::styled(format!("{indent}  {author}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::paper()).bold())));
+        let author_label = if comment.is_pending() { format!("{author} · pending") } else { author.to_string() };
+        lines.push(Line::from(Span::styled(format!("{indent}  {author_label}"), Style::new().bg(crate::theme::ink()).fg(crate::theme::paper()).bold())));
         lines.extend(crate::theme::render_markdown(&comment.body).lines.into_iter().map(|mut line| {
             line.spans.insert(0, Span::raw(format!("{indent}  ")));
             Line::from(line.spans.into_iter().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>())
@@ -1249,19 +1371,19 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         highlight_mentions(&mut header, n, app.repo_key().as_deref());
     }
     let header = wrap_lines(header, inner_w);
-    // The paired line is display-only: it renders with the header block but
-    // stays out of `header_rows`, so clicks never navigate from it.
+    // The paired line renders with the header block and joins
+    // `header_rows`, so clicking `#N` navigates to the counterpart.
     let paired = match (app.tab, app.current.and_then(|n| app.data.get(&n))) {
         (crate::app::Tab::Details, Some(d)) => paired_line(d)
             .map(|line| wrap_lines(vec![line], inner_w))
             .unwrap_or_default(),
         _ => vec![],
     };
+    let header: Vec<Line> = header.into_iter().chain(paired).collect();
     app.header_rows = header
         .iter()
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
         .collect();
-    let header: Vec<Line> = header.into_iter().chain(paired).collect();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1312,11 +1434,10 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         _ => "Graph",
     };
     // Nerd Font glyphs: file-text, comments, code. Labels stay so a
-    // missing font degrades to a tofu box plus readable text.
-    let tabs = Tabs::new(vec![
-        format!("\u{f15c}  Details"),
-        format!("\u{f121}  {visual_label}"),
-    ])
+    // missing font degrades to a tofu box plus readable text. The
+    // `1`/`2` prefixes mirror the Details/Visual keys; the click
+    // router splits on the first title via `TAB_SPLIT_X`.
+    let tabs = Tabs::new(crate::app::tab_titles(visual_label).to_vec())
         .select(match app.tab { Tab::Details => 0, Tab::Visual => 1 })
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
@@ -1379,6 +1500,15 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// dots read as motion at a glance and stay one cell wide.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// Right-side shortcut hints, longest first. `render_bar` picks the
+/// longest tier that fits the space left by the repo/status/loading
+/// content, so narrow terminals keep content and shed hints instead
+/// of squeezing either side.
+const BAR_HINT_TIERS: [&str; 2] = [
+    "q quit · tab panes · j/k move · : open · b board · ? shortcuts",
+    "q quit · ? shortcuts",
+];
+
 fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, base, ink, muted, paper};
     if app.focus == crate::app::Focus::Bar {
@@ -1403,11 +1533,12 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         f.set_cursor_position((area.x + (2 + text.len() as u16).min(area.width.saturating_sub(1)), area.y));
         return;
     }
-    // Version-only brand: no commit-SHA wiring exists, and a build.rs
-    // just for the SHA would over-engineer the bar.
-    let hint = format!("? for shortcuts · ghit v{}", env!("CARGO_PKG_VERSION"));
-    let hint_width = hint.chars().count() as u16;
-    let left_width = area.width.saturating_sub(hint_width + 1);
+    // Minimal shortcut hints, responsive: the longest tier that fits
+    // the space left by the content wins. The spinner truncates
+    // against the smallest tier, the most content-favoring reserve,
+    // so live fetch feedback never loses to static hints.
+    let short_hint = BAR_HINT_TIERS[BAR_HINT_TIERS.len() - 1].chars().count() as u16;
+    let left_width = if area.width > short_hint + 1 { area.width - short_hint - 1 } else { area.width };
     let mut segments: Vec<(String, bool)> = Vec::new();
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
         segments.push((format!("\u{f1d3} {repo}"), false));
@@ -1421,8 +1552,8 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     // Loading spinner between project and message: muted, with
     // determinate `n/m` where known. Explicit messages win, so the
     // derivation already hides this under one; empty collapses per the
-    // existing rule. The label truncates first so the `?` hint never
-    // shrinks, keeping the 80-cell bar intact.
+    // existing rule. The label truncates first so the short hint
+    // never shrinks, keeping the 80-cell bar intact.
     let loads = crate::core::loading(&app.fetch_state());
     if !loads.is_empty() {
         let label = crate::core::loading_label(&loads);
@@ -1437,14 +1568,35 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     if app.message_visible() && !app.message.is_empty() {
         segments.push((format!("\u{f071} {}", app.message), true));
     }
+    let left_used: usize =
+        segments.iter().map(|(s, _)| s.chars().count()).sum::<usize>() + segments.len().saturating_sub(1) * 3;
+    let left_shown = (left_used as u16).min(area.width);
+    // Content wins: a tier only shows when it fits whole beside it,
+    // with one cell of breathing room. Long messages and heavy
+    // fetch labels evict the full set first, then the short one.
+    let tier = BAR_HINT_TIERS.iter().find(|h| {
+        let w = h.chars().count() as u16;
+        left_shown + 1 + w <= area.width
+    });
     let mut spans = Vec::new();
     for (i, (text, accent)) in segments.into_iter().enumerate() {
         if i > 0 { spans.push(Span::styled(" · ", Style::new().fg(muted()))); }
         spans.push(Span::styled(text, Style::new().fg(if accent { amber() } else { paper() })));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)).style(base()), Rect::new(area.x, area.y, left_width, area.height));
-    if area.width >= hint_width {
-        f.render_widget(Paragraph::new(hint).style(Style::new().bg(ink()).fg(muted())), Rect::new(area.x + area.width - hint_width, area.y, hint_width, area.height));
+    // The left rect stretches to the hint so the bar background
+    // stays continuous; the content itself never reaches past
+    // `left_shown`, the rest is `base()` fill.
+    let left_rect_w = match tier {
+        Some(hint) => area.width.saturating_sub(hint.chars().count() as u16 + 1),
+        None => left_shown,
+    };
+    f.render_widget(Paragraph::new(Line::from(spans)).style(base()), Rect::new(area.x, area.y, left_rect_w, area.height));
+    if let Some(hint) = tier {
+        let w = hint.chars().count() as u16;
+        f.render_widget(
+            Paragraph::new(*hint).style(Style::new().bg(ink()).fg(muted())),
+            Rect::new(area.x + area.width - w, area.y, w, area.height),
+        );
     }
 }
 
@@ -1808,8 +1960,9 @@ fn card_assignee(c: &model::BoardItem) -> Option<String> {
 /// Comment compose modal (`c`): textarea over a rendered markdown
 /// preview through the shared `GhitSheet` stylesheet. The draft shows a
 /// `▌` cursor marker; while the background submit runs, the title reads
-/// Sending and editing locks. Footer names the keys; resolving threads
-/// is out of scope and never offered here.
+/// Sending and editing locks. The modal steals all keyboard and mouse
+/// focus, edits with bash/readline chords, and offers `$EDITOR` on
+/// `Ctrl+O`; resolving threads is out of scope and never offered here.
 fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, ink, muted, base, paper};
     let Some(c) = app.compose.as_ref() else { return };
@@ -1866,9 +2019,17 @@ fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Paragraph::new(preview).style(base()).block(Block::default().title(Span::styled(" preview ", Style::new().bg(ink()).fg(muted())))),
         chunks[1],
     );
+    let editor_hint = crate::app::App::compose_editor()
+        .map(|e| format!("ctrl-o {e}"))
+        .unwrap_or_else(|| "ctrl-o $EDITOR".to_string());
+    let footer = if c.sending {
+        "sending… esc closes, the send still lands".to_string()
+    } else {
+        format!("emacs keys · tab indents · {editor_hint} · ctrl-s send · esc discard")
+    };
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            if c.sending { "sending… esc closes, the send still lands" } else { "type to write · ctrl-s send · esc discard" },
+            footer,
             Style::new().bg(ink()).fg(muted()),
         ))),
         chunks[2],
@@ -2077,10 +2238,11 @@ mod render_smoke {
         app.section_rx = Some(rx);
         let _ = tx.send(crate::github::SectionEvent::Progress { done: 120, total: 500 });
         crate::app::poll_sections(&mut app);
-        // Narrow render must not panic, and the `?` hint always survives:
+        // Narrow render must not panic, and the short hint always survives:
         // the loading label truncates first, never the hint.
         let text = frame_text_narrow(&mut app, 80);
-        assert!(text.contains("? for shortcuts"), "hint survives: {text}");
+        assert!(text.contains("q quit · ? shortcuts"), "hint survives: {text}");
+        assert!(!text.contains("b board"), "full set drops under load: {text}");
         assert!(text.contains("⠋"), "spinner shows: {text}");
     }
 
@@ -2432,7 +2594,8 @@ mod render_smoke {
         assert!(text.contains("█"), "focused pane marks its row");
         let marker = buf.content().iter().find(|c| c.symbol() == "█").expect("marker cell");
         assert_eq!(marker.bg, crate::theme::code_bg(), "marked row carries the shade");
-        // Tab away: marker and color go quiet, border thins, cursor stays.
+        // Tab away: border thins and title quiets, the marker stays on
+        // the active row, cursor stays.
         handle_key(&mut app, key(KeyCode::Tab));
         assert_eq!(app.pane, Pane::PRs);
         assert_eq!(app.current, Some(7));
@@ -2442,7 +2605,7 @@ mod render_smoke {
         assert_eq!(buf[(40, 0)].symbol(), "─", "inactive pane thins its border");
         assert_eq!(title_fg(&buf, 0, "Issues"), Some(crate::theme::muted()));
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(!text.contains("█"), "blurred panes drop the marker");
+        assert!(text.contains("█"), "blurred pane keeps the active marker");
         // Tab back: everything returns on the same row.
         handle_key(&mut app, key(KeyCode::Tab));
         assert_eq!(app.pane, Pane::Issues);
@@ -2452,6 +2615,34 @@ mod render_smoke {
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("█"), "marker returns with focus");
         assert_eq!(app.current, Some(7));
+    }
+
+    #[test]
+    fn main_focus_keeps_sidebar_marker_for_current() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        // Clicking the Diff/Visual tab moves focus to Main; the sidebar
+        // marker must stay coupled to what the main pane displays.
+        app.pane = Pane::Main;
+        assert_eq!(app.current, Some(7));
+        let text = sidebar_text(&mut app);
+        assert!(text.contains("█"), "main focus keeps the active marker");
+        // Same for a PR in the lower pane.
+        app.show_issue(9);
+        app.pane = Pane::Main;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let area = app.side_pr_area;
+        let buf = terminal.backend().buffer().clone();
+        let mut pr_text = String::new();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                pr_text.push_str(buf[(x, y)].symbol());
+            }
+            pr_text.push('\n');
+        }
+        assert!(pr_text.contains("█"), "PR marker survives main focus");
     }
 
     #[test]
@@ -2552,7 +2743,7 @@ mod render_smoke {
     }
 
     #[test]
-    fn details_header_shows_display_only_paired_line() {
+    fn details_header_shows_clickable_paired_line() {
         let mut app = loaded_app();
         let text = frame_text(&mut app);
         assert!(!text.contains("Paired"), "no line without pairs: {text}");
@@ -2562,9 +2753,26 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("Paired"), "{text}");
         assert!(text.contains("#9 MERGED"), "{text}");
-        // Display-only: the line renders with the header but never takes
-        // part in header click resolution.
-        assert!(!app.header_rows.iter().any(|l| l.contains("Paired")), "{:?}", app.header_rows);
+        // Clickable: the line joins header click resolution so `#9`
+        // navigates to the counterpart.
+        assert!(app.header_rows.iter().any(|l| l.contains("Paired")), "{:?}", app.header_rows);
+    }
+
+    #[test]
+    fn paired_header_click_opens_counterpart_in_main() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().paired =
+            vec![PairedRef { number: 9, state: "MERGED".to_string() }];
+        app.show_issue(7);
+        let _ = frame_text(&mut app);
+        let idx = app.header_rows.iter().position(|l| l.contains("Paired")).expect("paired row");
+        let col = app.header_area.x + app.header_rows[idx].find("#9").expect("paired ref col") as u16;
+        let row_y = app.header_area.y + idx as u16;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, row_y));
+        assert_eq!(app.current, Some(9), "clicking the paired header opens the counterpart");
+        assert_eq!(app.pane, Pane::Main, "counterpart opens in the main tab");
+        assert!(matches!(app.focus, crate::app::Focus::Main));
     }
 
     #[test]
@@ -2998,7 +3206,7 @@ mod render_smoke {
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
         handle_mouse(
             &mut app,
-            click(MouseEventKind::Down(MouseButton::Left), tx + 12, y),
+            click(MouseEventKind::Down(MouseButton::Left), tx + 14, y),
         );
         assert_eq!(app.tab, Tab::Visual);
         handle_mouse(
@@ -3142,7 +3350,7 @@ mod render_smoke {
     }
 
     #[test]
-    fn main_pane_keeps_a_single_title_line_with_footer_brand() {
+    fn main_pane_keeps_a_single_title_line_with_hint() {
         let mut app = loaded_app();
         app.data.get_mut(&7).unwrap().title = "Quasar title nine".to_string();
         let text = frame_text(&mut app);
@@ -3154,9 +3362,10 @@ mod render_smoke {
             "header starts at meta: {:?}",
             app.header_rows
         );
-        let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
-        assert!(text.contains(&brand), "footer brand: {text}");
-        assert!(text.contains("? for shortcuts"), "hint survives: {text}");
+        assert!(
+            text.contains("q quit · tab panes · j/k move · : open · b board · ? shortcuts"),
+            "full hints: {text}"
+        );
     }
 
     #[test]
@@ -3289,12 +3498,42 @@ mod render_smoke {
             body: "reply".into(),
             cursor: 5,
             sending: false,
+            kill: String::new(),
         });
         let text = frame_text(&mut app);
         assert!(text.contains("Reply"), "{text}");
         assert!(text.contains("reply"), "{text}");
         handle_key(&mut app, key(KeyCode::Esc));
         assert!(!app.compose_open());
+    }
+
+    #[test]
+    fn compose_footer_names_the_editor_key() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('c')));
+        let text = frame_text(&mut app);
+        assert!(text.contains("ctrl-o"), "footer offers the external editor: {text}");
+        assert!(text.contains("ctrl-s"), "footer keeps the send key: {text}");
+    }
+
+    #[test]
+    fn compose_modal_steals_mouse_focus() {
+        let mut app = loaded_app();
+        app.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+        handle_key(&mut app, key(KeyCode::Char('c')));
+        assert!(app.compose_open());
+        let _ = frame_text(&mut app);
+        let row = app
+            .body_rows
+            .iter()
+            .position(|l| l.contains("#9"))
+            .expect("ref visible");
+        let (x, y) = (app.body_area.x + 2, app.body_area.y + row as u16);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+        assert_eq!(app.current, Some(7), "clicks never leak past the modal");
+        assert!(app.compose_open(), "the draft survives the click");
+        handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 60, 20));
+        assert_eq!(app.scroll, 0, "wheel never scrolls behind the modal");
     }
 
     #[test]
@@ -3328,6 +3567,52 @@ mod render_smoke {
             assert!(text.find("+new").unwrap() < text.find("line 1").unwrap(), "{text}");
             assert!(text.contains('\u{f075}') && text.contains("inline note"), "{text}");
         }
+    }
+
+    #[test]
+    fn pending_nav_dialog_renders_all_three_actions() {
+        let mut app = loaded_app();
+        app.current = Some(9);
+        let d = app.data.get_mut(&9).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![crate::model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(1),
+            comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
+            ..Default::default()
+        }];
+        app.open_pending_nav(crate::app::NavIntent::Issue(7));
+        let text = frame_text(&mut app);
+        assert!(text.contains("Unsubmitted comments"), "{text}");
+        assert!(text.contains("Submit them") && text.contains("Discard") && text.contains("Cancel"), "{text}");
+        assert!(text.contains("#9"), "{text}");
+    }
+
+    #[test]
+    fn pending_review_threads_show_a_pending_pill() {
+        use crate::model::{DiffFile, ReviewThread, ReviewComment};
+        let mut app = loaded_app();
+        let mut pr = diff_pr(9);
+        pr.review_threads = vec![
+            ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(1), comments: vec![
+                ReviewComment { id: "c".into(), body: "draft note".into(), state: "PENDING".into(), ..Default::default() },
+            ], ..Default::default() },
+            ReviewThread { id: "t2".into(), path: "a.rs".into(), line: Some(8), comments: vec![
+                ReviewComment { id: "d".into(), body: "live note".into(), ..Default::default() },
+            ], ..Default::default() },
+        ];
+        app.data.insert(9, pr);
+        app.show_issue(9);
+        app.diffs.insert(9, vec![DiffFile { filename: "a.rs".into(), patch: "@@ -1 +1 @@\n-old\n+new".into(), ..Default::default() }]);
+        app.expanded_files.insert((9, "a.rs".into()));
+        app.set_tab(Tab::Visual);
+        app.confirm_choose(1);
+        assert!(!app.confirm_open(), "discard keeps the test on the Diff tab");
+        let text = frame_text(&mut app);
+        assert!(text.contains("line 1 · unresolved · pending"), "{text}");
+        assert!(text.contains("pending") && text.contains("draft note"), "{text}");
+        assert!(!text.contains("line 8 · unresolved · pending"), "{text}");
     }
 
     #[test]
@@ -3456,6 +3741,54 @@ mod render_smoke {
     }
 
     #[test]
+    fn shift_jk_jumps_between_diff_files() {
+        use crate::model::DiffFile;
+        let mut app = loaded_app();
+        app.data.insert(9, diff_pr(9));
+        app.show_issue(9);
+        app.diff_pending.remove(&9);
+        // Long expanded first file: the second header starts off-screen,
+        // so the jump must scroll, not just hop visible headers.
+        let patch_a =
+            format!("@@ -1 +1 @@\n{}", (0..60).map(|i| format!("+line{i}")).collect::<Vec<_>>().join("\n"));
+        app.diffs.insert(9, vec![
+            DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 60, deletions: 0, patch: patch_a },
+            DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
+        ]);
+        app.expanded_files.insert((9, "src/a.rs".into()));
+        app.set_tab(Tab::Visual);
+        let _ = frame_text(&mut app);
+        assert_eq!(app.diff_cursor, 0);
+        let top = app.scroll;
+        // J lands the second header at the top and opens it.
+        handle_key(&mut app, key(KeyCode::Char('J')));
+        assert_eq!(app.diff_cursor, 1, "J moves the file cursor before render");
+        assert!(app.scroll > top, "off-screen header scrolls into view");
+        let _ = frame_text(&mut app);
+        assert_eq!(app.diff_cursor, 1, "render keeps the jumped file");
+        assert!(app.expanded_files.contains(&(9, "src/b.rs".to_string())), "jumped-on file opens");
+        assert!(
+            app.body_rows.first().is_some_and(|l| l.contains("src/b.rs")),
+            "header lands at top: {:?}",
+            app.body_rows.first()
+        );
+        // J at the last file is a no-op.
+        let held = app.scroll;
+        handle_key(&mut app, key(KeyCode::Char('J')));
+        let _ = frame_text(&mut app);
+        assert_eq!((app.diff_cursor, app.scroll), (1, held), "clamped at the last file");
+        // K jumps back to the first header.
+        handle_key(&mut app, key(KeyCode::Char('K')));
+        let _ = frame_text(&mut app);
+        assert_eq!(app.diff_cursor, 0);
+        assert!(
+            app.body_rows.first().is_some_and(|l| l.contains("src/a.rs")),
+            "first header back at top: {:?}",
+            app.body_rows.first()
+        );
+    }
+
+    #[test]
     fn diff_active_line_highlights_and_yanks() {
         use crate::model::DiffFile;
         let mut app = loaded_app();
@@ -3532,6 +3865,34 @@ mod render_smoke {
     }
 
     #[test]
+    fn content_tabs_show_shortcut_numbers() {
+        let mut app = loaded_app();
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 Details"), "details tab names its key: {text}");
+        assert!(text.contains("2 Graph"), "graph tab names its key: {text}");
+        app.show_issue(9);
+        let text = frame_text(&mut app);
+        assert!(text.contains("2 Diff View"), "PR tab names its key: {text}");
+    }
+
+    #[test]
+    fn status_bar_hint_tiers_respond_to_width() {
+        // Wide terminals get the full minimalist set.
+        let mut app = loaded_app();
+        let wide = frame_text(&mut app);
+        assert!(
+            wide.contains("q quit · tab panes · j/k move · : open · b board · ? shortcuts"),
+            "full hints: {wide}"
+        );
+        // Narrow terminals keep the repo and shed the long set for the short one.
+        let mut narrow_app = loaded_app();
+        let narrow = frame_text_narrow(&mut narrow_app, 60);
+        assert!(narrow.contains("q quit · ? shortcuts"), "short hints: {narrow}");
+        assert!(!narrow.contains("b board"), "long set drops: {narrow}");
+        assert!(narrow.contains("o/r"), "repo survives: {narrow}");
+    }
+
+    #[test]
     fn content_tab_names_diff_view_for_prs() {
         // loaded_app files issue 7 and PR 9; parking on the PR renames it.
         let mut app = loaded_app();
@@ -3543,15 +3904,17 @@ mod render_smoke {
 
     #[test]
     fn tab_click_zones_match_wider_labels() {
-        // Glyph plus two spaces plus label: Body spans rel 0..7, Comments
-        // rel 9..20, Diff rel 22..29, Graph rel 31..39. Dividers map to
-        // the tab on their left. Clicks on the boundaries prove it.
+        // Glyph plus two spaces plus `1 Details` spans rel 0..12, then
+        // the divider: rel 12..14 still selects Details, rel 14 lands
+        // on the `2 …` tab. The split follows `TAB_SPLIT_X`.
         let mut app = loaded_app();
         let _ = frame_text(&mut app);
         let (tx, y) = (app.tabs_area.x, app.tabs_area.y);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 8, y));
         assert_eq!(app.tab, Tab::Details);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 12, y));
+        assert_eq!(app.tab, Tab::Details);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 14, y));
         assert_eq!(app.tab, Tab::Visual);
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 22, y));
         assert_eq!(app.tab, Tab::Visual);
@@ -3702,9 +4065,8 @@ mod render_smoke {
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("o/r"), "{line}");
         assert!(line.contains("ghit demo (Todo)"), "{line}");
-        assert!(line.contains("? for shortcuts"), "{line}");
-        let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
-        assert!(line.ends_with(brand.as_str()), "{line}");
+        assert!(line.contains("b board · ? shortcuts"), "{line}");
+        assert!(line.ends_with("? shortcuts"), "{line}");
     }
 
     #[test]
@@ -3716,7 +4078,7 @@ mod render_smoke {
         terminal.draw(|f| render(f, &mut app)).unwrap();
         let line: String = (0..120).map(|x| terminal.backend().buffer()[(x, 39)].symbol()).collect();
         assert!(line.starts_with("❯ 123"), "{line}");
-        assert!(!line.contains("? for shortcuts"), "{line}");
+        assert!(!line.contains("? shortcuts"), "{line}");
         assert_eq!(terminal.get_cursor_position().unwrap(), (5, 39).into());
     }
 
@@ -3728,9 +4090,8 @@ mod render_smoke {
         assert_eq!(text.matches("hello status").count(), 1);
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("hello status"), "{line}");
-        assert!(line.contains("? for shortcuts"), "{line}");
-        let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
-        assert!(line.ends_with(brand.as_str()), "{line}");
+        assert!(line.contains("b board · ? shortcuts"), "{line}");
+        assert!(line.ends_with("? shortcuts"), "{line}");
     }
 
     #[test]
@@ -3812,7 +4173,7 @@ mod render_smoke {
         app.repo_slug = Some("o/r".to_string());
         handle_key(&mut app, key(KeyCode::Char('y')));
         assert_eq!(app.message, "view an issue first");
-        // A long yank toast still renders with the footer hints intact.
+        // A long yank toast still renders with the short hints intact.
         let mut app = loaded_app();
         app.notify(format!(
             "yanked {}",
@@ -3820,7 +4181,8 @@ mod render_smoke {
         ));
         let text = frame_text(&mut app);
         assert!(text.contains("yanked #7"), "{text}");
-        assert!(text.contains("? for shortcuts"), "status keeps the hint");
+        assert!(text.contains("q quit · ? shortcuts"), "status keeps the hint");
+        assert!(!text.contains("b board"), "full set drops under a long toast: {text}");
     }
 
     #[test]
