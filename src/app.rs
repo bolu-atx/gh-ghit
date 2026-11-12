@@ -466,6 +466,10 @@ pub(crate) struct AuthState {
     /// The user dismissed the prompt: later auth failures notify only,
     /// never re-modal. Cleared by a successful re-auth.
     pub(crate) dismissed: bool,
+    /// An auth problem was seen and no re-auth has fixed it yet. The
+    /// status bar shows a badge while set; only a successful re-auth
+    /// clears it, because a clean probe cannot prove every permission.
+    pub(crate) degraded: bool,
     /// The repo-scoped access probe fired once the repo resolved.
     pub(crate) repo_probed: bool,
 }
@@ -2360,6 +2364,7 @@ impl App {
     /// dialog keeps its turn: the question waits, and the next auth
     /// failure re-raises it.
     pub(crate) fn open_reauth(&mut self, cause: String, missing: Vec<String>, scopes_known: bool) {
+        self.auth.degraded = true;
         if self.confirm.is_some() {
             return;
         }
@@ -2384,6 +2389,16 @@ impl App {
             ],
             kind: ConfirmKind::Reauth,
         });
+    }
+
+    /// Reopen the re-auth question after dismissal left auth degraded.
+    /// No-op unless degraded with no dialog up, so `R` never steals a
+    /// healthy key or stacks a second modal.
+    pub(crate) fn reopen_reauth(&mut self) {
+        if !self.auth.degraded || self.confirm.is_some() {
+            return;
+        }
+        self.open_reauth("auth still failing after dismissal".to_string(), vec![], false);
     }
 
     /// Guard one navigation: with pending comments on the current issue
@@ -2684,14 +2699,17 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
 /// Route an auth-class fetch failure at the re-auth modal: the early
 /// probes cannot see every token kind or repo, so the first failing
 /// fetch gets the same question. A dismissed prompt never re-rises;
-/// the caller still notifies as before.
+/// the status-bar badge carries the warning, and the caller still
+/// notifies as before.
 pub(crate) fn auth_failure(app: &mut App, e: &str) {
+    if !crate::github::is_auth_error(e) {
+        return;
+    }
+    app.auth.degraded = true;
     if app.auth.dismissed || app.confirm.is_some() {
         return;
     }
-    if crate::github::is_auth_error(e) {
-        app.open_reauth(e.to_string(), vec![], false);
-    }
+    app.open_reauth(e.to_string(), vec![], false);
 }
 
 /// Run `gh auth refresh` with the required scopes on the real terminal:
@@ -2714,6 +2732,7 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
         Ok(s) if s.success() => {
             crate::github::forget_token();
             app.auth.dismissed = false;
+            app.auth.degraded = false;
             app.notify("re-auth ok: re-checking token…".to_string());
         }
         _ => app.notify(format!("re-auth failed — run by hand: {cmd}")),
@@ -4227,6 +4246,63 @@ mod tests {
         app.auth.dismissed = false;
         auth_failure(&mut app, "bad search payload");
         assert!(app.confirm.is_none(), "non-auth never prompts");
+    }
+
+    #[test]
+    fn auth_degraded_holds_until_a_reauth_succeeds() {
+        let mut app = App::new(Some("o/r".to_string()));
+        assert!(!app.auth.degraded, "healthy boot has no badge");
+        let denied = "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials";
+        auth_failure(&mut app, denied);
+        assert!(app.confirm.is_some(), "first failure prompts");
+        assert!(app.auth.degraded, "the problem is recorded with the prompt");
+        app.confirm = None;
+        app.auth.dismissed = true;
+        assert!(app.auth.degraded, "dismissing keeps the badge");
+        auth_failure(&mut app, denied);
+        assert!(app.confirm.is_none(), "dismissed never re-modals");
+        auth_failure(&mut app, "bad search payload");
+        assert!(app.auth.degraded, "non-auth leaves the badge alone");
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.auth.rx = Some(rx);
+        tx.send(Ok(vec![])).unwrap();
+        poll_auth(&mut app);
+        assert!(app.auth.degraded, "a clean probe cannot prove every permission");
+    }
+
+    #[test]
+    fn auth_question_blocked_by_another_dialog_still_degrades() {
+        let mut app = pending_nav_app();
+        app.request_issue(7);
+        auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials");
+        assert!(
+            matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
+            "the open question stays",
+        );
+        assert!(app.auth.degraded, "the badge records the blocked auth question");
+    }
+
+    #[test]
+    fn reopen_reauth_only_reopens_while_degraded() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.reopen_reauth();
+        assert!(app.confirm.is_none(), "healthy key is a no-op");
+        app.auth.dismissed = true;
+        app.auth.degraded = true;
+        app.reopen_reauth();
+        assert!(
+            matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
+            "degraded key reopens the dialog",
+        );
+        assert!(app.auth.degraded, "reopening keeps the badge until a re-auth succeeds");
+        let mut guarded = pending_nav_app();
+        guarded.request_issue(7);
+        guarded.auth.degraded = true;
+        guarded.reopen_reauth();
+        assert!(
+            matches!(guarded.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
+            "never stacks over another question",
+        );
     }
 
     #[test]
