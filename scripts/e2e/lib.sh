@@ -48,7 +48,10 @@ e2e_start() {
     --drive "$E2E_SOCK" --size "$E2E_GEO" -R "$E2E_REPO" $E2E_NUMS &
   E2E_GHIT_PID=$!
   # Hold the write end open for the session so the bridge never sees EOF.
-  exec {E2E_CMD_FD}<>"$E2E_CMD"
+  # Fixed fd 9: automatic allocation (exec {var}<>) needs bash 4+, and
+  # macOS ships bash 3.2, so the scenarios must run there too.
+  exec 9<>"$E2E_CMD"
+  E2E_CMD_FD=9
   python3 "$E2E_ROOT/scripts/e2e/drive.py" --sock "$E2E_SOCK" \
     --cmd "$E2E_CMD" --pane "$E2E_PANE" --log "$E2E_FRAMES/frames.jsonl" &
   E2E_BRIDGE_PID=$!
