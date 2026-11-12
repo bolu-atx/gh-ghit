@@ -1529,7 +1529,7 @@ mod tests {
     #[test]
     fn compose_ctrl_o_arms_editor_or_names_a_missing_editor() {
         // Serialized with every other env-mutating test process-wide.
-        let _env = crate::cache::test_env_lock().lock().unwrap();
+        let _env = crate::cache::test_env_lock();
         let prior = std::env::var("EDITOR").ok();
         std::env::remove_var("EDITOR");
         let mut app = compose_app();

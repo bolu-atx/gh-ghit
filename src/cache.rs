@@ -126,10 +126,13 @@ pub fn save_pins(repo: &str, numbers: &[u64]) {
 
 /// Serializes tests that mutate `XDG_DATA_HOME`. Shared with `theme`
 /// tests so parallel runners never steal each other's data dir.
+/// A panicking test poisons the mutex. Take the guard anyway: each test
+/// resets the env vars it guards, so one failure does not cascade into
+/// every later env test.
 #[cfg(test)]
-pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]
@@ -138,7 +141,7 @@ mod tests {
 
     #[test]
     fn keys_include_host_and_differ_across_hosts() {
-        let _guard = test_env_lock().lock().unwrap();
+        let _guard = test_env_lock();
         let saved = std::env::var("GH_HOST").ok();
         let variants = |repo: &str| {
             [
@@ -175,7 +178,7 @@ mod tests {
 
     #[test]
     fn pins_roundtrip() {
-        let _guard = test_env_lock().lock().unwrap();
+        let _guard = test_env_lock();
         let dir = tempfile::tempdir().unwrap();
         let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
@@ -189,7 +192,7 @@ mod tests {
 
     #[test]
     fn cache_roundtrip_and_expiry() {
-        let _guard = test_env_lock().lock().unwrap();
+        let _guard = test_env_lock();
         let dir = tempfile::tempdir().unwrap();
         let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());

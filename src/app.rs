@@ -3100,7 +3100,7 @@ mod tests {
     }
 
     fn temp_xdg() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir, Option<String>) {
-        let guard = crate::cache::test_env_lock().lock().unwrap();
+        let guard = crate::cache::test_env_lock();
         let dir = tempfile::TempDir::new().unwrap();
         let saved = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
@@ -3295,7 +3295,7 @@ mod tests {
 
     #[test]
     fn auto_refresh_interval_env_override() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
         assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL);
         std::env::set_var("GHIT_AUTO_REFRESH_SECS", "3600");
@@ -3855,7 +3855,7 @@ mod tests {
         // and are ignored, so this runs the whole suspend-spawn-land
         // path headless. `true` edits nothing and exits 0, so the draft
         // lands byte-identical through the temp file.
-        let _env = crate::cache::test_env_lock().lock().unwrap();
+        let _env = crate::cache::test_env_lock();
         let prior = std::env::var("EDITOR").ok();
         std::env::set_var("EDITOR", "true");
         let mut app = sidebar_app(&[7]);
@@ -3864,8 +3864,11 @@ mod tests {
             app.compose_insert(ch);
         }
         app.compose.editor_requested = true;
+        // A fixed viewport skips the terminal size query, which fails
+        // without a TTY (CI runners).
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let mut terminal = ratatui::Terminal::new(backend).expect("headless terminal");
+        let options = ratatui::TerminalOptions { viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, 80, 24)) };
+        let mut terminal = ratatui::Terminal::with_options(backend, options).expect("headless terminal");
         run_compose_editor(&mut app, &mut terminal);
         assert!(!app.compose.editor_requested, "the run disarms itself");
         assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");

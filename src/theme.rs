@@ -286,7 +286,7 @@ mod tests {
     /// Point XDG at a temp dir so `set`/`cycle` persistence never touches
     /// real data. Returns the guard plus saved var to restore.
     fn temp_data() -> (std::sync::MutexGuard<'static, ()>, Option<String>, tempfile::TempDir) {
-        let guard = crate::cache::test_env_lock().lock().unwrap();
+        let guard = crate::cache::test_env_lock();
         let dir = tempfile::tempdir().unwrap();
         let saved = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn headings_glow_amber() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         ACTIVE.store(1, Ordering::Relaxed);
         let sheet = GhitSheet;
         assert_eq!(sheet.heading(1).fg, Some(amber()));
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn columns_have_colors() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         ACTIVE.store(1, Ordering::Relaxed);
         assert_eq!(column_color("Todo"), muted());
         assert_eq!(column_color("In Progress"), amber());
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn checks_have_colors_and_glyphs() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         ACTIVE.store(1, Ordering::Relaxed);
         use crate::model::CheckState;
         assert_eq!(check_color(&CheckState::Pass), green());
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn states_have_colors() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         ACTIVE.store(1, Ordering::Relaxed);
         assert_eq!(state_color("OPEN"), green());
         assert_eq!(state_color("CLOSED"), red());
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn system_theme_uses_terminal_colors() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         ACTIVE.store(0, Ordering::Relaxed);
         assert_eq!(ink(), Color::Reset);
         assert_eq!(paper(), Color::Reset);
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn themed_markdown_has_lines() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         ACTIVE.store(0, Ordering::Relaxed);
         let text = render_markdown("# hi\n\n- a\n- b\n");
         assert!(text.height() > 3);
