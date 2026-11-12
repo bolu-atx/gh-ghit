@@ -66,10 +66,64 @@ pub(crate) enum Tab {
     Visual,
 }
 
+/// Content tab titles with their `1`/`2` shortcuts. The mouse router
+/// splits on the first title plus the divider; `TAB_SPLIT_X` stays in
+/// sync by construction — see `tab_split_matches_first_title_width`.
+pub(crate) fn tab_titles(visual_label: &str) -> [String; 2] {
+    [format!("\u{f15c}  1 Details"), format!("\u{f121}  2 {visual_label}")]
+}
+
+/// Click columns before this select Details: first tab title plus divider.
+pub(crate) const TAB_SPLIT_X: u16 = 14;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     Main,
     Bar,
+}
+
+/// Deferred user navigation, stored when a confirm dialog interrupts
+/// it. Variants recompute at execution time so cancelling leaves
+/// history, selection, and caches untouched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NavIntent {
+    Issue(u64),
+    Tab(Tab),
+    Step(isize),
+    Back,
+    Forward,
+    Evict,
+}
+
+/// One button of a generic confirm dialog: the key that picks it plus
+/// its label. `Esc` always cancels and never needs a listed choice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConfirmChoice {
+    pub(crate) key: char,
+    pub(crate) label: String,
+}
+
+/// What a generic confirm dialog decides. The renderer and key handling
+/// only see title/body/choices; each variant owns its choice indexes
+/// in `confirm_choose`. New uses add a variant plus its constructor
+/// and one dispatch arm — no renderer or input changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ConfirmKind {
+    /// Leaving a PR with unsubmitted review comments. Choice 0 submits
+    /// then navigates, choice 1 navigates leaving them pending, choice
+    /// 2 (and `Esc`) stays put.
+    PendingNav { intent: NavIntent },
+}
+
+/// Generic confirm modal: title, message lines, and explicit choices.
+/// Specializations build one with a constructor like
+/// `open_pending_nav` and interpret choices in `confirm_choose`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConfirmDialog {
+    pub(crate) title: String,
+    pub(crate) body: Vec<String>,
+    pub(crate) choices: Vec<ConfirmChoice>,
+    pub(crate) kind: ConfirmKind,
 }
 
 /// Pending auth-scope question: the sentence that triggered the prompt
@@ -119,13 +173,15 @@ impl ComposeTarget {
 
 /// The compose modal: a draft plus where it goes. `cursor` is a char
 /// index into `body` where typing lands; `sending` locks editing while
-/// the background submit is in flight.
+/// the background submit is in flight. `kill` is the readline kill ring
+/// (one slot): kills stash text here, `Ctrl+Y` pastes it back.
 pub(crate) struct ComposeState {
     pub(crate) number: u64,
     pub(crate) target: ComposeTarget,
     pub(crate) body: String,
     pub(crate) cursor: usize,
     pub(crate) sending: bool,
+    pub(crate) kill: String,
 }
 
 /// What a filter-dialog query commit asks the caller to fetch.
@@ -219,6 +275,9 @@ pub(crate) struct App {
     /// Pending re-auth question: the token is dead or lacks scopes.
     /// A modal until the user answers; `y` runs `gh auth refresh`.
     pub(crate) auth_prompt: Option<AuthPrompt>,
+    /// Generic confirm modal plus its deferred decision. While set, all
+    /// keys and clicks route to the dialog until it resolves.
+    pub(crate) confirm: Option<ConfirmDialog>,
     /// Set by input; the event loop runs the refresh outside the TUI.
     pub(crate) reauth_requested: bool,
     /// The user dismissed the prompt: later auth failures notify only,
@@ -303,8 +362,16 @@ pub(crate) struct App {
     pub(crate) last_click: Option<(Rect, Instant)>,
     // Compose modal (`c`) plus its background submit channel.
     pub(crate) compose: Option<ComposeState>,
+    /// Set by input; the event loop suspends the TUI and runs `$EDITOR`
+    /// on the draft outside it, then lands the edited text.
+    pub(crate) editor_requested: bool,
     pub(crate) compose_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
     pub(crate) compose_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+    // Pending review submit (`S`): PRs with pending line comments, plus
+    // its background channel. One in-flight submit per PR.
+    pub(crate) review_submit_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
+    pub(crate) review_submit_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+    pub(crate) review_submitting: HashSet<u64>,
     // Board modal.
     pub(crate) board: Option<BoardData>,
     /// Frame counter, bumped once per event-loop pass. Drives the status
@@ -318,6 +385,7 @@ impl App {
     pub(crate) fn new(repo_flag: Option<String>) -> Self {
         let (detail_tx, detail_rx) = std::sync::mpsc::channel();
         let (compose_tx, compose_rx) = std::sync::mpsc::channel();
+        let (review_submit_tx, review_submit_rx) = std::sync::mpsc::channel();
         let (issue_tx, issue_rx) = std::sync::mpsc::channel();
         let (diff_tx, diff_rx) = std::sync::mpsc::channel();
         let (graph_tx, graph_rx) = std::sync::mpsc::channel();
@@ -368,12 +436,17 @@ impl App {
             board: None,
             auth_rx: None,
             auth_prompt: None,
+            confirm: None,
             reauth_requested: false,
             auth_dismissed: false,
             auth_repo_probed: false,
             compose: None,
+            editor_requested: false,
             compose_tx,
             compose_rx,
+            review_submit_tx,
+            review_submit_rx,
+            review_submitting: HashSet::new(),
             tick: 0,
             board_col: 0,
             board_row: 0,
@@ -579,6 +652,7 @@ impl App {
             || self.section_rx.is_some()
             || board_open(self)
             || self.compose.is_some()
+            || self.confirm.is_some()
             || self.filter_open
             || self.shortcuts_open
             || self.focus == Focus::Bar
@@ -652,6 +726,12 @@ impl App {
     /// back to the previous one at the end). Pinned rows resist until
     /// unpinned with `p`; a revisit refetches from the network.
     pub(crate) fn evict_current(&mut self) {
+        if !self.guard_nav(NavIntent::Evict) {
+            self.evict_current_inner();
+        }
+    }
+
+    fn evict_current_inner(&mut self) {
         if !matches!(self.pane, Pane::Issues | Pane::PRs) {
             return;
         }
@@ -847,8 +927,7 @@ impl App {
         self.searching = false;
         self.focus = Focus::Main;
         if let Some(n) = self.search_hits().first().copied() {
-            self.ensure_visited(n);
-            self.load_issue(n, false);
+            self.open_issue(n);
         }
     }
 
@@ -986,6 +1065,12 @@ impl App {
     /// issue moves to the forward stack so Ctrl+I can redo it. Restores
     /// without recording, keeping both stacks intact.
     pub(crate) fn go_back(&mut self) {
+        if !self.guard_nav(NavIntent::Back) {
+            self.go_back_inner();
+        }
+    }
+
+    fn go_back_inner(&mut self) {
         let Some(prev) = self.history.pop() else {
             self.notify("no older issue".to_string());
             return;
@@ -1003,6 +1088,12 @@ impl App {
     /// stack through the normal deduped push; the rest of the forward
     /// chain stays redoable.
     pub(crate) fn go_forward(&mut self) {
+        if !self.guard_nav(NavIntent::Forward) {
+            self.go_forward_inner();
+        }
+    }
+
+    fn go_forward_inner(&mut self) {
         let Some(next) = self.future.pop() else {
             self.notify("no newer issue".to_string());
             return;
@@ -1019,6 +1110,12 @@ impl App {
     /// the fetch 404s and `poll_issues` toasts instead. Either way
     /// `current` only moves on a real landing.
     pub(crate) fn step_issue(&mut self, delta: isize) {
+        if !self.guard_nav(NavIntent::Step(delta)) {
+            self.step_issue_inner(delta);
+        }
+    }
+
+    fn step_issue_inner(&mut self, delta: isize) {
         let Some(cur) = self.current else {
             self.notify("view an issue first".to_string());
             return;
@@ -1095,6 +1192,65 @@ impl App {
         }
     }
 
+    /// `J`/`K` jumps between diff file headers, landing the target header
+    /// at the top of the viewport. The offset is measured with the same
+    /// widget and width the body renders, so the landing matches exactly;
+    /// past the scan cap it falls back to the next visible header, then to
+    /// a page scroll. Clamped at the first and last file.
+    pub(crate) fn jump_diff_file(&mut self, delta: isize) {
+        if !self.visual_diff() {
+            return;
+        }
+        let Some(n) = self.current else { return };
+        let count = self.diffs.get(&n).map(|f| f.len().min(crate::ui::MAX_DIFF_FILES)).unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+        let cur = self.diff_file_at_cursor().unwrap_or(self.diff_cursor).min(count - 1);
+        let next = (cur as isize + delta).clamp(0, count as isize - 1) as usize;
+        if next == cur {
+            return;
+        }
+        // Update the file state first: the summary names the cursor file,
+        // so the measured offsets must come from the post-jump text.
+        self.diff_cursor = next;
+        self.pane = Pane::Main;
+        if let Some(files) = self.diffs.get(&n) {
+            if let Some(f) = files.get(next) {
+                self.expanded_files.insert((n, f.filename.clone()));
+            }
+        }
+        if let Some(off) = crate::ui::diff_header_offset(self, next, delta) {
+            self.scroll = off;
+            self.diff_line = Some(usize::from(off));
+            self.diff_touched = true;
+            return;
+        }
+        // Fallback: the next visible header in this direction (headers run
+        // in file order, so it owns the adjacent file), else a page scroll
+        // toward it. The next render re-resolves the file from the line.
+        let base = usize::from(self.body_base);
+        let cur_vis = self.diff_line.map(|abs| abs.saturating_sub(base));
+        let mut headers = self.diff_headers.clone();
+        headers.sort_unstable();
+        let target = if delta > 0 {
+            cur_vis.and_then(|v| headers.iter().copied().find(|&h| h > v))
+        } else {
+            cur_vis.and_then(|v| headers.iter().copied().rev().find(|&h| h < v))
+        };
+        if let Some(h) = target {
+            self.diff_line = Some(base + h);
+            self.diff_touched = true;
+        } else {
+            let page = self.body_area.height;
+            if delta > 0 {
+                self.scroll = self.scroll.saturating_add(page);
+            } else {
+                self.scroll = self.scroll.saturating_sub(page);
+            }
+        }
+    }
+
     /// Owning file of the active diff line from the last render capture.
     /// `None` when the cursor is unset, stale, or on a pre-header row.
     pub(crate) fn diff_file_at_cursor(&self) -> Option<usize> {
@@ -1147,8 +1303,7 @@ impl App {
         if !self.ref_paired.contains(&n) {
             return;
         }
-        self.ensure_visited(n);
-        self.show_issue(n);
+        self.open_issue(n);
     }
 
     /// Flip the right refs pane, keeping the current issue in place.
@@ -1221,6 +1376,10 @@ impl App {
     /// any issue starts its background fetch so the pane fills in without
     /// blocking; first visit fetches, later visits reuse the cache.
     pub(crate) fn set_tab(&mut self, tab: Tab) {
+        self.request_tab(tab);
+    }
+
+    fn set_tab_inner(&mut self, tab: Tab) {
         self.tab = tab;
         self.scroll = 0;
         self.diff_line = None;
@@ -1304,8 +1463,7 @@ impl App {
     pub(crate) fn open_graph_selection(&mut self) {
         let order = self.graph_order_numbers();
         if let Some(&n) = order.get(self.graph_cursor) {
-            self.ensure_visited(n);
-            self.load_issue(n, false);
+            self.open_issue(n);
         }
     }
 
@@ -1473,8 +1631,10 @@ impl App {
         match core::parse_bar(&self.bar.clone()) {
             core::BarCommand::Numbers(numbers) => {
                 for n in numbers {
-                    self.ensure_visited(n);
-                    self.load_issue(n, false);
+                    self.open_issue(n);
+                    if self.confirm_open() {
+                        break;
+                    }
                 }
             }
             core::BarCommand::OpenCurrent => {
@@ -1566,7 +1726,7 @@ impl App {
             return;
         }
         let target = self.compose_target().unwrap_or(ComposeTarget::Thread);
-        self.compose = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false });
+        self.compose = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new() });
     }
 
     /// Comment target for the active diff line, or `None` for a plain
@@ -1656,6 +1816,284 @@ impl App {
         s.cursor = base + next_col;
     }
 
+    /// Line start of the cursor: the char after the previous `\n`, or 0.
+    fn compose_line_start(body: &str, cursor: usize) -> usize {
+        let head: String = body.chars().take(cursor.min(body.chars().count())).collect();
+        head.rfind('\n').map(|b| head[..=b].chars().count()).unwrap_or(0)
+    }
+
+    /// Line end of the cursor: the next `\n`, or the body end.
+    fn compose_line_end(body: &str, cursor: usize) -> usize {
+        let cursor = cursor.min(body.chars().count());
+        let mut end = cursor;
+        for (i, ch) in body.chars().enumerate().skip(cursor) {
+            if ch == '\n' {
+                return i;
+            }
+            end = i + 1;
+        }
+        end
+    }
+
+    /// Word char for emacs word motions: letters, digits, `_`.
+    fn compose_word_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+
+    /// Word start behind the cursor: skip whitespace, then word chars.
+    fn compose_word_back_from(body: &str, cursor: usize) -> usize {
+        let chars: Vec<char> = body.chars().collect();
+        let mut i = cursor.min(chars.len());
+        while i > 0 && chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        while i > 0 && Self::compose_word_char(chars[i - 1]) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// Word end ahead of the cursor: from mid-word to its end, else past
+    /// the next word.
+    fn compose_word_forward_from(body: &str, cursor: usize) -> usize {
+        let chars: Vec<char> = body.chars().collect();
+        let mut i = cursor.min(chars.len());
+        if i < chars.len() && Self::compose_word_char(chars[i]) {
+            while i < chars.len() && Self::compose_word_char(chars[i]) {
+                i += 1;
+            }
+        } else {
+            while i < chars.len() && !Self::compose_word_char(chars[i]) {
+                i += 1;
+            }
+            while i < chars.len() && Self::compose_word_char(chars[i]) {
+                i += 1;
+            }
+        }
+        i
+    }
+
+    /// Drain `[start, end)` (char indices), stashing the cut text in the
+    /// kill ring. Locked while sending so the in-flight body never changes.
+    fn compose_cut(&mut self, start: usize, end: usize) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending {
+            return;
+        }
+        let len = s.body.chars().count();
+        let (start, end) = (start.min(len), end.min(len));
+        if start >= end {
+            return;
+        }
+        let killed: String = s.body.chars().skip(start).take(end - start).collect();
+        let byte_start = Self::compose_byte(&s.body, start);
+        let byte_end = Self::compose_byte(&s.body, end);
+        s.body.drain(byte_start..byte_end);
+        s.kill = killed;
+        s.cursor = start;
+    }
+
+    /// Jump to the line start (`Ctrl+A`, `Home`).
+    pub(crate) fn compose_home(&mut self) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending {
+            return;
+        }
+        s.cursor = Self::compose_line_start(&s.body, s.cursor);
+    }
+
+    /// Jump to the line end (`Ctrl+E`, `End`).
+    pub(crate) fn compose_end(&mut self) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending {
+            return;
+        }
+        s.cursor = Self::compose_line_end(&s.body, s.cursor);
+    }
+
+    /// Jump one word back (`Alt+B`).
+    pub(crate) fn compose_word_back(&mut self) {
+        let (body, cursor, sending) = match self.compose.as_ref() {
+            Some(s) => (s.body.clone(), s.cursor, s.sending),
+            None => return,
+        };
+        if sending {
+            return;
+        }
+        let at = Self::compose_word_back_from(&body, cursor);
+        if let Some(s) = self.compose.as_mut() {
+            s.cursor = at;
+        }
+    }
+
+    /// Jump one word forward (`Alt+F`).
+    pub(crate) fn compose_word_forward(&mut self) {
+        let (body, cursor, sending) = match self.compose.as_ref() {
+            Some(s) => (s.body.clone(), s.cursor, s.sending),
+            None => return,
+        };
+        if sending {
+            return;
+        }
+        let at = Self::compose_word_forward_from(&body, cursor);
+        if let Some(s) = self.compose.as_mut() {
+            s.cursor = at;
+        }
+    }
+
+    /// Kill to the line end (`Ctrl+K`); at the end of a line the newline
+    /// itself is the kill, joining the lines like bash does.
+    pub(crate) fn compose_kill_to_end(&mut self) {
+        let (body, cursor, sending) = match self.compose.as_ref() {
+            Some(s) => (s.body.clone(), s.cursor, s.sending),
+            None => return,
+        };
+        if sending {
+            return;
+        }
+        let len = body.chars().count();
+        let cursor = cursor.min(len);
+        let mut end = Self::compose_line_end(&body, cursor);
+        if end == cursor && cursor < len {
+            end = cursor + 1;
+        }
+        self.compose_cut(cursor, end);
+    }
+
+    /// Kill back to the line start (`Ctrl+U`).
+    pub(crate) fn compose_kill_to_start(&mut self) {
+        let (body, cursor, sending) = match self.compose.as_ref() {
+            Some(s) => (s.body.clone(), s.cursor, s.sending),
+            None => return,
+        };
+        if sending {
+            return;
+        }
+        let start = Self::compose_line_start(&body, cursor);
+        self.compose_cut(start, cursor.min(body.chars().count()));
+    }
+
+    /// Delete the char ahead (`Ctrl+D`, `Delete`). A plain delete, not
+    /// a kill: the kill ring keeps its text for yank. Never discards: an
+    /// empty draft has nothing to delete.
+    pub(crate) fn compose_delete_forward(&mut self) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending {
+            return;
+        }
+        let len = s.body.chars().count();
+        let cursor = s.cursor.min(len);
+        if cursor >= len {
+            return;
+        }
+        let start = Self::compose_byte(&s.body, cursor);
+        let end = Self::compose_byte(&s.body, cursor + 1);
+        s.body.drain(start..end);
+        s.cursor = cursor;
+    }
+
+    /// Delete the word behind (`Ctrl+W`).
+    pub(crate) fn compose_delete_word_back(&mut self) {
+        let (body, cursor, sending) = match self.compose.as_ref() {
+            Some(s) => (s.body.clone(), s.cursor, s.sending),
+            None => return,
+        };
+        if sending {
+            return;
+        }
+        let at = Self::compose_word_back_from(&body, cursor);
+        self.compose_cut(at, cursor.min(body.chars().count()));
+    }
+
+    /// Delete the word ahead (`Alt+D`); the cursor stays put.
+    pub(crate) fn compose_delete_word_forward(&mut self) {
+        let (body, cursor, len, sending) = match self.compose.as_ref() {
+            Some(s) => (s.body.clone(), s.cursor, s.body.chars().count(), s.sending),
+            None => return,
+        };
+        if sending {
+            return;
+        }
+        let cursor = cursor.min(len);
+        let end = Self::compose_word_forward_from(&body, cursor);
+        if end == cursor {
+            return;
+        }
+        let Some(s) = self.compose.as_mut() else { return };
+        let killed: String = s.body.chars().skip(cursor).take(end - cursor).collect();
+        let byte_start = Self::compose_byte(&s.body, cursor);
+        let byte_end = Self::compose_byte(&s.body, end);
+        s.body.drain(byte_start..byte_end);
+        s.kill = killed;
+        s.cursor = cursor;
+    }
+
+    /// Paste the kill ring back (`Ctrl+Y`).
+    pub(crate) fn compose_yank(&mut self) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending || s.kill.is_empty() {
+            return;
+        }
+        let kill = s.kill.clone();
+        let cursor = s.cursor.min(s.body.chars().count());
+        let byte = Self::compose_byte(&s.body, cursor);
+        s.body.insert_str(byte, &kill);
+        s.cursor = cursor + kill.chars().count();
+    }
+
+    /// Swap the char before the cursor with the one under it (`Ctrl+T`);
+    /// at the draft end that swaps the last two chars.
+    pub(crate) fn compose_transpose(&mut self) {
+        let Some(s) = self.compose.as_mut() else { return };
+        if s.sending {
+            return;
+        }
+        let chars: Vec<char> = s.body.chars().collect();
+        let len = chars.len();
+        if len < 2 {
+            return;
+        }
+        let cursor = s.cursor.min(len);
+        if cursor == 0 {
+            return;
+        }
+        let (a, b) = if cursor >= len { (len - 2, len - 1) } else { (cursor - 1, cursor) };
+        let mut next = chars;
+        next.swap(a, b);
+        s.body = next.into_iter().collect();
+        s.cursor = if cursor >= len { len } else { cursor + 1 };
+    }
+
+    /// `$EDITOR` for the compose modal. Just the env var: no config
+    /// plumbing, no fallback. `None` when unset or blank.
+    pub(crate) fn compose_editor() -> Option<String> {
+        std::env::var("EDITOR").ok().filter(|e| !e.trim().is_empty())
+    }
+
+    /// Arm the external editor run (`Ctrl+O` in the modal). With no
+    /// `$EDITOR` there is nothing to run, so the draft stays and the
+    /// toast names the fix.
+    pub(crate) fn request_compose_editor(&mut self) {
+        let sending = self.compose.as_ref().map(|c| c.sending).unwrap_or(true);
+        if sending {
+            return;
+        }
+        if Self::compose_editor().is_none() {
+            self.notify("no $EDITOR set: export EDITOR to edit comments outside ghit".to_string());
+            return;
+        }
+        self.editor_requested = true;
+    }
+
+    /// Land the external editor run: the file text replaces the draft
+    /// verbatim and the cursor parks at the end.
+    pub(crate) fn land_editor_text(&mut self, text: String, editor: &str) {
+        let Some(c) = self.compose.as_mut() else { return };
+        c.body = text;
+        c.cursor = c.body.chars().count();
+        self.notify(format!("edited in {editor}"));
+    }
+
     /// Submit the draft on a background thread; the loop never blocks.
     /// Empty drafts stay open with a status-line error, never a send.
     pub(crate) fn submit_compose(&mut self) {
@@ -1680,6 +2118,150 @@ impl App {
             let _ = tx.send((number, result));
         });
         self.notify("sending comment…".to_string());
+    }
+
+    /// Pending review threads on the current PR, if any.
+    pub(crate) fn pending_threads(&self) -> usize {
+        let Some(n) = self.current else { return 0 };
+        let Some(d) = self.data.get(&n) else { return 0 };
+        d.review_threads.iter().filter(|t| t.has_pending()).count()
+    }
+
+    /// Submit the viewer's pending review so pending line comments go
+    /// live. No pending threads means a status-line note, never a send.
+    pub(crate) fn submit_pending_review(&mut self) {
+        let Some(n) = self.current else {
+            self.notify("view an issue first".to_string());
+            return;
+        };
+        if self.review_submitting.contains(&n) {
+            return;
+        }
+        if self.pending_threads() == 0 {
+            self.notify("no pending comments to submit".to_string());
+            return;
+        }
+        self.review_submitting.insert(n);
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let tx = self.review_submit_tx.clone();
+        rt().spawn(async move {
+            let result = github::submit_pending_review(&repo, n).await;
+            let _ = tx.send((n, result));
+        });
+        self.notify("submitting pending review…".to_string());
+    }
+
+    /// A confirm modal is up, whatever it decides.
+    pub(crate) fn confirm_open(&self) -> bool {
+        self.confirm.is_some()
+    }
+
+    /// Pick choice `index` of the open dialog, then run what the
+    /// specialization decides. Out-of-range indexes are ignored so a
+    /// stale key never acts on the wrong button.
+    pub(crate) fn confirm_choose(&mut self, index: usize) {
+        let Some(dialog) = self.confirm.take() else { return };
+        match dialog.kind {
+            ConfirmKind::PendingNav { intent } => match index {
+                0 => {
+                    self.submit_pending_review();
+                    self.run_nav(intent);
+                }
+                1 => self.run_nav(intent),
+                _ => {}
+            },
+        }
+    }
+
+    /// Drop the open dialog: the deferred navigation never runs.
+    pub(crate) fn confirm_cancel(&mut self) {
+        self.confirm = None;
+    }
+
+    /// Run a deferred navigation after a confirm resolves. Never guards:
+    /// the guard already ran when the intent was stored.
+    fn run_nav(&mut self, intent: NavIntent) {
+        match intent {
+            NavIntent::Issue(n) => self.open_issue_inner(n),
+            NavIntent::Tab(tab) => self.set_tab_inner(tab),
+            NavIntent::Step(delta) => self.step_issue_inner(delta),
+            NavIntent::Back => self.go_back_inner(),
+            NavIntent::Forward => self.go_forward_inner(),
+            NavIntent::Evict => self.evict_current_inner(),
+        }
+    }
+
+    /// Specialization: leaving a PR with unsubmitted review comments.
+    /// Choice order is Submit, Discard, Cancel; the renderer shows the
+    /// keys. Discard only navigates — the comments stay pending on
+    /// GitHub, nothing is deleted.
+    pub(crate) fn open_pending_nav(&mut self, intent: NavIntent) {
+        let Some(n) = self.current else { return };
+        let count = self.pending_threads();
+        self.confirm = Some(ConfirmDialog {
+            title: "Unsubmitted comments".to_string(),
+            body: vec![
+                format!("#{n} has {count} unsubmitted comment{s}.", s = if count == 1 { "" } else { "s" }),
+                "Discard leaves them pending on GitHub.".to_string(),
+            ],
+            choices: vec![
+                ConfirmChoice { key: 's', label: "Submit them".to_string() },
+                ConfirmChoice { key: 'd', label: "Discard".to_string() },
+                ConfirmChoice { key: 'c', label: "Cancel".to_string() },
+            ],
+            kind: ConfirmKind::PendingNav { intent },
+        });
+    }
+
+    /// Guard one navigation: with pending comments on the current issue
+    /// the intent waits in a confirm dialog, otherwise it runs at once.
+    fn guard_nav(&mut self, intent: NavIntent) -> bool {
+        if self.pending_threads() == 0 {
+            return false;
+        }
+        self.open_pending_nav(intent);
+        true
+    }
+
+    /// User-initiated issue preview through the pending guard: the view
+    /// switches without filing the row, so cursor walks and first-press
+    /// previews never relocate rows between groups.
+    pub(crate) fn request_issue(&mut self, n: u64) {
+        if self.current == Some(n) {
+            self.show_issue(n);
+            return;
+        }
+        if !self.guard_nav(NavIntent::Issue(n)) {
+            self.show_issue(n);
+        }
+    }
+
+    /// User-initiated explicit open through the pending guard: files the
+    /// row under requested before switching, like the bar, board Enter,
+    /// and paired-refs opens always did.
+    pub(crate) fn open_issue(&mut self, n: u64) {
+        if self.current == Some(n) {
+            self.show_issue(n);
+            return;
+        }
+        if !self.guard_nav(NavIntent::Issue(n)) {
+            self.open_issue_inner(n);
+        }
+    }
+
+    fn open_issue_inner(&mut self, n: u64) {
+        self.ensure_visited(n);
+        self.load_issue(n, false);
+    }
+
+    /// User-initiated tab switch through the pending guard.
+    pub(crate) fn request_tab(&mut self, tab: Tab) {
+        if self.tab == tab {
+            return;
+        }
+        if !self.guard_nav(NavIntent::Tab(tab)) {
+            self.set_tab_inner(tab);
+        }
     }
 
     /// Snapshot the visible body text so clicks can land on `#123` refs.
@@ -1808,6 +2390,27 @@ pub(crate) fn poll_details(app: &mut App) -> bool {
     landed
 }
 
+/// Land a pending-review submit: success refetches the issue so the
+/// Diff tab shows submitted threads; failure just names the cause.
+pub(crate) fn poll_review_submit(app: &mut App) -> bool {
+    let ready: Vec<(u64, Result<(), String>)> = app.review_submit_rx.try_iter().collect();
+    let landed = !ready.is_empty();
+    for (n, res) in ready {
+        app.review_submitting.remove(&n);
+        match res {
+            Ok(()) => {
+                app.notify(format!("pending review submitted on #{n}"));
+                app.load_issue(n, true);
+            }
+            Err(e) => {
+                auth_failure(app, &e);
+                app.notify(e);
+            }
+        }
+    }
+    landed
+}
+
 /// Land a compose submit: success closes the modal, confirms on the
 /// status line, and refetches the issue so the Comments tab shows the
 /// new comment; failure keeps the draft and names the cause.
@@ -1817,8 +2420,13 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
     for (n, res) in ready {
         match res {
             Ok(()) => {
+                let pending = matches!(app.compose.as_ref().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
                 app.compose = None;
-                app.notify(format!("comment posted to #{n}"));
+                if pending {
+                    app.notify(format!("line comment pending on #{n} — press S to submit"));
+                } else {
+                    app.notify(format!("comment posted to #{n}"));
+                }
                 app.load_issue(n, true);
             }
             Err(e) => {
@@ -1863,7 +2471,6 @@ pub(crate) fn poll_board(app: &mut App) -> bool {
 /// off the async workers. Both the terminal and drive loops call this.
 pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     app.initial_numbers = numbers.to_vec();
-    app.focus = Focus::Bar;
     let repo = app.repo_flag.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     app.bootstrap_rx = Some(rx);
@@ -1962,6 +2569,48 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     });
 }
 
+/// Suspend the TUI, run `$EDITOR` on the draft, and land the result.
+/// Mirrors `run_reauth`: the loop owns the terminal, so input only arms
+/// `editor_requested` and the loop runs this with the terminal. The draft
+/// stays put on every failure path, so no edit ever loses text.
+pub(crate) fn run_compose_editor(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) {
+    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
+    use crossterm::ExecutableCommand;
+    app.editor_requested = false;
+    let Some(editor) = App::compose_editor() else {
+        app.notify("no $EDITOR set: export EDITOR to edit comments outside ghit".to_string());
+        return;
+    };
+    let drafting = app.compose.as_ref().map(|c| !c.sending).unwrap_or(false);
+    if !drafting {
+        return;
+    }
+    // Stage the draft in a temp file so the editor opens real markdown.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut path = std::env::temp_dir();
+    path.push(format!("ghit-comment-{}-{stamp}.md", std::process::id()));
+    if std::fs::write(&path, &app.compose.as_ref().expect("draft").body).is_err() {
+        app.notify("editor needs a writable temp dir".to_string());
+        return;
+    }
+    let _ = disable_raw_mode();
+    let _ = terminal.backend_mut().execute(LeaveAlternateScreen);
+    let status = std::process::Command::new(&editor).arg(&path).status();
+    let _ = enable_raw_mode();
+    let _ = terminal.backend_mut().execute(EnterAlternateScreen);
+    let _ = terminal.clear();
+    let text = std::fs::read_to_string(&path).ok();
+    let _ = std::fs::remove_file(&path);
+    match (status, text) {
+        (Ok(s), Some(text)) if s.success() => app.land_editor_text(text, &editor),
+        (Ok(_), _) => app.notify(format!("{editor} failed: draft kept")),
+        (Err(e), _) => app.notify(format!("{editor} failed to start ({e}): draft kept")),
+    }
+}
+
 /// Every background lander, once per loop pass. The terminal and drive
 /// loops share this so both pick up fetches the same way. True when any
 /// lander changed visible state, so the loop knows a redraw is owed.
@@ -1979,6 +2628,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= poll_board(app);
     landed |= poll_details(app);
     landed |= poll_compose(app);
+    landed |= poll_review_submit(app);
     landed
 }
 
@@ -2051,6 +2701,10 @@ fn event_loop(
         let poll_dirty = poll_all(app);
         if app.reauth_requested {
             run_reauth(app, terminal);
+            input_dirty = true;
+        }
+        if app.editor_requested {
+            run_compose_editor(app, terminal);
             input_dirty = true;
         }
         needs_draw = input_dirty || poll_dirty;
@@ -2560,6 +3214,12 @@ mod tests {
     }
 
     #[test]
+    fn tab_split_matches_first_title_width() {
+        let first = tab_titles("Diff View")[0].chars().count() as u16;
+        assert_eq!(TAB_SPLIT_X, first + 2, "click split follows the first title plus divider");
+    }
+
+    #[test]
     fn auto_refresh_guards_each_active_view() {
         for guard in 0..7 {
             let mut app = sidebar_app(&[7]);
@@ -2568,7 +3228,7 @@ mod tests {
                 0 => app.section_rx = Some(rx),
                 1 => app.board_loading = true,
                 2 => app.board = Some(BoardData { title: String::new(), order: vec![], items: vec![] }),
-                3 => app.compose = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false }),
+                3 => app.compose = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
                 4 => app.filter_open = true,
                 5 => app.shortcuts_open = true,
                 6 => app.focus = Focus::Bar,
@@ -2579,6 +3239,22 @@ mod tests {
             assert_eq!(app.last_sections_fetch, start, "guard {guard}");
             assert!(!app.section_auto_refresh, "guard {guard}");
         }
+    }
+
+    #[test]
+    fn bootstrap_starts_in_main_so_auto_refresh_runs() {
+        let mut app = App::new(None);
+        bootstrap(&mut app, &[]);
+        assert!(matches!(app.focus, Focus::Main), "boot must not sit in the command bar");
+        // A Main boot leaves the refresh gate open; the Bar guard above
+        // still holds once the user opens `:` or `/` on purpose.
+        let start = app.last_sections_fetch;
+        app.repo_slug = Some("o/r".to_string());
+        app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+        assert!(app.section_rx.is_some(), "startup focus must not block the refresh");
+        app.bootstrap_rx = None;
+        app.auth_rx = None;
+        app.section_rx = None;
     }
 
     #[test]
@@ -2968,6 +3644,88 @@ mod tests {
     }
 
     #[test]
+    fn compose_kills_stop_at_newlines() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        for ch in "one\ntwo".chars() {
+            app.compose_insert(ch);
+        }
+        app.compose_step(-3);
+        assert_eq!(app.compose.as_ref().unwrap().cursor, 4);
+        app.compose_kill_to_end();
+        assert_eq!(app.compose.as_ref().unwrap().body, "one\n");
+        // On the newline itself the kill eats it, joining the lines.
+        app.compose_step(-1);
+        app.compose_kill_to_end();
+        assert_eq!(app.compose.as_ref().unwrap().body, "one");
+        assert_eq!(app.compose.as_ref().unwrap().kill, "\n");
+        app.compose_yank();
+        assert_eq!(app.compose.as_ref().unwrap().body, "one\n");
+    }
+
+    #[test]
+    fn compose_kill_to_start_keeps_the_tail() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        for ch in "ab\ncd".chars() {
+            app.compose_insert(ch);
+        }
+        app.compose_step(-1);
+        app.compose_kill_to_start();
+        assert_eq!(app.compose.as_ref().unwrap().body, "ab\nd");
+        assert_eq!(app.compose.as_ref().unwrap().kill, "c");
+    }
+
+    #[test]
+    fn compose_editor_run_roundtrips_through_a_real_subprocess() {
+        // cargo test owns no TTY: raw-mode and alt-screen calls fail
+        // and are ignored, so this runs the whole suspend-spawn-land
+        // path headless. `true` edits nothing and exits 0, so the draft
+        // lands byte-identical through the temp file.
+        let _env = crate::cache::test_env_lock().lock().unwrap();
+        let prior = std::env::var("EDITOR").ok();
+        std::env::set_var("EDITOR", "true");
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        for ch in "draft ✓".chars() {
+            app.compose_insert(ch);
+        }
+        app.editor_requested = true;
+        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+        let mut terminal = ratatui::Terminal::new(backend).expect("headless terminal");
+        run_compose_editor(&mut app, &mut terminal);
+        assert!(!app.editor_requested, "the run disarms itself");
+        assert_eq!(app.compose.as_ref().unwrap().body, "draft ✓");
+        assert!(app.message.contains("edited in true"), "toast: {}", app.message);
+        // A failing editor keeps the draft.
+        std::env::set_var("EDITOR", "false");
+        app.editor_requested = true;
+        run_compose_editor(&mut app, &mut terminal);
+        assert_eq!(app.compose.as_ref().unwrap().body, "draft ✓");
+        assert!(app.message.contains("draft kept"), "toast: {}", app.message);
+        // A missing binary names the failure and keeps the draft.
+        std::env::set_var("EDITOR", "/nonexistent-ghit-editor-xyz");
+        app.editor_requested = true;
+        run_compose_editor(&mut app, &mut terminal);
+        assert_eq!(app.compose.as_ref().unwrap().body, "draft ✓");
+        assert!(app.message.contains("failed to start"), "toast: {}", app.message);
+        match prior {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+    }
+
+    #[test]
+    fn compose_lands_editor_text_at_the_end() {
+        let mut app = sidebar_app(&[7]);
+        app.open_compose();
+        app.land_editor_text("edited\ntext".to_string(), "true");
+        let c = app.compose.as_ref().unwrap();
+        assert_eq!((c.body.as_str(), c.cursor), ("edited\ntext", 11));
+        assert!(app.message.contains("true"), "toast names the editor");
+    }
+
+    #[test]
     fn compose_empty_submit_stays_open() {
         let mut app = sidebar_app(&[7]);
         app.open_compose();
@@ -3002,6 +3760,105 @@ mod tests {
         assert!(!c.sending);
         assert_eq!(c.body, "looks good");
         assert_eq!(app.message, "token scopes deny comments");
+    }
+
+    fn pending_nav_app() -> App {
+        let mut app = sidebar_app(&[7, 9]);
+        app.show_issue(9);
+        let d = app.data.get_mut(&9).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![crate::model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(2),
+            comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
+            ..Default::default()
+        }];
+        app
+    }
+
+    #[test]
+    fn pending_nav_guard_trips_and_cancel_stays() {
+        let mut app = pending_nav_app();
+        app.request_issue(7);
+        let dialog = app.confirm.as_ref().expect("guard trips");
+        assert_eq!(dialog.title, "Unsubmitted comments");
+        assert!(dialog.body.iter().any(|l| l.contains("#9")), "names the issue: {:?}", dialog.body);
+        assert_eq!(dialog.choices.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Submit them", "Discard", "Cancel"]);
+        assert_eq!(app.current, Some(9), "no navigation while the dialog is up");
+        app.confirm_cancel();
+        assert!(app.confirm.is_none());
+        assert_eq!(app.current, Some(9), "cancel stays put");
+    }
+
+    #[test]
+    fn pending_nav_discard_navigates_without_submitting() {
+        let mut app = pending_nav_app();
+        app.request_issue(7);
+        app.confirm_choose(1);
+        assert!(app.confirm.is_none());
+        assert_eq!(app.current, Some(7));
+        assert!(app.review_submitting.is_empty(), "discard never submits");
+    }
+
+    #[test]
+    fn pending_nav_submit_navigates_and_submits() {
+        let mut app = pending_nav_app();
+        app.request_issue(7);
+        app.confirm_choose(0);
+        assert!(app.confirm.is_none());
+        assert_eq!(app.current, Some(7), "submit still navigates");
+        assert!(app.review_submitting.contains(&9), "submit starts the review submit");
+    }
+
+    #[test]
+    fn pending_nav_tab_switch_guards_and_same_target_passes() {
+        let mut app = pending_nav_app();
+        app.request_tab(crate::app::Tab::Visual);
+        assert!(app.confirm.is_some(), "tab switch trips the guard");
+        app.confirm_choose(1);
+        assert_eq!(app.tab, crate::app::Tab::Visual);
+        // Same-target requests never open the dialog.
+        let mut plain = sidebar_app(&[7, 9]);
+        plain.show_issue(9);
+        plain.request_issue(9);
+        assert!(plain.confirm.is_none());
+        plain.request_tab(plain.tab);
+        assert!(plain.confirm.is_none());
+        // Without pending threads everything navigates directly.
+        plain.request_issue(7);
+        assert!(plain.confirm.is_none());
+        assert_eq!(plain.current, Some(7));
+    }
+
+    #[test]
+    fn pending_submit_counts_threads_and_lands() {
+        let mut app = sidebar_app(&[9]);
+        let d = app.data.get_mut(&9).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![crate::model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(2),
+            comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
+            ..Default::default()
+        }];
+        app.current = Some(9);
+        assert_eq!(app.pending_threads(), 1);
+        // Landing a submit refetches so the Diff tab shows submitted threads.
+        app.review_submitting.insert(9);
+        app.review_submit_tx.send((9, Ok(()))).unwrap();
+        assert!(poll_review_submit(&mut app));
+        assert!(!app.review_submitting.contains(&9));
+        assert_eq!(app.message, "pending review submitted on #9");
+        assert!(app.issue_pending.contains(&9));
+        // No pending threads means a note, never a send.
+        let d = app.data.get_mut(&9).unwrap();
+        d.review_threads.clear();
+        assert_eq!(app.pending_threads(), 0);
+        app.submit_pending_review();
+        assert!(app.review_submitting.is_empty());
+        assert_eq!(app.message, "no pending comments to submit");
     }
 
     #[test]
