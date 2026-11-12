@@ -485,33 +485,77 @@ fn in_rect(area: Rect, x: u16, y: u16) -> bool {
     area.contains(ratatui::layout::Position::new(x, y))
 }
 
+/// Visible height of one sidebar row: 3 lines per `Item` with 1-line
+/// labeled dividers. An expanded row adds the wrapped detail block its
+/// render draws, measured with the same inner width.
+fn sidebar_row_height(
+    row: &crate::model::SideRow,
+    data: &std::collections::HashMap<u64, crate::model::IssueData>,
+    expanded: &std::collections::HashSet<u64>,
+    inner_width: usize,
+) -> usize {
+    match row.number() {
+        Some(n) => {
+            let detail = match data.get(&n) {
+                Some(d) if expanded.contains(&n) => {
+                    crate::ui::expanded_row_height(d, inner_width)
+                }
+                _ => 0,
+            };
+            3 + detail
+        }
+        None => 1,
+    }
+}
+
 /// Sidebar rows are 3 lines each (`Item`) with 1-line labeled dividers,
-/// below a 1-line border plus a 1-line spacer. Dividers never hit. An
-/// expanded row adds the wrapped detail block its render draws, measured
-/// with the same inner width.
-fn sidebar_hit(area: Rect, rows: &[crate::model::SideRow], app: &App, x: u16, y: u16) -> Option<u64> {
+/// below a 1-line border plus a 1-line spacer. Dividers never hit.
+/// Takes the render-cached pane rows by borrow (no clone, no recompute):
+/// the caller holds what `render` recorded for this frame.
+fn sidebar_hit(
+    area: Rect,
+    rows: &[crate::model::SideRow],
+    data: &std::collections::HashMap<u64, crate::model::IssueData>,
+    expanded: &std::collections::HashSet<u64>,
+    x: u16,
+    y: u16,
+) -> Option<u64> {
     if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
     let inner_width = (area.width as usize).saturating_sub(2);
     let mut rel = (y - area.y - 2) as usize;
     for row in rows {
-        let h = match row.number() {
-            Some(n) => {
-                let detail = match app.data.get(&n) {
-                    Some(d) if app.expanded_rows.contains(&n) => {
-                        crate::ui::expanded_row_height(d, inner_width)
-                    }
-                    _ => 0,
-                };
-                3 + detail
-            }
-            None => 1,
-        };
+        let h = sidebar_row_height(row, data, expanded, inner_width);
         if rel < h {
             return row.number();
         }
         rel -= h;
+    }
+    None
+}
+
+/// Screen rect of the sidebar row naming `target`, for the click flash.
+/// Walks the same geometry as `sidebar_hit` so the flash covers exactly
+/// the row the press landed on.
+fn sidebar_row_rect(
+    area: Rect,
+    rows: &[crate::model::SideRow],
+    data: &std::collections::HashMap<u64, crate::model::IssueData>,
+    expanded: &std::collections::HashSet<u64>,
+    target: u64,
+) -> Option<Rect> {
+    if area.width == 0 {
+        return None;
+    }
+    let inner_width = (area.width as usize).saturating_sub(2);
+    let mut rel: u16 = 0;
+    for row in rows {
+        let h = sidebar_row_height(row, data, expanded, inner_width) as u16;
+        if row.number() == Some(target) {
+            return Some(Rect::new(area.x, area.y + 2 + rel, area.width, h));
+        }
+        rel += h;
     }
     None
 }
@@ -574,153 +618,18 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
     if app.auth_prompt.is_some() { return; }
     if app.shortcuts_open { return; }
     if board_open(app) {
-        match m.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                let hit = app
-                    .board_cells
-                    .iter()
-                    .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
-                    .map(|(rect, c, r)| (*rect, *c, *r));
-                if let Some((rect, c, r)) = hit {
-                    // Clicking the URL line of an expanded card opens it.
-                    if app.board_expanded == Some((c, r)) && m.row - rect.y == 3 {
-                        if let Some(board) = &app.board {
-                            let cols = crate::app::board_columns(board, &app.board_filter);
-                            if let Some(url) = cols
-                                .get(c)
-                                .and_then(|(_, cards)| cards.get(r))
-                                .and_then(|card| crate::ui::card_url(card))
-                            {
-                                open_url(&url, app);
-                                return;
-                            }
-                        }
-                    }
-                    if app.board_col == c && app.board_row == r {
-                        if let Some(n) = board_selected_number(app) {
-                            app.board = None;
-                            app.board_expanded = None;
-                            app.ensure_visited(n);
-                            app.load_issue(n, false);
-                        }
-                    } else {
-                        app.board_col = c;
-                        app.board_row = r;
-                        app.board_expanded = None;
-                    }
-                }
-            }
-            MouseEventKind::ScrollDown => board_move(app, 0, 1),
-            MouseEventKind::ScrollUp => board_move(app, 0, -1),
-            _ => {}
-        }
+        handle_board_mouse(app, m);
         return;
     }
     match m.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            if in_rect(app.bar_area, m.column, m.row) {
-                app.focus = Focus::Bar;
-                return;
-            }
-            let issue_rows = app.side_issue_rows.clone();
-            let pr_rows = app.side_pr_rows.clone();
-            if let Some(n) = sidebar_hit(app.side_issue_area, &issue_rows, app, m.column, m.row) {
-                if app.focus == Focus::Main && app.pane == Pane::Issues
-                    && app.current == Some(n) && app.effective(&issue_rows) == Some(n)
-                {
-                    app.ensure_visited(n);
-                }
-                app.focus = Focus::Main;
-                app.pane = Pane::Issues;
-                app.show_issue(n);
-                return;
-            }
-            if let Some(n) = sidebar_hit(app.side_pr_area, &pr_rows, app, m.column, m.row) {
-                if app.focus == Focus::Main && app.pane == Pane::PRs
-                    && app.current == Some(n) && app.effective(&pr_rows) == Some(n)
-                {
-                    app.ensure_visited(n);
-                }
-                app.focus = Focus::Main;
-                app.pane = Pane::PRs;
-                app.show_issue(n);
-                return;
-            }
-            // Mention rows only highlight their source line; paired rows
-            // open their counterpart like sidebar rows.
-            let ref_rows = app.ref_rows.clone();
-            if let Some(n) = sidebar_hit(app.refs_area, &ref_rows, app, m.column, m.row) {
-                app.focus = Focus::Main;
-                app.pane = Pane::Refs;
-                if app.ref_paired.contains(&n) {
-                    app.ensure_visited(n);
-                    app.show_issue(n);
-                } else {
-                    app.select_ref(n);
-                }
-                return;
-            }
-            if in_rect(app.tabs_area, m.column, m.row) {
-                app.pane = Pane::Main;
-                let rel = m.column.saturating_sub(app.tabs_area.x);
-                app.set_tab(if rel < 12 { Tab::Details } else { Tab::Visual });
-                return;
-            }
-            // The meta/label block above the tabs resolves refs and URLs
-            // exactly like body lines; only the body folds diff files.
-            let in_body = in_rect(app.body_area, m.column, m.row);
-            let in_header = !in_body && in_rect(app.header_area, m.column, m.row);
-            if in_body || in_header {
-                app.focus = Focus::Main;
-                app.pane = Pane::Main;
-                let area = if in_body { app.body_area } else { app.header_area };
-                let row = (m.row - area.y) as usize;
-                if in_body && app.visual_diff() {
-                    // Clicking parks the active line there; render resolves
-                    // the file and expands a collapsed header. Clicking an
-                    // expanded header folds it back instead. Other rows fall
-                    // through to link resolution below so refs still open.
-                    let abs = app.body_base as usize + row;
-                    app.diff_line = Some(abs);
-                    app.diff_touched = true;
-                    let is_header = app.diff_headers.iter().any(|&r| r == row);
-                    if is_header {
-                        if let Some(f) = app.diff_row_files.get(row).copied().flatten() {
-                            app.diff_cursor = f;
-                            let expanded = app.current.and_then(|n| {
-                                app.diffs.get(&n).and_then(|fs| {
-                                    fs.get(f).map(|file| {
-                                        app.expanded_files.contains(&(n, file.filename.clone()))
-                                    })
-                                })
-                            });
-                            if expanded == Some(true) {
-                                app.diff_touched = false;
-                                app.toggle_diff_file();
-                                return;
-                            }
-                        }
-                        return;
-                    }
-                }
-                let rows = if in_body { app.body_rows.clone() } else { app.header_rows.clone() };
-                if let Some(line) = rows.get(row) {
-                    let repo = app.repo_key();
-                    let rel_x = (m.column - area.x) as usize;
-                    let links = crate::model::links_in_line(line, repo.as_deref());
-                    match crate::model::nearest_link(line, &links, rel_x) {
-                        Some(crate::model::LinkTarget::Issue(n)) => {
-                            app.ensure_visited(n);
-                            app.load_issue(n, false);
-                        }
-                        Some(crate::model::LinkTarget::Url(url)) => open_url(&url, app),
-                        None => {}
-                    }
-                }
-                return;
-            }
-            app.focus = Focus::Main;
-        }
+        MouseEventKind::Down(MouseButton::Left) => handle_left(app, m.column, m.row, false),
+        // Drag keeps hover/scroll continuity while the button is held:
+        // side panes preview the row under the cursor, Main keeps its
+        // scroll, and nothing commits until a real press lands.
+        MouseEventKind::Drag(MouseButton::Left) => handle_left(app, m.column, m.row, true),
+        // Release is a no-op by design: selection commits on press, so a
+        // release off-target never undoes it, and drag scroll never clicks.
+        MouseEventKind::Up(_) => {}
         MouseEventKind::ScrollDown => {
             wheel_move(app, wheel_target(app, m.column, m.row), 1);
         }
@@ -729,6 +638,264 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         }
         _ => {}
     }
+}
+
+/// Board mouse path: press opens (double-press), drag only trails the
+/// cursor cell like a hover, scroll walks cards. Release never opens:
+/// the press already committed, so release is a no-op.
+fn handle_board_mouse(app: &mut App, m: MouseEvent) {
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let hit = app
+                .board_cells
+                .iter()
+                .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
+                .map(|(rect, c, r)| (*rect, *c, *r));
+            if let Some((rect, c, r)) = hit {
+                app.note_click(rect);
+                // Clicking the URL line of an expanded card opens it.
+                if app.board_expanded == Some((c, r)) && m.row - rect.y == 3 {
+                    if let Some(board) = &app.board {
+                        let cols = crate::app::board_columns(board, &app.board_filter);
+                        if let Some(url) = cols
+                            .get(c)
+                            .and_then(|(_, cards)| cards.get(r))
+                            .and_then(|card| crate::ui::card_url(card))
+                        {
+                            open_url(&url, app);
+                            return;
+                        }
+                    }
+                }
+                if app.board_col == c && app.board_row == r {
+                    if let Some(n) = board_selected_number(app) {
+                        app.board = None;
+                        app.board_expanded = None;
+                        app.ensure_visited(n);
+                        app.load_issue(n, false);
+                    }
+                } else {
+                    app.board_col = c;
+                    app.board_row = r;
+                    app.board_expanded = None;
+                }
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            let hit = app
+                .board_cells
+                .iter()
+                .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
+                .map(|(rect, c, r)| (*rect, *c, *r));
+            if let Some((rect, c, r)) = hit {
+                app.board_col = c;
+                app.board_row = r;
+                app.note_click(rect);
+            }
+        }
+        MouseEventKind::ScrollDown => board_move(app, 0, 1),
+        MouseEventKind::ScrollUp => board_move(app, 0, -1),
+        // Release never opens: the press already committed.
+        MouseEventKind::Up(_) => {}
+        _ => {}
+    }
+}
+
+/// Shared Left-press path. `drag` is a held-button move: side panes
+/// preview the row under the cursor (transient hover, never a visit),
+/// the refs pane previews the highlight without opening pairs, and
+/// Main only takes focus — Scroll events keep owning the scroll, and
+/// links/diff lines commit on a real press only. Both press and drag
+/// record a click flash; release stays a no-op at the call site.
+#[allow(clippy::too_many_lines)]
+fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
+    if in_rect(app.bar_area, x, y) {
+        if !drag {
+            app.focus = Focus::Bar;
+            app.note_click(Rect::new(x, y, 1, 1));
+        }
+        return;
+    }
+    // Hit-test against the render-cached pane rows by borrow: computed
+    // once per frame in `render`, reused here with no clone.
+    let issue_hit = sidebar_hit(
+        app.side_issue_area,
+        &app.side_issue_rows,
+        &app.data,
+        &app.expanded_rows,
+        x,
+        y,
+    );
+    if let Some(n) = issue_hit {
+        let flash = sidebar_row_rect(
+            app.side_issue_area,
+            &app.side_issue_rows,
+            &app.data,
+            &app.expanded_rows,
+            n,
+        );
+        // A press on the already-visible row files it under requested
+        // (first press previews, second promotes); a drag only hovers.
+        // The focus/pane guard reads pre-click state, as before.
+        if !drag
+            && app.focus == Focus::Main
+            && app.pane == Pane::Issues
+            && app.current == Some(n)
+            && app.effective(&app.side_issue_rows) == Some(n)
+        {
+            app.ensure_visited(n);
+        }
+        app.focus = Focus::Main;
+        app.pane = Pane::Issues;
+        if drag {
+            app.hover = if Some(n) == app.current { None } else { Some(n) };
+        } else {
+            app.show_issue(n);
+        }
+        if let Some(rect) = flash {
+            app.note_click(rect);
+        }
+        return;
+    }
+    let pr_hit = sidebar_hit(
+        app.side_pr_area,
+        &app.side_pr_rows,
+        &app.data,
+        &app.expanded_rows,
+        x,
+        y,
+    );
+    if let Some(n) = pr_hit {
+        let flash = sidebar_row_rect(
+            app.side_pr_area,
+            &app.side_pr_rows,
+            &app.data,
+            &app.expanded_rows,
+            n,
+        );
+        if !drag
+            && app.focus == Focus::Main
+            && app.pane == Pane::PRs
+            && app.current == Some(n)
+            && app.effective(&app.side_pr_rows) == Some(n)
+        {
+            app.ensure_visited(n);
+        }
+        app.focus = Focus::Main;
+        app.pane = Pane::PRs;
+        if drag {
+            app.hover = if Some(n) == app.current { None } else { Some(n) };
+        } else {
+            app.show_issue(n);
+        }
+        if let Some(rect) = flash {
+            app.note_click(rect);
+        }
+        return;
+    }
+    // Mention rows only highlight their source line; paired rows
+    // open their counterpart like sidebar rows.
+    let ref_hit = sidebar_hit(
+        app.refs_area,
+        &app.ref_rows,
+        &app.data,
+        &app.expanded_rows,
+        x,
+        y,
+    );
+    if let Some(n) = ref_hit {
+        let flash = sidebar_row_rect(
+            app.refs_area,
+            &app.ref_rows,
+            &app.data,
+            &app.expanded_rows,
+            n,
+        );
+        app.focus = Focus::Main;
+        app.pane = Pane::Refs;
+        if drag {
+            app.ref_highlight = Some(n);
+        } else if app.ref_paired.contains(&n) {
+            app.ensure_visited(n);
+            app.show_issue(n);
+        } else {
+            app.select_ref(n);
+        }
+        if let Some(rect) = flash {
+            app.note_click(rect);
+        }
+        return;
+    }
+    if in_rect(app.tabs_area, x, y) {
+        if !drag {
+            app.pane = Pane::Main;
+            let rel = x.saturating_sub(app.tabs_area.x);
+            app.set_tab(if rel < 12 { Tab::Details } else { Tab::Visual });
+            app.note_click(Rect::new(x, y, 1, 1));
+        }
+        return;
+    }
+    // The meta/label block above the tabs resolves refs and URLs
+    // exactly like body lines; only the body folds diff files.
+    let in_body = in_rect(app.body_area, x, y);
+    let in_header = !in_body && in_rect(app.header_area, x, y);
+    if in_body || in_header {
+        app.focus = Focus::Main;
+        app.pane = Pane::Main;
+        let area = if in_body { app.body_area } else { app.header_area };
+        let row = (y - area.y) as usize;
+        app.note_click(Rect::new(area.x, y, area.width, 1));
+        if drag {
+            return;
+        }
+        if in_body && app.visual_diff() {
+            // Clicking parks the active line there; render resolves
+            // the file and expands a collapsed header. Clicking an
+            // expanded header folds it back instead. Other rows fall
+            // through to link resolution below so refs still open.
+            let abs = app.body_base as usize + row;
+            app.diff_line = Some(abs);
+            app.diff_touched = true;
+            let is_header = app.diff_headers.iter().any(|&r| r == row);
+            if is_header {
+                if let Some(f) = app.diff_row_files.get(row).copied().flatten() {
+                    app.diff_cursor = f;
+                    let expanded = app.current.and_then(|n| {
+                        app.diffs.get(&n).and_then(|fs| {
+                            fs.get(f).map(|file| {
+                                app.expanded_files.contains(&(n, file.filename.clone()))
+                            })
+                        })
+                    });
+                    if expanded == Some(true) {
+                        app.diff_touched = false;
+                        app.toggle_diff_file();
+                        return;
+                    }
+                }
+                return;
+            }
+        }
+        let line = {
+            let rows = if in_body { &app.body_rows } else { &app.header_rows };
+            rows.get(row).cloned()
+        };
+        if let Some(line) = line {
+            let repo = app.repo_key();
+            let rel_x = (x - area.x) as usize;
+            let links = crate::model::links_in_line(&line, repo.as_deref());
+            match crate::model::nearest_link(&line, &links, rel_x) {
+                Some(crate::model::LinkTarget::Issue(n)) => {
+                    app.ensure_visited(n);
+                    app.load_issue(n, false);
+                }
+                Some(crate::model::LinkTarget::Url(url)) => open_url(&url, app),
+                None => {}
+            }
+        }
+        return;
+    }
+    app.focus = Focus::Main;
 }
 
 /// Open a URL in the browser. Stubbed in tests so suites never launch one.
@@ -789,18 +956,18 @@ mod tests {
         assert!(detail > 3, "detail block is tall enough to span a row: {detail}");
 
         // Collapsed geometry still applies: row 7 hits its own summary.
-        assert_eq!(sidebar_hit(area, &rows, &app, 5, area.y + 2), Some(7));
+        assert_eq!(sidebar_hit(area, &rows, &app.data, &app.expanded_rows, 5, area.y + 2), Some(7));
 
         app.expanded_rows.insert(7);
         // Every line of the detail block belongs to the expanded row.
         let detail_top = area.y + 4;
         for y in detail_top..detail_top + detail as u16 {
-            assert_eq!(sidebar_hit(area, &rows, &app, 5, y), Some(7), "detail line {y}");
+            assert_eq!(sidebar_hit(area, &rows, &app.data, &app.expanded_rows, 5, y), Some(7), "detail line {y}");
         }
         // Row 9 starts only after the detail block plus the item's blank tail.
         let row9_top = area.y + 2 + 3 + detail as u16;
         for y in row9_top..row9_top + 3 {
-            assert_eq!(sidebar_hit(area, &rows, &app, 5, y), Some(9), "row 9 line {y}");
+            assert_eq!(sidebar_hit(area, &rows, &app.data, &app.expanded_rows, 5, y), Some(9), "row 9 line {y}");
         }
     }
 
