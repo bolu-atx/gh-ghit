@@ -186,6 +186,13 @@ pub async fn fetch_recent_sections(
     Ok(rows)
 }
 
+/// Last persisted sections payload for a repo and window (`None` when no
+/// fresh cache exists). Startup hydration reads through here so the
+/// sidebar paints previous state before the background refresh lands.
+pub(crate) fn cached_sections(repo: &str, hours: u64) -> Option<Vec<api::Row>> {
+    cache::cache_get(&sections_cache_name(repo, hours))
+}
+
 fn sections_cache_name(repo: &str, hours: u64) -> String {
     format!("sections-{}-{hours}", repo.to_lowercase().replace('/', "__"))
 }
