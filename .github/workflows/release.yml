@@ -119,7 +119,7 @@ jobs:
           # only annotated tag objects count.
           tldr="$TLDR_INPUT"
           if [ -z "$tldr" ] && [ "$(git cat-file -t "$tag")" = "tag" ]; then
-            tldr="$(git tag -l --format='%(contents:strip)' "$tag")"
+            tldr="$(git tag -l --format='%(contents)' "$tag")"
           fi
           gen="$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
             -f tag_name="$tag" --jq .body)"
