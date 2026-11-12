@@ -75,8 +75,15 @@ fn require_repo(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn require_token() -> Result<&'static str, String> {
+fn require_token() -> Result<String, String> {
     api::token().ok_or_else(|| "GitHub token missing: set GH_TOKEN or run `gh auth login`".to_string())
+}
+
+/// Early auth probe result: a dead token errors, a live one reports
+/// which required scopes it still lacks (empty means fully covered).
+pub async fn check_auth() -> Result<Vec<String>, String> {
+    let token = require_token()?;
+    api::check_auth(&token).await
 }
 
 /// Fetch one issue/PR plus its project statuses. Failures are strings for
@@ -123,7 +130,7 @@ pub async fn fetch_number(
         }
     };
     let (data, statuses) =
-        api::issue(repo, number, token, cached_comments, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await?;
+        api::issue(repo, number, &token, cached_comments, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await?;
     let (data_c, statuses_c) = (data.clone(), statuses.clone());
     let _ = tokio::task::spawn_blocking(move || {
         if comments_fetched { cache::cache_put(&comments_name, &data_c.comments); }
@@ -160,7 +167,7 @@ pub async fn fetch_recent_sections(
     let fresh = api::sections(
         repo,
         hours,
-        token,
+        &token,
         cached_numbers.as_ref(),
         Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
     )
@@ -179,13 +186,13 @@ fn sections_cache_name(repo: &str, hours: u64) -> String {
 pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::search(repo, query, token).await
+    api::search(repo, query, &token).await
 }
 
 /// Batch board card details in one GraphQL request.
 pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<model::BoardDetail>>, String> {
     let token = require_token()?;
-    api::board_details(cards, token).await
+    api::board_details(cards, &token).await
 }
 
 /// Per-card detail: dates plus comment count.
@@ -196,7 +203,7 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
     let read_name = name.clone();
     let comments = tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
     let comments_fetched = comments.is_none();
-    let (data, _) = api::issue(repo, number, token, comments, None).await?;
+    let (data, _) = api::issue(repo, number, &token, comments, None).await?;
     let saved_comments = data.comments.clone();
     if comments_fetched {
         let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &saved_comments)).await;
@@ -220,7 +227,7 @@ pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::
             return Ok(data);
         }
     }
-    let data = api::graph(repo, number, token).await?;
+    let data = api::graph(repo, number, &token).await?;
     let (name_c, data_c) = (name, data.clone());
     let _ = tokio::task::spawn_blocking(move || {
         cache::cache_put(&name_c, &data_c);
@@ -245,7 +252,7 @@ pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<mode
             return Ok(files);
         }
     }
-    let files = api::pull_files(repo, number, token).await?;
+    let files = api::pull_files(repo, number, &token).await?;
     let (name_c, files_c) = (name, files.clone());
     let _ = tokio::task::spawn_blocking(move || {
         cache::cache_put(&name_c, &files_c);
@@ -260,7 +267,7 @@ pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<mode
 pub async fn post_thread_comment(repo: &str, number: u64, body: &str) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::add_comment(repo, number, body, token).await
+    api::add_comment(repo, number, body, &token).await
 }
 
 /// Post a single-shot line comment on a PR file. Same error contract
@@ -268,14 +275,14 @@ pub async fn post_thread_comment(repo: &str, number: u64, body: &str) -> Result<
 pub async fn post_line_comment(repo: &str, number: u64, body: &str, path: &str, line: u64) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::add_review_thread(repo, number, body, path, line, token).await
+    api::add_review_thread(repo, number, body, path, line, &token).await
 }
 
 /// Reply inside an existing review thread. Phase 4 of #31: wired but
 /// untargeted until #11 gives the cursor a thread to point at.
 pub async fn post_thread_reply(thread_id: &str, body: &str) -> Result<(), String> {
     let token = require_token()?;
-    api::add_thread_reply(thread_id, body, token).await
+    api::add_thread_reply(thread_id, body, &token).await
 }
 
 #[cfg(test)]

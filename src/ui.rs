@@ -138,6 +138,56 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_compose(f, f.area(), app);
     }
+    if app.auth_prompt.is_some() {
+        dim_background(f, 0.35);
+        render_auth(f, f.area(), app);
+    }
+}
+
+/// Auth-scope prompt (`gh` token dead or under-scoped): names the cause,
+/// the missing scopes, and the exact re-auth command. `y` suspends the
+/// TUI and runs it; `n` dismisses to a status-line hint.
+fn render_auth(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, ink, muted, paper, teal, base};
+    let Some(p) = app.auth_prompt.as_ref() else { return };
+    let popup = centered(area, 80, 60);
+    f.render_widget(Clear, popup);
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(amber()))
+        .style(base())
+        .title(" GitHub auth ");
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let mut lines = vec![
+        Line::from(Span::styled(p.cause.clone(), Style::new().bg(ink()).fg(paper()))),
+        Line::from(""),
+    ];
+    if p.missing.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "the token is expired, revoked, or invalid",
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("missing scopes: ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(p.missing.join(", "), Style::new().bg(ink()).fg(amber()).bold()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("needed: ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(crate::api::REQUIRED_SCOPES.join(", "), Style::new().bg(ink()).fg(teal())),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        crate::api::reauth_command(),
+        Style::new().bg(ink()).fg(paper()),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "y re-auth now · n dismiss (nothing is fetched until auth works)",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
@@ -2842,6 +2892,24 @@ mod render_smoke {
         assert!(text.contains("preview"), "{text}");
         assert!(text.contains("ctrl-s send · esc discard"), "{text}");
     }
+
+    #[test]
+    fn auth_modal_names_scopes_and_command() {
+        let mut app = loaded_app();
+        app.auth_prompt = Some(crate::app::AuthPrompt {
+            missing: vec!["project".to_string()],
+            cause: "token lacks scopes ghit needs".to_string(),
+        });
+        let text = frame_text(&mut app);
+        assert!(text.contains("GitHub auth"), "{text}");
+        assert!(text.contains("missing scopes:"), "{text}");
+        assert!(text.contains("project"), "{text}");
+        assert!(text.contains("gh auth refresh -s repo -s read:org -s project"), "{text}");
+        assert!(text.contains("y re-auth now"), "{text}");
+    }
+
+    // No second frame test for the dead-token state: same modal,
+    // same layout, and the live drive covers it.
 
     #[test]
     fn compose_on_diff_line_targets_file_and_line() {

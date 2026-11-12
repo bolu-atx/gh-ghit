@@ -62,6 +62,14 @@ pub(crate) enum Focus {
     Bar,
 }
 
+/// Pending auth-scope question: missing scopes (empty means the token
+/// itself is dead) plus the sentence that triggered the prompt.
+#[derive(Clone, Debug)]
+pub(crate) struct AuthPrompt {
+    pub(crate) missing: Vec<String>,
+    pub(crate) cause: String,
+}
+
 /// Which pane `j`/`k` act on. Tab cycles Issues → PRs → Refs, skipping
 /// Refs while it is hidden. Text input (`Focus::Bar`), the board, and the
 /// filter dialog keep their own keys. The body keeps its dedicated keys
@@ -193,6 +201,13 @@ pub(crate) struct App {
     pub(crate) body_base: u16,
     pub(crate) board_loading: bool,
     pub(crate) board_rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
+    /// Early auth probe in flight (`bootstrap` started it).
+    pub(crate) auth_rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
+    /// Pending re-auth question: the token is dead or lacks scopes.
+    /// A modal until the user answers; `y` runs `gh auth refresh`.
+    pub(crate) auth_prompt: Option<AuthPrompt>,
+    /// Set by input; the event loop runs the refresh outside the TUI.
+    pub(crate) reauth_requested: bool,
     pub(crate) board_states: Vec<ListState>,
     pub(crate) board_expanded: Option<(usize, usize)>,
     pub(crate) merged_window_hours: u64,
@@ -326,6 +341,9 @@ impl App {
             issue_state: ListState::default(),
             pr_state: ListState::default(),
             board: None,
+            auth_rx: None,
+            auth_prompt: None,
+            reauth_requested: false,
             compose: None,
             compose_tx,
             compose_rx,
@@ -1704,12 +1722,76 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
         let _ = crate::api::token();
         let _ = tx.send(worker.repo_slug);
     });
+    // Early auth probe: one cheap `/user` round-trip validates the token
+    // and reads its scopes, so a dead or under-scoped token prompts
+    // before the first real fetch fails into an empty sidebar.
+    let (atx, arx) = std::sync::mpsc::channel();
+    app.auth_rx = Some(arx);
+    rt().spawn(async move {
+        let _ = atx.send(github::check_auth().await);
+    });
+}
+
+/// Land the early auth probe: a dead token or missing scopes raises
+/// the re-auth modal; a covered token stays silent.
+pub(crate) fn poll_auth(app: &mut App) {
+    let Some(result) = app.auth_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+    app.auth_rx = None;
+    match result {
+        Ok(missing) if missing.is_empty() => {}
+        Ok(missing) => {
+            app.auth_prompt = Some(AuthPrompt {
+                cause: "token lacks scopes ghit needs".to_string(),
+                missing,
+            });
+        }
+        Err(e) => {
+            app.auth_prompt = Some(AuthPrompt { cause: e, missing: vec![] });
+        }
+    }
+}
+
+/// Run `gh auth refresh` with the required scopes on the real terminal:
+/// the TUI suspends (raw mode off, alternate screen left), the command
+/// inherits stdio so it can prompt, then the TUI resumes and the probe
+/// re-runs. Drive mode has no terminal to suspend; it just names the
+/// command instead.
+pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) {
+    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
+    use crossterm::ExecutableCommand;
+    let cmd = crate::api::reauth_command();
+    let _ = disable_raw_mode();
+    let _ = terminal.backend_mut().execute(LeaveAlternateScreen);
+    println!("ghit needs these scopes: {}", crate::api::REQUIRED_SCOPES.join(", "));
+    let status = std::process::Command::new("gh")
+        .args(["auth", "refresh"])
+        .args(crate::api::REQUIRED_SCOPES.iter().flat_map(|s| ["-s", s]))
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            crate::api::forget_token();
+            app.notify("re-auth ok: re-checking token…".to_string());
+        }
+        _ => app.notify(format!("re-auth failed — run by hand: {cmd}")),
+    }
+    let _ = enable_raw_mode();
+    let _ = terminal.backend_mut().execute(EnterAlternateScreen);
+    let _ = terminal.clear();
+    app.auth_prompt = None;
+    app.reauth_requested = false;
+    // Re-probe so the modal returns if the refresh did not cover it.
+    let (atx, arx) = std::sync::mpsc::channel();
+    app.auth_rx = Some(arx);
+    rt().spawn(async move {
+        let _ = atx.send(github::check_auth().await);
+    });
 }
 
 /// Every background lander, once per loop pass. The terminal and drive
 /// loops share this so both pick up fetches the same way.
 pub(crate) fn poll_all(app: &mut App) {
     poll_bootstrap(app);
+    poll_auth(app);
     poll_sections(app);
     app.auto_refresh_recent(Instant::now());
     poll_issues(app);
@@ -1759,6 +1841,9 @@ fn event_loop(
             };
         }
         poll_all(app);
+        if app.reauth_requested {
+            run_reauth(app, terminal);
+        }
         if app.quit {
             return Ok(());
         }
@@ -1841,7 +1926,10 @@ pub(crate) fn poll_sections(app: &mut App) {
                         if let Some(n) = last { app.load_issue(n, false); }
                     }
                 },
-                Err(e) => { if !auto { app.notify(e); } },
+                // Auto-refresh failures notify too: a silent empty
+                // sidebar is how under-scoped tokens went unnoticed.
+                // The backoff above still bounds the retry rate.
+                Err(e) => { app.notify(e); },
             }
         }
     }
@@ -2654,6 +2742,38 @@ mod tests {
         assert_eq!(app.message, "no #589");
         assert_eq!(app.current, Some(590), "nothing moves past the end");
         assert_eq!(app.step_pending, None);
+    }
+
+    #[test]
+    fn auto_refresh_failures_notify_instead_of_going_silent() {
+        let mut app = App::new(Some("o/r".to_string()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.section_rx = Some(rx);
+        app.section_auto_refresh = true;
+        tx.send(github::SectionEvent::Done(Err("GitHub request failed: 403".to_string()))).unwrap();
+        poll_sections(&mut app);
+        assert!(app.section_rx.is_none(), "terminal result clears the channel");
+        assert!(app.message.contains("403"), "auto error surfaces: {}", app.message);
+    }
+
+    #[test]
+    fn auth_probe_landing_drives_the_prompt() {
+        // Missing scopes raise the modal; full coverage stays silent;
+        // a dead token names its cause with no scopes to list.
+        let mut app = App::new(Some("o/r".to_string()));
+        for (result, expect_prompt) in [
+            (Ok(vec!["project".to_string()]), true),
+            (Ok(vec![]), false),
+            (Err("GitHub auth check failed: 401 Unauthorized".to_string()), true),
+        ] {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.auth_rx = Some(rx);
+            tx.send(result).unwrap();
+            poll_auth(&mut app);
+            assert!(app.auth_rx.is_none(), "probe lands once");
+            assert_eq!(app.auth_prompt.is_some(), expect_prompt);
+            app.auth_prompt = None;
+        }
     }
 
     #[test]

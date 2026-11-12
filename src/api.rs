@@ -22,22 +22,115 @@ pub struct Row {
     pub window_at: Option<String>,
 }
 
-pub fn token() -> Option<&'static str> {
-    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
-    TOKEN.get_or_init(|| {
-        for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
-            if let Ok(t) = std::env::var(var) {
-                let t = t.trim().to_owned();
-                if !t.is_empty() {
-                    return Some(t);
-                }
+/// Scopes ghit needs on the token: repo data (issues, PRs, comments,
+/// search, diffs), org boards, and Projects v2 fields.
+pub const REQUIRED_SCOPES: &[&str] = &["repo", "read:org", "project"];
+
+/// Exact re-auth command naming every required scope, so the prompt
+/// shows it and the user can also run it by hand.
+pub fn reauth_command() -> String {
+    let mut cmd = String::from("gh auth refresh");
+    for s in REQUIRED_SCOPES {
+        cmd.push_str(" -s ");
+        cmd.push_str(s);
+    }
+    cmd
+}
+
+/// True when a fetch failure smells like auth (bad/expired token or
+/// missing scopes) rather than a bad repo, number, or payload.
+pub fn is_auth_error(e: &str) -> bool {
+    // reqwest renders HTTP failures as `HTTP status client error
+    // (403 Forbidden) for url ...`, and the APIs explain themselves
+    // as bad credentials, inaccessible resources, or missing scopes.
+    const MARKERS: &[&str] = &[
+        "401", "403", "Unauthorized", "Forbidden", "Bad credentials",
+        "Resource not accessible", "requires authentication",
+        "missing scope", "Insufficient scopes", "Could not resolve to a Repository",
+        "FORBIDDEN", "UNAUTHORIZED",
+    ];
+    MARKERS.iter().any(|m| e.contains(m))
+}
+
+/// Append the re-auth command to an auth-class failure, so a bare
+/// status line still tells the user how to fix it.
+pub fn with_auth_hint(e: String) -> String {
+    if is_auth_error(&e) {
+        format!("{e} — re-auth with more permissions: {}", reauth_command())
+    } else {
+        e
+    }
+}
+
+/// Scopes still missing from a granted set: pure so tests pin it
+/// without the network.
+pub fn missing_scopes(granted: &[&str]) -> Vec<String> {
+    REQUIRED_SCOPES
+        .iter()
+        .filter(|s| !granted.contains(s))
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Early auth probe: validates the token against `GET /user` and reads
+/// the granted OAuth scopes off the response header. Returns the
+/// missing scopes, empty when the token covers everything ghit needs.
+/// A 401/403 here means the token itself is dead; fine-grained PATs
+/// carry no scopes header, so only validity is checked for those.
+pub async fn check_auth(bearer: &str) -> Result<Vec<String>, String> {
+    let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
+    let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
+    let res = client()
+        .get(format!("{base}/user"))
+        .bearer_auth(bearer)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub request failed: {e}"))?;
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED || res.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err(with_auth_hint(format!("GitHub auth check failed: {}", res.status())));
+    }
+    let granted: Vec<&str> = res
+        .headers()
+        .get("x-oauth-scopes")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').map(str::trim).collect())
+        .unwrap_or_default();
+    // No header (fine-grained token): validity above is all we know.
+    if res.headers().get("x-oauth-scopes").is_none() {
+        return Ok(vec![]);
+    }
+    Ok(missing_scopes(&granted))
+}
+
+static TOKEN_CACHE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn token() -> Option<String> {
+    // Env wins and is re-read every call, so an export mid-run applies.
+    for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
+        if let Ok(t) = std::env::var(var) {
+            let t = t.trim().to_owned();
+            if !t.is_empty() {
+                return Some(t);
             }
         }
-        let out = std::process::Command::new("gh").args(["auth", "token"]).output().ok()?;
-        if !out.status.success() { return None; }
-        let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();
-        (!token.is_empty()).then_some(token)
-    }).as_deref()
+    }
+    let mut cached = TOKEN_CACHE.lock().unwrap();
+    if let Some(t) = cached.clone() {
+        return Some(t);
+    }
+    let out = std::process::Command::new("gh").args(["auth", "token"]).output().ok()?;
+    if !out.status.success() { return None; }
+    let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    if token.is_empty() { return None; }
+    *cached = Some(token.clone());
+    Some(token)
+}
+
+/// Drop the cached `gh auth token` value so a re-auth (or logout)
+/// takes effect without restarting the app.
+pub fn forget_token() {
+    *TOKEN_CACHE.lock().unwrap() = None;
 }
 
 const PR_FIELDS: &str = r#"
@@ -89,6 +182,11 @@ fn within_window(s: Option<&str>, now: chrono::DateTime<chrono::Utc>, hours: u64
 }
 
 fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -> Result<Vec<Row>, String> {
+    for page in pages {
+        if let Some(e) = graphql_auth_failure(page) {
+            return Err(e);
+        }
+    }
     pages.first().and_then(|v| v.pointer("/data/repository")).filter(|v| v.is_object())
         .ok_or_else(|| format!("GitHub GraphQL: {}", pages.first().and_then(|v| v.get("errors")).unwrap_or(&Value::Null)))?;
     let mut rows = Vec::new();
@@ -137,15 +235,21 @@ fn client() -> reqwest::Client {
         .clone()
 }
 
+/// Map a transport failure: auth-class HTTP statuses carry the
+/// re-auth hint so no fetch ever fails silently into an empty list.
+fn http_error(context: &str, e: reqwest::Error) -> String {
+    with_auth_hint(format!("{context}: {e}"))
+}
+
 async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Result<Value, String> {
     client
         .get(url)
         .bearer_auth(bearer)
         .send()
         .await
-        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .map_err(|e| http_error("GitHub request failed", e))?
         .error_for_status()
-        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .map_err(|e| http_error("GitHub request failed", e))?
         .json()
         .await
         .map_err(|e| format!("bad GitHub response: {e}"))
@@ -158,12 +262,24 @@ async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Val
         .json(body)
         .send()
         .await
-        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .map_err(|e| http_error("GitHub request failed", e))?
         .error_for_status()
-        .map_err(|e| format!("GitHub request failed: {e}"))?
+        .map_err(|e| http_error("GitHub request failed", e))?
         .json()
         .await
         .map_err(|e| format!("bad GitHub response: {e}"))
+}
+
+/// Auth-class failure hiding inside a 200 GraphQL payload: the data
+/// may be partial (nested fields denied), so surface it instead of
+/// rendering the partial result as if it were whole.
+fn graphql_auth_failure(value: &Value) -> Option<String> {
+    let errors = value.get("errors")?.as_array()?;
+    if errors.is_empty() {
+        return None;
+    }
+    let first = errors.first().map(|v| v.to_string()).unwrap_or_default();
+    is_auth_error(&first).then(|| with_auth_hint(format!("GitHub GraphQL: {first}")))
 }
 
 /// `(hasNextPage, endCursor)` for one section connection of a sections page.
@@ -316,6 +432,9 @@ pub async fn board_details(cards: &[(String, u64)], bearer: &str) -> Result<Vec<
 }
 
 fn parse_board_details(value: &Value, count: usize) -> Result<Vec<Option<BoardDetail>>, String> {
+    if let Some(e) = graphql_auth_failure(value) {
+        return Err(e);
+    }
     let data = value.get("data").filter(|v| v.is_object())
         .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
     Ok((0..count).map(|i| {
@@ -703,6 +822,9 @@ fn parse_graph_neighbors(issue: &Value) -> Vec<(GraphNode, GraphEdgeKind)> {
 }
 
 fn graph_issue(value: &Value) -> Result<&Value, String> {
+    if let Some(e) = graphql_auth_failure(value) {
+        return Err(e);
+    }
     value
         .pointer("/data/repository/issue")
         .filter(|v| v.is_object())
@@ -909,6 +1031,50 @@ mod tests {
         let q = query();
         for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter", "commits(last: 1)", "statusCheckRollup"] { assert!(q.contains(field)); }
     }
+    #[test]
+    fn auth_failures_carry_the_reauth_command() {
+        for e in [
+            "GitHub request failed: HTTP status client error (401 Unauthorized) for url",
+            "GitHub request failed: HTTP status client error (403 Forbidden) for url",
+            "GitHub GraphQL: Bad credentials",
+            "GitHub GraphQL: Resource not accessible by personal access token",
+            "Could not resolve to a Repository with the name of o/r",
+        ] {
+            assert!(is_auth_error(e), "auth: {e}");
+            let hinted = with_auth_hint(e.to_string());
+            assert!(hinted.contains("gh auth refresh -s repo -s read:org -s project"), "hint: {hinted}");
+        }
+        for e in [
+            "GitHub request failed: HTTP status client error (404 Not Found) for url",
+            "bad search payload",
+            "missing row number",
+        ] {
+            assert!(!is_auth_error(e), "not auth: {e}");
+            assert_eq!(with_auth_hint(e.to_string()), e, "untouched: {e}");
+        }
+    }
+
+    #[test]
+    fn graphql_auth_errors_fail_loudly_not_partially() {
+        // Nested scope denial rides a 200 with partial data: surface it
+        // instead of rendering the partial result as whole.
+        let denied = json!({
+            "data": {"repository": {"open": {"nodes": []}}},
+            "errors": [{"type": "FORBIDDEN", "message": "Resource not accessible by personal access token"}],
+        });
+        let err = parse_board_details(&denied, 1).unwrap_err();
+        assert!(err.contains("gh auth refresh"), "hint: {err}");
+        // Non-auth field errors stay best-effort: rows still parse.
+        let benign = json!({
+            "data": {"repository": {
+                "open": {"nodes": []}, "merged": {"nodes": []},
+                "openIssues": {"nodes": []}, "closedIssues": {"nodes": []}}},
+            "errors": [{"message": "something odd on one field"}],
+        });
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert!(parse_rows(&[benign], now, 24).unwrap().is_empty());
+    }
+
     #[test]
     fn parses_check_rollup_per_state() {
         use crate::model::CheckState;
