@@ -113,6 +113,27 @@ pub(crate) enum ConfirmKind {
     /// then navigates, choice 1 navigates leaving them pending, choice
     /// 2 (and `Esc`) stays put.
     PendingNav { intent: NavIntent },
+    /// Re-auth question for a dead or under-scoped token. Choice 0
+    /// re-auths now, choice 1 (and `Esc`) dismisses to a status hint.
+    Reauth,
+}
+
+/// One line of a generic confirm body. Plain lines render as body
+/// text; an emphasized line names the actionable fact in amber bold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConfirmLine {
+    pub(crate) text: String,
+    pub(crate) emphasis: bool,
+}
+
+impl ConfirmLine {
+    pub(crate) fn plain(text: String) -> Self {
+        Self { text, emphasis: false }
+    }
+
+    pub(crate) fn strong(text: String) -> Self {
+        Self { text, emphasis: true }
+    }
 }
 
 /// Generic confirm modal: title, message lines, and explicit choices.
@@ -121,20 +142,9 @@ pub(crate) enum ConfirmKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ConfirmDialog {
     pub(crate) title: String,
-    pub(crate) body: Vec<String>,
+    pub(crate) body: Vec<ConfirmLine>,
     pub(crate) choices: Vec<ConfirmChoice>,
     pub(crate) kind: ConfirmKind,
-}
-
-/// Pending auth-scope question: the sentence that triggered the prompt
-/// plus the missing scopes. `scopes_known` is true only when a probe
-/// read the granted scopes; fetch failures cannot name the gap, so a
-/// missing list there means unknown, not clean.
-#[derive(Clone, Debug)]
-pub(crate) struct AuthPrompt {
-    pub(crate) missing: Vec<String>,
-    pub(crate) cause: String,
-    pub(crate) scopes_known: bool,
 }
 
 /// Which pane `j`/`k` act on. Tab cycles Issues → PRs → Refs, skipping
@@ -444,15 +454,13 @@ impl RefsPane {
 }
 
 /// Auth state: the startup bootstrap channel, the re-auth probe channel,
-/// the pending scope prompt, and its dismissal/re-probe bookkeeping.
+/// and the dismissal/re-probe bookkeeping. The pending re-auth
+/// question itself lives in the generic confirm modal.
 #[derive(Default)]
 pub(crate) struct AuthState {
     pub(crate) bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
     /// Early auth probe in flight (`bootstrap` started it).
     pub(crate) rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
-    /// Pending re-auth question: the token is dead or lacks scopes.
-    /// A modal until the user answers; `y` runs `gh auth refresh`.
-    pub(crate) prompt: Option<AuthPrompt>,
     /// Set by input; the event loop runs the refresh outside the TUI.
     pub(crate) reauth_requested: bool,
     /// The user dismissed the prompt: later auth failures notify only,
@@ -2272,7 +2280,7 @@ impl App {
     /// stale key never acts on the wrong button.
     pub(crate) fn confirm_choose(&mut self, index: usize) {
         let Some(dialog) = self.confirm.take() else { return };
-        match dialog.kind {
+        match dialog.kind.clone() {
             ConfirmKind::PendingNav { intent } => match index {
                 0 => {
                     self.submit_pending_review();
@@ -2281,12 +2289,34 @@ impl App {
                 1 => self.run_nav(intent),
                 _ => {}
             },
+            ConfirmKind::Reauth => match index {
+                0 => {
+                    self.auth.reauth_requested = true;
+                    self.confirm = Some(dialog);
+                }
+                1 => self.dismiss_reauth(),
+                _ => {}
+            },
         }
     }
 
-    /// Drop the open dialog: the deferred navigation never runs.
+    /// Drop the open dialog: the deferred navigation never runs. A
+    /// dropped re-auth question counts as dismissed, like its `n`
+    /// choice, so later auth failures notify only.
     pub(crate) fn confirm_cancel(&mut self) {
-        self.confirm = None;
+        let kind = self.confirm.take().map(|d| d.kind);
+        if matches!(kind, Some(ConfirmKind::Reauth)) {
+            self.dismiss_reauth();
+        }
+    }
+
+    /// Dismiss the re-auth question: later auth failures notify only,
+    /// never re-modal. Names the by-hand command on the status line.
+    fn dismiss_reauth(&mut self) {
+        let cmd = crate::github::reauth_command();
+        self.auth.dismissed = true;
+        self.nav.focus = Focus::Main;
+        self.notify(format!("auth dismissed — re-auth by hand: {cmd}"));
     }
 
     /// Run a deferred navigation after a confirm resolves. Never guards:
@@ -2312,8 +2342,8 @@ impl App {
         self.confirm = Some(ConfirmDialog {
             title: "Unsubmitted comments".to_string(),
             body: vec![
-                format!("#{n} has {count} unsubmitted comment{s}.", s = if count == 1 { "" } else { "s" }),
-                "Discard leaves them pending on GitHub.".to_string(),
+                ConfirmLine::plain(format!("#{n} has {count} unsubmitted comment{s}.", s = if count == 1 { "" } else { "s" })),
+                ConfirmLine::plain("Discard leaves them pending on GitHub.".to_string()),
             ],
             choices: vec![
                 ConfirmChoice { key: 's', label: "Submit them".to_string() },
@@ -2321,6 +2351,39 @@ impl App {
                 ConfirmChoice { key: 'c', label: "Cancel".to_string() },
             ],
             kind: ConfirmKind::PendingNav { intent },
+        });
+    }
+
+    /// Specialization: the re-auth question for a dead or
+    /// under-scoped token. `scopes_known` is true only when a probe
+    /// read the granted scopes; fetch failures cannot name the gap, so
+    /// an empty missing list there means unknown, not clean. An open
+    /// dialog keeps its turn: the question waits, and the next auth
+    /// failure re-raises it.
+    pub(crate) fn open_reauth(&mut self, cause: String, missing: Vec<String>, scopes_known: bool) {
+        if self.confirm.is_some() {
+            return;
+        }
+        let mut body = vec![ConfirmLine::plain(cause)];
+        if !scopes_known {
+            body.push(ConfirmLine::plain(
+                "scopes could not be read from this failure — the error above names the fix".to_string(),
+            ));
+        } else if missing.is_empty() {
+            body.push(ConfirmLine::plain("the token is expired, revoked, or invalid".to_string()));
+        } else {
+            body.push(ConfirmLine::strong(format!("missing scopes: {}", missing.join(", "))));
+            body.push(ConfirmLine::plain(format!("needed: {}", crate::github::REQUIRED_SCOPES.join(", "))));
+        }
+        body.push(ConfirmLine::plain(crate::github::reauth_command()));
+        self.confirm = Some(ConfirmDialog {
+            title: "GitHub auth".to_string(),
+            body,
+            choices: vec![
+                ConfirmChoice { key: 'y', label: "re-auth now".to_string() },
+                ConfirmChoice { key: 'n', label: "dismiss".to_string() },
+            ],
+            kind: ConfirmKind::Reauth,
         });
     }
 
@@ -2614,16 +2677,12 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
     match result {
         Ok(missing) if missing.is_empty() => {}
         Ok(missing) => {
-            app.auth.prompt = Some(AuthPrompt {
-                cause: "token lacks scopes ghit needs".to_string(),
-                missing,
-                scopes_known: true,
-            });
+            app.open_reauth("token lacks scopes ghit needs".to_string(), missing, true);
         }
         // Only auth-class failures rise to the modal: re-auth can fix
         // those, while a rate limit or outage just needs a status line.
         Err(e) if crate::github::is_auth_error(&e) => {
-            app.auth.prompt = Some(AuthPrompt { cause: e, missing: vec![], scopes_known: false });
+            app.open_reauth(e, vec![], false);
         }
         Err(e) => app.notify(e),
     }
@@ -2635,15 +2694,11 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
 /// fetch gets the same question. A dismissed prompt never re-rises;
 /// the caller still notifies as before.
 pub(crate) fn auth_failure(app: &mut App, e: &str) {
-    if app.auth.dismissed || app.auth.prompt.is_some() {
+    if app.auth.dismissed || app.confirm.is_some() {
         return;
     }
     if crate::github::is_auth_error(e) {
-        app.auth.prompt = Some(AuthPrompt {
-            cause: e.to_string(),
-            missing: vec![],
-            scopes_known: false,
-        });
+        app.open_reauth(e.to_string(), vec![], false);
     }
 }
 
@@ -2674,7 +2729,9 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     let _ = enable_raw_mode();
     let _ = terminal.backend_mut().execute(EnterAlternateScreen);
     let _ = terminal.clear();
-    app.auth.prompt = None;
+    if matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::Reauth)) {
+        app.confirm = None;
+    }
     app.auth.reauth_requested = false;
     // Re-probe so the modal returns if the refresh did not cover it.
     let (atx, arx) = std::sync::mpsc::channel();
@@ -3959,7 +4016,7 @@ mod tests {
         app.request_issue(7);
         let dialog = app.confirm.as_ref().expect("guard trips");
         assert_eq!(dialog.title, "Unsubmitted comments");
-        assert!(dialog.body.iter().any(|l| l.contains("#9")), "names the issue: {:?}", dialog.body);
+        assert!(dialog.body.iter().any(|l| l.text.contains("#9")), "names the issue: {:?}", dialog.body);
         assert_eq!(dialog.choices.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Submit them", "Discard", "Cancel"]);
         assert_eq!(app.nav.current, Some(9), "no navigation while the dialog is up");
         app.confirm_cancel();
@@ -4160,8 +4217,8 @@ mod tests {
             tx.send(result).unwrap();
             poll_auth(&mut app);
             assert!(app.auth.rx.is_none(), "probe lands once");
-            assert_eq!(app.auth.prompt.is_some(), expect_prompt);
-            app.auth.prompt = None;
+            assert_eq!(app.confirm.is_some(), expect_prompt);
+            app.confirm = None;
         }
     }
 
@@ -4169,15 +4226,33 @@ mod tests {
     fn auth_failure_prompts_once_then_stays_quiet() {
         let mut app = App::new(Some("o/r".to_string()));
         auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
-        let prompt = app.auth.prompt.as_ref().expect("first auth failure prompts");
-        assert!(!prompt.scopes_known, "fetch failures cannot name the gap");
-        app.auth.prompt = None;
+        let dialog = app.confirm.as_ref().expect("first auth failure prompts");
+        assert!(dialog.body.iter().any(|l| l.text.contains("scopes could not be read")), "fetch failures cannot name the gap");
+        app.confirm = None;
         app.auth.dismissed = true;
         auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
-        assert!(app.auth.prompt.is_none(), "dismissed stays dismissed");
+        assert!(app.confirm.is_none(), "dismissed stays dismissed");
         app.auth.dismissed = false;
         auth_failure(&mut app, "bad search payload");
-        assert!(app.auth.prompt.is_none(), "non-auth never prompts");
+        assert!(app.confirm.is_none(), "non-auth never prompts");
+    }
+
+    #[test]
+    fn auth_failure_waits_for_an_open_dialog() {
+        let mut app = pending_nav_app();
+        app.request_issue(7);
+        assert!(app.confirm.is_some(), "nav guard holds the dialog");
+        auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
+        assert!(
+            matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
+            "auth never replaces another question",
+        );
+        app.confirm_cancel();
+        auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
+        assert!(
+            matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
+            "next failure re-raises it",
+        );
     }
 
     #[test]
@@ -4189,7 +4264,7 @@ mod tests {
         app.auth.rx = Some(rx);
         tx.send(Err("GitHub auth check failed: 403 Forbidden for https://api.github.com/user: rate limit".to_string())).unwrap();
         poll_auth(&mut app);
-        assert!(app.auth.prompt.is_none(), "no modal for quota errors");
+        assert!(app.confirm.is_none(), "no modal for quota errors");
         assert!(app.message.contains("403"), "still surfaces: {}", app.message);
     }
 

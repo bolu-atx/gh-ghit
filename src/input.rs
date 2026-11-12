@@ -10,25 +10,6 @@ use crate::app::{App, Focus, Pane, Tab, board_move, board_open, board_selected_n
 use crate::core;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    // Auth prompt captures everything: y re-auths, n/Esc dismisses.
-    if app.auth.prompt.is_some() {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.auth.reauth_requested = true;
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                let cmd = crate::github::reauth_command();
-                app.auth.prompt = None;
-                app.auth.dismissed = true;
-                // Back to Main so the hint renders: the bar keeps input
-                // focus otherwise and swallows the toast.
-                app.nav.focus = crate::app::Focus::Main;
-                app.notify(format!("auth dismissed — re-auth by hand: {cmd}"));
-            }
-            _ => {}
-        }
-        return;
-    }
     if app.shortcuts_open {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
             app.shortcuts_open = false;
@@ -761,7 +742,6 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
-    if app.auth.prompt.is_some() { return; }
     if app.confirm_open() { return; }
     if app.shortcuts_open { return; }
     // The compose modal steals all mouse focus: clicks and wheel never
@@ -1699,24 +1679,39 @@ mod tests {
     #[test]
     fn auth_prompt_y_requests_reauth_and_n_dismisses() {
         let mut app = step_app();
-        app.auth.prompt = Some(crate::app::AuthPrompt {
-            missing: vec!["project".to_string()],
-            cause: "token lacks scopes ghit needs".to_string(),
-            scopes_known: true,
-        });
+        app.open_reauth(
+            "token lacks scopes ghit needs".to_string(),
+            vec!["project".to_string()],
+            true,
+        );
         handle_key(&mut app, plain_key(KeyCode::Char('y')));
         assert!(app.auth.reauth_requested, "y arms the refresh");
-        assert!(app.auth.prompt.is_some(), "loop clears the modal after running");
+        assert!(app.confirm.is_some(), "loop clears the modal after running");
         let mut app = step_app();
-        app.auth.prompt = Some(crate::app::AuthPrompt {
-            missing: vec![],
-            cause: "GitHub auth check failed: 401 Unauthorized".to_string(),
-            scopes_known: false,
-        });
+        app.open_reauth(
+            "GitHub auth check failed: 401 Unauthorized".to_string(),
+            vec![],
+            false,
+        );
         handle_key(&mut app, plain_key(KeyCode::Char('n')));
         assert!(!app.auth.reauth_requested, "n never refreshes");
-        assert!(app.auth.prompt.is_none(), "n dismisses");
+        assert!(app.confirm.is_none(), "n dismisses");
         assert!(matches!(app.nav.focus, crate::app::Focus::Main), "hint must render");
+        assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
+    }
+
+    #[test]
+    fn auth_esc_dismisses_like_n() {
+        let mut app = step_app();
+        app.open_reauth(
+            "GitHub auth check failed: 401 Unauthorized".to_string(),
+            vec![],
+            false,
+        );
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.auth.reauth_requested, "esc never refreshes");
+        assert!(app.confirm.is_none(), "esc dismisses");
+        assert!(app.auth.dismissed, "esc counts as dismissed");
         assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
     }
 }
