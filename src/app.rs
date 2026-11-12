@@ -44,7 +44,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
-use crate::{cache, core, github, model};
+use crate::{core, github, model};
 use crate::model::{BoardData, IssueData};
 
 /// The one executor for all background fetches. Tasks are cheap, so callers
@@ -1492,7 +1492,7 @@ impl App {
             self.notify("pinning needs a repo: use -R or run inside one".to_string());
             return;
         };
-        let loaded = cache::load_pins(&key);
+        let loaded = github::load_pins(&key);
         let was_pinned = loaded.contains(&n);
         let pins = core::toggle_pin(&loaded, n);
         if was_pinned {
@@ -1503,7 +1503,7 @@ impl App {
             self.notify(format!("pinned #{n}"));
         }
         self.pin_order = pins.clone();
-        cache::save_pins(&key, &pins);
+        github::save_pins(&key, &pins);
         self.show_issue(n);
     }
 
@@ -1514,7 +1514,7 @@ impl App {
         };
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone());
         if let Some(owner) = github::board_owner(repo.as_deref()) {
-            cache::cache_drop(&format!("board-{}", owner.to_lowercase()));
+            github::invalidate(&[github::Key::Board { owner }]);
         }
         self.load_issue(n, true);
         self.load_diff(n, true);
@@ -2791,7 +2791,7 @@ fn poll_bootstrap(app: &mut App) -> bool {
     }
     let numbers = std::mem::take(&mut app.initial_numbers);
     if let Some(key) = app.repo_key() {
-        let mut pins = cache::load_pins(&key);
+        let mut pins = github::load_pins(&key);
         pins.retain(|n| !numbers.contains(n));
         app.pinned = pins.iter().copied().collect();
         app.pin_order = pins.clone();
@@ -3024,9 +3024,9 @@ mod tests {
         app
     }
 
-    /// On-disk name of the o/r sections cache at the default window.
-    /// Mirrors `github::sections_cache_name("o/r", 24)`; update together.
-    const SECTIONS_CACHE: &str = "sections-o__r-24";
+    fn sections_cache() -> String {
+        github::Key::Sections { repo: "o/r".to_string(), hours: 24 }.name()
+    }
 
     fn cached_row(number: u64, complete: bool) -> crate::github::Row {
         crate::github::Row {
@@ -3060,7 +3060,7 @@ mod tests {
     #[test]
     fn startup_hydrates_sidebar_from_sections_cache() {
         let (_guard, _dir, saved) = temp_xdg();
-        cache::cache_put(SECTIONS_CACHE, &vec![cached_row(7, false), cached_row(9, true)]);
+        crate::cache::cache_put(&sections_cache(), &vec![cached_row(7, false), cached_row(9, true)]);
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         app.hydrate_cached_sections();
@@ -3075,7 +3075,7 @@ mod tests {
     #[test]
     fn startup_hydration_leaves_present_rows_alone() {
         let (_guard, _dir, saved) = temp_xdg();
-        cache::cache_put(SECTIONS_CACHE, &vec![cached_row(7, false), cached_row(9, false)]);
+        crate::cache::cache_put(&sections_cache(), &vec![cached_row(7, false), cached_row(9, false)]);
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         let mut kept = issue(7, "2026-01-05T00:00:00Z");
@@ -3095,8 +3095,8 @@ mod tests {
         app.repo_slug = Some("o/r".to_string());
         app.hydrate_cached_sections();
         assert!(app.recent.is_empty() && app.data.is_empty(), "no cache means no rows");
-        cache::cache_put(SECTIONS_CACHE, &vec![cached_row(7, false)]);
-        let path = dir.path().join("ghit").join("cache").join(format!("{SECTIONS_CACHE}.json"));
+        crate::cache::cache_put(&sections_cache(), &vec![cached_row(7, false)]);
+        let path = dir.path().join("ghit").join("cache").join(format!("{}.json", sections_cache()));
         let mut payload: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let now = std::time::SystemTime::now()

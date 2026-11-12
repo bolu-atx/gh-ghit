@@ -109,9 +109,8 @@ pub async fn fetch_number(
 ) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let raw = repo.to_lowercase().replace('/', "__");
-    let iname = format!("issue-{raw}-{number}");
-    let sname = format!("status-{raw}-{number}");
+    let iname = cache::Key::Issue { repo: repo.to_string(), number }.name();
+    let sname = cache::Key::Status { repo: repo.to_string(), number }.name();
 
     if !force {
         let iname_c = iname.clone();
@@ -128,7 +127,7 @@ pub async fn fetch_number(
             return Ok(bundle);
         }
     }
-    let comments_name = cache::comment_cache_name(repo, number);
+    let comments_name = cache::Key::Comments { repo: repo.to_string(), number }.name();
     let cached_comments = if force { None } else {
         let name = comments_name.clone();
         tokio::task::spawn_blocking(move || cache::cache_get(&name)).await.unwrap_or(None)
@@ -163,7 +162,7 @@ pub async fn fetch_recent_sections(
 ) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let name = sections_cache_name(repo, hours);
+    let name = cache::Key::Sections { repo: repo.to_string(), hours }.name();
     let read_name = name.clone();
     let cached: Option<Vec<api::Row>> =
         tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
@@ -192,11 +191,28 @@ pub async fn fetch_recent_sections(
 /// fresh cache exists). Startup hydration reads through here so the
 /// sidebar paints previous state before the background refresh lands.
 pub(crate) fn cached_sections(repo: &str, hours: u64) -> Option<Vec<api::Row>> {
-    cache::cache_get(&sections_cache_name(repo, hours))
+    cache::cache_get(&cache::Key::Sections { repo: repo.to_string(), hours }.name())
 }
 
-fn sections_cache_name(repo: &str, hours: u64) -> String {
-    format!("sections-{}-{hours}", repo.to_lowercase().replace('/', "__"))
+/// Typed cache keys, re-exported so UI layers never touch `cache`.
+pub use crate::cache::Key;
+
+/// Drop the named entries. `refresh_current` routes through here so UI
+/// layers never touch `cache` directly.
+pub fn invalidate(keys: &[Key]) {
+    for key in keys {
+        cache::cache_drop(&key.name());
+    }
+}
+
+/// Pinned-issue passthroughs so UI layers never touch `cache` directly.
+pub fn load_pins(repo: &str) -> Vec<u64> {
+    cache::load_pins(repo)
+}
+
+/// Pinned-issue passthroughs so UI layers never touch `cache` directly.
+pub fn save_pins(repo: &str, numbers: &[u64]) {
+    cache::save_pins(repo, numbers);
 }
 
 /// Server-side issue/PR search scoped to the repo.
@@ -216,7 +232,7 @@ pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<m
 pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let name = cache::comment_cache_name(repo, number);
+    let name = cache::Key::Comments { repo: repo.to_string(), number }.name();
     let read_name = name.clone();
     let comments = tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
     let comments_fetched = comments.is_none();
@@ -232,8 +248,7 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
 pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::GraphData, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let raw = repo.to_lowercase().replace('/', "__");
-    let name = format!("graph-{raw}-{number}");
+    let name = cache::Key::Graph { repo: repo.to_string(), number }.name();
     if !force {
         let name_c = name.clone();
         let hit: Option<model::GraphData> =
@@ -257,8 +272,7 @@ pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::
 pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<model::DiffFile>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let raw = repo.to_lowercase().replace('/', "__");
-    let name = format!("diff-{raw}-{number}");
+    let name = cache::Key::Diff { repo: repo.to_string(), number }.name();
     if !force {
         let name_c = name.clone();
         let hit: Option<Vec<model::DiffFile>> =
