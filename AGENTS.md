@@ -48,6 +48,13 @@ Key patterns:
 - **Stateful lists scroll themselves.** Board columns render statefully so the
   selected card stays visible; record click areas from `ListState::offset()`.
 
+## Code style
+
+Read [docs/code-style.md](docs/code-style.md) before writing code. It covers
+module layout, file size budgets and how to split, naming, comments (never
+write comments about the edit itself, such as "moved to X"), and the rules for
+refactors.
+
 ## Verification
 
 - `cargo test` after every behavior change; add a frame test in `render_smoke`
