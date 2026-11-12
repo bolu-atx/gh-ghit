@@ -218,6 +218,9 @@ pub(crate) struct App {
     pub(crate) auth_repo_probed: bool,
     pub(crate) board_states: Vec<ListState>,
     pub(crate) board_expanded: Option<(usize, usize)>,
+    /// Board filter (`f` while the board is open): milestone, label, card
+    /// title, or `#num`. Empty shows every card.
+    pub(crate) board_filter: String,
     pub(crate) merged_window_hours: u64,
     pub(crate) board_details: HashMap<u64, model::BoardDetail>,
     pub(crate) detail_pending: HashSet<u64>,
@@ -364,6 +367,7 @@ impl App {
             board_rx: None,
             board_states: Vec::new(),
             board_expanded: None,
+            board_filter: String::new(),
             merged_window_hours: 24,
             board_details: HashMap::new(),
             detail_pending: HashSet::new(),
@@ -1433,12 +1437,44 @@ impl App {
         self.board_loading = true;
         self.board_col = 0;
         self.board_row = 0;
+        self.board_filter.clear();
         let (tx, rx) = std::sync::mpsc::channel();
         self.board_rx = Some(rx);
         // `gh` subprocesses block: keep them off the async workers.
         rt().spawn_blocking(move || {
             let _ = tx.send(board_via_gh(&owner));
         });
+    }
+
+    /// Open the filter dialog against the board cards. It starts in edit
+    /// mode with the active filter prefilled; the board stays up behind it.
+    pub(crate) fn open_board_filter(&mut self) {
+        self.query_draft = self.board_filter.clone();
+        self.query_edit = true;
+        self.filter_open = true;
+    }
+
+    /// Apply a board filter and keep the cursor inside the narrowed grid.
+    pub(crate) fn set_board_filter(&mut self, query: String) {
+        self.board_filter = query.trim().to_string();
+        // Positions move under a new filter: never keep a stale expansion.
+        self.board_expanded = None;
+        self.clamp_board_cursor();
+    }
+
+    pub(crate) fn clear_board_filter(&mut self) {
+        self.board_filter.clear();
+        self.board_expanded = None;
+        self.clamp_board_cursor();
+    }
+
+    fn clamp_board_cursor(&mut self) {
+        let Some(board) = &self.board else { return };
+        let cols = board_columns(board, &self.board_filter);
+        let col = self.board_col.min(cols.len().saturating_sub(1));
+        let rows = cols.get(col).map(|(_, cards)| cards.len()).unwrap_or(0);
+        self.board_col = col;
+        self.board_row = self.board_row.min(rows.saturating_sub(1));
     }
 
     /// The compose modal is up, whether drafting or sending.
@@ -1605,10 +1641,40 @@ pub(crate) fn board_open(app: &App) -> bool {
     app.board.is_some() || app.board_loading
 }
 
+/// Board columns narrowed by the active filter. An empty filter returns
+/// every card.
+pub(crate) fn board_columns<'a>(
+    board: &'a BoardData,
+    filter: &str,
+) -> Vec<(String, Vec<&'a model::BoardItem>)> {
+    let cols = model::board_columns(&board.items, &board.order);
+    if filter.trim().is_empty() {
+        return cols;
+    }
+    cols.into_iter()
+        .map(|(name, cards)| {
+            let cards = cards
+                .into_iter()
+                .filter(|c| {
+                    let labels: Vec<&str> = c.labels.iter().map(|l| l.name.as_str()).collect();
+                    core::matches_board_filter(
+                        c.number,
+                        &c.title,
+                        &labels,
+                        c.milestone.as_deref(),
+                        filter,
+                    )
+                })
+                .collect();
+            (name, cards)
+        })
+        .collect()
+}
+
 pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
     app.board_expanded = None;
     let Some(board) = &app.board else { return };
-    let cols = model::board_columns(&board.items, &board.order);
+    let cols = board_columns(board, &app.board_filter);
     if cols.is_empty() {
         return;
     }
@@ -1620,7 +1686,7 @@ pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
 
 pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
     let board = app.board.as_ref()?;
-    let cols = model::board_columns(&board.items, &board.order);
+    let cols = board_columns(board, &app.board_filter);
     cols.get(app.board_col)?.1.get(app.board_row)?.number
 }
 

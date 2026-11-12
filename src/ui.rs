@@ -213,7 +213,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "Actions", "  : command · / find · f filter · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict", "",
-        "Board", "  h/l columns · j/k cards · space expand · enter open", "",
+        "Board", "  h/l columns · j/k cards · space expand · enter open · f filter", "",
         "Diff", "  ↑/↓ lines · space expand · s split", "",
         "Esc / ? / q close",
     ];
@@ -240,10 +240,14 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Filter dialog (`f`): recent window, open/closed toggles, and a GitHub
-/// search query box. Window and query commits refetch; toggles only hide
-/// recent rows on this screen.
+/// Filter dialog (`f`). Over the board it is one query box over the fetched
+/// cards; otherwise it holds the recent window, open/closed toggles, and a
+/// GitHub search query. The title names the target.
 fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    if crate::app::board_open(app) {
+        render_board_filter(f, area, app);
+        return;
+    }
     use crate::theme::{amber, ink, muted, paper, base};
     let popup = centered(area, 62, 52);
     f.render_widget(Clear, popup);
@@ -252,7 +256,10 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         .border_style(Style::new().bg(ink()).fg(muted()))
         .style(base())
         // Nerd Font Font Awesome fa-filter.
-        .title(Span::styled(" \u{f0b0} Filter ", Style::new().bg(ink()).fg(amber()).bold()));
+        .title(Line::from(vec![
+            Span::styled(" \u{f0b0} Filter ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("· sidebar ", Style::new().bg(ink()).fg(muted())),
+        ]));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let window_mark = |hours: u64| {
@@ -323,6 +330,43 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     if app.query_edit {
         f.set_cursor_position((inner.x + 6 + app.query_draft.len() as u16, inner.y));
     }
+}
+
+/// Board filter (`f` with the board open): one query box over the fetched
+/// cards. Enter applies the draft; Esc clears the filter and returns to
+/// every card.
+fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, base, ink, muted, paper};
+    let popup = centered(area, 62, 30);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base())
+        .title(Line::from(vec![
+            Span::styled(" \u{f0b0} Filter ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("· board cards ", Style::new().bg(ink()).fg(muted())),
+        ]));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let empty = app.query_draft.is_empty();
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("filter ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(
+                if empty { "milestone, label, title, #num …".to_string() } else { app.query_draft.clone() },
+                Style::new().bg(ink()).fg(if empty { muted() } else { paper() }),
+            ),
+            Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "enter apply · esc clear · matches milestone, label, title, #num",
+            Style::new().bg(ink()).fg(muted()),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines).style(base()), inner);
+    f.set_cursor_position((inner.x + 7 + app.query_draft.chars().count() as u16, inner.y));
 }
 
 /// Darken every rendered cell toward the background so the modal sits proud.
@@ -1396,19 +1440,31 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
     let (inner, hint_area) = (chunks[0], chunks[1]);
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "h/l columns · j/k cards · space expand · enter open · esc close",
-            Style::new().bg(ink()).fg(muted()),
-        ))),
-        hint_area,
-    );
+    let filtered = !app.board_filter.trim().is_empty();
+    let mut hint = vec![];
+    if filtered {
+        hint.push(Span::styled("filter ", Style::new().bg(ink()).fg(muted())));
+        hint.push(Span::styled(
+            format!("\"{}\"", app.board_filter),
+            Style::new().bg(ink()).fg(amber()).bold(),
+        ));
+        hint.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+    }
+    hint.push(Span::styled(
+        if filtered {
+            "h/l columns · j/k cards · space expand · enter open · f filter · esc clear"
+        } else {
+            "h/l columns · j/k cards · space expand · enter open · f filter · esc close"
+        },
+        Style::new().bg(ink()).fg(muted()),
+    ));
+    f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
     let Some(board) = &app.board else {
         render_skeleton(f, inner);
         return;
     };
-    let cols = model::board_columns(&board.items, &board.order);
+    let cols = crate::app::board_columns(board, &app.board_filter);
     if cols.is_empty() {
         f.render_widget(Paragraph::new("empty board").style(base()), inner);
         return;
@@ -1466,10 +1522,12 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let col_inner = Block::default().borders(Borders::ALL).inner(*a);
         if cards.is_empty() {
             // An empty lane keeps its width and says so, instead of
-            // reading as a broken fetch.
+            // reading as a broken fetch. A filter that hides every card
+            // reads as no match, not as an empty column.
+            let label = if filtered { "  no matches" } else { "  no cards" };
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "  no cards",
+                    label,
                     Style::new().bg(ink()).fg(muted()),
                 )))
                 .style(base()),
@@ -1754,6 +1812,7 @@ mod render_smoke {
                 status: Some("Todo".to_string()),
                 labels: vec![Label { name: "x".to_string() }],
                 repo: Some("o/r".to_string()),
+                milestone: None,
                 content: serde_json::json!({
                     "type": "Issue",
                     "url": format!("https://github.com/o/r/issues/{}", 100 + i),
@@ -1865,6 +1924,7 @@ mod render_smoke {
             status: Some("Done".to_string()),
             labels: vec![Label { name: "x".to_string() }],
             repo: Some("o/r".to_string()),
+            milestone: None,
             content: serde_json::json!({ "type": "Issue" }),
         });
         let text = frame_text(&mut app);
@@ -1879,6 +1939,53 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("Done (0)"), "zero count missing: {text}");
         assert!(text.contains("no cards"), "empty label missing: {text}");
+    }
+
+    #[test]
+    fn board_filter_narrows_columns_then_esc_restores() {
+        use crossterm::event::KeyEvent;
+        let mut app = board_app(2);
+        let board = app.board.as_mut().expect("board");
+        board.order.push("Done".to_string());
+        board.items.push(BoardItem {
+            title: "Other card".to_string(),
+            number: Some(200),
+            status: Some("Done".to_string()),
+            labels: vec![Label { name: "chore".to_string() }],
+            repo: Some("o/r".to_string()),
+            milestone: None,
+            content: serde_json::json!({ "type": "Issue" }),
+        });
+        board.items[0].milestone = Some("v0.3".to_string());
+        let all = frame_text(&mut app);
+        assert!(all.contains("Todo (2)") && all.contains("Done (1)"), "unfiltered counts: {all}");
+
+        let key = |app: &mut App, code| handle_key(app, KeyEvent::new(code, KeyModifiers::empty()));
+        key(&mut app, KeyCode::Char('f'));
+        let dialog = frame_text(&mut app);
+        assert!(dialog.contains("board cards"), "subtitle names the target: {dialog}");
+        for c in "v0.3".chars() {
+            key(&mut app, KeyCode::Char(c));
+        }
+        key(&mut app, KeyCode::Enter);
+
+        let narrowed = frame_text(&mut app);
+        assert!(narrowed.contains("Todo (1)"), "filtered count: {narrowed}");
+        assert!(narrowed.contains("Done (0)"), "empty lane count: {narrowed}");
+        assert!(narrowed.contains("no matches"), "empty lane label: {narrowed}");
+        assert!(narrowed.contains("Card 0") && !narrowed.contains("Card 1"), "hit stays, miss hides: {narrowed}");
+        assert!(narrowed.contains("filter \"v0.3\""), "footer names the filter: {narrowed}");
+        // Cursor math reads the narrowed grid too: the hit is selected and
+        // the single row cannot scroll past itself.
+        assert_eq!(crate::app::board_selected_number(&app), Some(100));
+        board_move(&mut app, 0, 1);
+        assert_eq!((app.board_col, app.board_row), (0, 0), "cursor clamps to the filtered column");
+
+        key(&mut app, KeyCode::Esc);
+        let restored = frame_text(&mut app);
+        assert!(restored.contains("Todo (2)") && restored.contains("Done (1)"), "clear restores: {restored}");
+        assert!(!restored.contains("no matches"), "empty label clears: {restored}");
+        assert!(!restored.contains("filter \""), "footer clears: {restored}");
     }
 
     #[test]
