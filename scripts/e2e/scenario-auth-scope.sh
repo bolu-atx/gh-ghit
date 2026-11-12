@@ -1,10 +1,10 @@
 #!/bin/bash
-# Fixture: none — auth fails before any fetch matters. A dead token must
+# fixtures: auth-401
+# A dead token must
 # raise the re-auth modal naming scopes and the refresh command, and `n`
 # must dismiss to a status-line hint. Never sends `o`.
 source "$(dirname "$0")/lib.sh"
-export GH_TOKEN="ghit-e2e-bad-token"
-export E2E_XDG=/tmp/ghit-e2e-auth E2E_SOCK=/tmp/ghit-auth.sock
+export E2E_SOCK=/tmp/ghit-auth.sock
 export E2E_CMD=/tmp/ghit-auth.cmd E2E_PANE="$E2E_FRAMES/auth-pane.txt"
 e2e_start
 e2e_wait "GitHub auth" 60 || fail "auth modal never rose"

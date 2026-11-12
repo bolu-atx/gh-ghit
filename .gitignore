@@ -1,2 +1,4 @@
 /target
 .worktrees
+
+scripts/e2e/__pycache__/

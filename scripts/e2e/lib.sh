@@ -19,6 +19,7 @@ E2E_PANE="${E2E_PANE:-$E2E_FRAMES/pane.txt}"
 E2E_GHIT_PID=""
 E2E_BRIDGE_PID=""
 E2E_CMD_FD=""
+# GHIT_API_BASE points the harness at its local fixture server.
 # Stretch auto-refresh past any scenario lifetime: each scenario boots
 # fresh and issues exactly one sections fetch instead of hammering the
 # API every 5s (which also exhausts CI rate budget mid-run).
