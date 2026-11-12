@@ -21,7 +21,8 @@ What good code looks like here:
 ## Shape of the code
 
 - Small functions with one job: fetch over HTTPS behind the `github.rs`
-  facade (`api.rs`/`cache.rs`; `gh.rs` is deprecated board-only),
+  facade (`api.rs` + `api/{client,sections,graph}.rs`/`cache.rs`;
+  `gh.rs` is deprecated board-only),
   pure domain transforms in `model.rs`,
   pure business rules in `core.rs`, state and the event loop in `app.rs`,
   input mapping in `input.rs`, rendering as `render_*` functions in `ui.rs`.
