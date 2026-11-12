@@ -88,6 +88,15 @@ PR_URL="$(gh pr create --base main --title "chore: bump to $VERSION for release"
   --body "Bump Cargo.toml and the locked entry $CURRENT -> $VERSION for release. Tag \`$TAG\` on main after merge.")"
 PR_NUM="${PR_URL##*/}"
 echo "PR #$PR_NUM: $PR_URL"
+# Checks can take a moment to register after PR creation; --watch
+# exits immediately when none exist yet, so poll until they appear.
+for _ in $(seq 1 30); do
+  OUT="$(gh pr checks "$PR_NUM" 2>&1 || true)"
+  case "$OUT" in
+    *"no checks reported"*) sleep 10 ;;
+    *) echo "$OUT"; break ;;
+  esac
+done
 gh pr checks "$PR_NUM" --watch --fail-fast
 gh pr merge "$PR_NUM" --squash --delete-branch
 git switch --quiet main
