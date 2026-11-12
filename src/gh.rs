@@ -47,6 +47,13 @@ fn parse_labels(item: &serde_json::Value) -> Vec<crate::model::Label> {
     vec![]
 }
 
+/// Milestone title off one `project item-list` row. The CLI ships
+/// `{title, description, dueOn}` beside `content`, not inside it, and omits
+/// the key when the card has no milestone.
+fn parse_milestone(item: &serde_json::Value) -> Option<String> {
+    item.get("milestone")?.get("title")?.as_str().map(str::to_string)
+}
+
 /// Board data for an org/user login: title, status order, cards.
 ///
 /// Deprecated: remove with the GraphQL board port; `app` calls it through
@@ -96,6 +103,7 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
                     .get("repository")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
+                milestone: parse_milestone(c),
                 content,
             }
         })
@@ -104,4 +112,25 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
     let data = BoardData { title, order, items };
     cache::cache_put(&key, &data);
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_milestone;
+    use serde_json::json;
+
+    #[test]
+    fn milestone_title_comes_from_the_item_level() {
+        let item = json!({
+            "title": "Card",
+            "content": { "title": "Card", "number": 4 },
+            "milestone": { "title": "Project board", "description": "", "dueOn": "" },
+        });
+        assert_eq!(parse_milestone(&item), Some("Project board".to_string()));
+        assert_eq!(
+            parse_milestone(&json!({ "title": "No milestone", "content": { "milestone": { "title": "nested" } } })),
+            None,
+            "content-level milestones are not the item-list shape"
+        );
+    }
 }

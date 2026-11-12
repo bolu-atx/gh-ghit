@@ -179,6 +179,10 @@ pub struct BoardItem {
     pub labels: Vec<Label>,
     #[serde(default)]
     pub repo: Option<String>,
+    /// Milestone title, when the card carries one. `gh project item-list`
+    /// ships it at the item top level; defaulted so old board caches parse.
+    #[serde(default)]
+    pub milestone: Option<String>,
     #[serde(default)]
     pub content: serde_json::Value,
 }
@@ -1242,9 +1246,9 @@ mod tests {
     #[test]
     fn board_groups_unknowns() {
         let items = vec![
-            BoardItem { title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![], repo: None, content: serde_json::Value::Null },
-            BoardItem { title: "b".into(), number: Some(2), status: Some("Done".into()), labels: vec![], repo: None, content: serde_json::Value::Null },
-            BoardItem { title: "c".into(), number: Some(3), status: Some("Mystery".into()), labels: vec![], repo: None, content: serde_json::Value::Null },
+            BoardItem { title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![], repo: None, milestone: None, content: serde_json::Value::Null },
+            BoardItem { title: "b".into(), number: Some(2), status: Some("Done".into()), labels: vec![], repo: None, milestone: None, content: serde_json::Value::Null },
+            BoardItem { title: "c".into(), number: Some(3), status: Some("Mystery".into()), labels: vec![], repo: None, milestone: None, content: serde_json::Value::Null },
         ];
         let cols = board_columns(&items, &["Todo".to_string(), "Done".to_string()]);
         assert_eq!(cols.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), vec!["Todo", "Done", "Other"]);
@@ -1265,7 +1269,7 @@ mod tests {
 
     #[test]
     fn card_footer_splits_labels_left_and_date_right() {
-        let item = BoardItem { title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![Label { name: "bug".into() }], repo: None, content: serde_json::Value::Null };
+        let item = BoardItem { title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![Label { name: "bug".into() }], repo: None, milestone: None, content: serde_json::Value::Null };
         assert_eq!(card_footer_labels(&item), "● bug");
         let bare = BoardItem { labels: vec![], ..item.clone() };
         assert_eq!(card_footer_labels(&bare), "–");

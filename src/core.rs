@@ -324,6 +324,30 @@ pub fn matches_search(number: u64, title: &str, labels: &[&str], author: &str, q
     labels.iter().any(|l| l.to_lowercase().contains(&q))
 }
 
+/// True when `query` matches a board card: a case-insensitive substring of
+/// the card title, a label name, or the milestone title, or the card number
+/// written exactly as `#123`. Empty query matches every card, so clearing
+/// the filter restores the full board.
+pub fn matches_board_filter(
+    number: Option<u64>,
+    title: &str,
+    labels: &[&str],
+    milestone: Option<&str>,
+    query: &str,
+) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    if let Some(rest) = q.strip_prefix('#') {
+        let parsed = rest.parse::<u64>().ok();
+        return parsed.is_some() && parsed == number;
+    }
+    title.to_lowercase().contains(&q)
+        || labels.iter().any(|l| l.to_lowercase().contains(&q))
+        || milestone.is_some_and(|m| m.to_lowercase().contains(&q))
+}
+
 /// Sidebar sort key. `Default` restores the incoming pinned/requested/
 /// recent order; `Updated` sorts by the raw timestamp (newest first by
 /// default), `Author`/`State` by login/state, and `Label` by the first
@@ -740,6 +764,26 @@ mod tests {
         assert!(matches_search(7, "Anything", &["bug"], "alice", ""));
         assert!(matches_search(7, "Anything", &["bug"], "alice", "   "));
         assert!(matches_search(7, "Anything", &[], "", ""));
+    }
+
+    #[test]
+    fn board_filter_matches_milestone_label_title_and_exact_number() {
+        let labels = ["feature"];
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "board"));
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "FEATURE"));
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "v0.3"));
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "#103"));
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "#10"));
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "103"));
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "zzz"));
+    }
+
+    #[test]
+    fn board_filter_empty_matches_all_and_drafts_never_match_numbers() {
+        assert!(matches_board_filter(Some(103), "Card", &[], None, ""));
+        assert!(matches_board_filter(None, "Draft", &[], None, "   "));
+        assert!(!matches_board_filter(None, "Draft", &[], None, "#1"));
+        assert!(!matches_board_filter(None, "Draft", &[], None, "#"));
     }
 
     fn sort_issue(number: u64, updated: &str, author: &str, state: &str, labels: &[&str]) -> IssueData {

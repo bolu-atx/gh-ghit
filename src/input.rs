@@ -43,13 +43,30 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
 
+    // Filter dialog captures everything: over the board it filters cards,
+    // over the main view it keeps its window/query/toggle keys.
+    if app.filter_open {
+        handle_filter_key(app, key);
+        return;
+    }
+
     // Board modal captures everything.
     if board_open(app) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Char('q') => {
                 app.board = None;
                 app.board_loading = false;
             }
+            KeyCode::Esc => {
+                // Esc first clears an active filter, then closes the board.
+                if app.board_filter.trim().is_empty() {
+                    app.board = None;
+                    app.board_loading = false;
+                } else {
+                    app.clear_board_filter();
+                }
+            }
+            KeyCode::Char('f') => app.open_board_filter(),
             KeyCode::Char('j') | KeyCode::Down => board_move(app, 0, 1),
             KeyCode::Char('k') | KeyCode::Up => board_move(app, 0, -1),
             KeyCode::PageDown => board_move(app, 0, 5),
@@ -72,12 +89,6 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             }
             _ => {}
         }
-        return;
-    }
-
-    // Filter dialog captures everything except the command bar path below.
-    if app.filter_open {
-        handle_filter_key(app, key);
         return;
     }
 
@@ -388,10 +399,33 @@ fn jump_search_hit(app: &mut App, delta: isize) {
     }
 }
 
-/// Filter dialog keys: window presets refetch the window listing, toggles
-/// only hide recent rows here, `e` edits the GitHub query.
+/// Filter dialog keys. Over the board the whole dialog is one query box:
+/// Enter applies the draft, Esc clears the filter. Everywhere else window
+/// presets refetch, toggles only hide recent rows, and `e` edits the
+/// server-side GitHub query.
 fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     use crate::app::QueryAction;
+    if board_open(app) {
+        match key.code {
+            KeyCode::Esc => {
+                app.query_edit = false;
+                app.filter_open = false;
+                app.clear_board_filter();
+            }
+            KeyCode::Enter => {
+                let draft = app.query_draft.clone();
+                app.query_edit = false;
+                app.filter_open = false;
+                app.set_board_filter(draft);
+            }
+            KeyCode::Char(c) => app.query_draft.push(c),
+            KeyCode::Backspace => {
+                app.query_draft.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
     if app.query_edit {
         match key.code {
             KeyCode::Esc => {
@@ -551,7 +585,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                     // Clicking the URL line of an expanded card opens it.
                     if app.board_expanded == Some((c, r)) && m.row - rect.y == 3 {
                         if let Some(board) = &app.board {
-                            let cols = crate::model::board_columns(&board.items, &board.order);
+                            let cols = crate::app::board_columns(board, &app.board_filter);
                             if let Some(url) = cols
                                 .get(c)
                                 .and_then(|(_, cards)| cards.get(r))
