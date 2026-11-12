@@ -17,7 +17,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.reauth_requested = true;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                let cmd = crate::api::reauth_command();
+                let cmd = crate::github::reauth_command();
                 app.auth_prompt = None;
                 app.auth_dismissed = true;
                 // Back to Main so the hint renders: the bar keeps input

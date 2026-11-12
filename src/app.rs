@@ -2524,7 +2524,7 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     rt().spawn_blocking(move || {
         let mut worker = App::new(repo);
         worker.resolve_repo();
-        let _ = crate::api::token();
+        let _ = crate::github::token();
         let _ = tx.send(worker.repo_slug);
     });
     // Early auth probe: one cheap round-trip validates the token so a
@@ -2553,7 +2553,7 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
         }
         // Only auth-class failures rise to the modal: re-auth can fix
         // those, while a rate limit or outage just needs a status line.
-        Err(e) if crate::api::is_auth_error(&e) => {
+        Err(e) if crate::github::is_auth_error(&e) => {
             app.auth_prompt = Some(AuthPrompt { cause: e, missing: vec![], scopes_known: false });
         }
         Err(e) => app.notify(e),
@@ -2569,7 +2569,7 @@ pub(crate) fn auth_failure(app: &mut App, e: &str) {
     if app.auth_dismissed || app.auth_prompt.is_some() {
         return;
     }
-    if crate::api::is_auth_error(e) {
+    if crate::github::is_auth_error(e) {
         app.auth_prompt = Some(AuthPrompt {
             cause: e.to_string(),
             missing: vec![],
@@ -2586,17 +2586,17 @@ pub(crate) fn auth_failure(app: &mut App, e: &str) {
 pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) {
     use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
     use crossterm::ExecutableCommand;
-    let cmd = crate::api::reauth_command();
+    let cmd = crate::github::reauth_command();
     let _ = disable_raw_mode();
     let _ = terminal.backend_mut().execute(LeaveAlternateScreen);
-    println!("ghit needs these scopes: {}", crate::api::REQUIRED_SCOPES.join(", "));
+    println!("ghit needs these scopes: {}", crate::github::REQUIRED_SCOPES.join(", "));
     let status = std::process::Command::new("gh")
         .args(["auth", "refresh"])
-        .args(crate::api::REQUIRED_SCOPES.iter().flat_map(|s| ["-s", s]))
+        .args(crate::github::REQUIRED_SCOPES.iter().flat_map(|s| ["-s", s]))
         .status();
     match status {
         Ok(s) if s.success() => {
-            crate::api::forget_token();
+            crate::github::forget_token();
             app.auth_dismissed = false;
             app.notify("re-auth ok: re-checking token…".to_string());
         }
@@ -2864,7 +2864,7 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
 /// longer carries. Visited, pinned, current, and pending-open rows stay
 /// so the open view and its thread survive a refresh; search mode never
 /// lands here and keeps `drop_unvisited_background` replace semantics.
-fn evict_vanished_rows(app: &mut App, rows: &[crate::api::Row]) {
+fn evict_vanished_rows(app: &mut App, rows: &[crate::github::Row]) {
     let fresh: HashSet<u64> = rows.iter().map(|r| r.issue.number).collect();
     let keep: HashSet<u64> = app.visited.iter().copied()
         .chain(app.pin_order.iter().copied())
@@ -3015,8 +3015,8 @@ mod tests {
     /// Mirrors `github::sections_cache_name("o/r", 24)`; update together.
     const SECTIONS_CACHE: &str = "sections-o__r-24";
 
-    fn cached_row(number: u64, complete: bool) -> crate::api::Row {
-        crate::api::Row {
+    fn cached_row(number: u64, complete: bool) -> crate::github::Row {
+        crate::github::Row {
             issue: issue(number, "2026-01-05T00:00:00Z"),
             statuses: vec![],
             detail: crate::model::BoardDetail {
@@ -3350,7 +3350,7 @@ mod tests {
             let (tx, rx) = std::sync::mpsc::channel();
             app.section_rx = Some(rx);
             app.section_auto_refresh = true;
-            let row = crate::api::Row { issue: issue(9, "2026-01-06T00:00:00Z"), statuses: vec![], detail: model::BoardDetail::default(), complete: true, window_at: None };
+            let row = crate::github::Row { issue: issue(9, "2026-01-06T00:00:00Z"), statuses: vec![], detail: model::BoardDetail::default(), complete: true, window_at: None };
             tx.send(github::SectionEvent::Done(Ok(vec![row]))).unwrap();
             poll_sections(&mut app);
             assert!(app.recent.contains(&9));
@@ -3360,8 +3360,8 @@ mod tests {
         }
     }
 
-    fn section_row(issue: IssueData) -> crate::api::Row {
-        crate::api::Row {
+    fn section_row(issue: IssueData) -> crate::github::Row {
+        crate::github::Row {
             issue,
             statuses: vec![],
             detail: model::BoardDetail::default(),
@@ -3370,7 +3370,7 @@ mod tests {
         }
     }
 
-    fn land_sections(app: &mut App, rows: Vec<crate::api::Row>) {
+    fn land_sections(app: &mut App, rows: Vec<crate::github::Row>) {
         let (tx, rx) = std::sync::mpsc::channel();
         app.section_rx = Some(rx);
         tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();

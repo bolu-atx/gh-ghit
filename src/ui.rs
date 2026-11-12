@@ -246,12 +246,12 @@ fn render_auth(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]));
         lines.push(Line::from(vec![
             Span::styled("needed: ", Style::new().bg(ink()).fg(muted())),
-            Span::styled(crate::api::REQUIRED_SCOPES.join(", "), Style::new().bg(ink()).fg(teal())),
+            Span::styled(crate::github::REQUIRED_SCOPES.join(", "), Style::new().bg(ink()).fg(teal())),
         ]));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        crate::api::reauth_command(),
+        crate::github::reauth_command(),
         Style::new().bg(ink()).fg(paper()),
     )));
     lines.push(Line::from(""));
@@ -3376,7 +3376,7 @@ mod render_smoke {
         let mut issue = sample(42);
         issue.is_pr = true;
         issue.title = "background pull request".to_string();
-        tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::api::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false, window_at: None }]))).unwrap();
+        tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::github::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false, window_at: None }]))).unwrap();
         poll_sections(&mut app);
         assert_eq!(app.current, Some(7));
         assert!(app.partial.contains(&42));
