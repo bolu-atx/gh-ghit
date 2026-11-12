@@ -2242,6 +2242,11 @@ impl App {
     pub(crate) fn open_issue(&mut self, n: u64) {
         if self.current == Some(n) {
             self.show_issue(n);
+            // Already viewing still completes the submit tail: the bar
+            // clears and focus returns to Main, or later keys land as
+            // bar text. Matches the cached fast path in `load_issue`.
+            self.bar.clear();
+            self.focus = Focus::Main;
             return;
         }
         if !self.guard_nav(NavIntent::Issue(n)) {
@@ -3255,6 +3260,20 @@ mod tests {
         app.bootstrap_rx = None;
         app.auth_rx = None;
         app.section_rx = None;
+    }
+
+    #[test]
+    fn bar_submit_of_current_issue_clears_bar_and_returns_focus() {
+        // Boot auto-shows the last number, so `:7 Enter` re-opens the
+        // current issue through the already-current branch. The submit
+        // tail must still run: without it focus strands in the bar and
+        // later keys (`y`, `2`) land as bar text (e2e pr/diff/refs yank).
+        let mut app = sidebar_app(&[7]);
+        app.focus = Focus::Bar;
+        app.bar = "7".to_string();
+        app.submit_bar();
+        assert!(matches!(app.focus, Focus::Main), "submit leaves the bar");
+        assert!(app.bar.is_empty(), "submit clears its text");
     }
 
     #[test]
