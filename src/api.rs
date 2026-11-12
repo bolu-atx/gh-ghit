@@ -38,16 +38,15 @@ pub fn reauth_command() -> String {
 }
 
 /// True when a fetch failure smells like auth (bad/expired token or
-/// missing scopes) rather than a bad repo, number, or payload.
+/// missing scopes) rather than a bad repo, number, payload, or rate
+/// limit. Bare 403s stay out: rate limits are 403s with a quota body,
+/// and only a scope-denial body (or a 401) may point at re-auth.
 pub fn is_auth_error(e: &str) -> bool {
-    // reqwest renders HTTP failures as `HTTP status client error
-    // (403 Forbidden) for url ...`, and the APIs explain themselves
-    // as bad credentials, inaccessible resources, or missing scopes.
     const MARKERS: &[&str] = &[
-        "401", "403", "Unauthorized", "Forbidden", "Bad credentials",
+        "401 Unauthorized", "Bad credentials", "Requires authentication",
         "Resource not accessible", "requires authentication",
         "missing scope", "Insufficient scopes", "Could not resolve to a Repository",
-        "FORBIDDEN", "UNAUTHORIZED",
+        "FORBIDDEN", "UNAUTHORIZED", "SAML", "Must have admin rights",
     ];
     MARKERS.iter().any(|m| e.contains(m))
 }
@@ -80,15 +79,16 @@ pub fn missing_scopes(granted: &[&str]) -> Vec<String> {
 pub async fn check_auth(bearer: &str) -> Result<Vec<String>, String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
+    let url = format!("{base}/user");
     let res = client()
-        .get(format!("{base}/user"))
+        .get(&url)
         .bearer_auth(bearer)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
         .map_err(|e| format!("GitHub request failed: {e}"))?;
-    if res.status() == reqwest::StatusCode::UNAUTHORIZED || res.status() == reqwest::StatusCode::FORBIDDEN {
-        return Err(with_auth_hint(format!("GitHub auth check failed: {}", res.status())));
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub auth check failed", &url, res).await);
     }
     let granted: Vec<&str> = res
         .headers()
@@ -96,8 +96,9 @@ pub async fn check_auth(bearer: &str) -> Result<Vec<String>, String> {
         .and_then(|v| v.to_str().ok())
         .map(|s| s.split(',').map(str::trim).collect())
         .unwrap_or_default();
-    // No header (fine-grained token): validity above is all we know.
-    if res.headers().get("x-oauth-scopes").is_none() {
+    // No scopes header (fine-grained token, or a blank one): validity
+    // above is all we know, and a blank list proves no gap.
+    if granted.iter().all(|s| s.is_empty()) {
         return Ok(vec![]);
     }
     Ok(missing_scopes(&granted))
@@ -235,37 +236,53 @@ fn client() -> reqwest::Client {
         .clone()
 }
 
-/// Map a transport failure: auth-class HTTP statuses carry the
-/// re-auth hint so no fetch ever fails silently into an empty list.
-fn http_error(context: &str, e: reqwest::Error) -> String {
-    with_auth_hint(format!("{context}: {e}"))
+/// Map a failed response: the status plus the API's own first body
+/// line, so a 403 rate limit never reads as a scope denial. Auth-class
+/// failures carry the re-auth hint; everything else stays a plain error
+/// for the status line.
+async fn http_fail(context: &str, url: &str, res: reqwest::Response) -> String {
+    let status = res.status();
+    let snippet: String = res
+        .text()
+        .await
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(200)
+        .collect();
+    with_auth_hint(format!("{context}: {status} for {url}: {snippet}"))
 }
 
 async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Result<Value, String> {
-    client
+    let res = client
         .get(url)
         .bearer_auth(bearer)
         .send()
         .await
-        .map_err(|e| http_error("GitHub request failed", e))?
-        .error_for_status()
-        .map_err(|e| http_error("GitHub request failed", e))?
-        .json()
+        .map_err(|e| format!("GitHub request failed: {e}"))?;
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub request failed", url, res).await);
+    }
+    res.json()
         .await
         .map_err(|e| format!("bad GitHub response: {e}"))
 }
 
 async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
-    client
+    let res = client
         .post(url)
         .bearer_auth(bearer)
         .json(body)
         .send()
         .await
-        .map_err(|e| http_error("GitHub request failed", e))?
-        .error_for_status()
-        .map_err(|e| http_error("GitHub request failed", e))?
-        .json()
+        .map_err(|e| format!("GitHub request failed: {e}"))?;
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub request failed", url, res).await);
+    }
+    res.json()
         .await
         .map_err(|e| format!("bad GitHub response: {e}"))
 }
@@ -498,16 +515,19 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
 pub async fn search(repo: &str, query: &str, bearer: &str) -> Result<Vec<Row>, String> {
     let host = std::env::var("GH_HOST").unwrap_or_else(|_| "github.com".to_owned());
     let base = if host == "github.com" { "https://api.github.com".to_owned() } else { format!("https://{host}/api/v3") };
-    let value: Value = client()
-        .get(format!("{base}/search/issues"))
+    let url = format!("{base}/search/issues");
+    let res = client()
+        .get(&url)
         .bearer_auth(bearer)
         .header("Accept", "application/vnd.github+json")
         .query(&[("q", format!("repo:{repo} {query}")), ("per_page", "50".to_string())])
         .send()
         .await
-        .map_err(|e| format!("GitHub search failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("GitHub search failed: {e}"))?
+        .map_err(|e| format!("GitHub search failed: {e}"))?;
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub search failed", &url, res).await);
+    }
+    let value: Value = res
         .json()
         .await
         .map_err(|e| format!("bad search response: {e}"))?;
@@ -1034,8 +1054,8 @@ mod tests {
     #[test]
     fn auth_failures_carry_the_reauth_command() {
         for e in [
-            "GitHub request failed: HTTP status client error (401 Unauthorized) for url",
-            "GitHub request failed: HTTP status client error (403 Forbidden) for url",
+            "GitHub request failed: 401 Unauthorized for https://api.github.com/user: {\"message\":\"Bad credentials\"}",
+            "GitHub request failed: 403 Forbidden for https://api.github.com/graphql: {\"message\":\"Resource not accessible by personal access token\"}",
             "GitHub GraphQL: Bad credentials",
             "GitHub GraphQL: Resource not accessible by personal access token",
             "Could not resolve to a Repository with the name of o/r",
@@ -1045,7 +1065,8 @@ mod tests {
             assert!(hinted.contains("gh auth refresh -s repo -s read:org -s project"), "hint: {hinted}");
         }
         for e in [
-            "GitHub request failed: HTTP status client error (404 Not Found) for url",
+            "GitHub request failed: 404 Not Found for https://api.github.com/repos/o/r/issues/401: {\"message\":\"Not Found\"}",
+            "GitHub request failed: 403 Forbidden for https://api.github.com/rate_limit: {\"message\":\"API rate limit exceeded\"}",
             "bad search payload",
             "missing row number",
         ] {

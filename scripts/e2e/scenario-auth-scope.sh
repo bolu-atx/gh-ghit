@@ -10,9 +10,13 @@ e2e_start
 e2e_wait "GitHub auth" 60 || fail "auth modal never rose"
 e2e_wait "gh auth refresh -s repo -s read:org -s project" 10 || fail "no re-auth command"
 e2e_shot auth-modal
-e2e_key n
-# The dismiss hint yields to the landing fetch error, which must carry
-# the same command: nothing about auth ever fails silently.
-e2e_wait "re-auth with more permissions" 20 || fail "fetch error names no fix"
-echo "hint: $(e2e_pane | grep -o 're-auth with more permissions.*' | head -1)"
+e2e_key n Escape
+# Refetch after the dismiss: the landing error may already have expired,
+# so force a fresh 401. Assert the short stable head of the toast — the
+# bar clips long lines, so the full command is pinned by the modal frame
+# test instead — plus that the modal is gone.
+e2e_bar 9
+e2e_wait "401 Unauthorized" 20 || fail "fetch error never surfaced"
+[ "$(e2e_pane | grep -c 'GitHub auth')" -eq 0 ] || fail "modal still up after n"
+echo "hint: $(e2e_pane | grep -o '401 Unauthorized' | head -1)"
 echo "PASS auth scope"

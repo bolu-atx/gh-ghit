@@ -1745,9 +1745,12 @@ pub(crate) fn poll_auth(app: &mut App) {
                 missing,
             });
         }
-        Err(e) => {
+        // Only auth-class failures rise to the modal: re-auth can fix
+        // those, while a rate limit or outage just needs a status line.
+        Err(e) if crate::api::is_auth_error(&e) => {
             app.auth_prompt = Some(AuthPrompt { cause: e, missing: vec![] });
         }
+        Err(e) => app.notify(e),
     }
 }
 
@@ -2774,6 +2777,19 @@ mod tests {
             assert_eq!(app.auth_prompt.is_some(), expect_prompt);
             app.auth_prompt = None;
         }
+    }
+
+    #[test]
+    fn auth_probe_non_auth_failure_notifies_without_modal() {
+        // A rate limit is not a scope problem: status line, never the
+        // re-auth modal.
+        let mut app = App::new(Some("o/r".to_string()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.auth_rx = Some(rx);
+        tx.send(Err("GitHub auth check failed: 403 Forbidden for https://api.github.com/user: rate limit".to_string())).unwrap();
+        poll_auth(&mut app);
+        assert!(app.auth_prompt.is_none(), "no modal for quota errors");
+        assert!(app.message.contains("403"), "still surfaces: {}", app.message);
     }
 
     #[test]
