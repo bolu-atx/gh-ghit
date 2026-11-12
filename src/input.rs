@@ -10,6 +10,25 @@ use crate::app::{App, Focus, Pane, Tab, board_move, board_open, board_selected_n
 use crate::core;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    // Auth prompt captures everything: y re-auths, n/Esc dismisses.
+    if app.auth_prompt.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.reauth_requested = true;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                let cmd = crate::api::reauth_command();
+                app.auth_prompt = None;
+                app.auth_dismissed = true;
+                // Back to Main so the hint renders: the bar keeps input
+                // focus otherwise and swallows the toast.
+                app.focus = crate::app::Focus::Main;
+                app.notify(format!("auth dismissed — re-auth by hand: {cmd}"));
+            }
+            _ => {}
+        }
+        return;
+    }
     if app.shortcuts_open {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
             app.shortcuts_open = false;
@@ -518,6 +537,7 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
+    if app.auth_prompt.is_some() { return; }
     if app.shortcuts_open { return; }
     if board_open(app) {
         match m.kind {
@@ -1086,5 +1106,29 @@ mod tests {
         assert_eq!(app.current, Some(7), "board keeps h/l");
         assert_eq!(app.step_pending, None);
         assert!(app.board_loading, "board stays open");
+    }
+
+    #[test]
+    fn auth_prompt_y_requests_reauth_and_n_dismisses() {
+        let mut app = step_app();
+        app.auth_prompt = Some(crate::app::AuthPrompt {
+            missing: vec!["project".to_string()],
+            cause: "token lacks scopes ghit needs".to_string(),
+            scopes_known: true,
+        });
+        handle_key(&mut app, plain_key(KeyCode::Char('y')));
+        assert!(app.reauth_requested, "y arms the refresh");
+        assert!(app.auth_prompt.is_some(), "loop clears the modal after running");
+        let mut app = step_app();
+        app.auth_prompt = Some(crate::app::AuthPrompt {
+            missing: vec![],
+            cause: "GitHub auth check failed: 401 Unauthorized".to_string(),
+            scopes_known: false,
+        });
+        handle_key(&mut app, plain_key(KeyCode::Char('n')));
+        assert!(!app.reauth_requested, "n never refreshes");
+        assert!(app.auth_prompt.is_none(), "n dismisses");
+        assert!(matches!(app.focus, crate::app::Focus::Main), "hint must render");
+        assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
     }
 }

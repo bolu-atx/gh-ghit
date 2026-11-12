@@ -37,6 +37,19 @@ no visible change needs no scenario.
 
 One control per scenario. No scenario, no sign-off.
 
+## Unit test economy
+
+Unit tests pin design behavior, not helpers. One test per decision
+the code branches on (an error class callers match, a merge or order
+rule, a cursor clamp), one frame test per visible state, one live
+drive per touched control. A pure mapping with one caller gets its
+coverage from the caller's test. A second state of the same modal
+rides the same frame test unless it changes layout. A negative
+control earns its place only when it guards a real regression (a
+best-effort path that must stay best-effort). When the new tests want
+their own fixture, extend the shared harness (`loaded_app`,
+`sidebar_app`, `step_app`) instead.
+
 ## Breaking existing tests
 
 New features can break existing tests on purpose. When one fails,

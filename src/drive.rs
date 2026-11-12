@@ -276,6 +276,13 @@ pub(crate) fn serve(
             }
         }
         crate::app::poll_all(app);
+        // Drive mode has no terminal to suspend for `gh auth refresh`,
+        // so an accepted prompt degrades to naming the command.
+        if app.reauth_requested {
+            app.reauth_requested = false;
+            app.auth_prompt = None;
+            app.notify(format!("re-auth by hand: {}", crate::api::reauth_command()));
+        }
         if app.quit {
             app.tick = app.tick.wrapping_add(1);
             terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| format!("{e:?}"))?;
