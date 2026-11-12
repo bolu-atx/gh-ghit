@@ -308,9 +308,10 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Filter dialog (`f`). Over the board it is one query box over the fetched
-/// cards; otherwise it holds the recent window, open/closed toggles, and a
-/// GitHub search query. The title names the target.
+/// Filter dialog (`f`). Over the board it is a form: a text row plus one
+/// milestone pill per milestone on the cards; otherwise it holds the
+/// recent window, open/closed toggles, and a GitHub search query. The
+/// title names the target.
 fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     if crate::app::board_open(app) {
         render_board_filter(f, area, app);
@@ -400,12 +401,14 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     }
 }
 
-/// Board filter (`f` with the board open): one query box over the fetched
-/// cards. Enter applies the draft; Esc clears the filter and returns to
-/// every card.
+/// Board filter form (`f` with the board open): the text row plus one
+/// milestone pill per milestone on the board. The active widget carries
+/// the `▌` marker; `space` toggles a pill, typing on the text row edits
+/// it, Enter applies, Esc clears. Empty pills select every card.
 fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, base, ink, muted, paper};
-    let popup = centered(area, 62, 30);
+    let pills = app.board_pills();
+    let popup = centered(area, 62, (34 + pills.len() as u16 * 4).min(86));
     f.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -417,24 +420,60 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
+    // Nerd Font Font Awesome fa-check-square / fa-square-o, same as the
+    // sidebar filter toggles. The marker echoes the board card selection.
+    let marker = |active: bool| {
+        Span::styled(
+            if active { "▌ " } else { "  " },
+            Style::new().bg(ink()).fg(if active { amber() } else { muted() }).bold(),
+        )
+    };
     let empty = app.query_draft.is_empty();
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("filter ", Style::new().bg(ink()).fg(muted())),
-            Span::styled(
-                if empty { "milestone, label, title, #num …".to_string() } else { app.query_draft.clone() },
-                Style::new().bg(ink()).fg(if empty { muted() } else { paper() }),
-            ),
-            Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "enter apply · esc clear · matches milestone, label, title, #num",
-            Style::new().bg(ink()).fg(muted()),
-        )),
+    let mut text_row = vec![
+        marker(app.filter_focus == 0),
+        Span::styled("filter ", Style::new().bg(ink()).fg(muted())),
+        Span::styled(
+            if empty { "label, title, #num …".to_string() } else { app.query_draft.clone() },
+            Style::new().bg(ink()).fg(if empty { muted() } else { paper() }),
+        ),
     ];
+    if app.query_edit {
+        text_row.push(Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()));
+    } else {
+        text_row.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
+    }
+    let mut lines = vec![
+        Line::from(text_row),
+        Line::from(""),
+        Line::from(Span::styled("milestones", Style::new().bg(ink()).fg(muted()))),
+    ];
+    if pills.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no milestones on this board",
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    }
+    for (i, pill) in pills.iter().enumerate() {
+        let on = app.filter_milestone_draft.contains(pill);
+        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+        let name = pill.clone().unwrap_or_else(|| "(no milestone)".to_string());
+        lines.push(Line::from(vec![
+            marker(app.filter_focus == i + 1),
+            Span::styled(
+                format!("{box_glyph} {name}"),
+                Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "j/k move · space toggle · type filters text · enter apply · esc clear",
+        Style::new().bg(ink()).fg(muted()),
+    )));
     f.render_widget(Paragraph::new(lines).style(base()), inner);
-    f.set_cursor_position((inner.x + 7 + app.query_draft.chars().count() as u16, inner.y));
+    if app.query_edit {
+        f.set_cursor_position((inner.x + 9 + app.query_draft.chars().count() as u16, inner.y));
+    }
 }
 
 /// Darken every rendered cell toward the background so the modal sits proud.
@@ -702,6 +741,7 @@ fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Lin
             MetaKind::Dim => Style::new().bg(ink()).fg(muted()),
             MetaKind::State => Style::new().bg(ink()).fg(crate::theme::state_color(&d.state)).bold(),
             MetaKind::Label => Style::new().bg(ink()).fg(amber()),
+            MetaKind::Milestone => Style::new().bg(ink()).fg(amber()),
             MetaKind::Normal => Style::new().bg(ink()).fg(paper()),
             MetaKind::Project => Style::new()
                 .bg(ink())
@@ -1615,17 +1655,32 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .title(title);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
+    render_board_links(f, popup, app);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
     let (inner, hint_area) = (chunks[0], chunks[1]);
-    let filtered = !app.board_filter.trim().is_empty();
+    let filtered = app.board_filtered();
     let mut hint = vec![];
-    if filtered {
+    if !app.board_filter.trim().is_empty() {
         hint.push(Span::styled("filter ", Style::new().bg(ink()).fg(muted())));
         hint.push(Span::styled(
             format!("\"{}\"", app.board_filter),
+            Style::new().bg(ink()).fg(amber()).bold(),
+        ));
+        hint.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+    }
+    if !app.board_milestones.is_empty() {
+        let names: Vec<String> = app
+            .board_pills()
+            .into_iter()
+            .filter(|p| app.board_milestones.contains(p))
+            .map(|p| p.unwrap_or_else(|| "(no milestone)".to_string()))
+            .collect();
+        hint.push(Span::styled("milestones ", Style::new().bg(ink()).fg(muted())));
+        hint.push(Span::styled(
+            names.join(", "),
             Style::new().bg(ink()).fg(amber()).bold(),
         ));
         hint.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
@@ -1644,7 +1699,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         render_skeleton(f, inner);
         return;
     };
-    let cols = crate::app::board_columns(board, &app.board_filter);
+    let cols = crate::app::board_columns(board, &app.board_filter, &app.board_milestones);
     if cols.is_empty() {
         f.render_widget(Paragraph::new("empty board").style(base()), inner);
         return;
@@ -1726,6 +1781,53 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             app.board_cells.push((Rect::new(col_inner.x, y, col_inner.width, h), i, ri));
             y += h;
         }
+    }
+}
+
+/// Top-right header icons: a flag for the repo milestones page plus an
+/// external-link for the project board itself. Nerd Font glyphs only,
+/// in the same teal-underlined URL style as card links, so the header
+/// stays one row tall. Hit areas land in `app.board_links`.
+fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
+    use crate::theme::{base, ink, teal};
+    app.board_links.clear();
+    let mut links: Vec<(String, String)> = vec![];
+    // Nerd Font Font Awesome fa-flag: the repo milestones page.
+    if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
+        links.push((
+            "\u{f024}".to_string(),
+            format!("https://github.com/{repo}/milestones"),
+        ));
+    }
+    // Nerd Font Font Awesome fa-external-link: the project board page,
+    // from `gh project list` (old caches predate it and show no icon
+    // until the board refetches).
+    if let Some(url) = app.board.as_ref().map(|b| b.url.clone()) {
+        if !url.is_empty() {
+            links.push(("\u{f08e}".to_string(), url));
+        }
+    }
+    if links.is_empty() || popup.width < 12 {
+        return;
+    }
+    let width = links.len() as u16 * 3;
+    let x = popup.x + popup.width.saturating_sub(width + 1);
+    let spans: Vec<Span> = links
+        .iter()
+        .map(|(glyph, _)| {
+            Span::styled(
+                format!(" {glyph} "),
+                Style::new().bg(ink()).fg(teal()).underlined(),
+            )
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(base()),
+        Rect::new(x, popup.y, width, 1),
+    );
+    for (i, (_, url)) in links.iter().enumerate() {
+        app.board_links
+            .push((Rect::new(x + i as u16 * 3, popup.y, 3, 1), url.clone()));
     }
 }
 
@@ -2013,6 +2115,7 @@ mod render_smoke {
             title: "Roadmap".to_string(),
             order: vec!["Todo".to_string()],
             items,
+            url: "https://github.com/orgs/o/projects/1".to_string(),
         });
         app
     }
@@ -2155,6 +2258,22 @@ mod render_smoke {
     }
 
     #[test]
+    fn board_header_links_milestones_and_project() {
+        let mut app = board_app(1);
+        let _ = frame_text(&mut app);
+        let urls: Vec<&str> = app.board_links.iter().map(|(_, u)| u.as_str()).collect();
+        assert_eq!(
+            urls,
+            vec![
+                "https://github.com/o/r/milestones",
+                "https://github.com/orgs/o/projects/1"
+            ],
+            "flag then project link: {urls:?}"
+        );
+        assert!(app.board_links.iter().all(|(r, _)| r.width == 3 && r.height == 1));
+    }
+
+    #[test]
     fn board_headers_show_card_counts() {
         let mut app = board_app(2);
         let board = app.board.as_mut().expect("board");
@@ -2205,9 +2324,10 @@ mod render_smoke {
         key(&mut app, KeyCode::Char('f'));
         let dialog = frame_text(&mut app);
         assert!(dialog.contains("board cards"), "subtitle names the target: {dialog}");
-        for c in "v0.3".chars() {
-            key(&mut app, KeyCode::Char(c));
-        }
+        assert!(dialog.contains("v0.3"), "milestone pill lists the card milestone: {dialog}");
+        // Down moves to the milestone pill, space toggles it, Enter applies.
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Char(' '));
         key(&mut app, KeyCode::Enter);
 
         let narrowed = frame_text(&mut app);
@@ -2215,7 +2335,7 @@ mod render_smoke {
         assert!(narrowed.contains("Done (0)"), "empty lane count: {narrowed}");
         assert!(narrowed.contains("no matches"), "empty lane label: {narrowed}");
         assert!(narrowed.contains("Card 0") && !narrowed.contains("Card 1"), "hit stays, miss hides: {narrowed}");
-        assert!(narrowed.contains("filter \"v0.3\""), "footer names the filter: {narrowed}");
+        assert!(narrowed.contains("milestones v0.3"), "footer names the filter: {narrowed}");
         // Cursor math reads the narrowed grid too: the hit is selected and
         // the single row cannot scroll past itself.
         assert_eq!(crate::app::board_selected_number(&app), Some(100));
@@ -2226,7 +2346,7 @@ mod render_smoke {
         let restored = frame_text(&mut app);
         assert!(restored.contains("Todo (2)") && restored.contains("Done (1)"), "clear restores: {restored}");
         assert!(!restored.contains("no matches"), "empty label clears: {restored}");
-        assert!(!restored.contains("filter \""), "footer clears: {restored}");
+        assert!(!restored.contains("milestones"), "footer clears: {restored}");
     }
 
     #[test]
@@ -2294,6 +2414,7 @@ mod render_smoke {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: None,
             is_pr: false,
         }
     }

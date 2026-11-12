@@ -325,14 +325,14 @@ pub fn matches_search(number: u64, title: &str, labels: &[&str], author: &str, q
 }
 
 /// True when `query` matches a board card: a case-insensitive substring of
-/// the card title, a label name, or the milestone title, or the card number
-/// written exactly as `#123`. Empty query matches every card, so clearing
-/// the filter restores the full board.
+/// the card title or a label name, or the card number written exactly as
+/// `#123`. Milestones filter through the dialog pills, never this text.
+/// Empty query matches every card, so clearing the filter restores the
+/// full board.
 pub fn matches_board_filter(
     number: Option<u64>,
     title: &str,
     labels: &[&str],
-    milestone: Option<&str>,
     query: &str,
 ) -> bool {
     let q = query.trim().to_lowercase();
@@ -345,7 +345,6 @@ pub fn matches_board_filter(
     }
     title.to_lowercase().contains(&q)
         || labels.iter().any(|l| l.to_lowercase().contains(&q))
-        || milestone.is_some_and(|m| m.to_lowercase().contains(&q))
 }
 
 /// Sidebar sort key. `Default` restores the incoming pinned/requested/
@@ -767,23 +766,24 @@ mod tests {
     }
 
     #[test]
-    fn board_filter_matches_milestone_label_title_and_exact_number() {
+    fn board_filter_matches_label_title_and_exact_number_but_not_milestone() {
         let labels = ["feature"];
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "board"));
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "FEATURE"));
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "v0.3"));
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "#103"));
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "#10"));
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "103"));
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, Some("v0.3"), "zzz"));
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, "board"));
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, "FEATURE"));
+        // Milestones filter through the dialog pills, never the text.
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "v0.3"));
+        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, "#103"));
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "#10"));
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "103"));
+        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "zzz"));
     }
 
     #[test]
     fn board_filter_empty_matches_all_and_drafts_never_match_numbers() {
-        assert!(matches_board_filter(Some(103), "Card", &[], None, ""));
-        assert!(matches_board_filter(None, "Draft", &[], None, "   "));
-        assert!(!matches_board_filter(None, "Draft", &[], None, "#1"));
-        assert!(!matches_board_filter(None, "Draft", &[], None, "#"));
+        assert!(matches_board_filter(Some(103), "Card", &[], ""));
+        assert!(matches_board_filter(None, "Draft", &[], "   "));
+        assert!(!matches_board_filter(None, "Draft", &[], "#1"));
+        assert!(!matches_board_filter(None, "Draft", &[], "#"));
     }
 
     fn sort_issue(number: u64, updated: &str, author: &str, state: &str, labels: &[&str]) -> IssueData {
@@ -803,6 +803,7 @@ mod tests {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: None,
         }
     }
 

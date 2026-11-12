@@ -183,6 +183,11 @@ pub struct IssueData {
     /// old file caches without the field still parse.
     #[serde(default)]
     pub checks: Option<CheckState>,
+    /// Milestone title, when the issue belongs to one. REST ships
+    /// `milestone.title`; GraphQL rows add `milestone { title }`.
+    /// Defaulted so old file caches without the field still parse.
+    #[serde(default)]
+    pub milestone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +238,11 @@ pub struct BoardData {
     pub order: Vec<String>,
     #[serde(default)]
     pub items: Vec<BoardItem>,
+    /// Project page URL from `gh project list` (`url`), or the
+    /// `orgs/{owner}/projects/{number}` fallback. Defaulted so old
+    /// board caches without the field still parse.
+    #[serde(default)]
+    pub url: String,
 }
 
 pub fn slug(title: &str, width: usize) -> String {
@@ -479,6 +489,7 @@ pub enum MetaKind {
     Dim,
     State,
     Label,
+    Milestone,
     Normal,
     Project,
     Url,
@@ -508,6 +519,8 @@ pub fn meta_spans(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<(
         (MetaKind::State, d.state.clone()),
         (MetaKind::Dim, format!(" · by {} · opened {opened} · labels: ", d.author.login)),
         (MetaKind::Label, labels),
+        (MetaKind::Dim, " · milestone: ".to_string()),
+        (MetaKind::Milestone, d.milestone.clone().unwrap_or_else(|| "—".to_string())),
         (MetaKind::Dim, " · assignees: ".to_string()),
         (MetaKind::Normal, people),
         (MetaKind::Dim, " · project: ".to_string()),
@@ -929,6 +942,30 @@ pub fn board_columns<'a>(items: &'a [BoardItem], order: &[String]) -> Vec<(Strin
     cols
 }
 
+/// Distinct milestones across board cards, sorted, with `None` last when
+/// some card carries no milestone. The filter dialog offers one pill
+/// per entry; an empty board yields no pills.
+pub fn board_milestones(items: &[BoardItem]) -> Vec<Option<String>> {
+    let mut names: Vec<String> = vec![];
+    let mut has_none = false;
+    for it in items {
+        match &it.milestone {
+            Some(m) => {
+                if !names.iter().any(|n| n == m) {
+                    names.push(m.clone());
+                }
+            }
+            None => has_none = true,
+        }
+    }
+    names.sort();
+    let mut out: Vec<Option<String>> = names.into_iter().map(Some).collect();
+    if has_none {
+        out.push(None);
+    }
+    out
+}
+
 /// Relative updated time for a sidebar row: under 60 min → `N min ago`,
 /// under 24 h → `N hr ago`, under 30 days → `N day ago`, under 12 months
 /// (30-day months) → `N m ago`, else `mm/dd/yy`. Future stamps clamp to
@@ -1124,6 +1161,7 @@ mod tests {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: None,
             is_pr: false,
         }
     }
@@ -1210,6 +1248,37 @@ mod tests {
         assert!(parts.iter().any(|(k, _)| *k == MetaKind::Url));
         let joined: String = parts.into_iter().map(|(_, t)| t).collect();
         assert!(joined.contains("project: —"));
+    }
+
+    #[test]
+    fn meta_spans_name_the_milestone_or_a_dash() {
+        let mut d = sample_issue();
+        d.milestone = Some("v0.3".to_string());
+        let parts = meta_spans(&d, &[]);
+        assert!(parts.iter().any(|(k, t)| *k == MetaKind::Milestone && t == "v0.3"));
+        let joined: String = parts.into_iter().map(|(_, t)| t).collect();
+        assert!(joined.contains("milestone: v0.3"));
+        let bare = meta_spans(&sample_issue(), &[]);
+        assert!(bare.iter().any(|(k, t)| *k == MetaKind::Milestone && t == "—"));
+    }
+
+    #[test]
+    fn board_milestones_sort_and_push_none_last() {
+        let item = |milestone: Option<&str>| BoardItem {
+            title: "c".into(),
+            number: None,
+            status: None,
+            labels: vec![],
+            repo: None,
+            milestone: milestone.map(str::to_string),
+            content: serde_json::Value::Null,
+        };
+        let items = vec![item(None), item(Some("v2")), item(Some("v1")), item(Some("v1"))];
+        assert_eq!(
+            board_milestones(&items),
+            vec![Some("v1".to_string()), Some("v2".to_string()), None]
+        );
+        assert!(board_milestones(&[]).is_empty());
     }
 
     #[test]

@@ -441,6 +441,7 @@ mod tests {
             review_threads: vec![],
             paired: vec![],
             checks: None,
+            milestone: None,
             is_pr: false,
         };
         let mut app = crate::app::App::new(Some("o/r".to_string()));
