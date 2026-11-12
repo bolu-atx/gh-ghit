@@ -1,0 +1,7 @@
+# One toolchain for local, CI and release builds. Clippy runs with
+# -D warnings, so a floating stable would fail CI whenever Rust adds a
+# lint. Bump this on purpose, in its own PR, and fix new lints there.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy"]
+profile = "minimal"

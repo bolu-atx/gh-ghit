@@ -592,13 +592,18 @@ fn check_span(d: &IssueData) -> Option<Span<'static>> {
     ))
 }
 
+/// Border chrome for one sidebar pane: the top title and bottom footer.
+struct SectionFrame {
+    title: Line<'static>,
+    footer: Line<'static>,
+}
+
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
 /// thin divider row between non-empty groups. Everything is owned, so the
 /// returned list outlives the `&App` borrow and the caller can persist its
 /// `ListState` back into `App` for scroll continuity.
 fn section_list(
-    title: Line<'static>,
-    footer: Line<'static>,
+    frame: SectionFrame,
     rows: &[crate::model::SideRow],
     app: &App,
     inner_width: usize,
@@ -642,16 +647,8 @@ fn section_list(
         let (title_text, labels, updated, status) = match app.issues.data.get(n) {
             Some(d) => {
                 let st = app.issues.statuses.get(n).cloned().unwrap_or_default();
-                let (_, labels, updated, status) = model::sidebar_lines(
-                    *n,
-                    &d.title,
-                    &d.labels,
-                    &st,
-                    &d.updated_at,
-                    now,
-                    38,
-                    app.nav.pinned.contains(n),
-                );
+                let (_, labels, updated, status) =
+                    model::sidebar_lines(d, &st, now, 38, app.nav.pinned.contains(n));
                 (model::slug(&d.title, 30), labels, updated, status)
             }
             None => (String::new(), String::new(), String::new(), String::new()),
@@ -716,8 +713,8 @@ fn section_list(
                 .borders(Borders::ALL)
                 .border_type(if focused { BorderType::Double } else { BorderType::Plain })
                 .border_style(Style::new().bg(ink()).fg(border))
-                .title(title)
-                .title_bottom(footer)
+                .title(frame.title)
+                .title_bottom(frame.footer)
                 .style(Style::new().bg(ink())),
         )
         .highlight_style(if focused {
@@ -810,7 +807,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         )));
     }
     let split = app.diff.split && width >= 40;
-    let cursor = app.diff.cursor.min(files.len().saturating_sub(1).max(0));
+    let cursor = app.diff.cursor.min(files.len().saturating_sub(1));
     let cursor_name = files.get(cursor).map(|f| f.filename.as_str()).unwrap_or("");
     // Nerd Font Font Awesome fa-file-text reuses the per-file vocabulary;
     // the status words keep their own icons and stay spelled out. The `❯`
@@ -1205,9 +1202,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let now = chrono::Utc::now();
     let issues_focused = app.nav.pane == crate::app::Pane::Issues;
     let il = section_list(
-        // Nerd Font Font Awesome fa-exclamation-circle.
-        section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused),
-        footer_line(&app.side_footer(false)),
+        SectionFrame {
+            // Nerd Font Font Awesome fa-exclamation-circle.
+            title: section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused),
+            footer: footer_line(&app.side_footer(false)),
+        },
         &issue_rows,
         app,
         inner(panes[0]),
@@ -1221,9 +1220,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.sidebar.issue_state = istate;
     let prs_focused = app.nav.pane == crate::app::Pane::PRs;
     let pl = section_list(
-        // Nerd Font Font Awesome fa-code-fork.
-        section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused),
-        footer_line(&app.side_footer(true)),
+        SectionFrame {
+            // Nerd Font Font Awesome fa-code-fork.
+            title: section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused),
+            footer: footer_line(&app.side_footer(true)),
+        },
         &pr_rows,
         app,
         inner(panes[1]),
@@ -1247,9 +1248,11 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let inner = (area.width as usize).saturating_sub(2);
     let refs_focused = app.nav.pane == crate::app::Pane::Refs;
     let list = section_list(
-        // Nerd Font Font Awesome fa-link.
-        section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
-        footer_line(&app.refs_footer()),
+        SectionFrame {
+            // Nerd Font Font Awesome fa-link.
+            title: section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
+            footer: footer_line(&app.refs_footer()),
+        },
         &rows,
         app,
         inner,
@@ -2483,7 +2486,7 @@ mod render_smoke {
         app.show_issue(42);
         assert_eq!(app.nav.visited, Vec::<u64>::new());
         // Background fetch lands.
-        app.issues.tx.send((42, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
+        app.issues.tx.send((42, crate::github::IssueEvent::Done(Ok(Box::new((d, vec![])))))).unwrap();
         poll_issues(&mut app);
         assert_eq!(app.nav.visited, Vec::<u64>::new());
         let (_, _, recent) = app.pane_groups(true, false);
@@ -2829,7 +2832,7 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('e')));
         let mut d = sample(7);
         d.body = "see #9".to_string();
-        app.issues.tx.send((7, crate::github::IssueEvent::Done(Ok((d, vec![]))))).unwrap();
+        app.issues.tx.send((7, crate::github::IssueEvent::Done(Ok(Box::new((d, vec![])))))).unwrap();
         crate::app::poll_issues(&mut app);
         assert_eq!(app.refs.numbers, vec![9]);
     }

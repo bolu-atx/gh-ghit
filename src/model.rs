@@ -1018,16 +1018,18 @@ pub fn relative_updated(updated_at: &str, now: chrono::DateTime<chrono::Utc>) ->
 /// The status segment comes back separately so the UI can paint it in the
 /// board color with the board glyph.
 pub fn sidebar_lines(
-    number: u64,
-    title: &str,
-    labels: &[Label],
+    issue: &IssueData,
     statuses: &[(String, Option<String>)],
-    updated_at: &str,
     now: chrono::DateTime<chrono::Utc>,
     width: usize,
     pinned: bool,
 ) -> (String, String, String, String) {
-    let first = format!("#{}{} {}", number, if pinned { " 📌" } else { "" }, slug(title, 30.min(width)));
+    let first = format!(
+        "#{}{} {}",
+        issue.number,
+        if pinned { " 📌" } else { "" },
+        slug(&issue.title, 30.min(width))
+    );
     let plain_status = status_text(statuses);
     let status = if plain_status.is_empty() {
         String::new()
@@ -1035,7 +1037,7 @@ pub fn sidebar_lines(
         let icon = crate::theme::column_icon(&plain_status);
         if icon.is_empty() { plain_status } else { format!("{icon} {plain_status}") }
     };
-    let updated = relative_updated(updated_at, now);
+    let updated = relative_updated(&issue.updated_at, now);
     // Fixed cost: the date and status segments plus their ` · ` separator.
     let fixed = updated.chars().count()
         + status.chars().count()
@@ -1044,7 +1046,7 @@ pub fn sidebar_lines(
     let room = width
         .saturating_sub(fixed)
         .saturating_sub(if fixed > 0 { 3 } else { 0 });
-    let chips: Vec<String> = labels.iter().map(|l| format!("● {}", l.name)).collect();
+    let chips: Vec<String> = issue.labels.iter().map(|l| format!("● {}", l.name)).collect();
     let mut labels_text = String::new();
     let mut used = 0;
     for (i, chip) in chips.iter().enumerate() {
@@ -1349,8 +1351,7 @@ mod tests {
         let d = sample_issue();
         let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
         let now = at("2026-01-07T00:00:00Z");
-        let (first, labels, updated, status) =
-            sidebar_lines(d.number, &d.title, &d.labels, &st, &d.updated_at, now, 40, false);
+        let (first, labels, updated, status) = sidebar_lines(&d, &st, now, 40, false);
         assert!(first.starts_with("#1 some title here"), "{first}");
         assert_eq!(labels, "● needs-triage");
         assert_eq!(updated, "2 day ago");
@@ -1367,8 +1368,14 @@ mod tests {
         ];
         let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
         let now = at("2026-01-07T00:00:00Z");
-        let (_, kept, updated, status) =
-            sidebar_lines(7, "t", &labels, &st, "2026-01-05T00:00:00Z", now, 30, false);
+        let issue = IssueData {
+            number: 7,
+            title: "t".to_string(),
+            labels,
+            updated_at: "2026-01-05T00:00:00Z".to_string(),
+            ..sample_issue()
+        };
+        let (_, kept, updated, status) = sidebar_lines(&issue, &st, now, 30, false);
         assert_eq!(kept, "● alpha", "only the first chip fits");
         assert_eq!(updated, "2 day ago");
         assert!(status.ends_with("Todo"));
@@ -1377,8 +1384,14 @@ mod tests {
     #[test]
     fn sidebar_segments_collapse_when_empty() {
         let now = at("2026-01-07T00:00:00Z");
-        let (_, labels, updated, status) =
-            sidebar_lines(7, "t", &[], &[], "", now, 40, false);
+        let issue = IssueData {
+            number: 7,
+            title: "t".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            ..sample_issue()
+        };
+        let (_, labels, updated, status) = sidebar_lines(&issue, &[], now, 40, false);
         assert_eq!((labels.as_str(), updated.as_str(), status.as_str()), ("", "", ""));
     }
 
@@ -1420,9 +1433,16 @@ mod tests {
     #[test]
     fn pinned_marker() {
         let now = at("2026-01-07T00:00:00Z");
-        let (first, _, _, _) = sidebar_lines(7, "t", &[], &[], "", now, 40, true);
+        let issue = IssueData {
+            number: 7,
+            title: "t".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            ..sample_issue()
+        };
+        let (first, _, _, _) = sidebar_lines(&issue, &[], now, 40, true);
         assert!(first.contains("📌"));
-        let (plain, _, _, _) = sidebar_lines(7, "t", &[], &[], "", now, 40, false);
+        let (plain, _, _, _) = sidebar_lines(&issue, &[], now, 40, false);
         assert!(!plain.contains("📌"));
     }
 
@@ -1507,9 +1527,6 @@ mod tests {
 /// Cap on nodes in one dependency graph (center included). The graph is a
 /// 1-hop star around the current issue; a full-repo layout is out of scope.
 pub const MAX_GRAPH_NODES: usize = 24;
-
-/// Label chips shown per graph node before the `+k` overflow.
-
 
 /// One relationship in the dependency graph, named from the center issue's
 /// perspective: `Blocks` means the center blocks the neighbor, `BlockedBy`

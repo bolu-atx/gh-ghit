@@ -68,7 +68,6 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
     if let Some(cached) = cache::cache_get::<BoardData>(&key) {
         return Ok(cached);
     }
-    let num_s;
     let projects = gh(&["project", "list", "--owner", owner, "--limit", "1", "--format", "json"])?;
     let list = projects.get("projects").and_then(|p| p.as_array()).cloned().unwrap_or_default();
     let Some(first) = list.first() else {
@@ -83,7 +82,7 @@ pub fn fetch_board(owner: &str) -> Result<BoardData, String> {
         .and_then(|u| u.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| format!("https://github.com/orgs/{owner}/projects/{num}"));
-    num_s = num.to_string();
+    let num_s = num.to_string();
 
     let fields = gh(&["project", "field-list", &num_s, "--owner", owner, "--format", "json"])?;
     let mut order: Vec<String> = vec![];

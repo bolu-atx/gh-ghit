@@ -10,6 +10,8 @@ crate and binary are both called `ghit`.
 cargo build   # refreshes target/debug/ghit (also your PATH binary via symlink)
 cargo test    # unit + headless frame tests, must be green with zero warnings
 cargo build 2>&1 | grep -cE "^warning|^error"   # expect 0
+cargo clippy --all-targets -- -D warnings          # lint gate, same as CI
+# Toolchain is pinned in rust-toolchain.toml; rustup installs it on first use.
 ```
 
 Run the app with isolated state so pins/cache writes don't touch real data:
@@ -57,6 +59,9 @@ refactors.
 
 ## Verification
 
+- End of work, before every push: `cargo clippy --all-targets -- -D warnings`
+  and `cargo test`, both clean. CI runs the same two commands in the required
+  `tmux-drive` check.
 - `cargo test` after every behavior change; add a frame test in `render_smoke`
   for UI changes (see `docs/routers.md` for the live-drive procedure).
 - Live check in tmux before pushing anything interactive. Never press `o`

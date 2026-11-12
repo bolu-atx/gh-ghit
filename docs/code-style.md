@@ -1,7 +1,8 @@
 # Code style — ghit
 
-Rust edition 2021. `cargo build` must be warning-free; warnings are errors
-in spirit. Fix the code, never silence the lint.
+Rust edition 2021. `cargo build` and `cargo clippy --all-targets` must be
+warning-free; CI runs clippy with `-D warnings`. Fix the code, never
+silence the lint: no `#[allow(clippy::...)]` to make a gate pass.
 
 ## Principles
 
@@ -106,9 +107,13 @@ What good code looks like here:
 
 - Return early. Handle the error or the empty case first, then write the
   main path without extra nesting. [r-a: early returns]
-- Function size: aim for 100 lines or fewer, and 7 parameters or fewer.
-  These are Clippy's default limits for `too_many_lines` and
-  `too_many_arguments`. Treat them as a sign to split, not as a hard rule.
+- Seven parameters or fewer. Clippy's `too_many_arguments` lint is on by
+  default, so CI enforces this limit. Group related parameters into the
+  domain type they come from (for example, pass `&DiffFile`, not its four
+  fields).
+- Aim for 100 lines or fewer per function. This is the default for
+  `too_many_lines`. That lint is in the pedantic group, which is off, so
+  treat the number as a sign to split, not as a hard rule.
 - Do not add a `bool` or `Option` parameter that every caller passes as a
   literal. Split the function in two. If a function would need more than
   three `bool` parameters, pass an `enum` or a small struct instead.

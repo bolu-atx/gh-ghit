@@ -70,7 +70,7 @@ pub(crate) enum Tab {
 /// splits on the first title plus the divider; `TAB_SPLIT_X` stays in
 /// sync by construction — see `tab_split_matches_first_title_width`.
 pub(crate) fn tab_titles(visual_label: &str) -> [String; 2] {
-    [format!("\u{f15c}  1 Details"), format!("\u{f121}  2 {visual_label}")]
+    ["\u{f15c}  1 Details".to_string(), format!("\u{f121}  2 {visual_label}")]
 }
 
 /// Click columns before this select Details: first tab title plus divider.
@@ -871,7 +871,7 @@ impl App {
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         rt().spawn(async move {
             let result = github::fetch_number(&repo, number, force, Some(tx.clone())).await;
-            let _ = tx.send((number, github::IssueEvent::Done(result)));
+            let _ = tx.send((number, github::IssueEvent::Done(result.map(Box::new))));
         });
     }
 
@@ -1439,7 +1439,7 @@ impl App {
             let repo = repo.clone();
             rt().spawn(async move {
                 let result = github::fetch_number(&repo, m, false, Some(tx.clone())).await;
-                let _ = tx.send((m, github::IssueEvent::Done(result)));
+                let _ = tx.send((m, github::IssueEvent::Done(result.map(Box::new))));
             });
         }
     }
@@ -1668,16 +1668,7 @@ impl App {
             } else {
                 None
             };
-            return Some(core::yank_diff_text(
-                current,
-                &d.title,
-                &d.url,
-                &file.filename,
-                &file.status,
-                file.additions,
-                file.deletions,
-                hunk.as_deref(),
-            ));
+            return Some(core::yank_diff_text(current, &d.title, &d.url, file, hunk.as_deref()));
         }
         Some(core::yank_issue_text(current, &d.title, &d.url))
     }
@@ -2967,6 +2958,7 @@ pub(crate) fn poll_issues(app: &mut App) -> bool {
                 app.issues.progress.insert(number, (done, total));
             }
             github::IssueEvent::Done(result) => {
+                let result = result.map(|bundle| *bundle);
                 app.issues.progress.remove(&number);
                 app.issues.pending.remove(&number);
                 // An h/l step owns this number until it lands: remember
@@ -3108,7 +3100,7 @@ mod tests {
     }
 
     fn temp_xdg() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir, Option<String>) {
-        let guard = crate::cache::test_env_lock().lock().unwrap();
+        let guard = crate::cache::test_env_lock();
         let dir = tempfile::TempDir::new().unwrap();
         let saved = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
@@ -3294,7 +3286,7 @@ mod tests {
         assert_eq!(app.issues.progress.get(&9), Some(&(2, 7)));
         assert!(app.issues.pending.contains(&9), "progress is not completion");
         let fresh = issue(9, "2026-01-06T00:00:00Z");
-        app.issues.tx.send((9, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        app.issues.tx.send((9, github::IssueEvent::Done(Ok(Box::new((fresh, vec![])))))).unwrap();
         poll_issues(&mut app);
         assert!(!app.issues.progress.contains_key(&9), "terminal result clears progress");
         assert!(!app.issues.pending.contains(&9));
@@ -3303,7 +3295,7 @@ mod tests {
 
     #[test]
     fn auto_refresh_interval_env_override() {
-        let _guard = crate::cache::test_env_lock().lock().unwrap();
+        let _guard = crate::cache::test_env_lock();
         std::env::remove_var("GHIT_AUTO_REFRESH_SECS");
         assert_eq!(auto_refresh_interval_default(), RECENT_REFRESH_INTERVAL);
         std::env::set_var("GHIT_AUTO_REFRESH_SECS", "3600");
@@ -3658,7 +3650,7 @@ mod tests {
         assert!(app.issue_numbers().contains(&7), "row is listable again");
         // The refetch lands through the normal poll path.
         let fresh = issue(7, "2026-01-06T00:00:00Z");
-        app.issues.tx.send((7, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        app.issues.tx.send((7, github::IssueEvent::Done(Ok(Box::new((fresh, vec![])))))).unwrap();
         poll_issues(&mut app);
         assert!(app.issues.data.contains_key(&7));
     }
@@ -3681,7 +3673,7 @@ mod tests {
         let mut full = issue(9, "2026-01-06T00:00:00Z");
         full.body = "see #7".to_string();
         full.paired = vec![model::PairedRef { number: 12, state: "OPEN".to_string() }];
-        app.issues.tx.send((9, github::IssueEvent::Done(Ok((full, vec![]))))).unwrap();
+        app.issues.tx.send((9, github::IssueEvent::Done(Ok(Box::new((full, vec![])))))).unwrap();
         poll_issues(&mut app);
         assert!(!app.issues.partial.contains(&9), "full fetch completes the row");
         assert_eq!(app.issues.data.get(&9).unwrap().body, "see #7");
@@ -3863,7 +3855,7 @@ mod tests {
         // and are ignored, so this runs the whole suspend-spawn-land
         // path headless. `true` edits nothing and exits 0, so the draft
         // lands byte-identical through the temp file.
-        let _env = crate::cache::test_env_lock().lock().unwrap();
+        let _env = crate::cache::test_env_lock();
         let prior = std::env::var("EDITOR").ok();
         std::env::set_var("EDITOR", "true");
         let mut app = sidebar_app(&[7]);
@@ -3872,8 +3864,11 @@ mod tests {
             app.compose_insert(ch);
         }
         app.compose.editor_requested = true;
+        // A fixed viewport skips the terminal size query, which fails
+        // without a TTY (CI runners).
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let mut terminal = ratatui::Terminal::new(backend).expect("headless terminal");
+        let options = ratatui::TerminalOptions { viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, 80, 24)) };
+        let mut terminal = ratatui::Terminal::with_options(backend, options).expect("headless terminal");
         run_compose_editor(&mut app, &mut terminal);
         assert!(!app.compose.editor_requested, "the run disarms itself");
         assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
@@ -4114,7 +4109,7 @@ mod tests {
         assert!(app.nav.visited.contains(&591), "explicit visit files the row");
         // The landing clears the step and moves the highlight.
         let fresh = issue(591, "2026-01-06T00:00:00Z");
-        app.issues.tx.send((591, github::IssueEvent::Done(Ok((fresh, vec![]))))).unwrap();
+        app.issues.tx.send((591, github::IssueEvent::Done(Ok(Box::new((fresh, vec![])))))).unwrap();
         poll_issues(&mut app);
         assert_eq!(app.nav.current, Some(591));
         assert_eq!(app.nav.step_pending, None);
