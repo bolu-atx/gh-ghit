@@ -22,12 +22,11 @@ What good code looks like here:
 ## Shape of the code
 
 - Small functions with one job: fetch over HTTPS behind the `github.rs`
-  facade (`api.rs` + `api/{client,sections,graph}.rs`/`cache.rs`;
-  `gh.rs` is deprecated board-only),
+  facade (`api.rs` + `api/{client,sections,graph,board}.rs`/`cache.rs`),
   pure domain transforms in `model.rs`,
   pure business rules in `core.rs`, state and the event loop in `app.rs`,
   input mapping in `input.rs`, rendering as `render_*` functions in `ui.rs`.
-- Layer discipline: `ui`/`input` never import `api`/`gh`/`cache`;
+- Layer discipline: `ui`/`input` never import `api`/`cache`;
   `model`/`core` never import ratatui or crossterm. New network paths go
   through `github.rs`.
 - Prefer exhaustive handling: every user request lists ALL of its behaviors
@@ -171,7 +170,7 @@ What good code looks like here:
   channel, apply in a `poll_*` step each frame.
 - Cache reads tolerate absence: corrupt or expired entries mean refetch,
   never a crash.
-- `gh` failures surface as status-line messages, not panics.
+- Fetch failures surface as status-line messages, not panics.
 
 ## Tests
 

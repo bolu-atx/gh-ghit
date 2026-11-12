@@ -1742,9 +1742,8 @@ impl App {
         self.board.milestones.clear();
         let (tx, rx) = std::sync::mpsc::channel();
         self.board.rx = Some(rx);
-        // `gh` subprocesses block: keep them off the async workers.
-        rt().spawn_blocking(move || {
-            let _ = tx.send(board_via_gh(&owner));
+        rt().spawn(async move {
+            let _ = tx.send(github::fetch_board(&owner).await);
         });
     }
 
@@ -2395,13 +2394,6 @@ impl App {
             .collect();
         self.hits.body_base = self.nav.scroll;
     }
-}
-
-/// Board fetch while `gh::fetch_board` is deprecated. Single call site by
-/// design: remove with the GraphQL board port.
-#[allow(deprecated)]
-fn board_via_gh(owner: &str) -> Result<BoardData, String> {
-    crate::gh::fetch_board(owner)
 }
 
 /// The board modal is up, whether still fetching or fully loaded.

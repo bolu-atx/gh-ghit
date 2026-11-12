@@ -1,8 +1,6 @@
 //! Data access over HTTPS (`api` + `cache`).
 //!
-//! The `gh` CLI subprocess backend is deprecated: `gh.rs` keeps only the
-//! project board until it moves to GraphQL, and nothing else falls back to
-//! it. Missing auth or repo is a status-line error, never silent behavior.
+//! Missing auth or repo is a status-line error, never silent behavior.
 
 use crate::{api, cache, model};
 use crate::model::IssueData;
@@ -222,6 +220,27 @@ pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, Strin
     api::search(repo, query, &token).await
 }
 
+/// First Projects v2 board for an owner, through the read-through cache.
+pub async fn fetch_board(owner: &str) -> Result<model::BoardData, String> {
+    if owner.is_empty() {
+        return Err("board needs an owner".to_string());
+    }
+    let token = require_token()?;
+    let name = cache::Key::Board { owner: owner.to_string() }.name();
+    let read_name = name.clone();
+    let hit: Option<model::BoardData> =
+        tokio::task::spawn_blocking(move || cache::cache_get(&read_name))
+            .await
+            .map_err(|e| format!("cache read failed: {e}"))?;
+    if let Some(data) = hit {
+        return Ok(data);
+    }
+    let data = api::fetch_board(owner, &token).await?;
+    let data_c = data.clone();
+    let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &data_c)).await;
+    Ok(data)
+}
+
 /// Batch board card details in one GraphQL request.
 pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<model::BoardDetail>>, String> {
     let token = require_token()?;
@@ -352,6 +371,7 @@ mod tests {
         assert!(fetch_number("", 1, false, None).await.is_err());
         assert!(fetch_recent_sections("", 24, None).await.is_err());
         assert!(search_repo("", "bug").await.is_err());
+        assert!(fetch_board("").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
         assert!(fetch_diff("", 1, false).await.is_err());
         assert!(fetch_graph("", 1, false).await.is_err());

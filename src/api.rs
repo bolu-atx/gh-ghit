@@ -1,3 +1,4 @@
+mod board;
 mod client;
 mod graph;
 mod sections;
@@ -6,6 +7,7 @@ pub use client::{
     check_auth, check_repo_access, forget_token, is_auth_error, reauth_command, token,
     REQUIRED_SCOPES,
 };
+pub use board::fetch_board;
 pub use graph::graph;
 pub use sections::{merge_rows, sections};
 
