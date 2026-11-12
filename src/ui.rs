@@ -807,7 +807,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         )));
     }
     let split = app.diff.split && width >= 40;
-    let cursor = app.diff.cursor.min(files.len().saturating_sub(1).max(0));
+    let cursor = app.diff.cursor.min(files.len().saturating_sub(1));
     let cursor_name = files.get(cursor).map(|f| f.filename.as_str()).unwrap_or("");
     // Nerd Font Font Awesome fa-file-text reuses the per-file vocabulary;
     // the status words keep their own icons and stay spelled out. The `❯`
