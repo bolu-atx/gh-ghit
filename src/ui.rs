@@ -227,10 +227,10 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
         "  1/2 details/visual · e refs · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
-        "Actions", "  : command · / find · f filter · b board · w window",
+        "Actions", "  : command · / find · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict", "",
-        "Board", "  h/l columns · j/k cards · space expand · enter open · f filter", "",
+        "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
         "Diff", "  ↑/↓ lines · J/K files · space expand · s split · S submit pending",
         "Comment  c open · emacs keys · ctrl-o $EDITOR · ctrl-s send",
         "Esc / ? / q close",
@@ -258,29 +258,16 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Filter dialog (`f`). Over the board it is a form: a text row plus one
-/// milestone pill per milestone on the cards; otherwise it holds the
-/// recent window, open/closed toggles, and a GitHub search query. The
-/// title names the target.
+/// Format dialog (`f`). Over the board it is a form: a text row, one
+/// milestone pill per milestone on the cards, and card field checkboxes;
+/// otherwise it holds the recent window, open/closed toggles, a GitHub
+/// search query, and row field checkboxes. The title names the target.
 fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     if crate::app::board_open(app) {
         render_board_filter(f, area, app);
         return;
     }
     use crate::theme::{amber, ink, muted, paper, base};
-    let popup = centered(area, 62, 52);
-    f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base())
-        // Nerd Font Font Awesome fa-filter.
-        .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Filter ", Style::new().bg(ink()).fg(amber()).bold()),
-            Span::styled("· sidebar ", Style::new().bg(ink()).fg(muted())),
-        ]));
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
     let window_mark = |hours: u64| {
         if app.sections.merged_window_hours == hours {
             Span::styled("● ", Style::new().bg(ink()).fg(amber()).bold())
@@ -302,7 +289,17 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
             Span::styled(format!("({key})"), Style::new().bg(ink()).fg(muted())),
         ]
     };
+    // Same marker as the board dialog: the Row fields cursor.
+    let marker = |active: bool| {
+        Span::styled(
+            if active { "▌ " } else { "  " },
+            Style::new().bg(ink()).fg(if active { amber() } else { muted() }).bold(),
+        )
+    };
     let mut lines = vec![];
+    // Buffer row of the focused widget, so a short popup can scroll it
+    // into view. The query row owns row 0 while it edits.
+    let mut focus_line = 0;
     let query_text = if app.sidebar.query_edit { &app.sidebar.query_draft } else { &app.sidebar.query_active };
     let mut qline = vec![
         Span::styled("query ", Style::new().bg(ink()).fg(muted())),
@@ -342,34 +339,84 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     lines.push(Line::from(closed_line));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "1/2/3 window · e query · o/m/i/c toggle · w age · f/esc close",
+        "row fields · issues",
         Style::new().bg(ink()).fg(muted()),
     )));
-    f.render_widget(Paragraph::new(lines).style(base()), inner);
-    if app.sidebar.query_edit {
-        f.set_cursor_position((inner.x + 6 + app.sidebar.query_draft.len() as u16, inner.y));
+    for (i, name) in model::RowFields::ISSUE_ORDER.iter().enumerate() {
+        if !app.sidebar.query_edit && app.sidebar.format_focus == i {
+            focus_line = lines.len();
+        }
+        lines.push(row_field_line(
+            marker(app.sidebar.format_focus == i),
+            app.sidebar.row_issue.shown(false, i).unwrap_or(false),
+            name,
+        ));
     }
-}
-
-/// Board filter form (`f` with the board open): the text row plus one
-/// milestone pill per milestone on the board. The active widget carries
-/// the `▌` marker; `space` toggles a pill, typing on the text row edits
-/// it, Enter applies, Esc clears. Empty pills select every card.
-fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
-    use crate::theme::{amber, base, ink, muted, paper};
-    let pills = app.board_pills();
-    let popup = centered(area, 62, (34 + pills.len() as u16 * 4).min(86));
+    lines.push(Line::from(Span::styled(
+        "row fields · prs",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    let pr_base = model::RowFields::ISSUE_ORDER.len();
+    for (i, name) in model::RowFields::PR_ORDER.iter().enumerate() {
+        if !app.sidebar.query_edit && app.sidebar.format_focus == pr_base + i {
+            focus_line = lines.len();
+        }
+        lines.push(row_field_line(
+            marker(app.sidebar.format_focus == model::RowFields::ISSUE_ORDER.len() + i),
+            app.sidebar.row_pr.shown(true, i).unwrap_or(false),
+            name,
+        ));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "1/2/3 window · e query · o/m/i/c toggle · w age",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    lines.push(Line::from(Span::styled(
+        "j/k move · space toggle · f/esc close",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    let popup = sized_popup(area, 62, lines.len());
     f.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(muted()))
         .style(base())
+        // Nerd Font Font Awesome fa-filter.
         .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Filter ", Style::new().bg(ink()).fg(amber()).bold()),
-            Span::styled("· board cards ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("· sidebar ", Style::new().bg(ink()).fg(muted())),
         ]));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
+    let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
+    f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
+    if app.sidebar.query_edit {
+        f.set_cursor_position((inner.x + 6 + app.sidebar.query_draft.len() as u16, inner.y));
+    }
+}
+
+/// One Row fields checkbox row: the dialog cursor plus the checked box.
+fn row_field_line(marker: Span<'static>, on: bool, label: &str) -> Line<'static> {
+    use crate::theme::{ink, muted, paper};
+    let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+    Line::from(vec![
+        marker,
+        Span::styled(
+            format!("{box_glyph} {label}"),
+            Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
+        ),
+    ])
+}
+
+/// Board format form (`f` with the board open): the text row, one
+/// milestone pill per milestone on the board, and card field checkboxes.
+/// The active widget carries the `▌` marker; `space` toggles a pill or a
+/// field, typing on the text row edits it, Enter applies, Esc clears.
+/// Empty pills select every card.
+fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    use crate::theme::{amber, base, ink, muted, paper};
+    let pills = app.board_pills();
     // Nerd Font Font Awesome fa-check-square / fa-square-o, same as the
     // sidebar filter toggles. The marker echoes the board card selection.
     let marker = |active: bool| {
@@ -392,6 +439,7 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     } else {
         text_row.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
     }
+    let mut focus_line = 0;
     let mut lines = vec![
         Line::from(text_row),
         Line::from(""),
@@ -404,6 +452,9 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         )));
     }
     for (i, pill) in pills.iter().enumerate() {
+        if !app.sidebar.query_edit && app.board.filter_focus == i + 1 {
+            focus_line = lines.len();
+        }
         let on = app.board.milestone_draft.contains(pill);
         let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
         let name = pill.clone().unwrap_or_else(|| "(no milestone)".to_string());
@@ -416,13 +467,43 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]));
     }
     lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("card fields", Style::new().bg(ink()).fg(muted()))));
+    for (i, name) in model::CardFields::ORDER.iter().enumerate() {
+        if !app.sidebar.query_edit && app.board.filter_focus == pills.len() + 1 + i {
+            focus_line = lines.len();
+        }
+        let on = app.board.fields.shown(i).unwrap_or(false);
+        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+        lines.push(Line::from(vec![
+            marker(app.board.filter_focus == pills.len() + 1 + i),
+            Span::styled(
+                format!("{box_glyph} {name}"),
+                Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "j/k move · space toggle · type filters text · enter apply · esc clear",
         Style::new().bg(ink()).fg(muted()),
     )));
-    f.render_widget(Paragraph::new(lines).style(base()), inner);
+    let popup = sized_popup(area, 62, lines.len());
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base())
+        .title(Line::from(vec![
+            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("· board cards ", Style::new().bg(ink()).fg(muted())),
+        ]));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
+    f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
     if app.sidebar.query_edit {
-        f.set_cursor_position((inner.x + 9 + app.sidebar.query_draft.chars().count() as u16, inner.y));
+        let x = inner.x + 9 + app.sidebar.query_draft.chars().count() as u16;
+        f.set_cursor_position((x, inner.y));
     }
 }
 
@@ -542,10 +623,14 @@ fn check_span(d: &IssueData) -> Option<Span<'static>> {
     ))
 }
 
-/// Border chrome for one sidebar pane: the top title and bottom footer.
+/// Border chrome for one sidebar pane: the top title and bottom footer,
+/// plus the Row fields that decide which segments its rows draw. The
+/// `checks` flag gates the PR check glyph; Issues rows never carry one.
 struct SectionFrame {
     title: Line<'static>,
     footer: Line<'static>,
+    fields: model::RowFields,
+    checks: bool,
 }
 
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
@@ -594,14 +679,16 @@ fn section_list(
         } else {
             Style::new().fg(muted())
         };
-        let (title_text, labels, updated, status) = match app.issues.data.get(n) {
+        let (title_text, labels, updated, status, author, milestone) =
+            match app.issues.data.get(n) {
             Some(d) => {
                 let st = app.issues.statuses.get(n).cloned().unwrap_or_default();
-                let (_, labels, updated, status) =
-                    model::sidebar_lines(d, &st, now, 38, app.nav.pinned.contains(n));
-                (model::slug(&d.title, 30), labels, updated, status)
+                let pinned = app.nav.pinned.contains(n);
+                let (_, labels, updated, status, author, milestone) =
+                    model::sidebar_lines(d, &st, now, 38, pinned, &frame.fields);
+                (model::slug(&d.title, 30), labels, updated, status, author, milestone)
             }
-            None => (String::new(), String::new(), String::new(), String::new()),
+            None => Default::default(),
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
@@ -622,13 +709,16 @@ fn section_list(
         first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
         first.extend(highlighted_spans(title_text, &query, title_style));
         // PR head-commit CI rollup: one glyph, no text, so hit-testing
-        // and row height are untouched.
-        if let Some(d) = data {
-            if let Some(check) = check_span(d) {
-                first.push(check);
+        // and row height are untouched. The Row fields toggle gates it.
+        if frame.checks {
+            if let Some(d) = data {
+                if let Some(check) = check_span(d) {
+                    first.push(check);
+                }
             }
         }
-        // Second line: labels · relative updated · project status. Empty
+        // Second line: labels · relative updated · project status, plus
+        // the author and milestone when their fields are on. Empty
         // segments collapse; the status keeps the board color and glyph.
         let status_color = crate::theme::column_color(&status);
         let mut second = vec![Span::raw("    ")];
@@ -637,6 +727,8 @@ fn section_list(
             (labels, Style::new().fg(muted())),
             (updated, Style::new().fg(muted())),
             (status, Style::new().fg(status_color)),
+            (author, Style::new().fg(paper())),
+            (milestone, Style::new().fg(amber())),
         ] {
             if text.is_empty() {
                 continue;
@@ -1156,6 +1248,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             // Nerd Font Font Awesome fa-exclamation-circle.
             title: section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused),
             footer: footer_line(&app.side_footer(false)),
+            fields: app.sidebar.row_issue,
+            checks: app.sidebar.row_issue.checks,
         },
         &issue_rows,
         app,
@@ -1174,6 +1268,8 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             // Nerd Font Font Awesome fa-code-fork.
             title: section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused),
             footer: footer_line(&app.side_footer(true)),
+            fields: app.sidebar.row_pr,
+            checks: app.sidebar.row_pr.checks,
         },
         &pr_rows,
         app,
@@ -1202,6 +1298,8 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             // Nerd Font Font Awesome fa-link.
             title: section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
             footer: footer_line(&app.refs_footer()),
+            fields: app.sidebar.row_issue,
+            checks: app.sidebar.row_pr.checks,
         },
         &rows,
         app,
@@ -1727,9 +1825,9 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     hint.push(Span::styled(
         if filtered {
-            "h/l columns · j/k cards · space expand · enter open · f filter · esc clear"
+            "h/l columns · j/k cards · space expand · enter open · f format · esc clear"
         } else {
-            "h/l columns · j/k cards · space expand · enter open · f filter · esc close"
+            "h/l columns · j/k cards · space expand · enter open · f format · esc close"
         },
         Style::new().bg(ink()).fg(muted()),
     ));
@@ -1758,7 +1856,8 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             .map(|(ri, c)| {
                 let sel = app.board.col == i && app.board.row == ri;
                 let detail = c.number.and_then(|n| app.board.details.get(&n));
-                board_card(c, sel, app.board.expanded == Some((i, ri)), detail, inner_w)
+                let expanded = app.board.expanded == Some((i, ri));
+                board_card(c, sel, expanded, detail, inner_w, &app.board.fields)
             })
             .collect();
         let active = app.board.col == i;
@@ -1894,27 +1993,34 @@ fn card_excerpt(c: &model::BoardItem, width: usize) -> String {
     }
 }
 
-/// A board card: 3 lines collapsed (head, breathing room, footer with
-/// labels left and dates right), 6 lines expanded (status, URL, excerpt,
-/// dates plus comment count). Matches `BASE_CARD_H` / `EXPANDED_CARD_H`.
+/// A board card: 3 lines collapsed (head, meta or breathing room,
+/// footer with labels left and dates right), 6 lines expanded (status,
+/// URL, excerpt, dates plus comment count). Collapsed lines honor the
+/// Card fields toggles; off means undrawn. Matches `BASE_CARD_H` /
+/// `EXPANDED_CARD_H`, so the height never changes with the toggles.
 fn board_card(
     c: &model::BoardItem,
     sel: bool,
     expanded: bool,
     detail: Option<&model::BoardDetail>,
     inner_width: u16,
+    fields: &model::CardFields,
 ) -> ListItem<'static> {
     use crate::theme::{amber, column_color, ink, muted, paper, teal};
     // The slug takes what the line leaves after the 2-cell marker and
-    // the `#num ` prefix, so a wider column shows more title.
+    // the `#num ` prefix, so a wider column shows more title. The number
+    // toggle governs the collapsed card; the expanded card is a detail
+    // view and always names its number.
     let title_width = (inner_width as usize).saturating_sub(2);
-    let head = match c.number {
-        Some(n) => {
+    let show_number = fields.number || expanded;
+    let head = match (c.number, show_number) {
+        (Some(n), true) => {
             let prefix = format!("#{n} ");
             let room = title_width.saturating_sub(prefix.chars().count()).max(1);
             format!("{prefix}{}", model::slug(&c.title, room))
         }
-        None => {
+        (Some(_), false) => model::slug(&c.title, title_width.max(1)),
+        (None, _) => {
             format!("◇ {}", model::slug(&c.title, title_width.saturating_sub(2).max(1)))
         }
     };
@@ -1931,19 +2037,25 @@ fn board_card(
     };
     if !expanded {
         // Labels own the left; the swimlane carries the status, so the
-        // collapsed card never repeats it.
+        // collapsed card never repeats it unless its field is on.
         let room = (inner_width as usize).saturating_sub(4);
-        let right = model::card_footer_date(detail);
+        let right = model::card_footer_right(detail, fields);
         let max_left = room.saturating_sub(right.chars().count() + 2);
-        let mut left = model::card_footer_labels(c);
+        let mut left = if fields.labels { model::card_footer_labels(c) } else { String::new() };
         if left.chars().count() > max_left && max_left > 1 {
             left = format!("{}…", left.chars().take(max_left.saturating_sub(1)).collect::<String>());
         }
         let pad = room.saturating_sub(left.chars().count() + right.chars().count()).max(1);
         let footer = format!("    {left}{}{right}", " ".repeat(pad));
+        let meta = model::card_meta(c, fields, room);
+        let second = if meta.is_empty() {
+            Line::from(Span::styled("", Style::new().bg(ink())))
+        } else {
+            Line::from(Span::styled(format!("    {meta}"), Style::new().bg(ink()).fg(muted())))
+        };
         return ListItem::new(vec![
             first,
-            Line::from(Span::styled("", Style::new().bg(ink()))),
+            second,
             Line::from(Span::styled(footer, Style::new().bg(ink()).fg(muted()))),
         ]);
     }
@@ -1955,7 +2067,7 @@ fn board_card(
         format!("{icon} {status}")
     };
     let mut meta = format!("{} · {}", status_label, card_kind(c));
-    if let Some(login) = card_assignee(c) {
+    if let Some(login) = model::card_assignee(c) {
         meta.push_str(&format!(" · @{login}"));
     }
     // No icon here: at the minimum column width the date line already
@@ -1996,14 +2108,6 @@ fn comment_word(n: usize) -> String {
     } else {
         format!("{} comment{}", n, if n == 1 { "" } else { "s" })
     }
-}
-
-/// First assignee login off the card payload, when the board ships one.
-fn card_assignee(c: &model::BoardItem) -> Option<String> {
-    let arr = c.content.get("assignees").and_then(|v| v.as_array())?;
-    arr.iter().filter_map(|a| {
-        a.get("login").and_then(|l| l.as_str()).or_else(|| a.as_str())
-    }).map(str::to_string).next()
 }
 
 /// Comment compose modal (`c`): textarea over a rendered markdown
@@ -2110,6 +2214,38 @@ fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
     }
 }
 
+/// Popup rect sized to `content` rows plus borders, clamped to the
+/// area and centered. Short terminals get a short popup whose content
+/// scrolls instead of a clipped one.
+fn sized_popup(area: Rect, pct_x: u16, content: usize) -> Rect {
+    let height = (content.saturating_add(2) as u16).min(area.height.max(1));
+    let v = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(area.height.saturating_sub(height) / 2),
+            Constraint::Length(height),
+            Constraint::Min(0),
+        ])
+        .split(area)[1];
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - pct_x) / 2),
+            Constraint::Percentage(pct_x),
+            Constraint::Percentage((100 - pct_x) / 2),
+        ])
+        .split(v)[1]
+}
+
+/// Paragraph scroll offset that keeps `focus_line` visible inside
+/// `inner`. The text row edits from row 0, so editing pins the top.
+fn scroll_to(inner: Rect, focus_line: usize, editing: bool) -> u16 {
+    if editing {
+        return 0;
+    }
+    focus_line.saturating_sub(inner.height.saturating_sub(2) as usize) as u16
+}
+
 fn centered(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
     let v = Layout::default()
         .direction(Direction::Vertical)
@@ -2201,6 +2337,20 @@ mod render_smoke {
         app.board.loading = true;
         let text = frame_text(&mut app);
         assert!(text.contains("Fetching"), "skeleton title");
+    }
+
+    /// Sized frame text, for short-terminal dialog fits.
+    fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
     }
 
     /// 80-cell bar text, so tests can assert the hint survives truncation.
@@ -2426,6 +2576,8 @@ mod render_smoke {
     #[test]
     fn board_filter_narrows_columns_then_esc_restores() {
         use crossterm::event::KeyEvent;
+        // Enter/Esc persist the filter, so isolate the data dir.
+        let _prefs = TempPrefs::new();
         let mut app = board_app(2);
         let board = app.board.data.as_mut().expect("board");
         board.order.push("Done".to_string());
@@ -2469,6 +2621,54 @@ mod render_smoke {
         assert!(restored.contains("Todo (2)") && restored.contains("Done (1)"), "clear restores: {restored}");
         assert!(!restored.contains("no matches"), "empty label clears: {restored}");
         assert!(!restored.contains("milestones"), "footer clears: {restored}");
+    }
+
+    #[test]
+    fn board_card_fields_render_when_on_and_hide_when_off() {
+        let mut app = board_app(1);
+        let board = app.board.data.as_mut().expect("board");
+        board.items[0] = BoardItem {
+            title: "Ship board".to_string(),
+            number: Some(102),
+            status: Some("Done".to_string()),
+            labels: vec![Label { name: "bug".to_string() }],
+            repo: Some("o/r".to_string()),
+            milestone: Some("v1".to_string()),
+            content: serde_json::json!({
+                "type": "PullRequest", "url": "https://github.com/o/r/pull/102",
+                "body": "", "assignees": [{"login": "amy"}], "isDraft": true,
+            }),
+        };
+        app.board.details.insert(102, BoardDetail {
+            created: "2026-11-01".to_string(),
+            updated: "2026-11-05".to_string(),
+            comments: 2,
+        });
+        // Defaults reproduce the shipped card: labels and dates on, the
+        // extra fields off.
+        let text = frame_text(&mut app);
+        assert!(text.contains("● bug"));
+        assert!(text.contains("2 comments · 2026-11-05"));
+        assert!(!text.contains("@amy"), "assignee stays off: {text}");
+        assert!(!text.contains("draft"), "pr state stays off: {text}");
+        // Labels off hides the chips; the dates stay.
+        app.board.fields.labels = false;
+        let text = frame_text(&mut app);
+        assert!(!text.contains("● bug"), "labels hide: {text}");
+        assert!(text.contains("2 comments · 2026-11-05"));
+        // Milestone, status, assignee, and PR draft state join the meta
+        // line. Issues show nothing for PR state.
+        app.board.fields.labels = true;
+        app.board.fields.milestone = true;
+        app.board.fields.status = true;
+        app.board.fields.assignee = true;
+        app.board.fields.pr_state = true;
+        let text = frame_text(&mut app);
+        assert!(text.contains("v1 · Done · @amy · draft"), "meta line: {text}");
+        app.board.data.as_mut().expect("board").items[0].content["type"] =
+            serde_json::json!("Issue");
+        let text = frame_text(&mut app);
+        assert!(!text.contains("draft") && !text.contains("ready"), "issues skip pr state: {text}");
     }
 
     #[test]
@@ -2558,6 +2758,34 @@ mod render_smoke {
 
     fn key(code: KeyCode) -> crossterm::event::KeyEvent {
         crossterm::event::KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    /// Point XDG at a temp dir so prefs persistence in key-driven tests
+    /// never touches real data. Holds the env lock so parallel cache
+    /// tests cannot interleave, and restores the var on drop.
+    struct TempPrefs {
+        saved: Option<String>,
+        _dir: tempfile::TempDir,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempPrefs {
+        fn new() -> Self {
+            let guard = crate::cache::test_env_lock();
+            let dir = tempfile::tempdir().unwrap();
+            let saved = std::env::var("XDG_DATA_HOME").ok();
+            std::env::set_var("XDG_DATA_HOME", dir.path());
+            Self { saved, _dir: dir, _guard: guard }
+        }
+    }
+
+    impl Drop for TempPrefs {
+        fn drop(&mut self) {
+            match self.saved.take() {
+                Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+                None => std::env::remove_var("XDG_DATA_HOME"),
+            }
+        }
     }
 
     fn click(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -3057,7 +3285,10 @@ mod render_smoke {
 
     #[test]
     fn filter_dialog_toggles_hide_recent_rows() {
+        // Toggles persist to prefs.json, so isolate the data dir.
+        let _prefs = TempPrefs::new();
         let mut app = loaded_app();
+        app.prefs_loaded = true;
         let mut merged = sample(20);
         merged.is_pr = true;
         merged.state = "MERGED".to_string();
@@ -3069,7 +3300,7 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(app.sidebar.filter_open);
         let text = frame_text(&mut app);
-        assert!(text.contains("Filter"));
+        assert!(text.contains("Format"));
         assert!(text.contains("query"));
         handle_key(&mut app, key(KeyCode::Char('m')));
         assert!(!app.sidebar.show_merged_prs);
@@ -3187,6 +3418,93 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('/')));
         let text = frame_text(&mut app);
         assert!(text.contains("sort updated ↓"), "sort hint: {text}");
+    }
+
+    #[test]
+    fn sidebar_row_hides_labels_when_off_but_keeps_date_and_status() {
+        let mut app = loaded_app();
+        let d = app.issues.data.get_mut(&7).unwrap();
+        d.labels = vec![Label { name: "bug".to_string() }];
+        d.updated_at = "2020-01-05T00:00:00Z".to_string();
+        app.issues.statuses.insert(7, vec![("Roadmap".to_string(), Some("Todo".to_string()))]);
+        app.show_issue(7);
+        let text = sidebar_text(&mut app);
+        assert!(text.contains("● bug · 01/05/20"), "labels and date: {text}");
+        app.sidebar.row_issue.labels = false;
+        let text = sidebar_text(&mut app);
+        assert!(!text.contains("● bug"), "labels hide: {text}");
+        assert!(text.contains("01/05/20"), "date stays: {text}");
+        assert!(text.contains("Todo"), "status stays: {text}");
+    }
+
+    #[test]
+    fn row_fields_dialog_toggles_with_jk_and_space() {
+        // Row flips persist, so isolate the data dir.
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        app.prefs_loaded = true;
+        handle_key(&mut app, key(KeyCode::Char('f')));
+        assert!(app.sidebar.filter_open);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Format"));
+        assert!(text.contains("row fields · issues"));
+        assert!(text.contains("row fields · prs"));
+        // `j` walks the Row fields rows; `space` flips the focused one.
+        assert!(app.sidebar.row_issue.labels);
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.sidebar.format_focus, 1);
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(!app.sidebar.row_issue.updated, "space flips the focused row");
+        // The existing single keys still work beside the new navigation.
+        handle_key(&mut app, key(KeyCode::Char('m')));
+        assert!(!app.sidebar.show_merged_prs);
+        // Both flips persisted across sessions.
+        let prefs = crate::cache::load_prefs();
+        assert!(!prefs.row_issue.updated);
+        assert!(!prefs.show_merged_prs);
+    }
+
+    #[test]
+    fn board_format_dialog_toggles_card_fields_with_space() {
+        // Card flips persist, so isolate the data dir.
+        let _prefs = TempPrefs::new();
+        let mut app = board_app(1);
+        app.prefs_loaded = true;
+        handle_key(&mut app, key(KeyCode::Char('f')));
+        assert!(app.sidebar.filter_open);
+        // One pill sits between the text row and the card fields.
+        handle_key(&mut app, key(KeyCode::Down));
+        handle_key(&mut app, key(KeyCode::Down));
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(!app.board.fields.number, "space flips the focused field");
+        let prefs = crate::cache::load_prefs();
+        assert!(!prefs.board_cards.number, "the flip persisted");
+    }
+
+    #[test]
+    fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
+        let mut app = loaded_app();
+        app.sidebar.filter_open = true;
+        // Last PRs row: the deepest focused widget in the sidebar dialog.
+        use crate::model::RowFields;
+        app.sidebar.format_focus = RowFields::ISSUE_ORDER.len() + RowFields::PR_ORDER.len() - 1;
+        let text = frame_text_sized(&mut app, 100, 24);
+        assert!(text.contains("row fields · prs"), "section header fits: {text}");
+        assert!(text.contains("ci checks"), "focused row stays visible: {text}");
+        assert!(text.contains("▌"), "focus marker stays visible: {text}");
+        // Ten pills push the board dialog past 24 rows: the popup caps
+        // at the area and scrolls the focused card field into view.
+        let mut board = board_app(10);
+        for (i, item) in board.board.data.as_mut().unwrap().items.iter_mut().enumerate() {
+            item.milestone = Some(format!("m{i}"));
+        }
+        board.sidebar.filter_open = true;
+        let widgets = board.board_pills().len() + crate::model::CardFields::ORDER.len();
+        board.board.filter_focus = widgets;
+        let text = frame_text_sized(&mut board, 100, 24);
+        assert!(text.contains("card fields"), "card fields header fits: {text}");
+        assert!(text.contains("comments"), "focused field stays visible: {text}");
+        assert!(text.contains("▌"), "board focus marker stays visible: {text}");
     }
 
     /// Text of the PRs sidebar only, mirroring `sidebar_text`.

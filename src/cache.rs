@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 pub const CACHE_TTL_SECS: u64 = 1800; // 30 minutes
 
 fn base_dir() -> PathBuf {
@@ -50,6 +52,18 @@ fn host() -> String {
 
 fn slug(repo: &str) -> String {
     repo.to_lowercase().replace('/', "__")
+}
+
+/// Prefs key for a repo-scoped query: host plus lowercased slug, so a
+/// GitHub Enterprise host never shares Format prefs with github.com.
+pub fn prefs_repo_key(repo: &str) -> String {
+    format!("{}/{}", host(), repo.to_lowercase())
+}
+
+/// Prefs key for a board-owner filter: host plus lowercased owner, for
+/// the same cross-host reason as `prefs_repo_key`.
+pub fn prefs_owner_key(owner: &str) -> String {
+    format!("{}/{}", host(), owner.to_lowercase())
 }
 
 /// Typed cache key. Every variant includes the host so a GitHub
@@ -105,6 +119,90 @@ pub fn save_theme(name: &str) {
         return;
     }
     let _ = std::fs::write(theme_path(), format!("{name}\n"));
+}
+
+fn prefs_path() -> PathBuf {
+    base_dir().join("prefs.json")
+}
+
+fn default_window() -> u64 {
+    24
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Board filter saved per board owner: the text row plus the selected
+/// milestone pills. Milestones serialize as a sorted list; `None` is the
+/// "(no milestone)" pill.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SavedBoardFilter {
+    #[serde(default)]
+    pub filter: String,
+    #[serde(default)]
+    pub milestones: Vec<Option<String>>,
+}
+
+/// Cross-session Format dialog state, one file for every repo and board.
+/// Missing or unreadable files load as defaults; unknown fields are
+/// ignored so newer files still parse. Every field carries a serde
+/// default so older files missing new keys keep working.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Prefs {
+    #[serde(default)]
+    pub board_cards: crate::model::CardFields,
+    #[serde(default)]
+    pub board_filters: std::collections::HashMap<String, SavedBoardFilter>,
+    #[serde(default)]
+    pub row_issue: crate::model::RowFields,
+    #[serde(default)]
+    pub row_pr: crate::model::RowFields,
+    #[serde(default = "default_true")]
+    pub show_open_prs: bool,
+    #[serde(default = "default_true")]
+    pub show_merged_prs: bool,
+    #[serde(default = "default_true")]
+    pub show_open_issues: bool,
+    #[serde(default = "default_true")]
+    pub show_closed_issues: bool,
+    #[serde(default = "default_window")]
+    pub merged_window_hours: u64,
+    #[serde(default)]
+    pub queries: std::collections::HashMap<String, String>,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self { board_cards: crate::model::CardFields::default(),
+            board_filters: std::collections::HashMap::new(),
+            row_issue: crate::model::RowFields::default(),
+            row_pr: crate::model::RowFields::default(),
+            show_open_prs: true, show_merged_prs: true,
+            show_open_issues: true, show_closed_issues: true,
+            merged_window_hours: default_window(),
+            queries: std::collections::HashMap::new() }
+    }
+}
+
+/// Load the Format dialog prefs. Garbage or a missing file means
+/// defaults, never an error.
+pub fn load_prefs() -> Prefs {
+    std::fs::read_to_string(prefs_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_prefs(prefs: &Prefs) {
+    let d = base_dir();
+    if std::fs::create_dir_all(&d).is_err() {
+        return;
+    }
+    let _ = std::fs::write(
+        prefs_path(),
+        serde_json::to_string(prefs).unwrap_or_default(),
+    );
 }
 
 pub fn load_pins(repo: &str) -> Vec<u64> {
@@ -173,6 +271,76 @@ mod tests {
         match saved {
             Some(v) => std::env::set_var("GH_HOST", v),
             None => std::env::remove_var("GH_HOST"),
+        }
+    }
+
+    #[test]
+    fn prefs_keys_include_host_and_differ_across_hosts() {
+        let _guard = test_env_lock();
+        let saved = std::env::var("GH_HOST").ok();
+        std::env::set_var("GH_HOST", "github.com");
+        let repo = prefs_repo_key("Acme/R");
+        let owner = prefs_owner_key("Acme");
+        assert_eq!(repo, "github.com/acme/r", "repo key carries host and slug");
+        assert_eq!(owner, "github.com/acme", "board key carries host and owner");
+        std::env::set_var("GH_HOST", "ghe.corp");
+        assert_ne!(prefs_repo_key("Acme/R"), repo, "same repo differs across hosts");
+        assert_ne!(prefs_owner_key("Acme"), owner, "same owner differs across hosts");
+        match saved {
+            Some(v) => std::env::set_var("GH_HOST", v),
+            None => std::env::remove_var("GH_HOST"),
+        }
+    }
+
+    #[test]
+    fn prefs_roundtrip_then_missing_and_garbage_load_defaults() {
+        let _guard = test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        // Missing file loads defaults.
+        let fresh = load_prefs();
+        assert_eq!(fresh.merged_window_hours, 24);
+        assert!(fresh.show_open_prs && fresh.show_merged_prs);
+        assert!(fresh.show_open_issues && fresh.show_closed_issues);
+        assert_eq!(fresh.board_cards, crate::model::CardFields::default());
+        // A round trip keeps toggles, per-owner filters, and per-repo queries.
+        let mut prefs = Prefs::default();
+        prefs.board_cards.milestone = true;
+        prefs.row_pr.checks = false;
+        prefs.show_merged_prs = false;
+        prefs.merged_window_hours = 1;
+        prefs.board_filters.insert(
+            "o".to_string(),
+            SavedBoardFilter {
+                filter: "bug".to_string(),
+                milestones: vec![Some("v1".to_string()), None],
+            },
+        );
+        prefs.queries.insert("o/r".to_string(), "label:bug".to_string());
+        save_prefs(&prefs);
+        let back = load_prefs();
+        assert!(back.board_cards.milestone);
+        assert!(!back.row_pr.checks);
+        assert!(!back.show_merged_prs);
+        assert_eq!(back.merged_window_hours, 1);
+        assert_eq!(back.board_filters["o"].filter, "bug");
+        assert_eq!(
+            back.board_filters["o"].milestones,
+            vec![Some("v1".to_string()), None]
+        );
+        assert_eq!(back.queries["o/r"], "label:bug");
+        // Garbage loads defaults, and unknown fields are ignored.
+        std::fs::write(super::prefs_path(), "{not json").unwrap();
+        assert_eq!(load_prefs().merged_window_hours, 24);
+        std::fs::write(super::prefs_path(), r#"{"future_key": 1, "merged_window_hours": 168}"#)
+            .unwrap();
+        let partial = load_prefs();
+        assert_eq!(partial.merged_window_hours, 168);
+        assert!(partial.show_open_prs);
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
         }
     }
 

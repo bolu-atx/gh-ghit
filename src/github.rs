@@ -195,6 +195,9 @@ pub(crate) fn cached_sections(repo: &str, hours: u64) -> Option<Vec<api::Row>> {
 /// Typed cache keys, re-exported so UI layers never touch `cache`.
 pub use crate::cache::Key;
 
+/// Format-dialog prefs, re-exported so UI layers never touch `cache`.
+pub use crate::cache::{SavedBoardFilter, load_prefs, prefs_owner_key, prefs_repo_key, save_prefs};
+
 /// Drop the named entries. `refresh_current` routes through here so UI
 /// layers never touch `cache` directly.
 pub fn invalidate(keys: &[Key]) {

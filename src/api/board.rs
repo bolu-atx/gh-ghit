@@ -13,7 +13,7 @@ fn query(kind: &str) -> String {
             assignees(first: 10) { nodes { login } }
         }
         ... on PullRequest {
-            number title url body
+            number title url body isDraft
             labels(first: 100) { nodes { name } }
             milestone { title }
             repository { nameWithOwner }
@@ -99,6 +99,12 @@ fn parse_item(node: &Value) -> BoardItem {
         slim.insert("url".to_string(), Value::String(url.to_string()));
     }
     slim.insert("body".to_string(), Value::String(body.to_string()));
+    if typename == "PullRequest" {
+        slim.insert(
+            "isDraft".to_string(),
+            Value::Bool(content.get("isDraft").and_then(Value::as_bool).unwrap_or(false)),
+        );
+    }
     if let Some(repo) = &repo {
         slim.insert("repository".to_string(), Value::String(repo.clone()));
     }
@@ -256,7 +262,8 @@ mod tests {
                     milestone: None,
                     content: json!({
                         "type": "PullRequest", "url": "https://github.com/o/r/pull/102",
-                        "body": "", "repository": "o/r", "assignees": []
+                        "body": "", "repository": "o/r", "assignees": [],
+                        "isDraft": true
                     }),
                 },
                 BoardItem {
@@ -311,6 +318,7 @@ mod tests {
                     "content": {
                         "__typename": "PullRequest", "number": 102, "title": "Ship board",
                         "url": "https://github.com/o/r/pull/102", "body": "",
+                        "isDraft": true,
                         "labels": {"nodes": []}, "milestone": null,
                         "repository": {"nameWithOwner": "o/r"},
                         "assignees": {"nodes": []}
@@ -349,6 +357,7 @@ mod tests {
             "ProjectV2SingleSelectField",
             "fieldValueByName(name: \"Status\")",
             "nameWithOwner",
+            "isDraft",
         ] {
             assert!(q.contains(field), "missing: {field}");
         }
