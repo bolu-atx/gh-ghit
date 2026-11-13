@@ -3,25 +3,34 @@ on:
   pull_request:
   push:
     branches: [main]
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
 jobs:
-  # A push to main that is a squash-merge of a green PR re-tests the
-  # identical tree. Skip the run when the merged PR's head already
-  # passed: the "(#N)" suffix names it. Anything else always runs.
+  # A push to main that is a squash-merge of a green PR may re-test a
+  # tree that already passed. Skip only when the merged PR's head has
+  # the exact same tree and every check on it passed. The last "(#N)"
+  # in the subject names the PR (GitHub appends it; a PR title can
+  # hold an earlier one). Anything else always runs.
   tip-check:
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.tip.outputs.skip }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: tip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" != "push" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
-          NUM=$(git log -1 --format=%s | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | head -1)
+          NUM=$(git log -1 --format=%s | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | tail -1)
           if [ -z "$NUM" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
           HEAD=$(gh pr view "$NUM" --json headRefOid --jq .headRefOid 2>/dev/null || true)
           if [ -z "$HEAD" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
+          # A PR head that is behind main squashes to a different tree.
+          HEAD_TREE=$(gh api "repos/${{ github.repository }}/git/commits/$HEAD" --jq .tree.sha 2>/dev/null || true)
+          if [ "$HEAD_TREE" != "$(git rev-parse 'HEAD^{tree}')" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
           # Check-runs (not commit statuses): skip only when the head has
           # at least one run and every run completed green.
           BAD=$(gh api "repos/${{ github.repository }}/commits/$HEAD/check-runs" --jq '[.check_runs[] | select(.status != "completed" or .conclusion != "success")] | length' 2>/dev/null || echo 1)
@@ -35,12 +44,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Installs the toolchain and components pinned in rust-toolchain.toml.
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+  # Known-vulnerability scan of Cargo.lock against the RustSec
+  # advisory database. Not a required check, so a new advisory does
+  # not block unrelated PRs, but it shows red on the PR.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-audit
+      # Fails on vulnerabilities only. Unmaintained-crate warnings
+      # (e.g. bincode via tui-markdown → syntect) print but pass.
+      - run: cargo audit
   # Job keeps the historic tmux-drive name: the main-branch ruleset
   # requires exactly that check, and drive mode needs no tmux at all.
   # It waits for `check` and stops at once if lint or unit tests failed.
@@ -57,9 +80,9 @@ jobs:
         run: |
           echo "check job result: ${{ needs.check.result }}; e2e not run"
           exit 1
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: command -v python3 && python3 --version
       - run: cargo build
       # Drive mode boots headless on a Unix socket: no terminal, no X,
@@ -68,7 +91,7 @@ jobs:
       - run: bash scripts/e2e/run.sh
         env:
           E2E_FAKE_CLIPBOARD: 1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: e2e-frames
