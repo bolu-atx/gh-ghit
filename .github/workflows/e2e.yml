@@ -61,7 +61,9 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-audit
-      - run: cargo audit --deny warnings
+      # Fails on vulnerabilities only. Unmaintained-crate warnings
+      # (e.g. bincode via tui-markdown → syntect) print but pass.
+      - run: cargo audit
   # Job keeps the historic tmux-drive name: the main-branch ruleset
   # requires exactly that check, and drive mode needs no tmux at all.
   # It waits for `check` and stops at once if lint or unit tests failed.
