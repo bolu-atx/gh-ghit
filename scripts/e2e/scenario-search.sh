@@ -24,7 +24,7 @@ e2e_key f
 for _ in {1..7}; do e2e_key j; done
 e2e_key Space
 e2e_key Escape
-e2e_wait '1 · "label:bug" · filtered' 10 || fail "label pill did not narrow"
+e2e_wait '\[query\] 1 · filtered' 10 || fail "label pill did not narrow"
 e2e_key f
 e2e_key Space
 e2e_key Escape

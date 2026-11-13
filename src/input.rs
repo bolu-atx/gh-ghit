@@ -568,6 +568,16 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         handle_board_filter_key(app, key);
         return;
     }
+    if app.sidebar.name_edit {
+        match key.code {
+            KeyCode::Esc => app.sidebar.name_edit = false,
+            KeyCode::Enter => app.save_named_query(),
+            KeyCode::Char(c) => app.sidebar.name_draft.push(c),
+            KeyCode::Backspace => { app.sidebar.name_draft.pop(); }
+            _ => {}
+        }
+        return;
+    }
     if app.sidebar.query_edit {
         match key.code {
             KeyCode::Esc => {
@@ -598,6 +608,8 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.sidebar.filter_open = false;
         }
         KeyCode::Char('e') => app.start_query_edit(),
+        KeyCode::Char('s') => app.start_name_edit(),
+        KeyCode::Char('x') => app.delete_named_query(),
         KeyCode::Char('1') => app.set_window(1),
         KeyCode::Char('2') => app.set_window(24),
         KeyCode::Char('3') => app.set_window(168),
@@ -635,7 +647,7 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Char('j') | KeyCode::Down => app.format_step(1),
         KeyCode::Char('k') | KeyCode::Up => app.format_step(-1),
-        KeyCode::Char(' ') => app.toggle_format_widget(),
+        KeyCode::Char(' ') | KeyCode::Enter => app.toggle_format_widget(),
         _ => {}
     }
 }
