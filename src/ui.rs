@@ -1556,8 +1556,10 @@ fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     for (index, number) in numbers.into_iter().enumerate().skip(skip) {
         let row = Rect::new(inner.x, inner.y + (index - skip) as u16, inner.width, 1);
         let steps = total - index - 1;
-        // Same selection marker as the sidebar and Refs rows.
-        let marker = if steps == 0 { "█ " } else { "  " };
+        // `▌`, not the sidebar's `█`: the list selection marker stays
+        // unique on screen (e2e counts it), and "current" is not a
+        // list selection.
+        let marker = if steps == 0 { "▌ " } else { "  " };
         let head = format!("#{number}");
         let room = (inner.width as usize).saturating_sub(2 + head.chars().count() + 1);
         let title = app.issues.data.get(&number)
@@ -2549,7 +2551,8 @@ mod render_smoke {
         assert_eq!(app.hits.history_rows.len(), 5);
         assert_eq!(app.hits.history_rows[4].0.y, 37);
         assert_eq!(app.hits.refs_area.bottom(), app.hits.history_rows[0].0.y - 1);
-        assert!(text.contains("█ #15"));
+        assert!(text.contains("▌ #15"));
+        assert!(text.matches('█').count() <= 1, "History adds no list selection marker");
         let row = app.hits.history_rows[2].0;
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
         assert_eq!(app.nav.current, Some(12));
