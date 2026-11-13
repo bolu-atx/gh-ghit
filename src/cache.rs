@@ -15,6 +15,25 @@ fn base_dir() -> PathBuf {
     }
 }
 
+/// Creates `dir` and keeps the data root owner-only (0700 on Unix).
+/// The cache holds issue bodies from private repos, so other local
+/// users must not read it. Returns false when the directory can't be made.
+fn ensure_private_dir(dir: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        if std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).is_err() {
+            return false;
+        }
+        let _ = std::fs::set_permissions(base_dir(), std::fs::Permissions::from_mode(0o700));
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir).is_ok()
+    }
+}
+
 fn cache_path(name: &str) -> PathBuf {
     base_dir().join("cache").join(format!("{name}.json"))
 }
@@ -33,7 +52,7 @@ pub fn cache_get<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
 pub fn cache_put<T: serde::Serialize>(name: &str, data: &T) {
     let p = cache_path(name);
     if let Some(parent) = p.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        ensure_private_dir(parent);
     }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -119,7 +138,7 @@ pub fn load_theme() -> Option<String> {
 
 pub fn save_theme(name: &str) {
     let d = base_dir();
-    if std::fs::create_dir_all(&d).is_err() {
+    if !ensure_private_dir(&d) {
         return;
     }
     let _ = std::fs::write(theme_path(), format!("{name}\n"));
@@ -238,7 +257,7 @@ pub fn load_prefs() -> Prefs {
 
 pub fn save_prefs(prefs: &Prefs) {
     let d = base_dir();
-    if std::fs::create_dir_all(&d).is_err() {
+    if !ensure_private_dir(&d) {
         return;
     }
     let _ = std::fs::write(
@@ -257,7 +276,7 @@ pub fn load_pins(repo: &str) -> Vec<u64> {
 
 pub fn save_pins(repo: &str, numbers: &[u64]) {
     let d = base_dir();
-    if std::fs::create_dir_all(&d).is_err() {
+    if !ensure_private_dir(&d) {
         return;
     }
     let body = numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join("\n") + "\n";
@@ -287,6 +306,29 @@ mod tests {
         prefs.saved_queries.push(SavedQuery { name: "bugs".into(), query: "label:bug".into() });
         let decoded: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
         assert_eq!(decoded.saved_queries, prefs.saved_queries);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_root_is_owner_only_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = test_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", tmp.path());
+        let root = base_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        cache_put("probe", &1u32);
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let root_mode = mode(&root);
+        let cache_mode = mode(&root.join("cache"));
+        match saved {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        assert_eq!(root_mode, 0o700);
+        assert_eq!(cache_mode, 0o700);
     }
 
     #[test]
