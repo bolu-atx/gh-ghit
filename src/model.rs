@@ -489,6 +489,171 @@ pub fn nearest_link(line: &str, links: &[(usize, LinkTarget)], col: usize) -> Op
         .map(|(_, t)| t.clone())
 }
 
+/// Collapsed-card fields toggled in the board Format dialog. Defaults
+/// reproduce the shipped card: number, labels, dates, and comment count
+/// on, everything else off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardFields {
+    #[serde(default = "default_true")]
+    pub number: bool,
+    #[serde(default = "default_true")]
+    pub labels: bool,
+    #[serde(default)]
+    pub milestone: bool,
+    #[serde(default)]
+    pub status: bool,
+    #[serde(default)]
+    pub assignee: bool,
+    #[serde(default)]
+    pub pr_state: bool,
+    #[serde(default = "default_true")]
+    pub dates: bool,
+    #[serde(default = "default_true")]
+    pub comments: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for CardFields {
+    fn default() -> Self {
+        Self { number: true, labels: true, milestone: false, status: false,
+            assignee: false, pr_state: false, dates: true, comments: true }
+    }
+}
+
+impl CardFields {
+    /// Checkbox rows in dialog order. `toggle` and `shown` share this
+    /// order so the renderer and input never drift apart.
+    pub const ORDER: [&'static str; 8] = [
+        "number", "labels", "milestone", "status", "assignee", "pr state", "dates",
+        "comments",
+    ];
+
+    /// Value of the checkbox at `index`, or `None` past the dialog rows.
+    pub fn shown(&self, index: usize) -> Option<bool> {
+        match index {
+            0 => Some(self.number),
+            1 => Some(self.labels),
+            2 => Some(self.milestone),
+            3 => Some(self.status),
+            4 => Some(self.assignee),
+            5 => Some(self.pr_state),
+            6 => Some(self.dates),
+            7 => Some(self.comments),
+            _ => None,
+        }
+    }
+
+    /// Flip the checkbox at `index`. False past the dialog rows.
+    pub fn toggle(&mut self, index: usize) -> bool {
+        let Some(on) = self.shown(index) else { return false };
+        match index {
+            0 => self.number = !on,
+            1 => self.labels = !on,
+            2 => self.milestone = !on,
+            3 => self.status = !on,
+            4 => self.assignee = !on,
+            5 => self.pr_state = !on,
+            6 => self.dates = !on,
+            7 => self.comments = !on,
+            _ => return false,
+        }
+        true
+    }
+}
+
+/// Sidebar-row fields toggled in the Format dialog, one set per pane.
+/// Defaults reproduce the shipped rows: labels, updated age, status, and
+/// the PR check glyph on; author and milestone off. `checks` only applies
+/// to PR rows; the Issues pane ignores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowFields {
+    #[serde(default = "default_true")]
+    pub labels: bool,
+    #[serde(default = "default_true")]
+    pub updated: bool,
+    #[serde(default = "default_true")]
+    pub status: bool,
+    #[serde(default)]
+    pub author: bool,
+    #[serde(default)]
+    pub milestone: bool,
+    #[serde(default = "default_true")]
+    pub checks: bool,
+}
+
+impl Default for RowFields {
+    fn default() -> Self {
+        Self { labels: true, updated: true, status: true, author: false,
+            milestone: false, checks: true }
+    }
+}
+
+impl RowFields {
+    /// Checkbox rows for the Issues pane, in dialog order.
+    pub const ISSUE_ORDER: [&'static str; 5] =
+        ["labels", "updated age", "status", "author", "milestone"];
+
+    /// Checkbox rows for the PRs pane, in dialog order.
+    pub const PR_ORDER: [&'static str; 6] =
+        ["labels", "updated age", "status", "author", "milestone", "ci checks"];
+
+    /// Value of the checkbox at `index` within one pane's rows, or `None`
+    /// past them. `pr` selects the PRs pane order, else the Issues order.
+    pub fn shown(&self, pr: bool, index: usize) -> Option<bool> {
+        if pr {
+            match index {
+                0 => Some(self.labels),
+                1 => Some(self.updated),
+                2 => Some(self.status),
+                3 => Some(self.author),
+                4 => Some(self.milestone),
+                5 => Some(self.checks),
+                _ => None,
+            }
+        } else {
+            match index {
+                0 => Some(self.labels),
+                1 => Some(self.updated),
+                2 => Some(self.status),
+                3 => Some(self.author),
+                4 => Some(self.milestone),
+                _ => None,
+            }
+        }
+    }
+
+    /// Flip the checkbox at `index` within one pane's rows. False past
+    /// the pane rows.
+    pub fn toggle(&mut self, pr: bool, index: usize) -> bool {
+        let Some(on) = self.shown(pr, index) else { return false };
+        let slot = if pr {
+            match index {
+                0 => &mut self.labels,
+                1 => &mut self.updated,
+                2 => &mut self.status,
+                3 => &mut self.author,
+                4 => &mut self.milestone,
+                5 => &mut self.checks,
+                _ => return false,
+            }
+        } else {
+            match index {
+                0 => &mut self.labels,
+                1 => &mut self.updated,
+                2 => &mut self.status,
+                3 => &mut self.author,
+                4 => &mut self.milestone,
+                _ => return false,
+            }
+        };
+        *slot = !on;
+        true
+    }
+}
+
 /// Collapsed card footer, left side: label chips, or a dash when bare.
 pub fn card_footer_labels(c: &BoardItem) -> String {
     if c.labels.is_empty() {
@@ -502,20 +667,82 @@ pub fn card_footer_labels(c: &BoardItem) -> String {
     }
 }
 
-/// Collapsed card footer, right side: updated date plus comment count, or
-/// an ellipsis while the background detail fetch is still in flight.
-pub fn card_footer_date(detail: Option<&BoardDetail>) -> String {
+/// Collapsed footer, right side, honoring the dates and comment count
+/// fields. Both on reproduces `card_footer_date` exactly; either off
+/// drops its half; both off draws nothing.
+pub fn card_footer_right(detail: Option<&BoardDetail>, fields: &CardFields) -> String {
+    if !fields.dates && !fields.comments {
+        return String::new();
+    }
     match detail {
         None => "…".to_string(),
         Some(d) => {
-            let day = d.updated.get(..10).unwrap_or(&d.updated);
+            let day = d.updated.get(..10).unwrap_or(&d.updated).to_string();
             let comments = if d.comments == 0 {
                 "no comments".to_string()
             } else {
                 format!("{} comment{}", d.comments, if d.comments == 1 { "" } else { "s" })
             };
-            format!("{comments} · {day}")
+            match (fields.comments, fields.dates) {
+                (true, true) => format!("{comments} · {day}"),
+                (true, false) => comments,
+                (false, true) => day,
+                (false, false) => String::new(),
+            }
         }
+    }
+}
+
+/// Draft vs ready label for a PR card, from the slimmed `content` JSON.
+/// Issues and draft-issue cards show nothing.
+pub fn card_pr_state(c: &BoardItem) -> Option<&'static str> {
+    if c.content.get("type").and_then(|t| t.as_str()) != Some("PullRequest") {
+        return None;
+    }
+    let draft = c.content.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false);
+    Some(if draft { "draft" } else { "ready" })
+}
+
+/// First assignee login off the card payload, when the board ships one.
+pub fn card_assignee(c: &BoardItem) -> Option<String> {
+    let arr = c.content.get("assignees").and_then(|v| v.as_array())?;
+    arr.iter()
+        .filter_map(|a| a.get("login").and_then(|l| l.as_str()).or_else(|| a.as_str()))
+        .map(str::to_string)
+        .next()
+}
+
+/// Second collapsed-card line from the enabled extra fields: milestone,
+/// swimlane status, assignee, and PR draft state. Empty or disabled
+/// segments drop out; nothing to show renders blank like today. `room`
+/// is the usable width past the indent, so the line never wraps.
+pub fn card_meta(c: &BoardItem, fields: &CardFields, room: usize) -> String {
+    let mut segs: Vec<String> = vec![];
+    if fields.milestone {
+        if let Some(m) = c.milestone.as_deref() {
+            segs.push(m.to_string());
+        }
+    }
+    if fields.status {
+        if let Some(s) = c.status.as_deref() {
+            segs.push(s.to_string());
+        }
+    }
+    if fields.assignee {
+        if let Some(login) = card_assignee(c) {
+            segs.push(format!("@{login}"));
+        }
+    }
+    if fields.pr_state {
+        if let Some(state) = card_pr_state(c) {
+            segs.push(state.to_string());
+        }
+    }
+    let joined = segs.join(" · ");
+    if joined.chars().count() > room && room > 1 {
+        format!("{}…", joined.chars().take(room.saturating_sub(1)).collect::<String>())
+    } else {
+        joined
     }
 }
 
@@ -979,7 +1206,7 @@ pub fn board_columns<'a>(items: &'a [BoardItem], order: &[String]) -> Vec<(Strin
 }
 
 /// Distinct milestones across board cards, sorted, with `None` last when
-/// some card carries no milestone. The filter dialog offers one pill
+/// some card carries no milestone. The format dialog offers one pill
 /// per entry; an empty board yields no pills.
 pub fn board_milestones(items: &[BoardItem]) -> Vec<Option<String>> {
     let mut names: Vec<String> = vec![];
@@ -1030,62 +1257,75 @@ pub fn relative_updated(updated_at: &str, now: chrono::DateTime<chrono::Utc>) ->
     }
 }
 
-/// Sidebar row: `#n title` on line one; line two is up to three `·`
+/// Sidebar row: `#n title` on line one; line two is up to five `·`
 /// separated segments — label chips, relative updated time, project
-/// status. Returns `(first, labels, updated, status)`; empty segments
-/// collapse and labels truncate first so date and status always fit.
-/// The status segment comes back separately so the UI can paint it in the
-/// board color with the board glyph.
+/// status, author, and milestone. Returns `(first, labels, updated,
+/// status, author, milestone)`; a field the Format dialog turned off, or
+/// an empty value, collapses its segment. Labels truncate first so the
+/// other segments always fit. The status segment comes back separately
+/// so the UI can paint it in the board color with the board glyph.
 pub fn sidebar_lines(
     issue: &IssueData,
     statuses: &[(String, Option<String>)],
     now: chrono::DateTime<chrono::Utc>,
     width: usize,
     pinned: bool,
-) -> (String, String, String, String) {
+    fields: &RowFields,
+) -> (String, String, String, String, String, String) {
     let first = format!(
         "#{}{} {}",
         issue.number,
         if pinned { " 📌" } else { "" },
         slug(&issue.title, 30.min(width))
     );
-    let plain_status = status_text(statuses);
+    let plain_status = if fields.status { status_text(statuses) } else { String::new() };
     let status = if plain_status.is_empty() {
         String::new()
     } else {
         let icon = crate::theme::column_icon(&plain_status);
         if icon.is_empty() { plain_status } else { format!("{icon} {plain_status}") }
     };
-    let updated = relative_updated(&issue.updated_at, now);
-    // Fixed cost: the date and status segments plus their ` · ` separator.
-    let fixed = updated.chars().count()
-        + status.chars().count()
-        + if !updated.is_empty() && !status.is_empty() { 3 } else { 0 };
-    // Labels also pay one separator when another segment follows them.
+    let updated = if fields.updated {
+        relative_updated(&issue.updated_at, now)
+    } else {
+        String::new()
+    };
+    let author = if fields.author { issue.author.login.clone() } else { String::new() };
+    let milestone = if fields.milestone {
+        issue.milestone.clone().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    // Fixed cost: every other non-empty segment plus one ` · ` separator
+    // per segment. Labels pay the same separator when one follows them.
+    let trailing = [&updated, &status, &author, &milestone];
+    let fixed: usize = trailing.iter().map(|s| s.chars().count()).sum();
     let room = width
         .saturating_sub(fixed)
-        .saturating_sub(if fixed > 0 { 3 } else { 0 });
-    let chips: Vec<String> = issue.labels.iter().map(|l| format!("● {}", l.name)).collect();
+        .saturating_sub(3 * trailing.iter().filter(|s| !s.is_empty()).count());
     let mut labels_text = String::new();
-    let mut used = 0;
-    for (i, chip) in chips.iter().enumerate() {
-        let add = chip.chars().count() + if i > 0 { 2 } else { 0 };
-        if used + add > room {
-            if i == 0 {
-                let tail = format!("+{} labels", chips.len());
-                if tail.chars().count() <= room {
-                    labels_text = tail;
+    if fields.labels {
+        let chips: Vec<String> = issue.labels.iter().map(|l| format!("● {}", l.name)).collect();
+        let mut used = 0;
+        for (i, chip) in chips.iter().enumerate() {
+            let add = chip.chars().count() + if i > 0 { 2 } else { 0 };
+            if used + add > room {
+                if i == 0 {
+                    let tail = format!("+{} labels", chips.len());
+                    if tail.chars().count() <= room {
+                        labels_text = tail;
+                    }
                 }
+                break;
             }
-            break;
+            if i > 0 {
+                labels_text.push_str("  ");
+            }
+            labels_text.push_str(chip);
+            used += add;
         }
-        if i > 0 {
-            labels_text.push_str("  ");
-        }
-        labels_text.push_str(chip);
-        used += add;
     }
-    (first, labels_text, updated, status)
+    (first, labels_text, updated, status, author, milestone)
 }
 
 #[cfg(test)]
@@ -1377,7 +1617,8 @@ mod tests {
         let d = sample_issue();
         let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
         let now = at("2026-01-07T00:00:00Z");
-        let (first, labels, updated, status) = sidebar_lines(&d, &st, now, 40, false);
+        let (first, labels, updated, status, _, _) =
+            sidebar_lines(&d, &st, now, 40, false, &RowFields::default());
         assert!(first.starts_with("#1 some title here"), "{first}");
         assert_eq!(labels, "● needs-triage");
         assert_eq!(updated, "2 day ago");
@@ -1401,7 +1642,8 @@ mod tests {
             updated_at: "2026-01-05T00:00:00Z".to_string(),
             ..sample_issue()
         };
-        let (_, kept, updated, status) = sidebar_lines(&issue, &st, now, 30, false);
+        let (_, kept, updated, status, _, _) =
+            sidebar_lines(&issue, &st, now, 30, false, &RowFields::default());
         assert_eq!(kept, "● alpha", "only the first chip fits");
         assert_eq!(updated, "2 day ago");
         assert!(status.ends_with("Todo"));
@@ -1417,8 +1659,11 @@ mod tests {
             updated_at: String::new(),
             ..sample_issue()
         };
-        let (_, labels, updated, status) = sidebar_lines(&issue, &[], now, 40, false);
-        assert_eq!((labels.as_str(), updated.as_str(), status.as_str()), ("", "", ""));
+        let (_, labels, updated, status, author, milestone) =
+            sidebar_lines(&issue, &[], now, 40, false, &RowFields::default());
+        let got = (labels.as_str(), updated.as_str(), status.as_str(), author.as_str(),
+            milestone.as_str());
+        assert_eq!(got, ("", "", "", "", ""));
     }
 
     #[test]
@@ -1451,9 +1696,9 @@ mod tests {
         assert_eq!(card_footer_labels(&item), "● bug");
         let bare = BoardItem { labels: vec![], ..item.clone() };
         assert_eq!(card_footer_labels(&bare), "–");
-        assert_eq!(card_footer_date(None), "…");
+        assert_eq!(card_footer_right(None, &CardFields::default()), "…");
         let d = BoardDetail { created: "2026-01-02".into(), updated: "2026-01-05T00:00:00Z".into(), comments: 3 };
-        assert_eq!(card_footer_date(Some(&d)), "3 comments · 2026-01-05");
+        assert_eq!(card_footer_right(Some(&d), &CardFields::default()), "3 comments · 2026-01-05");
     }
 
     #[test]
@@ -1466,9 +1711,11 @@ mod tests {
             updated_at: String::new(),
             ..sample_issue()
         };
-        let (first, _, _, _) = sidebar_lines(&issue, &[], now, 40, true);
+        let (first, _, _, _, _, _) =
+            sidebar_lines(&issue, &[], now, 40, true, &RowFields::default());
         assert!(first.contains("📌"));
-        let (plain, _, _, _) = sidebar_lines(&issue, &[], now, 40, false);
+        let (plain, _, _, _, _, _) =
+            sidebar_lines(&issue, &[], now, 40, false, &RowFields::default());
         assert!(!plain.contains("📌"));
     }
 

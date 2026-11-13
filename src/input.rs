@@ -32,7 +32,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
 
-    // Filter dialog captures everything: over the board it filters cards,
+    // Format dialog captures everything: over the board it filters cards,
     // over the main view it keeps its window/query/toggle keys.
     if app.sidebar.filter_open {
         handle_filter_key(app, key);
@@ -244,6 +244,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('w') => {
             app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
             app.refetch_recent();
+            app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Esc => {
@@ -466,11 +467,11 @@ fn jump_search_hit(app: &mut App, delta: isize) {
     }
 }
 
-/// Board filter form keys. While the text row edits, keys type into it
+/// Board format form keys. While the text row edits, keys type into it
 /// (`Esc` backs out to navigate mode, `Enter` applies); otherwise `j`/`k`
-/// and the arrows move the active widget, `space` toggles the pill under
-/// the cursor, typing on the text row starts editing it, `Enter` applies,
-/// and `Esc` clears the whole filter.
+/// and the arrows move the active widget, `space` toggles the pill or
+/// field under the cursor, typing on the text row starts editing it,
+/// `Enter` applies, and `Esc` clears the whole filter.
 fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     if app.sidebar.query_edit {
         match key.code {
@@ -512,7 +513,7 @@ fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.board.filter_focus = 0;
             app.apply_board_filter();
         }
-        KeyCode::Char(' ') if app.board.filter_focus > 0 => toggle_board_pill(app),
+        KeyCode::Char(' ') if app.board.filter_focus > 0 => toggle_board_focused(app),
         KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('l') | KeyCode::Right => {
             app.board_filter_step(1);
         }
@@ -531,23 +532,33 @@ fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 }
 
-/// Toggle the milestone pill under the dialog cursor in the draft.
-fn toggle_board_pill(app: &mut App) {
+/// Toggle the widget under the board dialog cursor: a milestone pill
+/// flips in the draft (Enter applies it), a Card fields row flips live
+/// and persists.
+fn toggle_board_focused(app: &mut App) {
     let pills = app.board_pills();
-    let Some(pill) = pills.get(app.board.filter_focus.saturating_sub(1)) else {
+    let focus = app.board.filter_focus;
+    if focus == 0 {
         return;
-    };
-    if !app.board.milestone_draft.remove(pill) {
-        app.board.milestone_draft.insert(pill.clone());
+    }
+    let pill_index = focus - 1;
+    if pill_index < pills.len() {
+        let Some(pill) = pills.get(pill_index) else { return };
+        if !app.board.milestone_draft.remove(pill) {
+            app.board.milestone_draft.insert(pill.clone());
+        }
+    } else {
+        app.toggle_board_card_field(pill_index - pills.len());
     }
 }
 
-/// Filter dialog keys. Over the board the dialog is a form: the text row
-/// plus one milestone pill per milestone on the board. `j`/`k` and the
-/// arrows move the active widget, `space` toggles the pill under the
-/// cursor, typing on the text row edits it, Enter applies, Esc clears the
-/// filter. Everywhere else window presets refetch, toggles only hide
-/// recent rows, and `e` edits the server-side GitHub query.
+/// Format dialog keys. Over the board the dialog is a form: the text row,
+/// one milestone pill per milestone on the board, and card field rows.
+/// `j`/`k` and the arrows move the active widget, `space` toggles the
+/// pill or field under the cursor, typing on the text row edits it,
+/// Enter applies, Esc clears the filter. Everywhere else window presets
+/// refetch, toggles only hide recent rows, `e` edits the server-side
+/// GitHub query, and `j`/`k` plus `space` flip the Row fields rows.
 fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     use crate::app::QueryAction;
     if board_open(app) {
@@ -561,13 +572,16 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.sidebar.query_draft = app.sidebar.query_active.clone();
                 app.sidebar.query_edit = false;
             }
-            KeyCode::Enter => match app.commit_query_draft() {
-                QueryAction::Run(q) => app.run_gh_search(q),
-                QueryAction::Refetch => {
-                    app.refetch_recent();
-                    app.notify("back to recent".to_string());
+            KeyCode::Enter => {
+                match app.commit_query_draft() {
+                    QueryAction::Run(q) => app.run_gh_search(q),
+                    QueryAction::Refetch => {
+                        app.refetch_recent();
+                        app.notify("back to recent".to_string());
+                    }
                 }
-            },
+                app.persist_prefs();
+            }
             KeyCode::Char(c) => app.sidebar.query_draft.push(c),
             KeyCode::Backspace => {
                 app.sidebar.query_draft.pop();
@@ -584,27 +598,49 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('1') => {
             app.sections.merged_window_hours = 1;
             app.refetch_recent();
+            app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Char('2') => {
             app.sections.merged_window_hours = 24;
             app.refetch_recent();
+            app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Char('3') => {
             app.sections.merged_window_hours = 168;
             app.refetch_recent();
+            app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
         KeyCode::Char('w') => {
             app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
             app.refetch_recent();
+            app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
-        KeyCode::Char('o') => app.sidebar.show_open_prs = !app.sidebar.show_open_prs,
-        KeyCode::Char('m') => app.sidebar.show_merged_prs = !app.sidebar.show_merged_prs,
-        KeyCode::Char('i') => app.sidebar.show_open_issues = !app.sidebar.show_open_issues,
-        KeyCode::Char('c') => app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues,
+        KeyCode::Char('o') => {
+            app.sidebar.show_open_prs = !app.sidebar.show_open_prs;
+            app.persist_prefs();
+        }
+        KeyCode::Char('m') => {
+            app.sidebar.show_merged_prs = !app.sidebar.show_merged_prs;
+            app.persist_prefs();
+        }
+        KeyCode::Char('i') => {
+            app.sidebar.show_open_issues = !app.sidebar.show_open_issues;
+            app.persist_prefs();
+        }
+        KeyCode::Char('c') => {
+            app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues;
+            app.persist_prefs();
+        }
+        KeyCode::Char('j') | KeyCode::Down => app.format_step(1),
+        KeyCode::Char('k') | KeyCode::Up => app.format_step(-1),
+        KeyCode::Char(' ') => {
+            let focus = app.sidebar.format_focus;
+            app.toggle_sidebar_row_field(focus);
+        }
         _ => {}
     }
 }
