@@ -625,6 +625,13 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues;
             app.persist_prefs();
         }
+        KeyCode::Char('g') => {
+            app.sidebar.group_by = app.sidebar.group_by.next();
+            app.persist_prefs();
+        }
+        KeyCode::Char('h' | 'l') | KeyCode::Tab | KeyCode::BackTab => {
+            app.format_switch_column();
+        }
         KeyCode::Char('j') | KeyCode::Down => app.format_step(1),
         KeyCode::Char('k') | KeyCode::Up => app.format_step(-1),
         KeyCode::Char(' ') => app.toggle_format_widget(),

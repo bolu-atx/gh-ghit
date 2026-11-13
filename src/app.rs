@@ -300,6 +300,8 @@ pub(crate) struct Sidebar {
     pub(crate) row_pr: model::RowFields,
     /// Active widget in the dialog, in `format_widgets` order.
     pub(crate) format_focus: usize,
+    pub(crate) format_columns: bool,
+    pub(crate) format_rows: Vec<usize>,
     pub(crate) issue_state: ListState,
     pub(crate) pr_state: ListState,
 }
@@ -316,7 +318,7 @@ impl Sidebar {
             meta_rx: None, meta_repo: None, meta_loaded: false,
             filter_open: false,
             row_issue: model::RowFields::default(), row_pr: model::RowFields::default(),
-            format_focus: 0,
+            format_focus: 0, format_columns: false, format_rows: vec![],
             issue_state: ListState::default(), pr_state: ListState::default() }
     }
 }
@@ -1195,37 +1197,55 @@ impl App {
         out
     }
 
-    /// Focusable Format dialog rows: label pills, milestone pills, the
-    /// group-by row, then the Row fields checkboxes.
+    /// Number of controls in the left column of the sidebar format dialog.
+    pub(crate) fn format_left_widgets(&self) -> usize {
+        6 + self.sidebar.labels.len() + self.milestone_pills().len()
+    }
+
     pub(crate) fn format_widgets(&self) -> usize {
-        self.sidebar.labels.len() + self.milestone_pills().len() + 1
+        self.format_left_widgets() + 3
             + model::RowFields::ISSUE_ORDER.len() + model::RowFields::PR_ORDER.len()
     }
 
-    /// Space on the focused Format dialog row: flip a pill, cycle the
-    /// grouping, or flip a Row fields checkbox.
     pub(crate) fn toggle_format_widget(&mut self) {
         let focus = self.sidebar.format_focus;
         let labels = self.sidebar.labels.len();
         let pills = self.milestone_pills();
-        if focus < labels {
-            let name = self.sidebar.labels[focus].clone();
-            if !self.sidebar.label_filter.remove(&name) {
-                self.sidebar.label_filter.insert(name);
+        let left = self.format_left_widgets();
+        match focus {
+            0 => self.start_query_edit(),
+            1 => self.set_window(core::cycle_window(self.sections.merged_window_hours)),
+            2..=5 => {
+                let value = match focus {
+                    2 => &mut self.sidebar.show_open_prs,
+                    3 => &mut self.sidebar.show_merged_prs,
+                    4 => &mut self.sidebar.show_open_issues,
+                    _ => &mut self.sidebar.show_closed_issues,
+                };
+                *value = !*value;
+                self.persist_prefs();
             }
-            self.persist_prefs();
-        } else if focus < labels + pills.len() {
-            let pill = pills[focus - labels].clone();
-            if !self.sidebar.milestone_filter.remove(&pill) {
-                self.sidebar.milestone_filter.insert(pill);
+            n if n < 6 + labels => {
+                let name = self.sidebar.labels[n - 6].clone();
+                if !self.sidebar.label_filter.remove(&name) {
+                    self.sidebar.label_filter.insert(name);
+                }
+                self.persist_prefs();
             }
-            self.persist_prefs();
-        } else if focus == labels + pills.len() {
-            self.sidebar.group_by = self.sidebar.group_by.next();
-            self.persist_prefs();
-        } else {
-            let index = focus - (labels + pills.len() + 1);
-            self.toggle_sidebar_row_field(index);
+            n if n < left => {
+                let pill = pills[n - 6 - labels].clone();
+                if !self.sidebar.milestone_filter.remove(&pill) {
+                    self.sidebar.milestone_filter.insert(pill);
+                }
+                self.persist_prefs();
+            }
+            n if n == left => {
+                self.sidebar.group_by = self.sidebar.group_by.next();
+                self.persist_prefs();
+            }
+            n if n == left + 1 => self.cycle_sort(),
+            n if n == left + 2 => self.toggle_sort_dir(),
+            n => self.toggle_sidebar_row_field(n - left - 3),
         }
     }
 
@@ -2081,12 +2101,32 @@ impl App {
         }
     }
 
-    /// Step the sidebar dialog focus across pills, grouping, and Row
-    /// fields rows, wrapping.
     pub(crate) fn format_step(&mut self, delta: isize) {
-        let n = self.format_widgets();
-        self.sidebar.format_focus =
-            (self.sidebar.format_focus as isize + delta).rem_euclid(n as isize) as usize;
+        let left = self.format_left_widgets();
+        let total = self.format_widgets();
+        let (start, end) = if !self.sidebar.format_columns {
+            (0, total)
+        } else if self.sidebar.format_focus < left {
+            (0, left)
+        } else {
+            (left, total)
+        };
+        self.sidebar.format_focus = start
+            + (self.sidebar.format_focus as isize - start as isize + delta)
+                .rem_euclid((end - start) as isize) as usize;
+    }
+
+    pub(crate) fn format_switch_column(&mut self) {
+        if !self.sidebar.format_columns {
+            return;
+        }
+        let left = self.format_left_widgets();
+        let total = self.format_widgets();
+        let range = if self.sidebar.format_focus < left { left..total } else { 0..left };
+        let row = self.sidebar.format_rows.get(self.sidebar.format_focus).copied().unwrap_or(0);
+        self.sidebar.format_focus = range.min_by_key(|&index| {
+            self.sidebar.format_rows.get(index).copied().unwrap_or(0).abs_diff(row)
+        }).unwrap_or(self.sidebar.format_focus);
     }
 
     /// Snapshot the Format dialog state to `prefs.json`. Silent until
