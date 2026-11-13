@@ -694,12 +694,13 @@ pub fn card_footer_right(detail: Option<&BoardDetail>, fields: &CardFields) -> S
 }
 
 /// Draft vs ready label for a PR card, from the slimmed `content` JSON.
-/// Issues and draft-issue cards show nothing.
+/// Issues and draft-issue cards show nothing. A warm cache entry that
+/// predates `isDraft` shows nothing too, never a guessed "ready".
 pub fn card_pr_state(c: &BoardItem) -> Option<&'static str> {
     if c.content.get("type").and_then(|t| t.as_str()) != Some("PullRequest") {
         return None;
     }
-    let draft = c.content.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false);
+    let draft = c.content.get("isDraft").and_then(|v| v.as_bool())?;
     Some(if draft { "draft" } else { "ready" })
 }
 
@@ -1699,6 +1700,33 @@ mod tests {
         assert_eq!(card_footer_right(None, &CardFields::default()), "…");
         let d = BoardDetail { created: "2026-01-02".into(), updated: "2026-01-05T00:00:00Z".into(), comments: 3 };
         assert_eq!(card_footer_right(Some(&d), &CardFields::default()), "3 comments · 2026-01-05");
+    }
+
+    #[test]
+    fn card_pr_state_missing_is_draft_shows_nothing() {
+        let card = |content: serde_json::Value| BoardItem {
+            title: "a".into(),
+            number: Some(1),
+            status: Some("Todo".into()),
+            labels: vec![],
+            repo: None,
+            milestone: None,
+            content,
+        };
+        let pr = |draft: Option<bool>| {
+            let mut map = serde_json::Map::new();
+            map.insert("type".to_string(), serde_json::Value::String("PullRequest".to_string()));
+            if let Some(draft) = draft {
+                map.insert("isDraft".to_string(), serde_json::Value::Bool(draft));
+            }
+            card(serde_json::Value::Object(map))
+        };
+        assert_eq!(card_pr_state(&pr(Some(true))), Some("draft"));
+        assert_eq!(card_pr_state(&pr(Some(false))), Some("ready"));
+        // A warm cache entry predating `isDraft` shows nothing, never a
+        // guessed "ready"; issues never show a state either.
+        assert_eq!(card_pr_state(&pr(None)), None);
+        assert_eq!(card_pr_state(&card(serde_json::Value::Null)), None);
     }
 
     #[test]

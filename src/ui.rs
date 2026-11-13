@@ -268,19 +268,6 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         return;
     }
     use crate::theme::{amber, ink, muted, paper, base};
-    let popup = centered(area, 62, 72);
-    f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base())
-        // Nerd Font Font Awesome fa-filter.
-        .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
-            Span::styled("· sidebar ", Style::new().bg(ink()).fg(muted())),
-        ]));
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
     let window_mark = |hours: u64| {
         if app.sections.merged_window_hours == hours {
             Span::styled("● ", Style::new().bg(ink()).fg(amber()).bold())
@@ -310,6 +297,9 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         )
     };
     let mut lines = vec![];
+    // Buffer row of the focused widget, so a short popup can scroll it
+    // into view. The query row owns row 0 while it edits.
+    let mut focus_line = 0;
     let query_text = if app.sidebar.query_edit { &app.sidebar.query_draft } else { &app.sidebar.query_active };
     let mut qline = vec![
         Span::styled("query ", Style::new().bg(ink()).fg(muted())),
@@ -353,6 +343,9 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Style::new().bg(ink()).fg(muted()),
     )));
     for (i, name) in model::RowFields::ISSUE_ORDER.iter().enumerate() {
+        if !app.sidebar.query_edit && app.sidebar.format_focus == i {
+            focus_line = lines.len();
+        }
         lines.push(row_field_line(
             marker(app.sidebar.format_focus == i),
             app.sidebar.row_issue.shown(false, i).unwrap_or(false),
@@ -363,7 +356,11 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         "row fields · prs",
         Style::new().bg(ink()).fg(muted()),
     )));
+    let pr_base = model::RowFields::ISSUE_ORDER.len();
     for (i, name) in model::RowFields::PR_ORDER.iter().enumerate() {
+        if !app.sidebar.query_edit && app.sidebar.format_focus == pr_base + i {
+            focus_line = lines.len();
+        }
         lines.push(row_field_line(
             marker(app.sidebar.format_focus == model::RowFields::ISSUE_ORDER.len() + i),
             app.sidebar.row_pr.shown(true, i).unwrap_or(false),
@@ -379,7 +376,21 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         "j/k move · space toggle · f/esc close",
         Style::new().bg(ink()).fg(muted()),
     )));
-    f.render_widget(Paragraph::new(lines).style(base()), inner);
+    let popup = sized_popup(area, 62, lines.len());
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base())
+        // Nerd Font Font Awesome fa-filter.
+        .title(Line::from(vec![
+            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("· sidebar ", Style::new().bg(ink()).fg(muted())),
+        ]));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
+    f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
     if app.sidebar.query_edit {
         f.set_cursor_position((inner.x + 6 + app.sidebar.query_draft.len() as u16, inner.y));
     }
@@ -406,18 +417,6 @@ fn row_field_line(marker: Span<'static>, on: bool, label: &str) -> Line<'static>
 fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     use crate::theme::{amber, base, ink, muted, paper};
     let pills = app.board_pills();
-    let popup = centered(area, 62, (54 + pills.len() as u16 * 4).min(92));
-    f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base())
-        .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
-            Span::styled("· board cards ", Style::new().bg(ink()).fg(muted())),
-        ]));
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
     // Nerd Font Font Awesome fa-check-square / fa-square-o, same as the
     // sidebar filter toggles. The marker echoes the board card selection.
     let marker = |active: bool| {
@@ -440,6 +439,7 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     } else {
         text_row.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
     }
+    let mut focus_line = 0;
     let mut lines = vec![
         Line::from(text_row),
         Line::from(""),
@@ -452,6 +452,9 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         )));
     }
     for (i, pill) in pills.iter().enumerate() {
+        if !app.sidebar.query_edit && app.board.filter_focus == i + 1 {
+            focus_line = lines.len();
+        }
         let on = app.board.milestone_draft.contains(pill);
         let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
         let name = pill.clone().unwrap_or_else(|| "(no milestone)".to_string());
@@ -466,6 +469,9 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("card fields", Style::new().bg(ink()).fg(muted()))));
     for (i, name) in model::CardFields::ORDER.iter().enumerate() {
+        if !app.sidebar.query_edit && app.board.filter_focus == pills.len() + 1 + i {
+            focus_line = lines.len();
+        }
         let on = app.board.fields.shown(i).unwrap_or(false);
         let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
         lines.push(Line::from(vec![
@@ -481,9 +487,23 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         "j/k move · space toggle · type filters text · enter apply · esc clear",
         Style::new().bg(ink()).fg(muted()),
     )));
-    f.render_widget(Paragraph::new(lines).style(base()), inner);
+    let popup = sized_popup(area, 62, lines.len());
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().bg(ink()).fg(muted()))
+        .style(base())
+        .title(Line::from(vec![
+            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled("· board cards ", Style::new().bg(ink()).fg(muted())),
+        ]));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
+    f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
     if app.sidebar.query_edit {
-        f.set_cursor_position((inner.x + 9 + app.sidebar.query_draft.chars().count() as u16, inner.y));
+        let x = inner.x + 9 + app.sidebar.query_draft.chars().count() as u16;
+        f.set_cursor_position((x, inner.y));
     }
 }
 
@@ -2194,6 +2214,38 @@ fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
     }
 }
 
+/// Popup rect sized to `content` rows plus borders, clamped to the
+/// area and centered. Short terminals get a short popup whose content
+/// scrolls instead of a clipped one.
+fn sized_popup(area: Rect, pct_x: u16, content: usize) -> Rect {
+    let height = (content.saturating_add(2) as u16).min(area.height.max(1));
+    let v = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(area.height.saturating_sub(height) / 2),
+            Constraint::Length(height),
+            Constraint::Min(0),
+        ])
+        .split(area)[1];
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - pct_x) / 2),
+            Constraint::Percentage(pct_x),
+            Constraint::Percentage((100 - pct_x) / 2),
+        ])
+        .split(v)[1]
+}
+
+/// Paragraph scroll offset that keeps `focus_line` visible inside
+/// `inner`. The text row edits from row 0, so editing pins the top.
+fn scroll_to(inner: Rect, focus_line: usize, editing: bool) -> u16 {
+    if editing {
+        return 0;
+    }
+    focus_line.saturating_sub(inner.height.saturating_sub(2) as usize) as u16
+}
+
 fn centered(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
     let v = Layout::default()
         .direction(Direction::Vertical)
@@ -2285,6 +2337,20 @@ mod render_smoke {
         app.board.loading = true;
         let text = frame_text(&mut app);
         assert!(text.contains("Fetching"), "skeleton title");
+    }
+
+    /// Sized frame text, for short-terminal dialog fits.
+    fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
     }
 
     /// 80-cell bar text, so tests can assert the hint survives truncation.
@@ -3222,6 +3288,7 @@ mod render_smoke {
         // Toggles persist to prefs.json, so isolate the data dir.
         let _prefs = TempPrefs::new();
         let mut app = loaded_app();
+        app.prefs_loaded = true;
         let mut merged = sample(20);
         merged.is_pr = true;
         merged.state = "MERGED".to_string();
@@ -3375,6 +3442,7 @@ mod render_smoke {
         // Row flips persist, so isolate the data dir.
         let _prefs = TempPrefs::new();
         let mut app = loaded_app();
+        app.prefs_loaded = true;
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(app.sidebar.filter_open);
         let text = frame_text(&mut app);
@@ -3401,6 +3469,7 @@ mod render_smoke {
         // Card flips persist, so isolate the data dir.
         let _prefs = TempPrefs::new();
         let mut app = board_app(1);
+        app.prefs_loaded = true;
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(app.sidebar.filter_open);
         // One pill sits between the text row and the card fields.
@@ -3410,6 +3479,32 @@ mod render_smoke {
         assert!(!app.board.fields.number, "space flips the focused field");
         let prefs = crate::cache::load_prefs();
         assert!(!prefs.board_cards.number, "the flip persisted");
+    }
+
+    #[test]
+    fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
+        let mut app = loaded_app();
+        app.sidebar.filter_open = true;
+        // Last PRs row: the deepest focused widget in the sidebar dialog.
+        use crate::model::RowFields;
+        app.sidebar.format_focus = RowFields::ISSUE_ORDER.len() + RowFields::PR_ORDER.len() - 1;
+        let text = frame_text_sized(&mut app, 100, 24);
+        assert!(text.contains("row fields · prs"), "section header fits: {text}");
+        assert!(text.contains("ci checks"), "focused row stays visible: {text}");
+        assert!(text.contains("▌"), "focus marker stays visible: {text}");
+        // Ten pills push the board dialog past 24 rows: the popup caps
+        // at the area and scrolls the focused card field into view.
+        let mut board = board_app(10);
+        for (i, item) in board.board.data.as_mut().unwrap().items.iter_mut().enumerate() {
+            item.milestone = Some(format!("m{i}"));
+        }
+        board.sidebar.filter_open = true;
+        let widgets = board.board_pills().len() + crate::model::CardFields::ORDER.len();
+        board.board.filter_focus = widgets;
+        let text = frame_text_sized(&mut board, 100, 24);
+        assert!(text.contains("card fields"), "card fields header fits: {text}");
+        assert!(text.contains("comments"), "focused field stays visible: {text}");
+        assert!(text.contains("▌"), "board focus marker stays visible: {text}");
     }
 
     /// Text of the PRs sidebar only, mirroring `sidebar_text`.

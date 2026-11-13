@@ -54,6 +54,18 @@ fn slug(repo: &str) -> String {
     repo.to_lowercase().replace('/', "__")
 }
 
+/// Prefs key for a repo-scoped query: host plus lowercased slug, so a
+/// GitHub Enterprise host never shares Format prefs with github.com.
+pub fn prefs_repo_key(repo: &str) -> String {
+    format!("{}/{}", host(), repo.to_lowercase())
+}
+
+/// Prefs key for a board-owner filter: host plus lowercased owner, for
+/// the same cross-host reason as `prefs_repo_key`.
+pub fn prefs_owner_key(owner: &str) -> String {
+    format!("{}/{}", host(), owner.to_lowercase())
+}
+
 /// Typed cache key. Every variant includes the host so a GitHub
 /// Enterprise repo never shares entries with a github.com repo of the
 /// same slug.
@@ -256,6 +268,24 @@ mod tests {
         for (a, b) in dotcom.iter().zip(ghe.iter()) {
             assert_ne!(a, b, "same slug differs across hosts");
         }
+        match saved {
+            Some(v) => std::env::set_var("GH_HOST", v),
+            None => std::env::remove_var("GH_HOST"),
+        }
+    }
+
+    #[test]
+    fn prefs_keys_include_host_and_differ_across_hosts() {
+        let _guard = test_env_lock();
+        let saved = std::env::var("GH_HOST").ok();
+        std::env::set_var("GH_HOST", "github.com");
+        let repo = prefs_repo_key("Acme/R");
+        let owner = prefs_owner_key("Acme");
+        assert_eq!(repo, "github.com/acme/r", "repo key carries host and slug");
+        assert_eq!(owner, "github.com/acme", "board key carries host and owner");
+        std::env::set_var("GH_HOST", "ghe.corp");
+        assert_ne!(prefs_repo_key("Acme/R"), repo, "same repo differs across hosts");
+        assert_ne!(prefs_owner_key("Acme"), owner, "same owner differs across hosts");
         match saved {
             Some(v) => std::env::set_var("GH_HOST", v),
             None => std::env::remove_var("GH_HOST"),

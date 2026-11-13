@@ -564,6 +564,10 @@ pub(crate) struct App {
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
     pub(crate) initial_numbers: Vec<u64>,
+    /// True once the startup prefs load has applied. `persist_prefs`
+    /// stays silent before that so pre-bootstrap input cannot write
+    /// defaults over saved state.
+    pub(crate) prefs_loaded: bool,
     pub(crate) bar: String,
     pub(crate) shortcuts_open: bool,
     pub(crate) message: String,
@@ -588,6 +592,7 @@ impl App {
         Self {
             repo_flag,
             repo_slug: None,
+            prefs_loaded: false,
             auth: AuthState::default(),
             initial_numbers: vec![],
             sections: SectionFeed::new(),
@@ -1778,7 +1783,7 @@ impl App {
     /// owner. A fresh open looks like last time; an owner without saved
     /// state starts unfiltered.
     pub(crate) fn restore_board_filter(&mut self, owner: &str) {
-        match github::load_prefs().board_filters.get(&owner.to_lowercase()) {
+        match github::load_prefs().board_filters.get(&github::prefs_owner_key(owner)) {
             Some(saved) => {
                 self.board.filter = saved.filter.clone();
                 self.board.milestones = saved.milestones.iter().cloned().collect();
@@ -1788,6 +1793,22 @@ impl App {
                 self.board.milestones.clear();
             }
         }
+        self.prune_board_milestones();
+    }
+
+    /// Drop selected milestone pills that no longer exist on the board
+    /// and clamp the dialog focus to the widget count. A renamed or
+    /// deleted milestone would otherwise hide every lane with no pill
+    /// to deselect it by. Persists the pruned set when prefs are live.
+    pub(crate) fn prune_board_milestones(&mut self) {
+        let Some(board) = &self.board.data else { return };
+        let live: std::collections::HashSet<Option<String>> =
+            model::board_milestones(&board.items).into_iter().collect();
+        self.board.milestones.retain(|m| live.contains(m));
+        self.board.milestone_draft.retain(|m| live.contains(m));
+        let widgets = self.board_pills().len() + 1 + model::CardFields::ORDER.len();
+        self.board.filter_focus = self.board.filter_focus.min(widgets.saturating_sub(1));
+        self.persist_prefs();
     }
 
     /// Open the format dialog against the board cards. It opens in
@@ -1870,10 +1891,15 @@ impl App {
             (self.sidebar.format_focus as isize + delta).rem_euclid(n as isize) as usize;
     }
 
-    /// Snapshot the Format dialog state to `prefs.json`. Board filters
-    /// save only while the board is open: a fresh session starts with an
+    /// Snapshot the Format dialog state to `prefs.json`. Silent until
+    /// the startup prefs load has applied: pre-bootstrap input would
+    /// otherwise write defaults over saved state. Board filters save
+    /// only while the board is open: a fresh session starts with an
     /// empty in-memory filter that must not wipe the saved one.
     pub(crate) fn persist_prefs(&mut self) {
+        if !self.prefs_loaded {
+            return;
+        }
         let mut prefs = github::load_prefs();
         prefs.board_cards = self.board.fields;
         prefs.row_issue = self.sidebar.row_issue;
@@ -1884,7 +1910,7 @@ impl App {
         prefs.show_closed_issues = self.sidebar.show_closed_issues;
         prefs.merged_window_hours = self.sections.merged_window_hours;
         if let Some(repo) = self.repo_key() {
-            prefs.queries.insert(repo, self.sidebar.query_active.clone());
+            prefs.queries.insert(github::prefs_repo_key(&repo), self.sidebar.query_active.clone());
         }
         if board_open(self) {
             let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone());
@@ -1893,7 +1919,7 @@ impl App {
                     self.board.milestones.iter().cloned().collect();
                 milestones.sort();
                 prefs.board_filters.insert(
-                    owner.to_lowercase(),
+                    github::prefs_owner_key(&owner),
                     github::SavedBoardFilter {
                         filter: self.board.filter.clone(),
                         milestones,
@@ -1906,7 +1932,9 @@ impl App {
 
     /// Apply the saved Format dialog state at startup. Per-repo and
     /// per-owner keys resolve from the repo the bootstrap just found.
+    /// Marks the prefs load so later input may persist again.
     fn apply_prefs(&mut self) {
+        self.prefs_loaded = true;
         let prefs = github::load_prefs();
         self.sidebar.show_open_prs = prefs.show_open_prs;
         self.sidebar.show_merged_prs = prefs.show_merged_prs;
@@ -1919,7 +1947,7 @@ impl App {
         self.sidebar.row_pr = prefs.row_pr;
         self.board.fields = prefs.board_cards;
         if let Some(key) = self.repo_key() {
-            if let Some(q) = prefs.queries.get(&key) {
+            if let Some(q) = prefs.queries.get(&github::prefs_repo_key(&key)) {
                 self.sidebar.query_active = q.clone();
             }
         }
@@ -2760,6 +2788,7 @@ pub(crate) fn poll_board(app: &mut App) -> bool {
             app.board.row = 0;
             app.board.states.clear();
             app.board.expanded = None;
+            app.prune_board_milestones();
             kick_off_details(app);
         }
         Err(e) => { auth_failure(app, &e); app.notify(e); }
@@ -3044,8 +3073,13 @@ fn poll_bootstrap(app: &mut App) -> bool {
             app.ensure_visited(n);
             app.load_issue(n, false);
         }
-        app.hydrate_cached_sections();
-        app.merge_recent_sections();
+        if app.sidebar.query_active.trim().is_empty() {
+            app.hydrate_cached_sections();
+            app.merge_recent_sections();
+        } else {
+            let q = app.sidebar.query_active.clone();
+            app.run_gh_search(q);
+        }
     } else {
         for n in numbers { app.load_issue(n, false); }
     }
@@ -3488,6 +3522,7 @@ mod tests {
         // board filter, then persist like the key handlers do.
         let mut first = App::new(Some("o/r".to_string()));
         first.repo_slug = Some("o/r".to_string());
+        first.prefs_loaded = true;
         first.sidebar.show_merged_prs = false;
         first.sections.merged_window_hours = 1;
         first.sidebar.row_issue.author = true;
@@ -3515,6 +3550,166 @@ mod tests {
         assert!(second.board.milestones.contains(&Some("v1".to_string())));
         second.restore_board_filter("other");
         assert!(second.board.filter.is_empty(), "unknown owners start unfiltered");
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn startup_restored_query_runs_search_instead_of_window_fetch() {
+        let (_guard, _dir, saved) = temp_xdg();
+        let mut prefs = github::load_prefs();
+        prefs.queries.insert(github::prefs_repo_key("o/r"), "label:bug".to_string());
+        github::save_prefs(&prefs);
+        let mut app = App::new(Some("o/r".to_string()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.auth.bootstrap_rx = Some(rx);
+        tx.send(Some("o/r".to_string())).unwrap();
+        assert!(poll_bootstrap(&mut app));
+        assert_eq!(app.sidebar.query_active, "label:bug");
+        assert!(app.sections.rx.is_some(), "restored query fetches from the server");
+        assert!(app.sections.replace, "search results replace the listing");
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn startup_without_saved_query_fetches_window_listing() {
+        let (_guard, _dir, saved) = temp_xdg();
+        let mut app = App::new(Some("o/r".to_string()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.auth.bootstrap_rx = Some(rx);
+        tx.send(Some("o/r".to_string())).unwrap();
+        assert!(poll_bootstrap(&mut app));
+        assert!(app.sidebar.query_active.is_empty());
+        assert!(app.sections.rx.is_some(), "window listing still fetches");
+        assert!(!app.sections.replace, "window listing appends");
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn stale_saved_milestones_prune_when_board_lands() {
+        use crate::model::BoardItem;
+        let (_guard, _dir, saved) = temp_xdg();
+        let mut prefs = github::load_prefs();
+        prefs.board_filters.insert(
+            github::prefs_owner_key("o"),
+            github::SavedBoardFilter {
+                filter: String::new(),
+                milestones: vec![Some("v1".to_string())],
+            },
+        );
+        github::save_prefs(&prefs);
+        let mut app = App::new(Some("o/r".to_string()));
+        app.prefs_loaded = true;
+        // Restoring before the board lands keeps the saved pills: there
+        // is nothing to check them against yet.
+        app.restore_board_filter("o");
+        assert!(app.board.milestones.contains(&Some("v1".to_string())));
+        // The board lands without v1: the stale pill drops, the focus
+        // clamps to the widget count, and the pruned set persists.
+        let card = |milestone: Option<&str>| BoardItem {
+            title: "card".to_string(),
+            number: Some(1),
+            status: Some("Todo".to_string()),
+            labels: vec![],
+            repo: None,
+            milestone: milestone.map(str::to_string),
+            content: serde_json::Value::Null,
+        };
+        app.board.data = Some(BoardData {
+            title: "b".to_string(),
+            order: vec!["Todo".to_string()],
+            items: vec![card(Some("v2")), card(None)],
+            url: String::new(),
+        });
+        app.board.filter_focus = 99;
+        app.prune_board_milestones();
+        assert!(app.board.milestones.is_empty(), "stale v1 drops");
+        let widgets = app.board_pills().len() + 1 + model::CardFields::ORDER.len();
+        assert!(app.board.filter_focus < widgets, "focus clamps to the widget count");
+        let back = github::load_prefs();
+        let saved_filter = &back.board_filters[&github::prefs_owner_key("o")];
+        assert!(saved_filter.milestones.is_empty(), "pruned set persists");
+        let board = app.board.data.as_ref().unwrap();
+        assert!(
+            board_columns(board, &app.board.filter, &app.board.milestones)[0]
+                .1
+                .iter()
+                .any(|c| c.number == Some(1)),
+            "lanes match again"
+        );
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn prefs_saved_under_another_host_stay_unrestored() {
+        let _guard = crate::cache::test_env_lock();
+        let dir = tempfile::TempDir::new().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        let saved_host = std::env::var("GH_HOST").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        std::env::set_var("GH_HOST", "ghe.corp");
+        let mut first = App::new(Some("acme/r".to_string()));
+        first.repo_slug = Some("acme/r".to_string());
+        first.prefs_loaded = true;
+        first.sidebar.query_active = "label:bug".to_string();
+        first.board.filter = "auth".to_string();
+        first.board.milestones.insert(Some("v1".to_string()));
+        first.board.loading = true;
+        first.persist_prefs();
+        // Same owner and repo on github.com restore nothing: Format
+        // prefs never bleed across hosts.
+        std::env::set_var("GH_HOST", "github.com");
+        let mut second = App::new(Some("acme/r".to_string()));
+        second.repo_slug = Some("acme/r".to_string());
+        second.apply_prefs();
+        assert!(second.sidebar.query_active.is_empty(), "query stays on its host");
+        second.restore_board_filter("acme");
+        assert!(second.board.filter.is_empty(), "board filter stays on its host");
+        assert!(second.board.milestones.is_empty(), "milestone pills stay on its host");
+        match saved_host {
+            Some(v) => std::env::set_var("GH_HOST", v),
+            None => std::env::remove_var("GH_HOST"),
+        }
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+
+    #[test]
+    fn persist_before_startup_load_writes_nothing() {
+        let (_guard, _dir, saved) = temp_xdg();
+        let mut prefs = github::load_prefs();
+        prefs.queries.insert(github::prefs_repo_key("o/r"), "label:bug".to_string());
+        prefs.board_cards.milestone = true;
+        github::save_prefs(&prefs);
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        // Pre-bootstrap input mutates defaults and tries to persist, as
+        // `f` then `m` would before the bootstrap lands.
+        app.sidebar.show_merged_prs = false;
+        app.board.fields.milestone = false;
+        app.sidebar.query_active.clear();
+        app.persist_prefs();
+        let back = github::load_prefs();
+        assert_eq!(
+            back.queries.get(&github::prefs_repo_key("o/r")),
+            Some(&"label:bug".to_string()),
+            "unsaved query survives the early write"
+        );
+        assert!(back.board_cards.milestone, "unsaved card field survives the early write");
+        assert!(back.show_merged_prs, "unsaved toggle survives the early write");
+        // The bootstrap applies the saved state and re-arms persisting.
+        app.apply_prefs();
+        assert!(app.prefs_loaded);
+        assert_eq!(app.sidebar.query_active, "label:bug");
+        assert!(app.board.fields.milestone);
+        app.persist_prefs();
+        let live = github::load_prefs();
+        assert_eq!(
+            live.queries.get(&github::prefs_repo_key("o/r")),
+            Some(&"label:bug".to_string()),
+            "post-load persist keeps the query"
+        );
         restore_xdg(saved);
     }
 
