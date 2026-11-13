@@ -139,9 +139,10 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Char('b') => app.open_board(),
         KeyCode::Char('c') => app.open_compose(),
-        KeyCode::Char('f') => {
-            app.sidebar.filter_open = true;
-            app.sidebar.query_edit = false;
+        KeyCode::Char('f') => app.open_sidebar_format(),
+        KeyCode::Char('g') => {
+            app.open_sidebar_format();
+            app.start_query_edit();
         }
         KeyCode::Char('j') => {
             if graph_focused(app) {
@@ -556,9 +557,10 @@ fn toggle_board_focused(app: &mut App) {
 /// one milestone pill per milestone on the board, and card field rows.
 /// `j`/`k` and the arrows move the active widget, `space` toggles the
 /// pill or field under the cursor, typing on the text row edits it,
-/// Enter applies, Esc clears the filter. Everywhere else window presets
-/// refetch, toggles only hide recent rows, `e` edits the server-side
-/// GitHub query, and `j`/`k` plus `space` flip the Row fields rows.
+/// Enter applies, Esc clears the filter. Everywhere else 1/2/3/4 set the
+/// window, `0` resets to the recency default, `e` edits the server-side
+/// GitHub query, state toggles stay client-side, and `j`/`k` plus
+/// `space` flip label pills, milestone pills, grouping, and Row fields.
 fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     use crate::app::QueryAction;
     if board_open(app) {
@@ -595,30 +597,18 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.sidebar.filter_open = false;
         }
         KeyCode::Char('e') => app.start_query_edit(),
-        KeyCode::Char('1') => {
-            app.sections.merged_window_hours = 1;
-            app.refetch_recent();
-            app.persist_prefs();
-            app.notify(format!("merged window: {}", app.window_label()));
-        }
-        KeyCode::Char('2') => {
-            app.sections.merged_window_hours = 24;
-            app.refetch_recent();
-            app.persist_prefs();
-            app.notify(format!("merged window: {}", app.window_label()));
-        }
-        KeyCode::Char('3') => {
-            app.sections.merged_window_hours = 168;
-            app.refetch_recent();
-            app.persist_prefs();
-            app.notify(format!("merged window: {}", app.window_label()));
-        }
+        KeyCode::Char('1') => app.set_window(1),
+        KeyCode::Char('2') => app.set_window(24),
+        KeyCode::Char('3') => app.set_window(168),
+        // All time: the listing window stops limiting merged/closed rows
+        // and the search path adds no `updated:` token.
+        KeyCode::Char('4') => app.set_window(0),
+        KeyCode::Char('0') => app.reset_recent_default(),
         KeyCode::Char('w') => {
-            app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
-            app.refetch_recent();
-            app.persist_prefs();
-            app.notify(format!("merged window: {}", app.window_label()));
+            app.set_window(core::cycle_window(app.sections.merged_window_hours));
         }
+        // State toggles are client-side: they never refetch or edit the
+        // query text.
         KeyCode::Char('o') => {
             app.sidebar.show_open_prs = !app.sidebar.show_open_prs;
             app.persist_prefs();
@@ -635,12 +625,16 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues;
             app.persist_prefs();
         }
+        KeyCode::Char('g') => {
+            app.sidebar.group_by = app.sidebar.group_by.next();
+            app.persist_prefs();
+        }
+        KeyCode::Char('h' | 'l') | KeyCode::Tab | KeyCode::BackTab => {
+            app.format_switch_column();
+        }
         KeyCode::Char('j') | KeyCode::Down => app.format_step(1),
         KeyCode::Char('k') | KeyCode::Up => app.format_step(-1),
-        KeyCode::Char(' ') => {
-            let focus = app.sidebar.format_focus;
-            app.toggle_sidebar_row_field(focus);
-        }
+        KeyCode::Char(' ') => app.toggle_format_widget(),
         _ => {}
     }
 }

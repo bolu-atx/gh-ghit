@@ -13,6 +13,7 @@ use ratatui::widgets::{
 
 use crate::app::{App, Tab};
 use crate::model::{self, IssueData};
+use crate::theme;
 
 pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     use crate::theme::ink;
@@ -233,7 +234,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
         "  1/2 details/visual · e refs · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
-        "Actions", "  : command · / find · f format · b board · w window",
+        "Actions", "  : command · / find · g search · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
@@ -264,155 +265,351 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Format dialog (`f`). Over the board it is a form: a text row, one
-/// milestone pill per milestone on the cards, and card field checkboxes;
-/// otherwise it holds the recent window, open/closed toggles, a GitHub
-/// search query, and row field checkboxes. The title names the target.
-fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
+/// One column of the sidebar Format dialog. Every focusable row records
+/// its line so `h`/`l` can land on the matching row in the other column.
+struct FormatColumn {
+    lines: Vec<Line<'static>>,
+    width: usize,
+    focus: usize,
+    focus_line: Option<usize>,
+    rows: Vec<(usize, usize)>,
+    gutter: usize,
+}
+
+impl FormatColumn {
+    fn new(width: usize, focus: usize) -> Self {
+        Self { lines: Vec::new(), width, focus, focus_line: None, rows: Vec::new(), gutter: 0 }
+    }
+
+    /// Label gutter shared by every row in the column: the widest label
+    /// plus two cells of air. Chips start on the same cell on every row.
+    fn gutter(&mut self, labels: &[&str]) {
+        let widest = labels.iter().map(|label| Line::raw(*label).width()).max().unwrap_or(0);
+        self.gutter = (widest + 2).min(self.width.saturating_sub(1));
+    }
+
+    /// Blank line after a row. Rows breathe; wrapped chip lines stay tight.
+    fn gap(&mut self) {
+        self.lines.push(Line::raw(""));
+    }
+
+    /// Numbered pipeline section: amber number, paper name, a blank line
+    /// under the name, and two blank lines of margin above it.
+    fn section(&mut self, number: usize, title: &str) {
+        if !self.lines.is_empty() {
+            self.lines.push(Line::raw(""));
+            self.lines.push(Line::raw(""));
+        }
+        self.lines.push(Line::from(vec![
+            Span::styled(number.to_string(),
+                Style::new().bg(theme::ink()).fg(theme::amber()).bold()),
+            Span::styled(format!(" {title}"),
+                Style::new().bg(theme::ink()).fg(theme::paper()).bold()),
+        ]));
+        self.gap();
+    }
+
+    /// Section outside the pipeline: set apart by a blank line and a thin
+    /// muted rule, then a muted name.
+    fn quiet_section(&mut self, title: &str) {
+        if !self.lines.is_empty() {
+            self.lines.push(Line::raw(""));
+            self.lines.push(Line::raw(""));
+        }
+        self.lines.push(Line::styled("\u{2500}".repeat(self.width),
+            Style::new().bg(theme::ink()).fg(theme::muted())));
+        self.lines.push(Line::styled(title.to_string(),
+            Style::new().bg(theme::ink()).fg(theme::muted())));
+        self.gap();
+    }
+
+    /// Muted row label padded to the gutter. Unlabeled rows get a blank
+    /// gutter, so every control in the column starts on the same cell.
+    fn label_spans(&self, label: Option<&str>) -> Vec<Span<'static>> {
+        vec![Span::styled(
+            format!("{:<width$}", label.unwrap_or(""), width = self.gutter),
+            Style::new().bg(theme::ink()).fg(theme::muted()))]
+    }
+
+    /// Left cell where a row's controls start.
+    fn indent(&self, _label: Option<&str>) -> usize {
+        self.gutter
+    }
+
+    /// Focusable text row: label, amber marker cell, then the caller's
+    /// spans, starting on the same cell as chip and option names.
+    fn field(&mut self, index: usize, label: Option<&str>, spans: Vec<Span<'static>>) {
+        let active = self.focus == index;
+        self.rows.push((index, self.lines.len()));
+        if active {
+            self.focus_line = Some(self.lines.len());
+        }
+        let mut line = self.label_spans(label);
+        line.push(Span::styled(
+            if active { "▌  " } else { "   " },
+            Style::new().bg(theme::ink()).fg(theme::amber()),
+        ));
+        line.extend(spans);
+        self.lines.push(Line::from(line));
+        self.gap();
+    }
+
+    /// Focusable row of mutually exclusive options. The marker sits before
+    /// the selected option, which reads amber while the row is focused.
+    fn choice(&mut self, index: usize, label: Option<&str>, options: &[(bool, &str)]) {
+        let active = self.focus == index;
+        self.rows.push((index, self.lines.len()));
+        if active {
+            self.focus_line = Some(self.lines.len());
+        }
+        let indent = self.indent(label);
+        let mut line = self.label_spans(label);
+        let mut width = indent;
+        // Same cells as a chip: marker, radio glyph, space, name, air.
+        // The glyph keeps the selection readable without color.
+        for (selected, name) in options.iter() {
+            let marked = active && *selected;
+            let text = format!("{}{} {name}  ", if marked { "▌" } else { " " },
+                if *selected { "●" } else { "○" });
+            let chip_width = Line::raw(text.clone()).width();
+            if width > indent && width + chip_width > self.width {
+                self.lines.push(Line::from(std::mem::take(&mut line)));
+                line = vec![self.blank_span(indent)];
+                width = indent;
+            }
+            line.push(Span::styled(text, Style::new().bg(theme::ink()).fg(
+                if marked { theme::amber() } else if *selected { theme::paper() } else { theme::muted() })));
+            width += chip_width;
+        }
+        self.lines.push(Line::from(line));
+        self.gap();
+    }
+
+    fn blank_span(&self, width: usize) -> Span<'static> {
+        Span::styled(" ".repeat(width), Style::new().bg(theme::ink()))
+    }
+
+    /// Focusable checkbox chips, wrapped to the column width. The focused
+    /// chip carries the amber marker; selected chips read paper.
+    fn chips(&mut self, label: Option<&str>, chips: Vec<(usize, bool, String)>) {
+        let indent = self.indent(label);
+        let mut line = self.label_spans(label);
+        let mut width = indent;
+        for (index, on, name) in chips {
+            let active = self.focus == index;
+            let text = format!("{}{} {name}  ", if active { "▌" } else { " " },
+                if on { "\u{f14a}" } else { "\u{f096}" });
+            let chip_width = Line::raw(text.clone()).width();
+            if width > indent && width + chip_width > self.width {
+                self.lines.push(Line::from(std::mem::take(&mut line)));
+                line = vec![self.blank_span(indent)];
+                width = indent;
+            }
+            self.rows.push((index, self.lines.len()));
+            if active {
+                self.focus_line = Some(self.lines.len());
+            }
+            line.push(Span::styled(text, Style::new().bg(theme::ink()).fg(
+                if active { theme::amber() } else if on { theme::paper() } else { theme::muted() })));
+            width += chip_width;
+        }
+        if !line.is_empty() {
+            self.lines.push(Line::from(line));
+        }
+        self.gap();
+    }
+
+    /// Muted empty-state text in the row's chip column.
+    fn empty(&mut self, label: &str, text: &str) {
+        let mut line = self.label_spans(Some(label));
+        // Three cells of air: the marker, glyph and space a chip carries.
+        line.push(Span::styled(format!("   {text}"),
+            Style::new().bg(theme::ink()).fg(theme::muted())));
+        self.lines.push(Line::from(line));
+        self.gap();
+    }
+
+    /// Muted prose under a section, wrapped to the column width.
+    fn hint(&mut self, text: &str) {
+        let mut line = String::new();
+        for word in text.split_whitespace() {
+            if !line.is_empty() && line.len() + 1 + word.len() > self.width {
+                self.lines.push(Line::styled(std::mem::take(&mut line),
+                    Style::new().bg(theme::ink()).fg(theme::muted())));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        if !line.is_empty() {
+            self.lines.push(Line::styled(line,
+                Style::new().bg(theme::ink()).fg(theme::muted())));
+        }
+    }
+}
+
+fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if crate::app::board_open(app) {
         render_board_filter(f, area, app);
         return;
     }
-    use crate::theme::{amber, ink, muted, paper, base};
-    let window_mark = |hours: u64| {
-        if app.sections.merged_window_hours == hours {
-            Span::styled("● ", Style::new().bg(ink()).fg(amber()).bold())
-        } else {
-            Span::styled("○ ", Style::new().bg(ink()).fg(muted()))
-        }
-    };
-    let toggle = |on: bool, label: &str, key: &str| {
-        // Nerd Font Font Awesome fa-check-square / fa-square-o. Checked
-        // stays paper, unchecked stays muted; the key hint is unchanged.
-        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
-        let style = if on {
-            Style::new().bg(ink()).fg(paper())
-        } else {
-            Style::new().bg(ink()).fg(muted())
-        };
-        vec![
-            Span::styled(format!("{box_glyph} {label} "), style),
-            Span::styled(format!("({key})"), Style::new().bg(ink()).fg(muted())),
-        ]
-    };
-    // Same marker as the board dialog: the Row fields cursor.
-    let marker = |active: bool| {
-        Span::styled(
-            if active { "▌ " } else { "  " },
-            Style::new().bg(ink()).fg(if active { amber() } else { muted() }).bold(),
-        )
-    };
-    let mut lines = vec![];
-    // Buffer row of the focused widget, so a short popup can scroll it
-    // into view. The query row owns row 0 while it edits.
-    let mut focus_line = 0;
-    let query_text = if app.sidebar.query_edit { &app.sidebar.query_draft } else { &app.sidebar.query_active };
-    let mut qline = vec![
-        Span::styled("query ", Style::new().bg(ink()).fg(muted())),
-        Span::styled(
-            if query_text.is_empty() { "server github search, e to edit …".to_string() } else { query_text.clone() },
-            Style::new().bg(ink()).fg(if query_text.is_empty() { muted() } else { paper() }),
-        ),
-    ];
-    if app.sidebar.query_edit {
-        qline.push(Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()));
+    // Border plus one cell of air on each side.
+    let popup_width = sized_popup(area, 90, 1).width.saturating_sub(4) as usize;
+    let two_columns = popup_width >= 76;
+    app.sidebar.format_columns = two_columns;
+    let column_width = if two_columns { (popup_width - 3) / 2 } else { popup_width };
+    let focus = app.sidebar.format_focus;
+    let mut left = FormatColumn::new(column_width, focus);
+    left.gutter(&["search", "window", "states", "labels", "milestones"]);
+    let mut right = FormatColumn::new(column_width, focus);
+    right.gutter(&["key", "order", "issues", "PRs"]);
+    left.section(1, "Query");
+    let query = if app.sidebar.query_edit {
+        &app.sidebar.query_draft
     } else {
-        qline.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
-    }
-    lines.push(Line::from(qline));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        // Nerd Font Font Awesome fa-clock-o. The query row keeps its plain
-        // "query " label so the edit-cursor column math below stays exact.
-        Span::styled("\u{f017} window ", Style::new().bg(ink()).fg(muted())),
-        window_mark(1),
-        Span::styled("1h (1)  ", Style::new().bg(ink()).fg(paper())),
-        window_mark(24),
-        Span::styled("24h (2)  ", Style::new().bg(ink()).fg(paper())),
-        window_mark(168),
-        Span::styled("7d (3)", Style::new().bg(ink()).fg(paper())),
-    ]));
-    lines.push(Line::from(""));
-    let mut open_line = vec![Span::styled("show   ", Style::new().bg(ink()).fg(muted()))];
-    open_line.extend(toggle(app.sidebar.show_open_prs, "open PRs", "o"));
-    open_line.push(Span::raw("   "));
-    open_line.extend(toggle(app.sidebar.show_merged_prs, "merged PRs", "m"));
-    lines.push(Line::from(open_line));
-    let mut closed_line = vec![Span::styled("       ", Style::new().bg(ink()))];
-    closed_line.extend(toggle(app.sidebar.show_open_issues, "open issues", "i"));
-    closed_line.push(Span::raw("   "));
-    closed_line.extend(toggle(app.sidebar.show_closed_issues, "closed issues", "c"));
-    lines.push(Line::from(closed_line));
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "row fields · issues",
-        Style::new().bg(ink()).fg(muted()),
-    )));
-    for (i, name) in model::RowFields::ISSUE_ORDER.iter().enumerate() {
-        if !app.sidebar.query_edit && app.sidebar.format_focus == i {
-            focus_line = lines.len();
+        &app.sidebar.query_active
+    };
+    let mut search = Vec::new();
+    if query.is_empty() && !app.sidebar.query_edit {
+        search.push(Span::styled("recent activity (e to search)".to_string(),
+            Style::new().bg(theme::ink()).fg(theme::muted())));
+    } else {
+        search.push(Span::styled(query.to_string(), Style::new().bg(theme::ink()).fg(
+            if focus == 0 { theme::amber() } else { theme::paper() })));
+        if app.sidebar.query_edit {
+            search.push(Span::styled("▌", Style::new().bg(theme::ink()).fg(theme::amber())
+                .bold()));
         }
-        lines.push(row_field_line(
-            marker(app.sidebar.format_focus == i),
-            app.sidebar.row_issue.shown(false, i).unwrap_or(false),
-            name,
-        ));
     }
-    lines.push(Line::from(Span::styled(
-        "row fields · prs",
-        Style::new().bg(ink()).fg(muted()),
-    )));
-    let pr_base = model::RowFields::ISSUE_ORDER.len();
-    for (i, name) in model::RowFields::PR_ORDER.iter().enumerate() {
-        if !app.sidebar.query_edit && app.sidebar.format_focus == pr_base + i {
-            focus_line = lines.len();
-        }
-        lines.push(row_field_line(
-            marker(app.sidebar.format_focus == model::RowFields::ISSUE_ORDER.len() + i),
-            app.sidebar.row_pr.shown(true, i).unwrap_or(false),
-            name,
-        ));
+    left.field(0, Some("search"), search);
+    let hours = app.sections.merged_window_hours;
+    left.choice(1, Some("window"), &[
+        (hours == 1, "1h"),
+        (hours == 24, "24h"),
+        (hours == 168, "7d"),
+        (hours == 0, "all time"),
+    ]);
+    left.section(2, "Filter");
+    left.chips(Some("states"), vec![
+        (2, app.sidebar.show_open_prs, "open PRs".into()),
+        (3, app.sidebar.show_merged_prs, "merged PRs".into()),
+        (4, app.sidebar.show_open_issues, "open issues".into()),
+        (5, app.sidebar.show_closed_issues, "closed issues".into()),
+    ]);
+    let label_chips: Vec<_> = app.sidebar.labels.iter().enumerate().map(|(i, name)|
+        (6 + i, app.sidebar.label_filter.contains(name), name.clone())).collect();
+    if label_chips.is_empty() {
+        left.empty("labels", if app.sidebar.meta_rx.is_some() {
+            "loading labels …" } else { "No labels in this repo" });
+    } else {
+        left.chips(Some("labels"), label_chips);
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "1/2/3 window · e query · o/m/i/c toggle · w age",
-        Style::new().bg(ink()).fg(muted()),
-    )));
-    lines.push(Line::from(Span::styled(
-        "j/k move · space toggle · f/esc close",
-        Style::new().bg(ink()).fg(muted()),
-    )));
-    let popup = sized_popup(area, 62, lines.len());
+    let pills = app.milestone_pills();
+    let milestone_chips: Vec<_> = pills.iter().enumerate().map(|(i, pill)|
+        (6 + app.sidebar.labels.len() + i, app.sidebar.milestone_filter.contains(pill),
+         pill.clone().unwrap_or_else(|| "(no milestone)".into()))).collect();
+    if milestone_chips.is_empty() {
+        left.empty("milestones", if app.sidebar.meta_rx.is_some() {
+            "loading milestones …" } else { "No milestones in this repo" });
+    } else {
+        left.chips(Some("milestones"), milestone_chips);
+    }
+    left.hint("Filters only narrow loaded rows. To fetch every match, search for it, e.g. label:bug");
+    let base = app.format_left_widgets();
+    right.section(3, "Group");
+    right.choice(base, None, &[
+        (app.sidebar.group_by == model::GroupBy::None, "none"),
+        (app.sidebar.group_by == model::GroupBy::Milestone, "milestone"),
+    ]);
+    right.section(4, "Sort");
+    use crate::core::SideSort;
+    right.choice(base + 1, Some("key"), &[
+        (app.sidebar.sort == SideSort::Default, "default"),
+        (app.sidebar.sort == SideSort::Updated, "updated"),
+        (app.sidebar.sort == SideSort::Author, "author"),
+        (app.sidebar.sort == SideSort::State, "state"),
+        (app.sidebar.sort == SideSort::Label, "label"),
+    ]);
+    right.choice(base + 2, Some("order"), &[
+        (!app.sidebar.sort_desc, "ascending"),
+        (app.sidebar.sort_desc, "descending"),
+    ]);
+    right.quiet_section("Display");
+    right.chips(Some("issues"), model::RowFields::ISSUE_ORDER.iter().enumerate().map(|(i, name)|
+        (base + 3 + i, app.sidebar.row_issue.shown(false, i).unwrap_or(false),
+         name.to_string())).collect());
+    right.chips(Some("PRs"), model::RowFields::PR_ORDER.iter().enumerate().map(|(i, name)|
+        (base + 3 + model::RowFields::ISSUE_ORDER.len() + i,
+         app.sidebar.row_pr.shown(true, i).unwrap_or(false), name.to_string())).collect());
+    app.sidebar.format_rows = vec![0; app.format_widgets()];
+    for &(index, row) in left.rows.iter().chain(&right.rows) {
+        app.sidebar.format_rows[index] = row;
+    }
+    let focus_line = left.focus_line.or_else(|| right.focus_line.map(|row| {
+        if two_columns { row } else { row + left.lines.len() }
+    })).unwrap_or(0);
+    let content_height = if two_columns {
+        left.lines.len().max(right.lines.len())
+    } else {
+        left.lines.len() + right.lines.len()
+    };
+    // Content, a blank line, the footer, and one line of air top and bottom.
+    let popup = sized_popup(area, 90, content_height + 4);
     f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base())
-        // Nerd Font Font Awesome fa-filter.
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
         .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
-            Span::styled("· sidebar ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(" \u{f0b0} Format ", Style::new().bg(theme::ink())
+                .fg(theme::amber()).bold()),
+            Span::styled("sidebar ", Style::new().bg(theme::ink()).fg(theme::muted())),
         ]));
-    let inner = block.inner(popup);
+    let framed = block.inner(popup);
     f.render_widget(block, popup);
-    let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
-    f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
-    if app.sidebar.query_edit {
-        f.set_cursor_position((inner.x + 6 + app.sidebar.query_draft.len() as u16, inner.y));
+    let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+    let content = Rect { height: inner.height.saturating_sub(2), ..inner };
+    let scroll = scroll_to(content, focus_line, app.sidebar.query_edit);
+    if two_columns {
+        let left_area = Rect { width: column_width as u16, ..content };
+        let divider = Rect { x: left_area.right(), width: 3, ..content };
+        let right_area = Rect { x: divider.right(), width: content.right() - divider.right(),
+            ..content };
+        f.render_widget(Paragraph::new(left.lines).style(theme::base()).scroll((scroll, 0)),
+            left_area);
+        let rule = vec![Line::styled(" \u{2502} ", Style::new().fg(theme::muted()));
+            content.height as usize];
+        f.render_widget(Paragraph::new(rule).style(theme::base()), divider);
+        f.render_widget(Paragraph::new(right.lines).style(theme::base()).scroll((scroll, 0)),
+            right_area);
+    } else {
+        left.lines.extend(right.lines);
+        f.render_widget(Paragraph::new(left.lines).style(theme::base()).scroll((scroll, 0)),
+            content);
     }
-}
-
-/// One Row fields checkbox row: the dialog cursor plus the checked box.
-fn row_field_line(marker: Span<'static>, on: bool, label: &str) -> Line<'static> {
-    use crate::theme::{ink, muted, paper};
-    let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
-    Line::from(vec![
-        marker,
-        Span::styled(
-            format!("{box_glyph} {label}"),
-            Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
-        ),
-    ])
+    let footer = Rect { y: inner.y + inner.height.saturating_sub(1),
+        height: inner.height.min(1), ..inner };
+    let hint = Line::from([
+        ("j/k", "move"), ("h/l", "column"), ("space", "toggle"),
+        ("e", "search"), ("0", "reset"), ("esc", "close"),
+    ].iter().enumerate().flat_map(|(i, (key, action))| {
+        let mut spans = Vec::new();
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::new().bg(theme::ink()).fg(theme::muted())));
+        }
+        spans.push(Span::styled((*key).to_string(), Style::new().bg(theme::ink())
+            .fg(theme::paper()).bold()));
+        spans.push(Span::styled(format!(" {action}"),
+            Style::new().bg(theme::ink()).fg(theme::muted())));
+        spans
+    }).collect::<Vec<_>>());
+    f.render_widget(Paragraph::new(hint)
+        .style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
+    if app.sidebar.query_edit && content.height > 1 {
+        let x = inner.x + left.gutter as u16 + 3
+            + Line::raw(app.sidebar.query_draft.as_str()).width() as u16;
+        // The search row sits under the Query header and its blank line.
+        f.set_cursor_position((x.min(inner.right().saturating_sub(1)), inner.y + 2));
+    }
 }
 
 /// Board format form (`f` with the board open): the text row, one
@@ -3041,7 +3238,7 @@ mod render_smoke {
         let (pp, pv, pr) = app.pane_groups(true, false);
         assert_eq!((pp, pv, pr), (vec![9], vec![], vec![]));
         use crate::model::SideRow::{Divider, Item};
-        assert_eq!(app.issue_rows(), vec![Item(7), Divider("recent"), Item(42)]);
+        assert_eq!(app.issue_rows(), vec![Item(7), Divider("recent".to_string()), Item(42)]);
         assert_eq!(app.pr_rows(), vec![Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("Issues"));
@@ -3052,15 +3249,12 @@ mod render_smoke {
     fn pane_titles_carry_count_and_sort_with_group_footers() {
         let mut app = loaded_app();
         // loaded_app files one issue and one PR under requested.
-        assert_eq!(app.side_subtitle(false), "1 · default");
-        assert_eq!(app.side_subtitle(true), "1 · default");
+        assert_eq!(app.side_subtitle(false), "1 · recent · default");
+        assert_eq!(app.side_subtitle(true), "1 · recent · default");
         assert_eq!(app.side_footer(false), "pinned (0) · requested (1) · recent (0)");
-        assert_eq!(
-            app.side_footer(true),
-            "pinned (0) · requested (1) · recent (0) · open + merged ≤24h"
-        );
+        assert_eq!(app.side_footer(true), "pinned (0) · requested (1) · recent (0)");
         let text = frame_text(&mut app);
-        assert!(text.contains("1 · default"), "count plus sort in subtitle: {text}");
+        assert!(text.contains("1 · recent · default"), "count, context, sort in subtitle: {text}");
         assert!(
             text.contains("pinned (0) · requested (1) · recent (0)"),
             "group counts in footer: {text}"
@@ -3069,14 +3263,17 @@ mod render_smoke {
         app.sidebar.sort = crate::core::SideSort::Updated;
         app.sidebar.sort_desc = true;
         let text = frame_text(&mut app);
-        assert!(text.contains("1 · updated ↓"), "sort indicator: {text}");
+        assert!(text.contains("1 · recent · updated ↓"), "sort indicator: {text}");
         app.toggle_sort_dir();
         let text = frame_text(&mut app);
-        assert!(text.contains("1 · updated ↑"), "reverse indicator: {text}");
-        // An active search query moves to the PR footer, not the title.
+        assert!(text.contains("1 · recent · updated ↑"), "reverse indicator: {text}");
+        // An active query names itself and any filter marks the pane.
         app.sidebar.query_active = "is:open".to_string();
-        assert!(app.side_footer(true).contains("\"is:open\""), "query in footer");
-        assert!(!app.side_subtitle(true).contains("is:open"), "query out of title");
+        assert!(app.side_subtitle(true).contains("\"is:open\""), "query in title");
+        assert!(!app.side_subtitle(true).contains("filtered"), "no marker without filters");
+        app.sidebar.show_open_issues = false;
+        assert!(app.side_subtitle(true).contains("filtered"), "filter marker in title");
+        assert!(!app.side_footer(true).contains("is:open"), "query out of footer");
     }
 
     #[test]
@@ -3141,7 +3338,7 @@ mod render_smoke {
         d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
         app.show_issue(7);
         assert!(app.refs_visible());
-        assert_eq!(app.refs_rows(), vec![Divider("Paired"), Item(9)]);
+        assert_eq!(app.refs_rows(), vec![Divider("Paired".to_string()), Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("Paired"), "{text}");
         app.nav.pane = Pane::Refs;
@@ -3302,12 +3499,12 @@ mod render_smoke {
         app.issues.statuses.insert(20, vec![]);
         app.nav.recent.push(20);
         use crate::model::SideRow::{Divider, Item};
-        assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent"), Item(20)]);
+        assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent".to_string()), Item(20)]);
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(app.sidebar.filter_open);
         let text = frame_text(&mut app);
         assert!(text.contains("Format"));
-        assert!(text.contains("query"));
+        assert!(text.contains("1 Query"));
         handle_key(&mut app, key(KeyCode::Char('m')));
         assert!(!app.sidebar.show_merged_prs);
         assert_eq!(app.pr_rows(), vec![Item(9)]);
@@ -3342,6 +3539,188 @@ mod render_smoke {
         app.sidebar.query_draft = String::new();
         assert_eq!(app.commit_query_draft(), QueryAction::Refetch);
         assert!(app.sidebar.query_active.is_empty());
+    }
+
+    #[test]
+    fn g_opens_the_format_dialog_in_query_edit_mode() {
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('g')));
+        assert!(app.sidebar.filter_open, "g opens the sidebar dialog");
+        assert!(app.sidebar.query_edit, "the query field starts editing");
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 Query"), "{text}");
+        handle_key(&mut app, key(KeyCode::Char('b')));
+        handle_key(&mut app, key(KeyCode::Char('u')));
+        handle_key(&mut app, key(KeyCode::Char('g')));
+        assert_eq!(app.sidebar.query_draft, "bug");
+        handle_key(&mut app, key(KeyCode::Esc));
+        assert!(app.sidebar.filter_open, "esc keeps the dialog up");
+        assert!(!app.sidebar.query_edit);
+        assert!(app.sidebar.query_draft.is_empty(), "esc reverts the draft");
+        // `S` still submits pending review; it never opens the dialog.
+        app.sidebar.filter_open = false;
+        handle_key(&mut app, key(KeyCode::Char('S')));
+        assert!(!app.sidebar.filter_open);
+        assert!(app.message.contains("no pending comments"), "{}", app.message);
+    }
+
+    #[test]
+    fn sidebar_format_uses_columns_and_wraps_chips() {
+        let mut app = loaded_app();
+        app.sidebar.filter_open = true;
+        app.sidebar.labels = ["bug", "ui", "perf", "docs", "chore"]
+            .iter().map(|s| s.to_string()).collect();
+        let text = frame_text_sized(&mut app, 120, 40);
+        let rows: Vec<String> = text.chars().collect::<Vec<_>>().chunks(120)
+            .map(|row| row.iter().collect()).collect();
+        let header = rows.iter().find(|row| row.contains("1 Query")).unwrap();
+        assert!(header.contains("3 Group"), "{header}");
+        assert!(header.find("1 Query") < header.find("3 Group"), "{header}");
+        for title in ["2 Filter", "4 Sort", "Display"] {
+            assert!(text.contains(title), "missing {title}: {text}");
+        }
+        assert!(rows.iter().any(|row| row.contains("bug") && row.contains("ui")
+            && row.contains("perf")), "chips share a row: {text}");
+        assert!(app.sidebar.format_columns);
+    }
+
+    #[test]
+    fn sidebar_format_narrow_scrolls_to_focus() {
+        let mut app = loaded_app();
+        app.sidebar.filter_open = true;
+        app.sidebar.labels = (0..40).map(|n| format!("label{n}")).collect();
+        app.sidebar.format_focus = app.format_widgets() - 1;
+        let text = frame_text_sized(&mut app, 80, 24);
+        assert!(!app.sidebar.format_columns);
+        assert!(text.contains("ci checks") && text.contains("▌"), "{text}");
+        assert!(text.contains("j/k move"), "footer remains visible: {text}");
+    }
+
+    #[test]
+    fn sidebar_format_navigation_and_sort_match_shortcuts() {
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        let mut older = sample(11);
+        older.updated_at = "2020-01-01T00:00:00Z".into();
+        app.issues.data.insert(11, older);
+        app.nav.visited.push(11);
+        app.sidebar.filter_open = true;
+        frame_text(&mut app);
+        let left = app.format_left_widgets();
+        handle_key(&mut app, key(KeyCode::Char('l')));
+        assert!(app.sidebar.format_focus >= left);
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert!(app.sidebar.format_focus >= left);
+        handle_key(&mut app, key(KeyCode::Char('h')));
+        assert!(app.sidebar.format_focus < left);
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert!(app.sidebar.format_focus < left);
+        app.sidebar.format_focus = left + 1;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert_eq!(app.sidebar.sort, crate::core::SideSort::Updated);
+        assert!(app.sidebar.sort_desc);
+        let descending = app.issue_rows();
+        app.sidebar.format_focus = left + 2;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(!app.sidebar.sort_desc);
+        assert_ne!(app.issue_rows(), descending);
+        let mut via_shortcuts = loaded_app();
+        handle_key(&mut via_shortcuts, key(KeyCode::Char('a')));
+        handle_key(&mut via_shortcuts, key(KeyCode::Char('A')));
+        assert_eq!((app.sidebar.sort, app.sidebar.sort_desc),
+            (via_shortcuts.sidebar.sort, via_shortcuts.sidebar.sort_desc));
+    }
+
+    #[test]
+    fn format_dialog_lists_pills_and_space_toggles_them() {
+        use crate::model::GroupBy;
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        app.sidebar.meta_loaded = true;
+        app.sidebar.labels = vec!["bug".to_string(), "docs".to_string()];
+        app.sidebar.milestones = vec![crate::model::Milestone {
+            title: "v1".to_string(),
+            due_on: None,
+        }];
+        app.sidebar.filter_open = true;
+        app.sidebar.format_focus = 6;
+        let text = frame_text(&mut app);
+        assert!(text.contains("bug") && text.contains("docs"), "label pills: {text}");
+        assert!(text.contains("v1") && text.contains("(no milestone)"), "milestone pills: {text}");
+        let fetching = app.sections.rx.is_some();
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.label_filter.contains("bug"), "space flips the focused label");
+        assert!(!app.sidebar.label_filter.contains("docs"));
+        assert_eq!(app.sections.rx.is_some(), fetching, "pills never refetch");
+        // Milestone pills follow the labels: v1, then "(no milestone)".
+        app.sidebar.format_focus = 8;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.milestone_filter.contains(&Some("v1".to_string())));
+        app.sidebar.format_focus = 9;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.milestone_filter.contains(&None), "(no milestone) pill");
+        // The grouping row sits below the pills.
+        app.sidebar.format_focus = 10;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert_eq!(app.sidebar.group_by, GroupBy::Milestone);
+        let text = frame_text(&mut app);
+        assert!(text.contains("filtered"), "pane title marks active filters: {text}");
+    }
+
+    #[test]
+    fn milestone_groups_render_in_order_and_clicks_match_rows() {
+        use crate::model::{GroupBy, SideRow::{Divider, Item}};
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for (n, milestone) in [(7, Some("v1")), (9, Some("v0.6")), (11, None)] {
+            let mut d = sample(n);
+            d.milestone = milestone.map(str::to_string);
+            app.issues.data.insert(n, d);
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.recent.push(n);
+        }
+        app.sidebar.group_by = GroupBy::Milestone;
+        app.sidebar.meta_loaded = true;
+        app.sidebar.milestones = vec![
+            crate::model::Milestone {
+                title: "v1".to_string(),
+                due_on: Some("2026-03-01T00:00:00Z".to_string()),
+            },
+            crate::model::Milestone {
+                title: "v0.6".to_string(),
+                due_on: Some("2026-02-01T00:00:00Z".to_string()),
+            },
+        ];
+        assert_eq!(
+            app.issue_rows(),
+            vec![
+                Divider("v0.6 (1)".to_string()),
+                Item(9),
+                Divider("v1 (1)".to_string()),
+                Item(7),
+                Divider("(no milestone) (1)".to_string()),
+                Item(11),
+            ],
+            "due date, then title, then no milestone"
+        );
+        let text = sidebar_text(&mut app);
+        let order = ["v0.6 (1)", "v1 (1)", "(no milestone) (1)"]
+            .map(|label| text.find(label).unwrap_or(usize::MAX));
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "dividers render in order: {text}");
+        // A click on #7 must land on #7: walk the same row heights the
+        // hit test uses (3 lines per item, 1 per divider, plus border
+        // and spacer).
+        let area = app.hits.side_issue_area;
+        let mut rel = 2usize;
+        for row in app.issue_rows() {
+            if row.number() == Some(7) {
+                break;
+            }
+            rel += if row.number().is_some() { 3 } else { 1 };
+        }
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), area.x + 2, area.y + rel as u16 + 1));
+        assert_eq!(app.nav.current, Some(7), "click lands on the grouped row");
     }
 
     #[test]
@@ -3453,12 +3832,11 @@ mod render_smoke {
         assert!(app.sidebar.filter_open);
         let text = frame_text(&mut app);
         assert!(text.contains("Format"));
-        assert!(text.contains("row fields · issues"));
-        assert!(text.contains("row fields · prs"));
-        // `j` walks the Row fields rows; `space` flips the focused one.
+        assert!(text.contains("Display") && text.contains("issues"));
+        assert!(text.contains("PRs"));
         assert!(app.sidebar.row_issue.labels);
+        app.sidebar.format_focus = app.format_left_widgets() + 3;
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.sidebar.format_focus, 1);
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert!(!app.sidebar.row_issue.updated, "space flips the focused row");
         // The existing single keys still work beside the new navigation.
@@ -3491,11 +3869,10 @@ mod render_smoke {
     fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
         let mut app = loaded_app();
         app.sidebar.filter_open = true;
-        // Last PRs row: the deepest focused widget in the sidebar dialog.
-        use crate::model::RowFields;
-        app.sidebar.format_focus = RowFields::ISSUE_ORDER.len() + RowFields::PR_ORDER.len() - 1;
+        // Deepest focused widget in the sidebar dialog.
+        app.sidebar.format_focus = app.format_widgets().saturating_sub(1);
         let text = frame_text_sized(&mut app, 100, 24);
-        assert!(text.contains("row fields · prs"), "section header fits: {text}");
+        assert!(text.contains("PRs"), "section header fits: {text}");
         assert!(text.contains("ci checks"), "focused row stays visible: {text}");
         assert!(text.contains("▌"), "focus marker stays visible: {text}");
         // Ten pills push the board dialog past 24 rows: the popup caps
@@ -4459,7 +4836,7 @@ mod render_smoke {
         // Font Awesome: fa-filter title, fa-clock-o window row. All four
         // toggles default on, so the checked box renders.
         assert!(text.contains('\u{f0b0}'), "title: {text}");
-        assert!(text.contains('\u{f017}'), "window: {text}");
+        assert!(text.contains("window"), "window: {text}");
         assert!(text.contains('\u{f14a}'), "checked: {text}");
         app.sidebar.show_closed_issues = false;
         let text = frame_text(&mut app);

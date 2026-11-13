@@ -1,0 +1,2394 @@
+{
+  "GET /repos/bolu-atx/gh-ghit/labels?per_page=100": {
+    "body": [
+      {
+        "color": "ff0000",
+        "name": "bug"
+      },
+      {
+        "color": "00ff00",
+        "name": "docs"
+      }
+    ],
+    "status": 200
+  },
+  "GET /repos/bolu-atx/gh-ghit/milestones?per_page=100&state=all": {
+    "body": [
+      {
+        "due_on": "2026-12-01T00:00:00Z",
+        "state": "open",
+        "title": "v0.6"
+      },
+      {
+        "due_on": null,
+        "state": "open",
+        "title": "v0.7"
+      }
+    ],
+    "status": 200
+  },
+  "GET /search/issues?page=1&per_page=100&q=repo%3Abolu-atx%2Fgh-ghit+label%3Abug": {
+    "body": {
+      "incomplete_results": false,
+      "items": [
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1001",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1001,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1001",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1002",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1002,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1002",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1003",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1003,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1003",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1004",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1004,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1004",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1005",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1005,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1005",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1006",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1006,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1006",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1007",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1007,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1007",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1008",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1008,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1008",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1009",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1009,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1009",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1010",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1010,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1010",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1011",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1011,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1011",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1012",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1012,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1012",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1013",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1013,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1013",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1014",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1014,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1014",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1015",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1015,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1015",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1016",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1016,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1016",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1017",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1017,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1017",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1018",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1018,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1018",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1019",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1019,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1019",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1020",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1020,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1020",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1021",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1021,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1021",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1022",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1022,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1022",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1023",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1023,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1023",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1024",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1024,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1024",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1025",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1025,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1025",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1026",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1026,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1026",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1027",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1027,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1027",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1028",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1028,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1028",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1029",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1029,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1029",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1030",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1030,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1030",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1031",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1031,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1031",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1032",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1032,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1032",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1033",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1033,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1033",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1034",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1034,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1034",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1035",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1035,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1035",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1036",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1036,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1036",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1037",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1037,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1037",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1038",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1038,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1038",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1039",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1039,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1039",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1040",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1040,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1040",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1041",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1041,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1041",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1042",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1042,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1042",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1043",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1043,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1043",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1044",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1044,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1044",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1045",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1045,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1045",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1046",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1046,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1046",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1047",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1047,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1047",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1048",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1048,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1048",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1049",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1049,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1049",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1050",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1050,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1050",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1051",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1051,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1051",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1052",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1052,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1052",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1053",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1053,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1053",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1054",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1054,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1054",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1055",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1055,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1055",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1056",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1056,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1056",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1057",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1057,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1057",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1058",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1058,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1058",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1059",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1059,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1059",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1060",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1060,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1060",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1061",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1061,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1061",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1062",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1062,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1062",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1063",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1063,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1063",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1064",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1064,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1064",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1065",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1065,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1065",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1066",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1066,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1066",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1067",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1067,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1067",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1068",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1068,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1068",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1069",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1069,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1069",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1070",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1070,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1070",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1071",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1071,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1071",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1072",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1072,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1072",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1073",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1073,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1073",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1074",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1074,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1074",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1075",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1075,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1075",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1076",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1076,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1076",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1077",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1077,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1077",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1078",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1078,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1078",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1079",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1079,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1079",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1080",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1080,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1080",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1081",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1081,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1081",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1082",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1082,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1082",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1083",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1083,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1083",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1084",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1084,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1084",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1085",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1085,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1085",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1086",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1086,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1086",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1087",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1087,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1087",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1088",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1088,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1088",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1089",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1089,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1089",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1090",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1090,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1090",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1091",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1091,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1091",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1092",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1092,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1092",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1093",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1093,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1093",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1094",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1094,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1094",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1095",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1095,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1095",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1096",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1096,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1096",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1097",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1097,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1097",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1098",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1098,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1098",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1099",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1099,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1099",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1100",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1100,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1100",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        }
+      ],
+      "total_count": 102
+    },
+    "status": 200
+  },
+  "GET /search/issues?page=2&per_page=100&q=repo%3Abolu-atx%2Fgh-ghit+label%3Abug": {
+    "body": {
+      "incomplete_results": false,
+      "items": [
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1101",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1101,
+          "pull_request": null,
+          "state": "open",
+          "title": "search hit 1101",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        },
+        {
+          "assignees": [],
+          "body": "",
+          "comments": 0,
+          "created_at": "2026-01-01T00:00:00Z",
+          "html_url": "https://github.com/bolu-atx/gh-ghit/issues/1102",
+          "labels": [
+            {
+              "name": "bug"
+            }
+          ],
+          "milestone": {
+            "title": "v0.6"
+          },
+          "number": 1102,
+          "pull_request": null,
+          "state": "open",
+          "title": "paged tail hit",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "user": {
+            "login": "bo"
+          }
+        }
+      ],
+      "total_count": 102
+    },
+    "status": 200
+  }
+}

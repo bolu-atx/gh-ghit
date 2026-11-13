@@ -7,7 +7,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::model::{DiffFile, IssueData};
+
+/// Default merged/closed window: the last 24 hours.
+pub const DEFAULT_WINDOW_HOURS: u64 = 24;
 
 /// What the command bar text means. Parsing never touches state.
 #[derive(Debug, PartialEq, Eq)]
@@ -116,12 +121,37 @@ pub fn cycle_window(hours: u64) -> u64 {
     }
 }
 
-/// Sidebar subtitle for the merged window.
+/// Sidebar subtitle for the merged window. Zero means all time.
 pub fn window_label(hours: u64) -> String {
     match hours {
         1 => "open + merged ≤1h".to_string(),
         168 => "open + merged ≤7d".to_string(),
+        0 => "open + merged all time".to_string(),
         h => format!("open + merged ≤{h}h"),
+    }
+}
+
+/// `updated:>=` token for a recency window. Zero hours is all time and
+/// owns no token. Dates clamp to a decade back so absurd prefs never
+/// overflow the date arithmetic.
+pub fn window_token(hours: u64, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    if hours == 0 {
+        return None;
+    }
+    let hours = hours.min(24 * 365 * 10) as i64;
+    let date = (now - chrono::Duration::hours(hours)).date_naive();
+    Some(format!("updated:>={date}"))
+}
+
+/// Server query for the search path: the user text plus the window's
+/// `updated:` token. All time (zero hours) adds no token. The token is
+/// computed when the fetch runs, so the query text itself stays exactly
+/// what the user typed.
+pub fn search_query(query: &str, hours: u64, now: chrono::DateTime<chrono::Utc>) -> String {
+    let query = query.trim();
+    match window_token(hours, now) {
+        Some(token) if !query.is_empty() => format!("{query} {token}"),
+        _ => query.to_string(),
     }
 }
 
@@ -296,11 +326,68 @@ pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<crat
             continue;
         }
         if !out.is_empty() {
-            out.push(SideRow::Divider(label));
+            out.push(SideRow::Divider(label.to_string()));
         }
         out.extend(group.iter().copied().map(SideRow::Item));
     }
     out
+}
+
+/// Display rows with the recent group split by milestone: pinned and
+/// requested groups on top, then one divider per milestone. Group labels
+/// carry the member count. `(no milestone)` always sorts last.
+pub fn grouped_pane_order(
+    pinned: &[u64],
+    requested: &[u64],
+    groups: &[(String, Vec<u64>)],
+) -> Vec<crate::model::SideRow> {
+    use crate::model::SideRow;
+    let mut out = pane_order(pinned, requested, &[]);
+    for (label, rows) in groups {
+        if rows.is_empty() {
+            continue;
+        }
+        out.push(SideRow::Divider(format!("{label} ({})", rows.len())));
+        out.extend(rows.iter().copied().map(SideRow::Item));
+    }
+    out
+}
+
+/// Bucket recent rows by milestone title for display. Group order is due
+/// date ascending, then title; milestones without a due date follow the
+/// dated ones, and `(no milestone)` stays last. Members keep the incoming
+/// order.
+pub fn milestone_groups(
+    rows: &[u64],
+    milestone_of: &dyn Fn(u64) -> Option<String>,
+    due_of: &dyn Fn(&str) -> Option<String>,
+) -> Vec<(String, Vec<u64>)> {
+    use std::collections::HashMap;
+    let mut buckets: HashMap<Option<String>, Vec<u64>> = HashMap::new();
+    for &n in rows {
+        buckets.entry(milestone_of(n)).or_default().push(n);
+    }
+    let mut groups: Vec<(Option<String>, Vec<u64>)> = buckets.into_iter().collect();
+    groups.sort_by(|(a, _), (b, _)| match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(a), Some(b)) => {
+            let due_order = match (due_of(a), due_of(b)) {
+                (Some(a), Some(b)) => a.cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            due_order.then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+        }
+    });
+    groups
+        .into_iter()
+        .map(|(title, rows)| {
+            (title.unwrap_or_else(|| "(no milestone)".to_string()), rows)
+        })
+        .collect()
 }
 
 /// True when `query` matches the row: a case-insensitive substring of
@@ -351,7 +438,8 @@ pub fn matches_board_filter(
 /// recent order; `Updated` sorts by the raw timestamp (newest first by
 /// default), `Author`/`State` by login/state, and `Label` by the first
 /// label name alphabetically.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SideSort {
     #[default]
     Default,
@@ -635,6 +723,42 @@ mod tests {
         assert_eq!(window_label(1), "open + merged ≤1h");
         assert_eq!(window_label(24), "open + merged ≤24h");
         assert_eq!(window_label(168), "open + merged ≤7d");
+        assert_eq!(window_label(0), "open + merged all time");
+    }
+
+    #[test]
+    fn search_query_adds_the_window_token_only_when_dated() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(window_token(24, now).as_deref(), Some("updated:>=2026-11-09"));
+        assert_eq!(window_token(168, now).as_deref(), Some("updated:>=2026-11-03"));
+        assert_eq!(window_token(0, now), None, "all time adds no token");
+        assert_eq!(search_query("label:bug", 24, now), "label:bug updated:>=2026-11-09");
+        assert_eq!(search_query("  label:bug  ", 0, now), "label:bug");
+        assert_eq!(search_query("", 24, now), "", "no query means no search");
+    }
+
+    #[test]
+    fn milestone_groups_order_by_due_then_title_with_none_last() {
+        // 1 and 2 share v1, 3 is v2, 4 has no milestone, 5 is undated.
+        let milestone = |n: u64| match n {
+            1 | 2 => Some("v1".to_string()),
+            3 => Some("v2".to_string()),
+            5 => Some("backlog".to_string()),
+            _ => None,
+        };
+        let due = |title: &str| match title {
+            "v1" => Some("2026-02-01T00:00:00Z".to_string()),
+            "v2" => Some("2026-01-01T00:00:00Z".to_string()),
+            _ => None,
+        };
+        let groups = milestone_groups(&[1, 2, 3, 4, 5], &milestone, &due);
+        let labels: Vec<&str> = groups.iter().map(|(label, _)| label.as_str()).collect();
+        assert_eq!(labels, vec!["v2", "v1", "backlog", "(no milestone)"]);
+        assert_eq!(groups[1].1, vec![1, 2], "members keep the incoming order");
+        assert_eq!(groups[3].1, vec![4]);
+        assert!(milestone_groups(&[], &milestone, &due).is_empty());
     }
 
     #[test]
@@ -724,11 +848,20 @@ mod tests {
         use crate::model::SideRow::{Divider, Item};
         assert_eq!(
             pane_order(&[9], &[7], &[5]),
-            vec![Item(9), Divider("requested"), Item(7), Divider("recent"), Item(5)]
+            vec![
+                Item(9),
+                Divider("requested".to_string()),
+                Item(7),
+                Divider("recent".to_string()),
+                Item(5)
+            ]
         );
         assert_eq!(pane_order(&[], &[7], &[]), vec![Item(7)]);
         assert_eq!(pane_order(&[], &[], &[]), Vec::<crate::model::SideRow>::new());
-        assert_eq!(pane_order(&[9], &[], &[5]), vec![Item(9), Divider("recent"), Item(5)]);
+        assert_eq!(
+            pane_order(&[9], &[], &[5]),
+            vec![Item(9), Divider("recent".to_string()), Item(5)]
+        );
     }
 
     #[test]

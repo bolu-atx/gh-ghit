@@ -1,4 +1,4 @@
-use super::Row;
+use super::{Row, SectionRows};
 use super::client::{client, graphql_auth_failure, graphql_url, post_json};
 use crate::model::{Author, BoardDetail, IssueData, Label};
 use serde_json::{json, Value};
@@ -27,7 +27,7 @@ const ISSUE_FIELDS: &str = r#"
 /// blow up the sidebar (or memory) no matter how many pages it fills.
 /// Fetching stops once the raw nodes reach this many, and `parse_rows`
 /// truncates the merged rows here too.
-const MAX_SECTION_ROWS: usize = 500;
+pub const MAX_SECTION_ROWS: usize = 500;
 
 /// Warm-refresh early stop: retire a section once a page holds this many
 /// rows already in the last cache (the overlap anchor), or after this many
@@ -49,8 +49,14 @@ fn query() -> String {
 }
 
 fn within_window(s: Option<&str>, now: chrono::DateTime<chrono::Utc>, hours: u64) -> bool {
+    if hours == 0 {
+        return true;
+    }
     s.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-        .is_some_and(|d| d.with_timezone(&chrono::Utc) >= now - chrono::Duration::hours(hours as i64))
+        .is_some_and(|d| {
+            let hours = hours.min(24 * 365 * 10) as i64;
+            d.with_timezone(&chrono::Utc) >= now - chrono::Duration::hours(hours)
+        })
 }
 
 fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -> Result<Vec<Row>, String> {
@@ -173,7 +179,7 @@ pub async fn sections(
     bearer: &str,
     cached: Option<&HashSet<u64>>,
     progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
-) -> Result<Vec<Row>, String> {
+) -> Result<SectionRows, String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let url = graphql_url();
     let client = client();
@@ -199,7 +205,9 @@ pub async fn sections(
         pages.push(value);
         if live.iter().all(|l| !l) || fetched >= MAX_SECTION_ROWS { break; }
     }
-    parse_rows(&pages, chrono::Utc::now(), hours)
+    let rows = parse_rows(&pages, chrono::Utc::now(), hours)?;
+    let capped = fetched >= MAX_SECTION_ROWS || rows.len() >= MAX_SECTION_ROWS;
+    Ok(SectionRows { rows, capped })
 }
 
 /// Merge a warm fetch into the last cached payload. Fresh rows win for the
