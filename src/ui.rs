@@ -890,6 +890,13 @@ fn section_list(
     let query = app.sidebar.search.clone();
     let mut items: Vec<ListItem<'static>> = vec![ListItem::new(Line::from(""))];
     for row in rows {
+        if let SideRow::Loading { guide } = row {
+            items.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{guide} loading …"), Style::new().fg(muted())),
+            ])));
+            continue;
+        }
         let Some(n) = row.number() else {
             let SideRow::Divider(label) = row else {
                 continue;
@@ -933,10 +940,17 @@ fn section_list(
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
         let pin = if app.nav.pinned.contains(&n) { "\u{f08d} " } else { "" };
         let data = app.issues.data.get(&n);
-        let num_style = Style::new()
-            .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
-            .bold();
-        let title_style = if sel {
+        let outside = matches!(row, SideRow::Tree { outside: true, .. });
+        let num_style = if outside {
+            Style::new().fg(muted())
+        } else {
+            Style::new()
+                .fg(data.map(|d| state_color(&d.state)).unwrap_or_else(muted))
+                .bold()
+        };
+        let title_style = if outside {
+            Style::new().fg(muted())
+        } else if sel {
             Style::new().fg(paper()).bold()
         } else {
             Style::new().fg(paper())
@@ -951,6 +965,9 @@ fn section_list(
         }
         first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
         first.extend(highlighted_spans(title_text, &query, title_style));
+        if outside {
+            first.push(Span::styled(" · outside query", Style::new().fg(muted())));
+        }
         if matches!(row, SideRow::Tree { .. }) {
             // GraphQL ships `{0, 0}` for every leaf: only real parents badge.
             if let Some(summary) = data.and_then(|d| d.sub_summary.as_ref()).filter(|s| s.total > 0) {
@@ -3891,6 +3908,50 @@ mod render_smoke {
         app.sidebar.milestone_filter.insert(Some("child".into()));
         let filtered = sidebar_text(&mut app);
         assert!(filtered.contains("#2") && !filtered.contains("└─"), "{filtered}");
+    }
+
+    #[test]
+    fn lazy_sub_issue_rows_render_dim_with_outside_marker() {
+        let mut app = App::new(Some("o/r".into()));
+        let mut parent = sample(1);
+        parent.title = "parent title".into();
+        parent.sub_summary = Some(crate::model::SubSummary { total: 2, completed: 0 });
+        app.issues.data.insert(1, parent);
+        let mut fetched = sample(2);
+        fetched.title = "fetched child".into();
+        app.issues.data.insert(2, fetched);
+        let mut outside = sample(3);
+        outside.title = "outside child".into();
+        app.issues.data.insert(3, outside);
+        app.issues.partial.insert(3);
+        app.nav.recent = vec![1, 2];
+        app.sidebar.sub_issue_tree = true;
+        app.subs.state.insert(1, crate::model::LazyChildren::Loading);
+        let loading = sidebar_text(&mut app);
+        assert!(loading.contains("▾ #1") && loading.contains("loading …"), "{loading}");
+        app.subs.state.insert(1, crate::model::LazyChildren::Loaded(vec![2, 3]));
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let area = app.hits.side_issue_area;
+        let buf = terminal.backend().buffer();
+        let cell = |number: char| -> (u16, u16) {
+            (area.y..area.y + area.height)
+                .find_map(|y| (area.x..area.x + area.width.saturating_sub(1)).find_map(|x| {
+                    (buf[(x, y)].symbol() == "#"
+                        && buf[(x + 1, y)].symbol().starts_with(number))
+                        .then_some((x, y))
+                }))
+                .expect("child row renders")
+        };
+        let text: String = (area.y..area.y + area.height).map(|y| {
+            (area.x..area.x + area.width).map(|x| buf[(x, y)].symbol()).collect::<String>()
+        }).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("outside query"), "{text}");
+        assert_eq!(buf[cell('3')].style().fg, Some(crate::theme::muted()), "lazy child dim");
+        assert_ne!(buf[cell('2')].style().fg, Some(crate::theme::muted()), "query child normal");
+        assert_eq!(app.issue_rows().iter().filter_map(|r| r.number()).collect::<Vec<_>>(),
+            vec![1, 2, 3]);
     }
 
     #[test]

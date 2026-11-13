@@ -182,7 +182,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             let selected = app.effective(&rows);
             if key.code == KeyCode::Char('Z') {
                 let (_, _, recent) = app.pane_groups(false, true);
-                let all = core::tree_rows(&recent, &app.issues.data, &Default::default());
+                let all = core::tree_rows(
+                    &recent, &app.issues.data, &Default::default(), &app.subs.state);
                 let parents: Vec<u64> = all.iter().filter_map(|row| match row {
                     crate::model::SideRow::Tree { number, has_children: true, .. } => Some(*number),
                     _ => None,
@@ -198,9 +199,17 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 {
                     let (has_children, folded, depth) = (*has_children, *folded, *depth);
                     match key.code {
-                        KeyCode::Right if has_children => { app.sidebar.folded_issues.remove(&n); }
+                        KeyCode::Right if has_children => {
+                            app.sidebar.folded_issues.remove(&n);
+                            app.load_sub_issues(n);
+                        }
+                        // Act on the fold the row shows: an unloaded parent
+                        // reads folded without being in `folded_issues`.
                         KeyCode::Char('z') if has_children => {
-                            if !app.sidebar.folded_issues.remove(&n) {
+                            if folded {
+                                app.sidebar.folded_issues.remove(&n);
+                                app.load_sub_issues(n);
+                            } else {
                                 app.sidebar.folded_issues.insert(n);
                             }
                         }
@@ -962,14 +971,17 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     );
     if let Some(n) = issue_hit {
         if !drag && app.sidebar.sub_issue_tree {
-            if let Some(crate::model::SideRow::Tree { depth, has_children: true, .. }) =
+            if let Some(&crate::model::SideRow::Tree { depth, has_children: true, folded, .. }) =
                 app.hits.side_issue_rows.iter().find(|row| row.number() == Some(n))
             {
-                let glyph_x = app.hits.side_issue_area.x + 3 + 2 * (*depth as u16);
+                let glyph_x = app.hits.side_issue_area.x + 3 + 2 * (depth as u16);
                 let rect = sidebar_row_rect(app.hits.side_issue_area, &app.hits.side_issue_rows,
                     &app.issues.data, &app.diff.expanded_rows, n);
                 if x == glyph_x && rect.is_some_and(|rect| y == rect.y) {
-                    if !app.sidebar.folded_issues.remove(&n) {
+                    if folded {
+                        app.sidebar.folded_issues.remove(&n);
+                        app.load_sub_issues(n);
+                    } else {
                         app.sidebar.folded_issues.insert(n);
                     }
                     app.nav.pane = Pane::Issues;

@@ -174,7 +174,7 @@ pub struct SubSummary {
     pub completed: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueData {
     pub number: u64,
@@ -348,7 +348,17 @@ fn ref_url_re() -> &'static Regex {
 pub enum SideRow {
     Item(u64),
     /// Sub-issue tree row: `guide` is the ready-to-draw connector column.
-    Tree { number: u64, depth: usize, guide: String, has_children: bool, folded: bool },
+    /// `outside` marks a child the current query did not fetch.
+    Tree {
+        number: u64,
+        depth: usize,
+        guide: String,
+        has_children: bool,
+        folded: bool,
+        outside: bool,
+    },
+    /// Child row standing in for a REST sub-issue fetch still in flight.
+    Loading { guide: String },
     Divider(String),
 }
 
@@ -356,9 +366,18 @@ impl SideRow {
     pub fn number(&self) -> Option<u64> {
         match self {
             SideRow::Item(n) | SideRow::Tree { number: n, .. } => Some(*n),
-            SideRow::Divider(_) => None,
+            SideRow::Loading { .. } | SideRow::Divider(_) => None,
         }
     }
+}
+
+/// Per-parent REST sub-issue state for the opt-in sidebar tree. Only
+/// parents whose summary reports children the fetched rows do not cover
+/// are ever requested; a parent holds one state for the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LazyChildren {
+    Loading,
+    Loaded(Vec<u64>),
 }
 
 /// Display grouping for the sidebar's recent rows.
