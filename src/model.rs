@@ -347,13 +347,15 @@ fn ref_url_re() -> &'static Regex {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SideRow {
     Item(u64),
+    /// Sub-issue tree row: `guide` is the ready-to-draw connector column.
+    Tree { number: u64, depth: usize, guide: String, has_children: bool, folded: bool },
     Divider(String),
 }
 
 impl SideRow {
     pub fn number(&self) -> Option<u64> {
         match self {
-            SideRow::Item(n) => Some(*n),
+            SideRow::Item(n) | SideRow::Tree { number: n, .. } => Some(*n),
             SideRow::Divider(_) => None,
         }
     }

@@ -5,6 +5,10 @@
 //! unit test without a TUI. The stateful shells (`app`, `input`) delegate to
 //! these functions instead of reimplementing the rules inline.
 
+mod tree;
+
+pub(crate) use tree::tree_rows;
+
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -941,6 +945,42 @@ mod tests {
             parent: None,
             sub_summary: None,
         }
+    }
+
+    #[test]
+    fn tree_orders_siblings_promotes_orphans_and_caps_depth() {
+        let mut data = HashMap::new();
+        for n in 1..=7 {
+            let mut issue = sort_issue(n, "", "", "OPEN", &[]);
+            issue.parent = match n { 1 => None, 2 | 3 => Some(1), _ => Some(n - 1) };
+            data.insert(n, issue);
+        }
+        let rows = tree_rows(&[1, 3, 2, 4, 5, 6, 7], &data, &HashSet::new());
+        assert_eq!(rows.iter().filter_map(|r| r.number()).collect::<Vec<_>>(),
+            vec![1, 3, 4, 5, 6, 7, 2]);
+        assert!(matches!(rows[5], crate::model::SideRow::Tree { depth: 4, .. }));
+        let orphan = tree_rows(&[2], &data, &HashSet::new());
+        assert!(matches!(orphan[0], crate::model::SideRow::Tree { depth: 0, .. }));
+        let folded = tree_rows(&[1, 2, 3], &data, &HashSet::from([1]));
+        assert_eq!(folded.len(), 1);
+    }
+
+    #[test]
+    fn tree_guides_continue_past_open_siblings() {
+        // 1 ─┬ 2 ── 4
+        //    └ 3
+        let mut data = HashMap::new();
+        for (n, parent) in [(1, None), (2, Some(1)), (3, Some(1)), (4, Some(2))] {
+            let mut issue = sort_issue(n, "", "", "OPEN", &[]);
+            issue.parent = parent;
+            data.insert(n, issue);
+        }
+        let guides: Vec<String> = tree_rows(&[1, 2, 4, 3], &data, &HashSet::new()).into_iter()
+            .map(|row| match row {
+                crate::model::SideRow::Tree { guide, .. } => guide,
+                other => panic!("{other:?}"),
+            }).collect();
+        assert_eq!(guides, vec!["", "├─", "│ └─", "└─"]);
     }
 
     fn sort_data() -> HashMap<u64, IssueData> {
