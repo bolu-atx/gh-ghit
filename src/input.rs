@@ -176,6 +176,47 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.step_issue(1);
             }
         }
+        KeyCode::Right | KeyCode::Left | KeyCode::Char('z') | KeyCode::Char('Z')
+            if app.nav.pane == Pane::Issues && app.sidebar.sub_issue_tree => {
+            let rows = app.issue_rows();
+            let selected = app.effective(&rows);
+            if key.code == KeyCode::Char('Z') {
+                let (_, _, recent) = app.pane_groups(false, true);
+                let all = core::tree_rows(&recent, &app.issues.data, &Default::default());
+                let parents: Vec<u64> = all.iter().filter_map(|row| match row {
+                    crate::model::SideRow::Tree { number, has_children: true, .. } => Some(*number),
+                    _ => None,
+                }).collect();
+                if parents.iter().any(|n| app.sidebar.folded_issues.contains(n)) {
+                    app.sidebar.folded_issues.clear();
+                } else {
+                    app.sidebar.folded_issues.extend(parents);
+                }
+            } else if let Some(n) = selected {
+                if let Some(crate::model::SideRow::Tree { has_children, folded, depth, .. }) =
+                    rows.iter().find(|row| row.number() == Some(n))
+                {
+                    let (has_children, folded, depth) = (*has_children, *folded, *depth);
+                    match key.code {
+                        KeyCode::Right if has_children => { app.sidebar.folded_issues.remove(&n); }
+                        KeyCode::Char('z') if has_children => {
+                            if !app.sidebar.folded_issues.remove(&n) {
+                                app.sidebar.folded_issues.insert(n);
+                            }
+                        }
+                        KeyCode::Left if has_children && !folded => {
+                            app.sidebar.folded_issues.insert(n);
+                        }
+                        KeyCode::Left if depth > 0 => {
+                            if let Some(parent) = app.issues.data.get(&n).and_then(|d| d.parent) {
+                                app.request_issue(parent);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         KeyCode::Enter => {
             if graph_focused(app) {
                 app.open_graph_selection();
@@ -920,6 +961,23 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         y,
     );
     if let Some(n) = issue_hit {
+        if !drag && app.sidebar.sub_issue_tree {
+            if let Some(crate::model::SideRow::Tree { depth, has_children: true, .. }) =
+                app.hits.side_issue_rows.iter().find(|row| row.number() == Some(n))
+            {
+                let glyph_x = app.hits.side_issue_area.x + 3 + 2 * (*depth as u16);
+                let rect = sidebar_row_rect(app.hits.side_issue_area, &app.hits.side_issue_rows,
+                    &app.issues.data, &app.diff.expanded_rows, n);
+                if x == glyph_x && rect.is_some_and(|rect| y == rect.y) {
+                    if !app.sidebar.folded_issues.remove(&n) {
+                        app.sidebar.folded_issues.insert(n);
+                    }
+                    app.nav.pane = Pane::Issues;
+                    app.nav.focus = Focus::Main;
+                    return;
+                }
+            }
+        }
         let flash = sidebar_row_rect(
             app.hits.side_issue_area,
             &app.hits.side_issue_rows,

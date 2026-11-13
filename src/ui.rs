@@ -546,25 +546,28 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         (app.sidebar.group_by == model::GroupBy::None, "none"),
         (app.sidebar.group_by == model::GroupBy::Milestone, "milestone"),
     ]);
+    right.choice(base + 1, Some("nest sub-issues"), &[
+        (!app.sidebar.sub_issue_tree, "off"), (app.sidebar.sub_issue_tree, "on"),
+    ]);
     right.section(4, "Sort");
     use crate::core::SideSort;
-    right.choice(base + 1, Some("key"), &[
+    right.choice(base + 2, Some("key"), &[
         (app.sidebar.sort == SideSort::Default, "default"),
         (app.sidebar.sort == SideSort::Updated, "updated"),
         (app.sidebar.sort == SideSort::Author, "author"),
         (app.sidebar.sort == SideSort::State, "state"),
         (app.sidebar.sort == SideSort::Label, "label"),
     ]);
-    right.choice(base + 2, Some("order"), &[
+    right.choice(base + 3, Some("order"), &[
         (!app.sidebar.sort_desc, "ascending"),
         (app.sidebar.sort_desc, "descending"),
     ]);
     right.quiet_section("Display");
     right.chips(Some("issues"), model::RowFields::ISSUE_ORDER.iter().enumerate().map(|(i, name)|
-        (base + 3 + i, app.sidebar.row_issue.shown(false, i).unwrap_or(false),
+        (base + 4 + i, app.sidebar.row_issue.shown(false, i).unwrap_or(false),
          name.to_string())).collect());
     right.chips(Some("PRs"), model::RowFields::PR_ORDER.iter().enumerate().map(|(i, name)|
-        (base + 3 + model::RowFields::ISSUE_ORDER.len() + i,
+        (base + 4 + model::RowFields::ISSUE_ORDER.len() + i,
          app.sidebar.row_pr.shown(true, i).unwrap_or(false), name.to_string())).collect());
     app.sidebar.format_rows = vec![0; app.format_widgets()];
     for &(index, row) in left.rows.iter().chain(&right.rows) {
@@ -887,7 +890,7 @@ fn section_list(
     let query = app.sidebar.search.clone();
     let mut items: Vec<ListItem<'static>> = vec![ListItem::new(Line::from(""))];
     for row in rows {
-        let SideRow::Item(n) = row else {
+        let Some(n) = row.number() else {
             let SideRow::Divider(label) = row else {
                 continue;
             };
@@ -908,7 +911,7 @@ fn section_list(
         // state (j/k continue from it); the ListState cursor underneath
         // is untouched, so tabbing away and back restores the exact row
         // and scroll position.
-        let sel = app.nav.current == Some(*n) || mark == Some(*n);
+        let sel = app.nav.current == Some(n) || mark == Some(n);
         let marker = if sel { "█ " } else { "  " };
         let marker_style = if sel {
             Style::new().fg(amber()).bold()
@@ -916,10 +919,10 @@ fn section_list(
             Style::new().fg(muted())
         };
         let (title_text, labels, updated, status, author, milestone) =
-            match app.issues.data.get(n) {
+            match app.issues.data.get(&n) {
             Some(d) => {
-                let st = app.issues.statuses.get(n).cloned().unwrap_or_default();
-                let pinned = app.nav.pinned.contains(n);
+                let st = app.issues.statuses.get(&n).cloned().unwrap_or_default();
+                let pinned = app.nav.pinned.contains(&n);
                 let (_, labels, updated, status, author, milestone) =
                     model::sidebar_lines(d, &st, now, 38, pinned, &frame.fields);
                 (model::slug(&d.title, 30), labels, updated, status, author, milestone)
@@ -928,8 +931,8 @@ fn section_list(
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
-        let pin = if app.nav.pinned.contains(n) { "\u{f08d} " } else { "" };
-        let data = app.issues.data.get(n);
+        let pin = if app.nav.pinned.contains(&n) { "\u{f08d} " } else { "" };
+        let data = app.issues.data.get(&n);
         let num_style = Style::new()
             .fg(data.map(|d| state_color(&d.state)).unwrap_or(muted()))
             .bold();
@@ -942,8 +945,19 @@ fn section_list(
             Span::styled(marker, marker_style),
             Span::styled(pin, Style::new().fg(amber())),
         ];
+        if let SideRow::Tree { guide, has_children, folded, .. } = row {
+            let glyph = if *has_children { if *folded { "▸" } else { "▾" } } else { " " };
+            first.push(Span::styled(format!("{guide}{glyph} "), Style::new().fg(muted())));
+        }
         first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
         first.extend(highlighted_spans(title_text, &query, title_style));
+        if matches!(row, SideRow::Tree { .. }) {
+            // GraphQL ships `{0, 0}` for every leaf: only real parents badge.
+            if let Some(summary) = data.and_then(|d| d.sub_summary.as_ref()).filter(|s| s.total > 0) {
+                first.push(Span::styled(format!(" {}/{}", summary.completed, summary.total),
+                    Style::new().fg(muted())));
+            }
+        }
         // PR head-commit CI rollup: one glyph, no text, so hit-testing
         // and row height are untouched. The Row fields toggle gates it.
         if frame.checks {
@@ -976,7 +990,7 @@ fn section_list(
             second.push(Span::styled(text, style));
         }
         let mut lines = vec![Line::from(first), Line::from(second)];
-        if app.diff.expanded_rows.contains(n) {
+        if app.diff.expanded_rows.contains(&n) {
             if let Some(d) = data {
                 lines.extend(expanded_row_lines(d, inner_width));
             }
@@ -3795,12 +3809,12 @@ mod render_smoke {
         assert!(app.sidebar.format_focus < left);
         handle_key(&mut app, key(KeyCode::Char('k')));
         assert!(app.sidebar.format_focus < left);
-        app.sidebar.format_focus = left + 1;
+        app.sidebar.format_focus = left + 2;
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert_eq!(app.sidebar.sort, crate::core::SideSort::Updated);
         assert!(app.sidebar.sort_desc);
         let descending = app.issue_rows();
-        app.sidebar.format_focus = left + 2;
+        app.sidebar.format_focus = left + 3;
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert!(!app.sidebar.sort_desc);
         assert_ne!(app.issue_rows(), descending);
@@ -3845,6 +3859,67 @@ mod render_smoke {
         assert_eq!(app.sidebar.group_by, GroupBy::Milestone);
         let text = frame_text(&mut app);
         assert!(text.contains("filtered"), "pane title marks active filters: {text}");
+    }
+
+    #[test]
+    fn sub_issue_tree_renders_folds_and_promotes_filtered_children() {
+        let mut app = App::new(Some("o/r".to_string()));
+        let mut parent = sample(1);
+        parent.milestone = Some("parent".into());
+        parent.sub_summary = Some(crate::model::SubSummary { total: 2, completed: 1 });
+        let mut child = sample(2);
+        child.parent = Some(1);
+        child.milestone = Some("child".into());
+        app.issues.data.insert(1, parent);
+        app.issues.data.insert(2, child);
+        app.nav.recent = vec![1, 2];
+        let off = sidebar_text(&mut app);
+        assert!(!off.contains("▾") && !off.contains("└─"));
+        // A leaf's `{0, 0}` summary (GraphQL default) never badges.
+        app.issues.data.get_mut(&2).unwrap().sub_summary =
+            Some(crate::model::SubSummary { total: 0, completed: 0 });
+        app.sidebar.sub_issue_tree = true;
+        app.sidebar.group_by = crate::model::GroupBy::Milestone;
+        let on = sidebar_text(&mut app);
+        assert!(on.contains("▾ #1") && on.contains("└─  #2") && on.contains("1/2"), "{on}");
+        assert!(!on.contains("0/0"), "leaf rows carry no badge: {on}");
+        assert_eq!(app.issue_rows().iter().filter(|r| matches!(r,
+            crate::model::SideRow::Divider(_))).count(), 1);
+        app.sidebar.folded_issues.insert(1);
+        let folded = sidebar_text(&mut app);
+        assert!(folded.contains("▸ #1") && !folded.contains("#2"), "{folded}");
+        app.sidebar.milestone_filter.insert(Some("child".into()));
+        let filtered = sidebar_text(&mut app);
+        assert!(filtered.contains("#2") && !filtered.contains("└─"), "{filtered}");
+    }
+
+    #[test]
+    fn sub_issue_tree_keys_and_glyph_click_toggle_folds() {
+        let mut app = App::new(Some("o/r".into()));
+        let parent = sample(1);
+        let mut child = sample(2);
+        child.parent = Some(1);
+        app.issues.data.insert(1, parent);
+        app.issues.data.insert(2, child);
+        app.nav.recent = vec![1, 2];
+        app.sidebar.sub_issue_tree = true;
+        app.nav.pane = crate::app::Pane::Issues;
+        app.show_issue(1);
+        handle_key(&mut app, key(KeyCode::Left));
+        assert!(app.sidebar.folded_issues.contains(&1));
+        handle_key(&mut app, key(KeyCode::Right));
+        assert!(!app.sidebar.folded_issues.contains(&1));
+        handle_key(&mut app, key(KeyCode::Char('z')));
+        assert!(app.sidebar.folded_issues.contains(&1));
+        handle_key(&mut app, key(KeyCode::Char('Z')));
+        assert!(app.sidebar.folded_issues.is_empty());
+        frame_text(&mut app);
+        let area = app.hits.side_issue_area;
+        handle_mouse(&mut app, MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left), column: area.x + 3,
+            row: area.y + 2, modifiers: KeyModifiers::empty(),
+        });
+        assert!(app.sidebar.folded_issues.contains(&1));
     }
 
     #[test]
@@ -4014,7 +4089,7 @@ mod render_smoke {
         assert!(text.contains("Display") && text.contains("issues"));
         assert!(text.contains("PRs"));
         assert!(app.sidebar.row_issue.labels);
-        app.sidebar.format_focus = app.format_left_widgets() + 3;
+        app.sidebar.format_focus = app.format_left_widgets() + 4;
         handle_key(&mut app, key(KeyCode::Char('j')));
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert!(!app.sidebar.row_issue.updated, "space flips the focused row");

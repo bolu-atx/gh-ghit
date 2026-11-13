@@ -280,6 +280,8 @@ pub(crate) struct Sidebar {
     pub(crate) name_edit: bool,
     pub(crate) name_draft: String,
     pub(crate) group_by: model::GroupBy,
+    pub(crate) sub_issue_tree: bool,
+    pub(crate) folded_issues: HashSet<u64>,
     /// Selected label pills. Empty means no label filter. Pins and
     /// requested rows skip it.
     pub(crate) label_filter: HashSet<String>,
@@ -317,7 +319,8 @@ impl Sidebar {
             show_open_issues: true, show_closed_issues: true, query_edit: false,
             query_draft: String::new(), query_active: String::new(),
             saved_queries: Vec::new(), name_edit: false, name_draft: String::new(),
-            group_by: model::GroupBy::None, label_filter: HashSet::new(),
+            group_by: model::GroupBy::None, sub_issue_tree: false,
+            folded_issues: HashSet::new(), label_filter: HashSet::new(),
             milestone_filter: HashSet::new(),
             labels: vec![], milestones: vec![],
             meta_rx: None, meta_repo: None, meta_loaded: false,
@@ -1083,6 +1086,34 @@ impl App {
     /// rows, so rows the user asked for never move under a group.
     fn pane_rows(&self, want_pr: bool, filtered: bool) -> Vec<model::SideRow> {
         let (p, v, r) = self.pane_groups(want_pr, filtered);
+        if !want_pr && self.sidebar.sub_issue_tree {
+            let mut out = core::pane_order(&p, &v, &[]);
+            if self.sidebar.group_by == model::GroupBy::Milestone {
+                let visible: HashSet<u64> = r.iter().copied().collect();
+                let milestone_of = |mut n: u64| {
+                    let mut seen = HashSet::new();
+                    while seen.insert(n) {
+                        match self.issues.data.get(&n).and_then(|d| d.parent) {
+                            Some(parent) if visible.contains(&parent) => n = parent,
+                            _ => break,
+                        }
+                    }
+                    self.issues.data.get(&n).and_then(|d| d.milestone.clone())
+                };
+                let due_of = |title: &str| self.sidebar.milestones.iter()
+                    .find(|m| m.title == title).and_then(|m| m.due_on.clone());
+                for (label, rows) in core::milestone_groups(&r, &milestone_of, &due_of) {
+                    out.push(model::SideRow::Divider(format!("{label} ({})", rows.len())));
+                    out.extend(core::tree_rows(&rows, &self.issues.data, &self.sidebar.folded_issues));
+                }
+            } else {
+                if !out.is_empty() && !r.is_empty() {
+                    out.push(model::SideRow::Divider("recent".into()));
+                }
+                out.extend(core::tree_rows(&r, &self.issues.data, &self.sidebar.folded_issues));
+            }
+            return out;
+        }
         if self.sidebar.group_by != model::GroupBy::Milestone {
             return core::pane_order(&p, &v, &r);
         }
@@ -1253,7 +1284,7 @@ impl App {
     }
 
     pub(crate) fn format_widgets(&self) -> usize {
-        self.format_left_widgets() + 3
+        self.format_left_widgets() + 4
             + model::RowFields::ISSUE_ORDER.len() + model::RowFields::PR_ORDER.len()
     }
 
@@ -1304,9 +1335,13 @@ impl App {
                 self.sidebar.group_by = self.sidebar.group_by.next();
                 self.persist_prefs();
             }
-            n if n == left + 1 => self.cycle_sort(),
-            n if n == left + 2 => self.toggle_sort_dir(),
-            n => self.toggle_sidebar_row_field(n - left - 3),
+            n if n == left + 1 => {
+                self.sidebar.sub_issue_tree = !self.sidebar.sub_issue_tree;
+                self.persist_prefs();
+            }
+            n if n == left + 2 => self.cycle_sort(),
+            n if n == left + 3 => self.toggle_sort_dir(),
+            n => self.toggle_sidebar_row_field(n - left - 4),
         }
     }
 
@@ -2248,6 +2283,7 @@ impl App {
         prefs.show_closed_issues = self.sidebar.show_closed_issues;
         prefs.merged_window_hours = self.sections.merged_window_hours;
         prefs.group_by = self.sidebar.group_by;
+        prefs.sub_issue_tree = self.sidebar.sub_issue_tree;
         prefs.sort = self.sidebar.sort;
         prefs.sort_desc = self.sidebar.sort_desc;
         if let Some(repo) = self.repo_key() {
@@ -2303,6 +2339,7 @@ impl App {
         self.sidebar.row_issue = prefs.row_issue;
         self.sidebar.row_pr = prefs.row_pr;
         self.sidebar.group_by = prefs.group_by;
+        self.sidebar.sub_issue_tree = prefs.sub_issue_tree;
         self.sidebar.sort = prefs.sort;
         self.sidebar.sort_desc = prefs.sort_desc;
         self.board.fields = prefs.board_cards;

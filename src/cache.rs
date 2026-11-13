@@ -201,6 +201,8 @@ pub struct Prefs {
     #[serde(default)]
     pub group_by: crate::model::GroupBy,
     #[serde(default)]
+    pub sub_issue_tree: bool,
+    #[serde(default)]
     pub sort: crate::core::SideSort,
     #[serde(default)]
     pub sort_desc: bool,
@@ -219,6 +221,7 @@ impl Default for Prefs {
             saved_queries: Vec::new(),
             sidebar_filters: std::collections::HashMap::new(),
             group_by: crate::model::GroupBy::None,
+            sub_issue_tree: false,
             sort: crate::core::SideSort::Default,
             sort_desc: false }
     }
