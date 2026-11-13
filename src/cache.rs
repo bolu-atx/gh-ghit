@@ -77,6 +77,8 @@ pub enum Key {
     Graph { repo: String, number: u64 },
     Sections { repo: String, hours: u64 },
     Board { owner: String },
+    Labels { repo: String },
+    Milestones { repo: String },
 }
 
 impl Key {
@@ -90,6 +92,8 @@ impl Key {
             Key::Graph { repo, number } => format!("graph-{h}-{}-{number}", slug(repo)),
             Key::Sections { repo, hours } => format!("sections-{h}-{}-{hours}", slug(repo)),
             Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
+            Key::Labels { repo } => format!("labels-{h}-{}", slug(repo)),
+            Key::Milestones { repo } => format!("milestones-{h}-{}", slug(repo)),
         }
     }
 }
@@ -126,7 +130,7 @@ fn prefs_path() -> PathBuf {
 }
 
 fn default_window() -> u64 {
-    24
+    crate::core::DEFAULT_WINDOW_HOURS
 }
 
 fn default_true() -> bool {
@@ -140,6 +144,16 @@ fn default_true() -> bool {
 pub struct SavedBoardFilter {
     #[serde(default)]
     pub filter: String,
+    #[serde(default)]
+    pub milestones: Vec<Option<String>>,
+}
+
+/// Sidebar filter saved per repo: the selected label and milestone
+/// pills. `None` in `milestones` is the "(no milestone)" pill.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SavedSidebarFilter {
+    #[serde(default)]
+    pub labels: Vec<String>,
     #[serde(default)]
     pub milestones: Vec<Option<String>>,
 }
@@ -170,6 +184,14 @@ pub struct Prefs {
     pub merged_window_hours: u64,
     #[serde(default)]
     pub queries: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub sidebar_filters: std::collections::HashMap<String, SavedSidebarFilter>,
+    #[serde(default)]
+    pub group_by: crate::model::GroupBy,
+    #[serde(default)]
+    pub sort: crate::core::SideSort,
+    #[serde(default)]
+    pub sort_desc: bool,
 }
 
 impl Default for Prefs {
@@ -181,7 +203,11 @@ impl Default for Prefs {
             show_open_prs: true, show_merged_prs: true,
             show_open_issues: true, show_closed_issues: true,
             merged_window_hours: default_window(),
-            queries: std::collections::HashMap::new() }
+            queries: std::collections::HashMap::new(),
+            sidebar_filters: std::collections::HashMap::new(),
+            group_by: crate::model::GroupBy::None,
+            sort: crate::core::SideSort::Default,
+            sort_desc: false }
     }
 }
 
@@ -250,6 +276,8 @@ mod tests {
                 Key::Graph { repo: repo.to_string(), number: 7 }.name(),
                 Key::Sections { repo: repo.to_string(), hours: 24 }.name(),
                 Key::Board { owner: "octo".to_string() }.name(),
+                Key::Labels { repo: repo.to_string() }.name(),
+                Key::Milestones { repo: repo.to_string() }.name(),
             ]
         };
         std::env::set_var("GH_HOST", "github.com");
@@ -310,6 +338,7 @@ mod tests {
         prefs.row_pr.checks = false;
         prefs.show_merged_prs = false;
         prefs.merged_window_hours = 1;
+        prefs.group_by = crate::model::GroupBy::Milestone;
         prefs.board_filters.insert(
             "o".to_string(),
             SavedBoardFilter {
@@ -324,6 +353,7 @@ mod tests {
         assert!(!back.row_pr.checks);
         assert!(!back.show_merged_prs);
         assert_eq!(back.merged_window_hours, 1);
+        assert_eq!(back.group_by, crate::model::GroupBy::Milestone);
         assert_eq!(back.board_filters["o"].filter, "bug");
         assert_eq!(
             back.board_filters["o"].milestones,

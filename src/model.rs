@@ -323,21 +323,49 @@ fn ref_url_re() -> &'static Regex {
 }
 
 /// A sidebar row: an issue/PR number, or a divider labeled with the
-/// section that follows it (`requested`, `recent`; the leading pinned
-/// section needs no divider since its rows carry 📌).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// section that follows it (`requested`, `recent`, or a milestone group).
+/// The leading pinned section needs no divider since its rows carry 📌.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SideRow {
     Item(u64),
-    Divider(&'static str),
+    Divider(String),
 }
 
 impl SideRow {
-    pub fn number(self) -> Option<u64> {
+    pub fn number(&self) -> Option<u64> {
         match self {
-            SideRow::Item(n) => Some(n),
+            SideRow::Item(n) => Some(*n),
             SideRow::Divider(_) => None,
         }
     }
+}
+
+/// Display grouping for the sidebar's recent rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupBy {
+    #[default]
+    None,
+    Milestone,
+}
+
+impl GroupBy {
+    /// Space in the Format dialog cycles the two modes.
+    pub fn next(self) -> Self {
+        match self {
+            GroupBy::None => GroupBy::Milestone,
+            GroupBy::Milestone => GroupBy::None,
+        }
+    }
+}
+
+/// One repository milestone from the REST milestones listing. `due_on`
+/// orders the sidebar's milestone groups.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Milestone {
+    pub title: String,
+    #[serde(default)]
+    pub due_on: Option<String>,
 }
 
 /// Cap on related-issue rows pulled out of one body.

@@ -243,19 +243,26 @@ pub(crate) struct SectionFeed {
     /// The next section payload replaces (search) instead of appending.
     pub(crate) replace: bool,
     pub(crate) merged_window_hours: u64,
+    /// A cap notice already showed for this fetch setting, so the 5s
+    /// auto-refresh never repeats it.
+    pub(crate) cap_notified: bool,
 }
 
 impl SectionFeed {
     pub(crate) fn new() -> Self {
         Self { rx: None, last_fetch: Instant::now(),
             auto_refresh_interval: auto_refresh_interval_default(),
-            auto_refresh: false, progress: None, replace: false, merged_window_hours: 24 }
+            auto_refresh: false, progress: None, replace: false, merged_window_hours: 24,
+            cap_notified: false }
     }
 }
 
+/// Format dialog picker lists: repository labels and milestones.
+pub(crate) type RepoMeta = (Vec<String>, Vec<model::Milestone>);
+
 /// Sidebar state: `/` search text and editing flag, client-side sort,
-/// the `f` format dialog (open toggles, query draft/active, row fields),
-/// and the two pane list states.
+/// the `f` format dialog (open toggles, query draft/active, label and
+/// milestone pickers, group-by, row fields), and the two pane list states.
 pub(crate) struct Sidebar {
     pub(crate) search: String,
     pub(crate) searching: bool,
@@ -268,13 +275,30 @@ pub(crate) struct Sidebar {
     pub(crate) query_edit: bool,
     pub(crate) query_draft: String,
     pub(crate) query_active: String,
+    pub(crate) group_by: model::GroupBy,
+    /// Selected label pills. Empty means no label filter. Pins and
+    /// requested rows skip it.
+    pub(crate) label_filter: HashSet<String>,
+    /// Selected milestone pills; `None` is the "(no milestone)" pill.
+    /// Empty means no milestone filter.
+    pub(crate) milestone_filter: HashSet<Option<String>>,
+    /// Repository labels for the Format dialog picker.
+    pub(crate) labels: Vec<String>,
+    /// Repository milestones, in REST order, with due dates for grouping.
+    pub(crate) milestones: Vec<model::Milestone>,
+    /// Label/milestone fetch for the dialog; lands in `poll_repo_meta`.
+    pub(crate) meta_rx: Option<std::sync::mpsc::Receiver<Result<RepoMeta, String>>>,
+    /// Repo whose pickers are loaded or in flight, so reopening the
+    /// dialog does not refetch.
+    pub(crate) meta_repo: Option<String>,
+    /// True once a picker fetch landed, so an empty list is trusted.
+    pub(crate) meta_loaded: bool,
     /// Format dialog (`f`) state.
     pub(crate) filter_open: bool,
     /// Row fields per pane, toggled in the dialog Row fields section.
     pub(crate) row_issue: model::RowFields,
     pub(crate) row_pr: model::RowFields,
-    /// Active widget in the dialog Row fields section: 0..5 are the
-    /// Issues rows, 5..11 the PRs rows.
+    /// Active widget in the dialog, in `format_widgets` order.
     pub(crate) format_focus: usize,
     pub(crate) issue_state: ListState,
     pub(crate) pr_state: ListState,
@@ -285,7 +309,12 @@ impl Sidebar {
         Self { search: String::new(), searching: false, sort: core::SideSort::Default,
             sort_desc: false, show_open_prs: true, show_merged_prs: true,
             show_open_issues: true, show_closed_issues: true, query_edit: false,
-            query_draft: String::new(), query_active: String::new(), filter_open: false,
+            query_draft: String::new(), query_active: String::new(),
+            group_by: model::GroupBy::None, label_filter: HashSet::new(),
+            milestone_filter: HashSet::new(),
+            labels: vec![], milestones: vec![],
+            meta_rx: None, meta_repo: None, meta_loaded: false,
+            filter_open: false,
             row_issue: model::RowFields::default(), row_pr: model::RowFields::default(),
             format_focus: 0,
             issue_state: ListState::default(), pr_state: ListState::default() }
@@ -751,6 +780,7 @@ impl App {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
         self.sections.last_fetch = Instant::now();
         self.sections.auto_refresh = false;
+        self.sections.replace = false;
         let hours = self.sections.merged_window_hours;
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
@@ -772,25 +802,64 @@ impl App {
         {
             return;
         }
-        self.merge_recent_sections();
+        if self.sidebar.query_active.trim().is_empty() {
+            self.merge_recent_sections();
+        } else {
+            // Periodic refresh: no "searching" toast on every pass.
+            self.search_fetch(self.sidebar.query_active.clone());
+        }
         if self.sections.rx.is_some() {
             self.sections.auto_refresh = true;
         }
     }
 
     /// Window change: drop unopened background rows and refetch from
-    /// scratch so a narrower window actually shrinks the list. Explicitly
-    /// opened rows keep their data and stay listed.
+    /// scratch so a narrower window actually shrinks the list. The active
+    /// query keeps its text; the window only changes the search's
+    /// `updated:` token.
     pub(crate) fn refetch_recent(&mut self) {
+        self.sections.cap_notified = false;
         self.drop_unvisited_background();
+        if self.sidebar.query_active.trim().is_empty() {
+            self.merge_recent_sections();
+        } else {
+            self.run_gh_search(self.sidebar.query_active.clone());
+        }
+    }
+
+    /// Set the merged/closed window and refetch the active query path.
+    pub(crate) fn set_window(&mut self, hours: u64) {
+        self.sections.merged_window_hours = hours;
+        self.refetch_recent();
+        self.persist_prefs();
+        self.notify(format!("merged window: {}", self.window_label()));
+    }
+
+    /// `0` in the Format dialog: back to the recency default, an empty
+    /// query and the default window. Filters and grouping stay put.
+    pub(crate) fn reset_recent_default(&mut self) {
         self.sidebar.query_active.clear();
         self.sidebar.query_draft.clear();
-        self.merge_recent_sections();
+        self.sidebar.query_edit = false;
+        self.sections.merged_window_hours = core::DEFAULT_WINDOW_HOURS;
+        self.refetch_recent();
+        self.persist_prefs();
+        self.notify("recent: default query and window".to_string());
     }
 
     /// Server-side GitHub search scoped to the repo. Results replace the
-    /// recent list when they land; see `sections.replace`.
+    /// recent list when they land; see `sections.replace`. The window
+    /// rides in as an `updated:` token at fetch time, so the query text
+    /// stays exactly what the user typed.
     pub(crate) fn run_gh_search(&mut self, query: String) {
+        self.sections.cap_notified = false;
+        self.notify(format!("searching: {query}"));
+        self.search_fetch(query);
+    }
+
+    /// Spawn the search fetch. Callers own the status-line announcement:
+    /// user searches name the query, periodic refreshes stay quiet.
+    fn search_fetch(&mut self, query: String) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
             self.notify("search needs a repo: use -R or run inside one".to_string());
             return;
@@ -798,12 +867,12 @@ impl App {
         self.sections.last_fetch = Instant::now();
         self.sections.auto_refresh = false;
         self.sections.replace = true;
-        self.notify(format!("searching: {query}"));
+        let search = core::search_query(&query, self.sections.merged_window_hours, chrono::Utc::now());
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         rt().spawn(async move {
-            // Server search is a single request: indeterminate, no progress.
-            let _ = tx.send(github::SectionEvent::Done(github::search_repo(&repo, &query).await));
+            let result = github::search_repo(&repo, &search, Some(tx.clone())).await;
+            let _ = tx.send(github::SectionEvent::Done(result));
         });
     }
 
@@ -937,19 +1006,43 @@ impl App {
         self.issues.data.get(&n).map(|d| d.is_pr).unwrap_or(false)
     }
 
-    /// Recent-row visibility under the `f` state toggles. Pins and
-    /// requested rows always show: filters thin the firehose, never rows
-    /// the user explicitly opened.
+    /// Recent-row visibility under the phase-2 filters: the state
+    /// toggles, label pills, and milestone pills. Pins and requested rows
+    /// always show: filters thin the firehose, never rows the user
+    /// explicitly opened.
     fn recent_visible(&self, n: u64) -> bool {
         let Some(d) = self.issues.data.get(&n) else { return true };
         let closed = matches!(d.state.as_str(), "CLOSED" | "MERGED");
-        if d.is_pr {
+        let state_ok = if d.is_pr {
             if closed { self.sidebar.show_merged_prs } else { self.sidebar.show_open_prs }
         } else if closed {
             self.sidebar.show_closed_issues
         } else {
             self.sidebar.show_open_issues
-        }
+        };
+        state_ok && self.label_visible(d) && self.milestone_visible(d)
+    }
+
+    /// Label pills match when the row carries any selected label. Empty
+    /// selection means no filter.
+    fn label_visible(&self, d: &model::IssueData) -> bool {
+        self.sidebar.label_filter.is_empty()
+            || d.labels.iter().any(|l| self.sidebar.label_filter.contains(&l.name))
+    }
+
+    /// Milestone pills match the row's milestone exactly; `None` is the
+    /// "(no milestone)" pill. Empty selection means no filter.
+    fn milestone_visible(&self, d: &model::IssueData) -> bool {
+        self.sidebar.milestone_filter.is_empty()
+            || self.sidebar.milestone_filter.contains(&d.milestone)
+    }
+
+    /// True when any phase-2 filter narrows the recent rows.
+    pub(crate) fn filters_active(&self) -> bool {
+        !(self.sidebar.show_open_prs && self.sidebar.show_merged_prs
+            && self.sidebar.show_open_issues && self.sidebar.show_closed_issues)
+            || !self.sidebar.label_filter.is_empty()
+            || !self.sidebar.milestone_filter.is_empty()
     }
 
     /// (pinned, requested, recent) for one pane. When `filtered`, the `/`
@@ -977,17 +1070,39 @@ impl App {
         (pinned, requested, recent)
     }
 
+    /// Display rows for one pane. Pinned and requested keep the ordinary
+    /// section layout; milestone grouping splits only the filtered recent
+    /// rows, so rows the user asked for never move under a group.
+    fn pane_rows(&self, want_pr: bool, filtered: bool) -> Vec<model::SideRow> {
+        let (p, v, r) = self.pane_groups(want_pr, filtered);
+        if self.sidebar.group_by != model::GroupBy::Milestone {
+            return core::pane_order(&p, &v, &r);
+        }
+        let milestone_of = |n: u64| {
+            self.issues.data.get(&n).and_then(|d| d.milestone.clone())
+        };
+        let due_of = |title: &str| {
+            self.sidebar.milestones.iter()
+                .find(|m| m.title == title)
+                .and_then(|m| m.due_on.clone())
+        };
+        let groups = core::milestone_groups(&r, &milestone_of, &due_of);
+        core::grouped_pane_order(&p, &v, &groups)
+    }
+
     /// One key cycles the sort key; each key starts in its natural
     /// direction (updated newest first, text A→Z).
     pub(crate) fn cycle_sort(&mut self) {
         self.sidebar.sort = self.sidebar.sort.next();
         self.sidebar.sort_desc = self.sidebar.sort.natural_desc();
+        self.persist_prefs();
     }
 
     /// Flip the active sort direction. Default order has nothing to flip.
     pub(crate) fn toggle_sort_dir(&mut self) {
         if self.sidebar.sort != core::SideSort::Default {
             self.sidebar.sort_desc = !self.sidebar.sort_desc;
+            self.persist_prefs();
         }
     }
 
@@ -998,38 +1113,33 @@ impl App {
 
     /// Display rows for the Issues pane, dividers marking group slots.
     pub(crate) fn issue_rows(&self) -> Vec<model::SideRow> {
-        let (p, v, r) = self.pane_groups(false, self.sidebar.searching);
-        core::pane_order(&p, &v, &r)
+        self.pane_rows(false, self.sidebar.searching)
     }
 
     /// Display rows for the Pull requests pane, dividers marking groups.
     pub(crate) fn pr_rows(&self) -> Vec<model::SideRow> {
-        let (p, v, r) = self.pane_groups(true, self.sidebar.searching);
-        core::pane_order(&p, &v, &r)
+        self.pane_rows(true, self.sidebar.searching)
     }
 
-    /// Scoped j/k order for the Issues pane: pinned, requested, recent.
+    /// Scoped j/k order for the Issues pane: exactly the displayed rows.
     pub(crate) fn issue_numbers(&self) -> Vec<u64> {
-        let (p, v, r) = self.pane_groups(false, false);
-        p.into_iter().chain(v).chain(r).collect()
+        self.issue_rows().iter().filter_map(model::SideRow::number).collect()
     }
 
-    /// Scoped j/k order for the PRs pane: pinned, requested, recent.
+    /// Scoped j/k order for the PRs pane: exactly the displayed rows.
     pub(crate) fn pr_numbers(&self) -> Vec<u64> {
-        let (p, v, r) = self.pane_groups(true, false);
-        p.into_iter().chain(v).chain(r).collect()
+        self.pr_rows().iter().filter_map(model::SideRow::number).collect()
     }
 
     /// Flat order limited to `/` search hits, for Enter / n / N jumps.
+    /// Uses the displayed order, so it follows sort and grouping.
     pub(crate) fn search_hits(&self) -> Vec<u64> {
         if self.sidebar.search.trim().is_empty() {
             return vec![];
         }
-        let (ip, iv, ir) = self.pane_groups(false, false);
-        let (pp, pv, pr) = self.pane_groups(true, false);
         let q = self.sidebar.search.clone();
-        ip.into_iter()
-            .chain(iv).chain(ir).chain(pp).chain(pv).chain(pr)
+        self.issue_rows().iter().chain(self.pr_rows().iter())
+            .filter_map(model::SideRow::number)
             .filter(|n| self.row_matches(*n, &q))
             .collect()
     }
@@ -1062,15 +1172,104 @@ impl App {
         if q.is_empty() { QueryAction::Refetch } else { QueryAction::Run(q) }
     }
 
-    /// Filter context for the recent group: window label, or the active
-    /// search query. Renders in the PR footer, never the title, so all
-    /// pane titles share one shape.
-    pub(crate) fn filter_context(&self) -> String {
-        if self.sidebar.query_active.trim().is_empty() {
-            self.window_label()
-        } else {
-            format!("\"{}\"", self.sidebar.query_active)
+    /// Open the sidebar Format dialog in navigate mode. The picker lists
+    /// load lazily the first time.
+    pub(crate) fn open_sidebar_format(&mut self) {
+        self.sidebar.filter_open = true;
+        self.sidebar.query_edit = false;
+        self.ensure_repo_meta();
+    }
+
+    /// Milestone pills for the dialog: sorted titles, then the
+    /// "(no milestone)" pill last, matching the board dialog. Empty until
+    /// the first picker fetch lands.
+    pub(crate) fn milestone_pills(&self) -> Vec<Option<String>> {
+        if !self.sidebar.meta_loaded {
+            return vec![];
         }
+        let mut titles: Vec<String> =
+            self.sidebar.milestones.iter().map(|m| m.title.clone()).collect();
+        titles.sort();
+        let mut out: Vec<Option<String>> = titles.into_iter().map(Some).collect();
+        out.push(None);
+        out
+    }
+
+    /// Focusable Format dialog rows: label pills, milestone pills, the
+    /// group-by row, then the Row fields checkboxes.
+    pub(crate) fn format_widgets(&self) -> usize {
+        self.sidebar.labels.len() + self.milestone_pills().len() + 1
+            + model::RowFields::ISSUE_ORDER.len() + model::RowFields::PR_ORDER.len()
+    }
+
+    /// Space on the focused Format dialog row: flip a pill, cycle the
+    /// grouping, or flip a Row fields checkbox.
+    pub(crate) fn toggle_format_widget(&mut self) {
+        let focus = self.sidebar.format_focus;
+        let labels = self.sidebar.labels.len();
+        let pills = self.milestone_pills();
+        if focus < labels {
+            let name = self.sidebar.labels[focus].clone();
+            if !self.sidebar.label_filter.remove(&name) {
+                self.sidebar.label_filter.insert(name);
+            }
+            self.persist_prefs();
+        } else if focus < labels + pills.len() {
+            let pill = pills[focus - labels].clone();
+            if !self.sidebar.milestone_filter.remove(&pill) {
+                self.sidebar.milestone_filter.insert(pill);
+            }
+            self.persist_prefs();
+        } else if focus == labels + pills.len() {
+            self.sidebar.group_by = self.sidebar.group_by.next();
+            self.persist_prefs();
+        } else {
+            let index = focus - (labels + pills.len() + 1);
+            self.toggle_sidebar_row_field(index);
+        }
+    }
+
+    /// Fetch labels and milestones for the dialog once per repo. The
+    /// meta channel carries the result to `poll_repo_meta`.
+    pub(crate) fn ensure_repo_meta(&mut self) {
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
+        if self.sidebar.meta_repo.as_deref() == Some(repo.as_str()) {
+            return;
+        }
+        self.sidebar.meta_repo = Some(repo.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.sidebar.meta_rx = Some(rx);
+        rt().spawn(async move {
+            let _ = tx.send(github::fetch_repo_meta(&repo).await);
+        });
+    }
+
+    /// Land a picker fetch: keep the lists, drop saved pills the repo no
+    /// longer has, clamp the focus, and persist the pruned set. A failed
+    /// fetch clears `meta_repo` so the next dialog open retries.
+    pub(crate) fn land_repo_meta(&mut self, result: Result<RepoMeta, String>) {
+        self.sidebar.meta_rx = None;
+        let (labels, milestones) = match result {
+            Ok(meta) => meta,
+            Err(e) => {
+                self.sidebar.meta_repo = None;
+                self.notify(e);
+                return;
+            }
+        };
+        self.sidebar.labels = labels;
+        self.sidebar.milestones = milestones;
+        self.sidebar.meta_loaded = true;
+        let live_labels: HashSet<String> = self.sidebar.labels.iter().cloned().collect();
+        self.sidebar.label_filter.retain(|l| live_labels.contains(l));
+        let live_milestones: HashSet<Option<String>> =
+            std::iter::once(None)
+                .chain(self.sidebar.milestones.iter().map(|m| Some(m.title.clone())))
+                .collect();
+        self.sidebar.milestone_filter.retain(|m| live_milestones.contains(m));
+        self.sidebar.format_focus =
+            self.sidebar.format_focus.min(self.format_widgets().saturating_sub(1));
+        self.persist_prefs();
     }
 
     /// Group counts for one sidebar pane, matching the displayed rows.
@@ -1079,22 +1278,20 @@ impl App {
         (p.len(), v.len(), r.len())
     }
 
-    /// Title subtitle for Issues/PRs: total rows plus the sort state.
+    /// Title subtitle for Issues/PRs: row count, the active query (or
+    /// "recent"), a filter marker, and the sort state.
     pub(crate) fn side_subtitle(&self, want_pr: bool) -> String {
         let (p, v, r) = self.side_counts(want_pr);
-        format!("{} · {}", p + v + r, self.sort_label())
+        let query = self.sidebar.query_active.trim();
+        let context = if query.is_empty() { "recent".to_string() } else { format!("\"{query}\"") };
+        let filtered = if self.filters_active() { " · filtered" } else { "" };
+        format!("{} · {context}{filtered} · {}", p + v + r, self.sort_label())
     }
 
-    /// Footer for Issues/PRs: per-group counts. PRs append the filter
-    /// context after the counts, so narrow panes clip context first.
+    /// Footer for Issues/PRs: per-group counts.
     pub(crate) fn side_footer(&self, want_pr: bool) -> String {
         let (p, v, r) = self.side_counts(want_pr);
-        let base = format!("pinned ({p}) · requested ({v}) · recent ({r})");
-        if want_pr {
-            format!("{} · {}", base, self.filter_context())
-        } else {
-            base
-        }
+        format!("pinned ({p}) · requested ({v}) · recent ({r})")
     }
 
     /// Title subtitle for Refs: mention/pair counts (Refs has no sort).
@@ -1398,7 +1595,7 @@ impl App {
     pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
         let mut rows: Vec<model::SideRow> = self.refs.numbers.iter().copied().map(model::SideRow::Item).collect();
         if !self.refs.paired.is_empty() {
-            rows.push(model::SideRow::Divider("Paired"));
+            rows.push(model::SideRow::Divider("Paired".to_string()));
             rows.extend(self.refs.paired.iter().copied().map(model::SideRow::Item));
         }
         rows
@@ -1884,9 +2081,10 @@ impl App {
         }
     }
 
-    /// Step the sidebar dialog focus across the Row fields rows, wrapping.
+    /// Step the sidebar dialog focus across pills, grouping, and Row
+    /// fields rows, wrapping.
     pub(crate) fn format_step(&mut self, delta: isize) {
-        let n = model::RowFields::ISSUE_ORDER.len() + model::RowFields::PR_ORDER.len();
+        let n = self.format_widgets();
         self.sidebar.format_focus =
             (self.sidebar.format_focus as isize + delta).rem_euclid(n as isize) as usize;
     }
@@ -1909,8 +2107,21 @@ impl App {
         prefs.show_open_issues = self.sidebar.show_open_issues;
         prefs.show_closed_issues = self.sidebar.show_closed_issues;
         prefs.merged_window_hours = self.sections.merged_window_hours;
+        prefs.group_by = self.sidebar.group_by;
+        prefs.sort = self.sidebar.sort;
+        prefs.sort_desc = self.sidebar.sort_desc;
         if let Some(repo) = self.repo_key() {
-            prefs.queries.insert(github::prefs_repo_key(&repo), self.sidebar.query_active.clone());
+            let key = github::prefs_repo_key(&repo);
+            prefs.queries.insert(key.clone(), self.sidebar.query_active.clone());
+            let mut labels: Vec<String> = self.sidebar.label_filter.iter().cloned().collect();
+            labels.sort();
+            let mut milestones: Vec<Option<String>> =
+                self.sidebar.milestone_filter.iter().cloned().collect();
+            milestones.sort();
+            prefs.sidebar_filters.insert(
+                key,
+                github::SavedSidebarFilter { labels, milestones },
+            );
         }
         if board_open(self) {
             let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone());
@@ -1940,15 +2151,21 @@ impl App {
         self.sidebar.show_merged_prs = prefs.show_merged_prs;
         self.sidebar.show_open_issues = prefs.show_open_issues;
         self.sidebar.show_closed_issues = prefs.show_closed_issues;
-        if prefs.merged_window_hours > 0 {
-            self.sections.merged_window_hours = prefs.merged_window_hours;
-        }
+        self.sections.merged_window_hours = prefs.merged_window_hours;
         self.sidebar.row_issue = prefs.row_issue;
         self.sidebar.row_pr = prefs.row_pr;
+        self.sidebar.group_by = prefs.group_by;
+        self.sidebar.sort = prefs.sort;
+        self.sidebar.sort_desc = prefs.sort_desc;
         self.board.fields = prefs.board_cards;
         if let Some(key) = self.repo_key() {
-            if let Some(q) = prefs.queries.get(&github::prefs_repo_key(&key)) {
+            let repo_key = github::prefs_repo_key(&key);
+            if let Some(q) = prefs.queries.get(&repo_key) {
                 self.sidebar.query_active = q.clone();
+            }
+            if let Some(saved) = prefs.sidebar_filters.get(&repo_key) {
+                self.sidebar.label_filter = saved.labels.iter().cloned().collect();
+                self.sidebar.milestone_filter = saved.milestones.iter().cloned().collect();
             }
         }
     }
@@ -2950,6 +3167,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= poll_bootstrap(app);
     landed |= poll_auth(app);
     landed |= poll_sections(app);
+    landed |= poll_repo_meta(app);
     let had_fetch = app.sections.rx.is_some();
     app.auto_refresh_recent(Instant::now());
     landed |= had_fetch != app.sections.rx.is_some();
@@ -3086,11 +3304,37 @@ fn poll_bootstrap(app: &mut App) -> bool {
     true
 }
 
+/// Status-line notice for a fetch that stopped at the shared row cap.
+pub(crate) fn cap_notice() -> String {
+    format!(
+        "{} row cap reached: narrow the query or window",
+        github::MAX_SECTION_ROWS
+    )
+}
+
+/// Pick up the Format dialog's label and milestone lists. True when a
+/// result landed.
+pub(crate) fn poll_repo_meta(app: &mut App) -> bool {
+    let Some(result) = app.sidebar.meta_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else {
+        return false;
+    };
+    app.land_repo_meta(result);
+    true
+}
+
 pub(crate) fn poll_sections(app: &mut App) -> bool {
     let Some(event) = app.sections.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     match event {
         github::SectionEvent::Progress { done, total } => {
             app.sections.progress = Some((done, total));
+        }
+        // The fetch that hit the cap still lands its rows through Done;
+        // the notice only has to name the cap, once per fetch setting.
+        github::SectionEvent::Capped => {
+            if !app.sections.cap_notified {
+                app.sections.cap_notified = true;
+                app.notify(cap_notice());
+            }
         }
         github::SectionEvent::Done(result) => {
             app.sections.rx = None;
@@ -3459,6 +3703,168 @@ mod tests {
         assert_eq!(app.issue_numbers(), vec![7], "panes stay separate");
     }
 
+    /// Add a background (recent) row with the fields the pills read.
+    fn add_recent(app: &mut App, n: u64, updated: &str, labels: &[&str], milestone: Option<&str>) {
+        let mut d = issue(n, updated);
+        d.labels = labels
+            .iter()
+            .map(|name| model::Label { name: name.to_string() })
+            .collect();
+        d.milestone = milestone.map(str::to_string);
+        app.issues.data.insert(n, d);
+        app.issues.statuses.insert(n, vec![]);
+        app.nav.recent.push(n);
+    }
+
+    #[test]
+    fn label_and_milestone_pills_narrow_recent_rows_only() {
+        let mut app = sidebar_app(&[]);
+        app.nav.visited.clear();
+        add_recent(&mut app, 1, "2026-01-05T00:00:00Z", &["bug"], Some("v1"));
+        add_recent(&mut app, 2, "2026-01-04T00:00:00Z", &["docs"], Some("v2"));
+        add_recent(&mut app, 3, "2026-01-03T00:00:00Z", &[], None);
+        let query = "label:remote".to_string();
+        app.sidebar.query_active = query.clone();
+        assert_eq!(app.issue_numbers(), vec![1, 2, 3]);
+        app.sidebar.label_filter.insert("bug".to_string());
+        assert_eq!(app.issue_numbers(), vec![1], "label pill narrows");
+        assert_eq!(app.sidebar.query_active, query, "filter code never edits the query");
+        app.sidebar.label_filter.clear();
+        app.sidebar.milestone_filter.insert(Some("v2".to_string()));
+        assert_eq!(app.issue_numbers(), vec![2], "milestone pill narrows");
+        assert_eq!(app.sidebar.query_active, query, "query still untouched");
+        app.sidebar.milestone_filter.clear();
+        app.sidebar.milestone_filter.insert(None);
+        assert_eq!(app.issue_numbers(), vec![3], "(no milestone) pill narrows");
+        app.sidebar.milestone_filter.insert(Some("v1".to_string()));
+        assert_eq!(app.issue_numbers(), vec![1, 3], "milestone pills match any selected");
+        // Kinds intersect: label AND milestone.
+        app.sidebar.label_filter.insert("docs".to_string());
+        assert!(app.issue_numbers().is_empty());
+    }
+
+    #[test]
+    fn pinned_and_requested_rows_skip_filters_and_grouping() {
+        use crate::model::{GroupBy, SideRow::{Divider, Item}};
+        let mut app = sidebar_app(&[1, 2]);
+        app.nav.pin_order = vec![1];
+        app.nav.pinned = [1].into_iter().collect();
+        add_recent(&mut app, 3, "2026-01-05T00:00:00Z", &["bug"], Some("v1"));
+        add_recent(&mut app, 4, "2026-01-04T00:00:00Z", &["bug"], Some("v1"));
+        app.sidebar.label_filter.insert("bug".to_string());
+        app.sidebar.group_by = GroupBy::Milestone;
+        app.sidebar.meta_loaded = true;
+        app.sidebar.milestones =
+            vec![model::Milestone { title: "v1".to_string(), due_on: None }];
+        assert_eq!(
+            app.issue_rows(),
+            vec![
+                Item(1),
+                Divider("requested".to_string()),
+                Item(2),
+                Divider("v1 (2)".to_string()),
+                Item(3),
+                Item(4),
+            ],
+            "pins and requested rows stay on top, ungrouped and unfiltered"
+        );
+    }
+
+    #[test]
+    fn sort_runs_inside_each_milestone_group() {
+        use crate::model::{GroupBy, SideRow::{Divider, Item}};
+        let mut app = sidebar_app(&[]);
+        app.nav.visited.clear();
+        add_recent(&mut app, 3, "2026-01-03T00:00:00Z", &[], Some("v1"));
+        add_recent(&mut app, 4, "2026-01-06T00:00:00Z", &[], Some("v1"));
+        app.sidebar.group_by = GroupBy::Milestone;
+        app.sidebar.meta_loaded = true;
+        app.sidebar.milestones =
+            vec![model::Milestone { title: "v1".to_string(), due_on: None }];
+        app.cycle_sort();
+        assert_eq!(
+            app.issue_rows(),
+            vec![Divider("v1 (2)".to_string()), Item(4), Item(3)],
+            "updated sort reorders inside the group"
+        );
+        assert_eq!(app.issue_numbers(), vec![4, 3], "j/k follows the grouped display");
+    }
+
+    #[test]
+    fn milestone_groups_order_dated_then_undated_then_none() {
+        use crate::model::{GroupBy, SideRow::Divider};
+        let mut app = sidebar_app(&[]);
+        app.nav.visited.clear();
+        add_recent(&mut app, 1, "2026-01-05T00:00:00Z", &[], Some("later"));
+        add_recent(&mut app, 2, "2026-01-05T00:00:00Z", &[], Some("sooner"));
+        add_recent(&mut app, 3, "2026-01-05T00:00:00Z", &[], Some("backlog"));
+        add_recent(&mut app, 4, "2026-01-05T00:00:00Z", &[], None);
+        app.sidebar.group_by = GroupBy::Milestone;
+        app.sidebar.meta_loaded = true;
+        app.sidebar.milestones = vec![
+            model::Milestone { title: "later".to_string(), due_on: Some("2026-06-01T00:00:00Z".to_string()) },
+            model::Milestone { title: "sooner".to_string(), due_on: Some("2026-02-01T00:00:00Z".to_string()) },
+            model::Milestone { title: "backlog".to_string(), due_on: None },
+        ];
+        let dividers: Vec<String> = app.issue_rows().into_iter()
+            .filter_map(|row| match row {
+                Divider(label) => Some(label),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            dividers,
+            vec![
+                "sooner (1)".to_string(),
+                "later (1)".to_string(),
+                "backlog (1)".to_string(),
+                "(no milestone) (1)".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn stale_saved_pills_prune_when_picker_lists_land() {
+        let (_guard, _dir, saved) = temp_xdg();
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        app.prefs_loaded = true;
+        app.sidebar.label_filter = ["bug".to_string(), "gone".to_string()].into_iter().collect();
+        app.sidebar.milestone_filter =
+            [Some("v1".to_string()), Some("gone".to_string()), None].into_iter().collect();
+        app.sidebar.format_focus = 99;
+        app.land_repo_meta(Ok((
+            vec!["bug".to_string()],
+            vec![model::Milestone { title: "v1".to_string(), due_on: None }],
+        )));
+        assert!(app.sidebar.meta_loaded);
+        assert_eq!(app.sidebar.label_filter, ["bug".to_string()].into_iter().collect());
+        assert!(app.sidebar.milestone_filter.contains(&Some("v1".to_string())));
+        assert!(app.sidebar.milestone_filter.contains(&None), "(no milestone) stays live");
+        assert!(!app.sidebar.milestone_filter.contains(&Some("gone".to_string())));
+        assert!(app.sidebar.format_focus < app.format_widgets(), "focus clamps");
+        let back = github::load_prefs();
+        let saved_filter = &back.sidebar_filters[&github::prefs_repo_key("o/r")];
+        assert_eq!(saved_filter.labels, vec!["bug".to_string()], "pruned labels persist");
+        assert!(saved_filter.milestones.contains(&None));
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn four_selects_all_time_and_zero_resets_to_recent() {
+        let mut app = sidebar_app(&[]);
+        app.sidebar.query_active = "label:bug".to_string();
+        app.sections.merged_window_hours = 168;
+        app.set_window(0);
+        assert_eq!(app.sections.merged_window_hours, 0);
+        assert_eq!(app.window_label(), "open + merged all time");
+        assert_eq!(app.sidebar.query_active, "label:bug", "window keeps the query");
+        app.reset_recent_default();
+        assert_eq!(app.sections.merged_window_hours, core::DEFAULT_WINDOW_HOURS);
+        assert!(app.sidebar.query_active.is_empty(), "zero clears the query");
+        assert!(app.sidebar.query_draft.is_empty());
+    }
+
     #[test]
     fn evict_drops_row_and_cached_data_then_moves_cursor() {
         let mut app = sidebar_app(&[7, 9]);
@@ -3529,6 +3935,12 @@ mod tests {
         first.sidebar.row_pr.checks = false;
         first.board.fields.milestone = true;
         first.sidebar.query_active = "label:bug".to_string();
+        first.sidebar.label_filter.insert("bug".to_string());
+        first.sidebar.milestone_filter.insert(Some("v1".to_string()));
+        first.sidebar.milestone_filter.insert(None);
+        first.sidebar.group_by = model::GroupBy::Milestone;
+        first.sidebar.sort = core::SideSort::Updated;
+        first.sidebar.sort_desc = false;
         first.board.filter = "auth".to_string();
         first.board.milestones.insert(Some("v1".to_string()));
         first.board.loading = true;
@@ -3544,6 +3956,12 @@ mod tests {
         assert!(!second.sidebar.row_pr.checks);
         assert!(second.board.fields.milestone);
         assert_eq!(second.sidebar.query_active, "label:bug");
+        assert!(second.sidebar.label_filter.contains("bug"));
+        assert!(second.sidebar.milestone_filter.contains(&Some("v1".to_string())));
+        assert!(second.sidebar.milestone_filter.contains(&None));
+        assert_eq!(second.sidebar.group_by, model::GroupBy::Milestone);
+        assert_eq!(second.sidebar.sort, core::SideSort::Updated);
+        assert!(!second.sidebar.sort_desc, "direction restores too");
         assert!(second.board.filter.is_empty(), "board filter waits for its owner");
         second.restore_board_filter("o");
         assert_eq!(second.board.filter, "auth");
@@ -3860,6 +4278,33 @@ mod tests {
         app.sections.rx = Some(rx);
         tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();
         poll_sections(app);
+    }
+
+    #[test]
+    fn section_landing_warns_at_row_cap() {
+        let mut app = sidebar_app(&[1]);
+        let rows = (1..=500).map(|number| {
+            section_row(issue(number, "2026-01-06T00:00:00Z"))
+        }).collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.sections.rx = Some(rx);
+        tx.send(github::SectionEvent::Capped).unwrap();
+        tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();
+        poll_sections(&mut app);
+        assert!(app.message.contains("500 row cap"));
+        assert!(app.message.contains("narrow"));
+        poll_sections(&mut app);
+        assert!(app.sections.rx.is_none(), "the capped fetch still lands its rows");
+        // Auto-refresh repeats the same setting: the notice shows once.
+        app.message.clear();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.sections.rx = Some(rx);
+        tx.send(github::SectionEvent::Capped).unwrap();
+        poll_sections(&mut app);
+        assert!(app.message.is_empty(), "no repeat for the same fetch setting");
+        // A user window change re-arms the notice.
+        app.refetch_recent();
+        assert!(!app.sections.cap_notified);
     }
 
     #[test]

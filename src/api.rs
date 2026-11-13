@@ -9,7 +9,7 @@ pub use client::{
 };
 pub use board::fetch_board;
 pub use graph::graph;
-pub use sections::{merge_rows, sections};
+pub use sections::{merge_rows, sections, MAX_SECTION_ROWS};
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label};
 use client::{
@@ -66,8 +66,9 @@ fn parse_board_details(value: &Value, count: usize) -> Result<Vec<Option<BoardDe
 }
 
 /// One GitHub issue-search hit as a sidebar row. Search items carry no
-/// project or merged info, so statuses stay empty and the row is partial:
-/// opening it runs the full fetch.
+/// project status, so `statuses` stays empty and the row is partial:
+/// opening it runs the full fetch. Merged PRs still report `MERGED` from
+/// `pull_request.merged_at`.
 pub fn search_row(v: &Value) -> Result<Row, String> {
     let number = v.get("number").and_then(Value::as_u64).ok_or("search hit without a number")?;
     let string = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
@@ -81,6 +82,10 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
     let mut state = string("state").to_uppercase();
     if state.is_empty() {
         state = "OPEN".to_string();
+    }
+    let merged = v.pointer("/pull_request/merged_at").is_some_and(|m| !m.is_null());
+    if merged {
+        state = "MERGED".to_string();
     }
     let detail = BoardDetail {
         created: created.get(..10).unwrap_or("").to_owned(),
@@ -113,33 +118,110 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
     })
 }
 
-/// Server-side issue/PR search: `repo:{repo} {query}` through the REST
-/// search API, relevance-ranked, issues and PRs mixed.
-pub async fn search(repo: &str, query: &str, bearer: &str) -> Result<Vec<Row>, String> {
-    let base = rest_base();
-    let url = format!("{base}/search/issues");
-    let res = client()
-        .get(&url)
-        .bearer_auth(bearer)
-        .header("Accept", "application/vnd.github+json")
-        .query(&[("q", format!("repo:{repo} {query}")), ("per_page", "50".to_string())])
-        .send()
-        .await
-        .map_err(|e| format!("GitHub search failed: {e}"))?;
-    if res.status().is_client_error() || res.status().is_server_error() {
-        return Err(http_fail("GitHub search failed", &url, res).await);
-    }
-    let value: Value = res
-        .json()
-        .await
-        .map_err(|e| format!("bad search response: {e}"))?;
-    value
+/// Fetched rows plus whether the fetch stopped at the shared sidebar
+/// row cap.
+#[derive(Debug)]
+pub struct SectionRows {
+    pub rows: Vec<Row>,
+    pub capped: bool,
+}
+
+/// Absorb one REST search page into `rows`. Returns the hit count on the
+/// page: the caller pages again while it is 100 and the row cap is not
+/// reached. Hits past the cap are ignored.
+fn absorb_search_page(value: &Value, rows: &mut Vec<Row>) -> Result<usize, String> {
+    let items = value
         .get("items")
         .and_then(Value::as_array)
-        .ok_or("bad search payload")?
+        .ok_or("bad search payload")?;
+    let room = MAX_SECTION_ROWS.saturating_sub(rows.len());
+    for item in items.iter().take(room) {
+        rows.push(search_row(item)?);
+    }
+    Ok(items.len())
+}
+
+/// Server-side issue/PR search: one `repo:{repo} {query}` REST search,
+/// one page of 100 hits at a time, paged until the results end or the
+/// shared sidebar row cap lands.
+pub async fn search(
+    repo: &str,
+    query: &str,
+    bearer: &str,
+    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> Result<SectionRows, String> {
+    let url = format!("{}/search/issues", rest_base());
+    let client = client();
+    let q = format!("repo:{repo} {query}");
+    let mut rows = Vec::new();
+    let mut page = 1;
+    loop {
+        let res = client
+            .get(&url)
+            .bearer_auth(bearer)
+            .header("Accept", "application/vnd.github+json")
+            .query(&[
+                ("q", q.clone()),
+                ("per_page", "100".to_string()),
+                ("page", page.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("GitHub search failed: {e}"))?;
+        if res.status().is_client_error() || res.status().is_server_error() {
+            return Err(http_fail("GitHub search failed", &url, res).await);
+        }
+        let value: Value = res
+            .json()
+            .await
+            .map_err(|e| format!("bad search response: {e}"))?;
+        let hits = absorb_search_page(&value, &mut rows)?;
+        if rows.len() >= MAX_SECTION_ROWS {
+            return Ok(SectionRows { rows, capped: true });
+        }
+        if hits < 100 {
+            break;
+        }
+        if let Some(report) = progress {
+            report(rows.len(), MAX_SECTION_ROWS);
+        }
+        page += 1;
+    }
+    Ok(SectionRows { rows, capped: false })
+}
+
+/// Repository labels for the Format dialog's picker, one REST page.
+pub async fn repo_labels(repo: &str, bearer: &str) -> Result<Vec<String>, String> {
+    let url = format!("{}/repos/{repo}/labels?per_page=100", rest_base());
+    let value = get(&client(), &url, bearer).await?;
+    let items = value.as_array().ok_or("bad labels payload")?;
+    Ok(items
         .iter()
-        .map(search_row)
-        .collect()
+        .filter_map(|v| v.get("name").and_then(Value::as_str))
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// Repository milestones (open and closed) for the Format dialog's
+/// picker and the milestone group order. `due_on` rides along.
+pub async fn repo_milestones(repo: &str, bearer: &str) -> Result<Vec<model::Milestone>, String> {
+    let url = format!("{}/repos/{repo}/milestones?state=all&per_page=100", rest_base());
+    let value = get(&client(), &url, bearer).await?;
+    let items = value.as_array().ok_or("bad milestones payload")?;
+    Ok(items
+        .iter()
+        .filter_map(|v| {
+            let title = v.get("title").and_then(Value::as_str)?;
+            if title.is_empty() {
+                return None;
+            }
+            Some(model::Milestone {
+                title: title.to_owned(),
+                due_on: v.get("due_on").and_then(Value::as_str).map(str::to_owned),
+            })
+        })
+        .collect())
 }
 
 /// One entry of the REST `pulls/{n}/files` listing. `patch` is absent
@@ -398,17 +480,56 @@ mod tests {
     }
     #[test]
     fn search_row_marks_prs_and_stays_partial() {
-        let pr = json!({"number":12,"title":"a pr","state":"open","user":{"login":"bo"},"labels":[{"name":"bug"}],"assignees":[],"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","html_url":"https://github.com/o/r/pull/12","body":"hi","comments":4,"pull_request":{"url":"https://api.github.com/x"}});
+        let pr = json!({"number":12,"title":"a pr","state":"open","user":{"login":"bo"},"labels":[{"name":"bug"}],"assignees":[],"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","html_url":"https://github.com/o/r/pull/12","body":"hi","comments":4,"milestone":{"title":"v0.6"},"pull_request":{"url":"https://api.github.com/x"}});
         let row = search_row(&pr).unwrap();
         assert!(row.issue.is_pr);
         assert_eq!(row.issue.state, "OPEN");
+        assert_eq!(row.issue.milestone.as_deref(), Some("v0.6"), "search rows carry their milestone");
         assert!(!row.complete);
         assert_eq!(row.detail.comments, 4);
         let issue = json!({"number":13,"title":"an issue","state":"closed","user":{"login":"bo"},"labels":[],"assignees":[],"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","html_url":"https://github.com/o/r/issues/13","body":"","comments":0});
         let row = search_row(&issue).unwrap();
         assert!(!row.issue.is_pr);
         assert_eq!(row.issue.state, "CLOSED");
+        let merged = json!({"number":14,"title":"merged","state":"closed","user":{"login":"bo"},"labels":[],"assignees":[],"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","html_url":"https://github.com/o/r/pull/14","body":"","comments":0,"pull_request":{"merged_at":"2026-11-04T00:00:00Z"}});
+        assert_eq!(search_row(&merged).unwrap().issue.state, "MERGED");
         assert!(search_row(&json!({"title":"no number"})).is_err());
+    }
+
+    fn search_hit(number: u64) -> Value {
+        json!({
+            "number": number,
+            "title": format!("hit {number}"),
+            "state": "open",
+            "user": {"login": "bo"},
+            "labels": [{"name": "bug"}],
+            "created_at": "2026-11-01T00:00:00Z",
+            "updated_at": "2026-11-05T00:00:00Z",
+            "html_url": format!("https://github.com/o/r/issues/{number}"),
+            "comments": 0,
+        })
+    }
+
+    fn search_page(start: u64, count: usize) -> Value {
+        json!({"items": (start..start + count as u64).map(search_hit).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn paged_search_absorbs_every_page_and_stops_at_the_cap() {
+        let mut rows = vec![];
+        assert_eq!(absorb_search_page(&search_page(1, 100), &mut rows), Ok(100));
+        assert_eq!(absorb_search_page(&search_page(101, 2), &mut rows), Ok(2));
+        assert_eq!(rows.len(), 102, "both pages land");
+        assert_eq!(rows[101].issue.number, 102);
+        // A page of 100 means "ask again"; the cap ignores later hits.
+        let mut capped = vec![];
+        for page in 0..5 {
+            absorb_search_page(&search_page(page * 100 + 1, 100), &mut capped).unwrap();
+        }
+        assert_eq!(capped.len(), MAX_SECTION_ROWS);
+        assert_eq!(absorb_search_page(&search_page(9999, 3), &mut capped), Ok(3));
+        assert_eq!(capped.len(), MAX_SECTION_ROWS, "hits past the cap stay out");
+        assert!(absorb_search_page(&json!({"message": "no items"}), &mut rows).is_err());
     }
     #[test]
     fn rest_review_comment_payloads_carry_the_anchor_fields() {

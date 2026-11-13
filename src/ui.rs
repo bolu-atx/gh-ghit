@@ -233,7 +233,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
         "  1/2 details/visual · e refs · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
-        "Actions", "  : command · / find · f format · b board · w window",
+        "Actions", "  : command · / find · g search · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
@@ -266,8 +266,9 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
 
 /// Format dialog (`f`). Over the board it is a form: a text row, one
 /// milestone pill per milestone on the cards, and card field checkboxes;
-/// otherwise it holds the recent window, open/closed toggles, a GitHub
-/// search query, and row field checkboxes. The title names the target.
+/// otherwise it holds the query, window, state toggles, label and
+/// milestone pills, grouping, and row field checkboxes. The title names
+/// the target.
 fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     if crate::app::board_open(app) {
         render_board_filter(f, area, app);
@@ -295,7 +296,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
             Span::styled(format!("({key})"), Style::new().bg(ink()).fg(muted())),
         ]
     };
-    // Same marker as the board dialog: the Row fields cursor.
+    // Same marker as the board dialog: the focused widget cursor.
     let marker = |active: bool| {
         Span::styled(
             if active { "▌ " } else { "  " },
@@ -310,7 +311,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let mut qline = vec![
         Span::styled("query ", Style::new().bg(ink()).fg(muted())),
         Span::styled(
-            if query_text.is_empty() { "server github search, e to edit …".to_string() } else { query_text.clone() },
+            if query_text.is_empty() { "recent listing, e to edit …".to_string() } else { query_text.clone() },
             Style::new().bg(ink()).fg(if query_text.is_empty() { muted() } else { paper() }),
         ),
     ];
@@ -330,7 +331,9 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         window_mark(24),
         Span::styled("24h (2)  ", Style::new().bg(ink()).fg(paper())),
         window_mark(168),
-        Span::styled("7d (3)", Style::new().bg(ink()).fg(paper())),
+        Span::styled("7d (3)  ", Style::new().bg(ink()).fg(paper())),
+        window_mark(0),
+        Span::styled("all (4)", Style::new().bg(ink()).fg(paper())),
     ]));
     lines.push(Line::from(""));
     let mut open_line = vec![Span::styled("show   ", Style::new().bg(ink()).fg(muted()))];
@@ -344,16 +347,94 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     closed_line.extend(toggle(app.sidebar.show_closed_issues, "closed issues", "c"));
     lines.push(Line::from(closed_line));
     lines.push(Line::from(""));
+    // Phase-2 pill lists. Empty selection means no filter; the state
+    // toggles above are client-side too.
+    let pills = app.milestone_pills();
+    let labels = &app.sidebar.labels;
+    lines.push(Line::from(Span::styled(
+        "labels · filters narrow loaded rows",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    if labels.is_empty() {
+        lines.push(Line::from(Span::styled(
+            if app.sidebar.meta_rx.is_some() { "  loading labels …" } else { "  no labels" },
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    }
+    for (i, name) in labels.iter().enumerate() {
+        if app.sidebar.format_focus == i {
+            focus_line = lines.len();
+        }
+        let on = app.sidebar.label_filter.contains(name);
+        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+        lines.push(Line::from(vec![
+            marker(app.sidebar.format_focus == i),
+            Span::styled(
+                format!("{box_glyph} {name}"),
+                Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
+            ),
+        ]));
+    }
+    let pill_base = labels.len();
+    lines.push(Line::from(Span::styled(
+        "milestones",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    if pills.is_empty() {
+        lines.push(Line::from(Span::styled(
+            if app.sidebar.meta_rx.is_some() { "  loading milestones …" } else { "  no milestones" },
+            Style::new().bg(ink()).fg(muted()),
+        )));
+    }
+    for (i, pill) in pills.iter().enumerate() {
+        let index = pill_base + i;
+        if app.sidebar.format_focus == index {
+            focus_line = lines.len();
+        }
+        let on = app.sidebar.milestone_filter.contains(pill);
+        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+        let name = pill.clone().unwrap_or_else(|| "(no milestone)".to_string());
+        lines.push(Line::from(vec![
+            marker(app.sidebar.format_focus == index),
+            Span::styled(
+                format!("{box_glyph} {name}"),
+                Style::new().bg(ink()).fg(if on { paper() } else { muted() }),
+            ),
+        ]));
+    }
+    let group_index = pill_base + pills.len();
+    if app.sidebar.format_focus == group_index {
+        focus_line = lines.len();
+    }
+    let group_mark = |on: bool| if on { "●" } else { "○" };
+    lines.push(Line::from(vec![
+        marker(app.sidebar.format_focus == group_index),
+        Span::styled("group by ", Style::new().bg(ink()).fg(muted())),
+        Span::styled(
+            format!("{} none  ", group_mark(app.sidebar.group_by == crate::model::GroupBy::None)),
+            Style::new().bg(ink()).fg(paper()),
+        ),
+        Span::styled(
+            format!("{} milestone", group_mark(app.sidebar.group_by == crate::model::GroupBy::Milestone)),
+            Style::new().bg(ink()).fg(paper()),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "filters narrow fetched rows · label:bug fetches every match",
+        Style::new().bg(ink()).fg(muted()),
+    )));
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "row fields · issues",
         Style::new().bg(ink()).fg(muted()),
     )));
+    let row_base = group_index + 1;
     for (i, name) in model::RowFields::ISSUE_ORDER.iter().enumerate() {
-        if !app.sidebar.query_edit && app.sidebar.format_focus == i {
+        if !app.sidebar.query_edit && app.sidebar.format_focus == row_base + i {
             focus_line = lines.len();
         }
         lines.push(row_field_line(
-            marker(app.sidebar.format_focus == i),
+            marker(app.sidebar.format_focus == row_base + i),
             app.sidebar.row_issue.shown(false, i).unwrap_or(false),
             name,
         ));
@@ -362,20 +443,20 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
         "row fields · prs",
         Style::new().bg(ink()).fg(muted()),
     )));
-    let pr_base = model::RowFields::ISSUE_ORDER.len();
+    let pr_base = row_base + model::RowFields::ISSUE_ORDER.len();
     for (i, name) in model::RowFields::PR_ORDER.iter().enumerate() {
         if !app.sidebar.query_edit && app.sidebar.format_focus == pr_base + i {
             focus_line = lines.len();
         }
         lines.push(row_field_line(
-            marker(app.sidebar.format_focus == model::RowFields::ISSUE_ORDER.len() + i),
+            marker(app.sidebar.format_focus == pr_base + i),
             app.sidebar.row_pr.shown(true, i).unwrap_or(false),
             name,
         ));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "1/2/3 window · e query · o/m/i/c toggle · w age",
+        "1/2/3/4 window · 0 recent · e query · o/m/i/c toggle",
         Style::new().bg(ink()).fg(muted()),
     )));
     lines.push(Line::from(Span::styled(
@@ -3041,7 +3122,7 @@ mod render_smoke {
         let (pp, pv, pr) = app.pane_groups(true, false);
         assert_eq!((pp, pv, pr), (vec![9], vec![], vec![]));
         use crate::model::SideRow::{Divider, Item};
-        assert_eq!(app.issue_rows(), vec![Item(7), Divider("recent"), Item(42)]);
+        assert_eq!(app.issue_rows(), vec![Item(7), Divider("recent".to_string()), Item(42)]);
         assert_eq!(app.pr_rows(), vec![Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("Issues"));
@@ -3052,15 +3133,12 @@ mod render_smoke {
     fn pane_titles_carry_count_and_sort_with_group_footers() {
         let mut app = loaded_app();
         // loaded_app files one issue and one PR under requested.
-        assert_eq!(app.side_subtitle(false), "1 · default");
-        assert_eq!(app.side_subtitle(true), "1 · default");
+        assert_eq!(app.side_subtitle(false), "1 · recent · default");
+        assert_eq!(app.side_subtitle(true), "1 · recent · default");
         assert_eq!(app.side_footer(false), "pinned (0) · requested (1) · recent (0)");
-        assert_eq!(
-            app.side_footer(true),
-            "pinned (0) · requested (1) · recent (0) · open + merged ≤24h"
-        );
+        assert_eq!(app.side_footer(true), "pinned (0) · requested (1) · recent (0)");
         let text = frame_text(&mut app);
-        assert!(text.contains("1 · default"), "count plus sort in subtitle: {text}");
+        assert!(text.contains("1 · recent · default"), "count, context, sort in subtitle: {text}");
         assert!(
             text.contains("pinned (0) · requested (1) · recent (0)"),
             "group counts in footer: {text}"
@@ -3069,14 +3147,17 @@ mod render_smoke {
         app.sidebar.sort = crate::core::SideSort::Updated;
         app.sidebar.sort_desc = true;
         let text = frame_text(&mut app);
-        assert!(text.contains("1 · updated ↓"), "sort indicator: {text}");
+        assert!(text.contains("1 · recent · updated ↓"), "sort indicator: {text}");
         app.toggle_sort_dir();
         let text = frame_text(&mut app);
-        assert!(text.contains("1 · updated ↑"), "reverse indicator: {text}");
-        // An active search query moves to the PR footer, not the title.
+        assert!(text.contains("1 · recent · updated ↑"), "reverse indicator: {text}");
+        // An active query names itself and any filter marks the pane.
         app.sidebar.query_active = "is:open".to_string();
-        assert!(app.side_footer(true).contains("\"is:open\""), "query in footer");
-        assert!(!app.side_subtitle(true).contains("is:open"), "query out of title");
+        assert!(app.side_subtitle(true).contains("\"is:open\""), "query in title");
+        assert!(!app.side_subtitle(true).contains("filtered"), "no marker without filters");
+        app.sidebar.show_open_issues = false;
+        assert!(app.side_subtitle(true).contains("filtered"), "filter marker in title");
+        assert!(!app.side_footer(true).contains("is:open"), "query out of footer");
     }
 
     #[test]
@@ -3141,7 +3222,7 @@ mod render_smoke {
         d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
         app.show_issue(7);
         assert!(app.refs_visible());
-        assert_eq!(app.refs_rows(), vec![Divider("Paired"), Item(9)]);
+        assert_eq!(app.refs_rows(), vec![Divider("Paired".to_string()), Item(9)]);
         let text = frame_text(&mut app);
         assert!(text.contains("Paired"), "{text}");
         app.nav.pane = Pane::Refs;
@@ -3302,7 +3383,7 @@ mod render_smoke {
         app.issues.statuses.insert(20, vec![]);
         app.nav.recent.push(20);
         use crate::model::SideRow::{Divider, Item};
-        assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent"), Item(20)]);
+        assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent".to_string()), Item(20)]);
         handle_key(&mut app, key(KeyCode::Char('f')));
         assert!(app.sidebar.filter_open);
         let text = frame_text(&mut app);
@@ -3342,6 +3423,121 @@ mod render_smoke {
         app.sidebar.query_draft = String::new();
         assert_eq!(app.commit_query_draft(), QueryAction::Refetch);
         assert!(app.sidebar.query_active.is_empty());
+    }
+
+    #[test]
+    fn g_opens_the_format_dialog_in_query_edit_mode() {
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('g')));
+        assert!(app.sidebar.filter_open, "g opens the sidebar dialog");
+        assert!(app.sidebar.query_edit, "the query field starts editing");
+        let text = frame_text(&mut app);
+        assert!(text.contains("query"), "{text}");
+        handle_key(&mut app, key(KeyCode::Char('b')));
+        handle_key(&mut app, key(KeyCode::Char('u')));
+        handle_key(&mut app, key(KeyCode::Char('g')));
+        assert_eq!(app.sidebar.query_draft, "bug");
+        handle_key(&mut app, key(KeyCode::Esc));
+        assert!(app.sidebar.filter_open, "esc keeps the dialog up");
+        assert!(!app.sidebar.query_edit);
+        assert!(app.sidebar.query_draft.is_empty(), "esc reverts the draft");
+        // `S` still submits pending review; it never opens the dialog.
+        app.sidebar.filter_open = false;
+        handle_key(&mut app, key(KeyCode::Char('S')));
+        assert!(!app.sidebar.filter_open);
+        assert!(app.message.contains("no pending comments"), "{}", app.message);
+    }
+
+    #[test]
+    fn format_dialog_lists_pills_and_space_toggles_them() {
+        use crate::model::GroupBy;
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        app.sidebar.meta_loaded = true;
+        app.sidebar.labels = vec!["bug".to_string(), "docs".to_string()];
+        app.sidebar.milestones = vec![crate::model::Milestone {
+            title: "v1".to_string(),
+            due_on: None,
+        }];
+        app.sidebar.filter_open = true;
+        app.sidebar.format_focus = 0;
+        let text = frame_text(&mut app);
+        assert!(text.contains("bug") && text.contains("docs"), "label pills: {text}");
+        assert!(text.contains("v1") && text.contains("(no milestone)"), "milestone pills: {text}");
+        let fetching = app.sections.rx.is_some();
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.label_filter.contains("bug"), "space flips the focused label");
+        assert!(!app.sidebar.label_filter.contains("docs"));
+        assert_eq!(app.sections.rx.is_some(), fetching, "pills never refetch");
+        // Milestone pills follow the labels: v1, then "(no milestone)".
+        app.sidebar.format_focus = 2;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.milestone_filter.contains(&Some("v1".to_string())));
+        app.sidebar.format_focus = 3;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.milestone_filter.contains(&None), "(no milestone) pill");
+        // The grouping row sits below the pills.
+        app.sidebar.format_focus = 4;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert_eq!(app.sidebar.group_by, GroupBy::Milestone);
+        let text = frame_text(&mut app);
+        assert!(text.contains("filtered"), "pane title marks active filters: {text}");
+    }
+
+    #[test]
+    fn milestone_groups_render_in_order_and_clicks_match_rows() {
+        use crate::model::{GroupBy, SideRow::{Divider, Item}};
+        let mut app = App::new(Some("o/r".to_string()));
+        app.repo_slug = Some("o/r".to_string());
+        for (n, milestone) in [(7, Some("v1")), (9, Some("v0.6")), (11, None)] {
+            let mut d = sample(n);
+            d.milestone = milestone.map(str::to_string);
+            app.issues.data.insert(n, d);
+            app.issues.statuses.insert(n, vec![]);
+            app.nav.recent.push(n);
+        }
+        app.sidebar.group_by = GroupBy::Milestone;
+        app.sidebar.meta_loaded = true;
+        app.sidebar.milestones = vec![
+            crate::model::Milestone {
+                title: "v1".to_string(),
+                due_on: Some("2026-03-01T00:00:00Z".to_string()),
+            },
+            crate::model::Milestone {
+                title: "v0.6".to_string(),
+                due_on: Some("2026-02-01T00:00:00Z".to_string()),
+            },
+        ];
+        assert_eq!(
+            app.issue_rows(),
+            vec![
+                Divider("v0.6 (1)".to_string()),
+                Item(9),
+                Divider("v1 (1)".to_string()),
+                Item(7),
+                Divider("(no milestone) (1)".to_string()),
+                Item(11),
+            ],
+            "due date, then title, then no milestone"
+        );
+        let text = sidebar_text(&mut app);
+        let order = ["v0.6 (1)", "v1 (1)", "(no milestone) (1)"]
+            .map(|label| text.find(label).unwrap_or(usize::MAX));
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "dividers render in order: {text}");
+        // A click on #7 must land on #7: walk the same row heights the
+        // hit test uses (3 lines per item, 1 per divider, plus border
+        // and spacer).
+        let area = app.hits.side_issue_area;
+        let mut rel = 2usize;
+        for row in app.issue_rows() {
+            if row.number() == Some(7) {
+                break;
+            }
+            rel += if row.number().is_some() { 3 } else { 1 };
+        }
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), area.x + 2, area.y + rel as u16 + 1));
+        assert_eq!(app.nav.current, Some(7), "click lands on the grouped row");
     }
 
     #[test]
@@ -3455,10 +3651,13 @@ mod render_smoke {
         assert!(text.contains("Format"));
         assert!(text.contains("row fields · issues"));
         assert!(text.contains("row fields · prs"));
-        // `j` walks the Row fields rows; `space` flips the focused one.
+        // The grouping row sits above the Row fields rows while the
+        // picker lists are still loading: `j` twice lands on the first
+        // Row fields checkbox, and `space` flips it.
         assert!(app.sidebar.row_issue.labels);
         handle_key(&mut app, key(KeyCode::Char('j')));
-        assert_eq!(app.sidebar.format_focus, 1);
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.sidebar.format_focus, 2);
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert!(!app.sidebar.row_issue.updated, "space flips the focused row");
         // The existing single keys still work beside the new navigation.
@@ -3491,9 +3690,8 @@ mod render_smoke {
     fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
         let mut app = loaded_app();
         app.sidebar.filter_open = true;
-        // Last PRs row: the deepest focused widget in the sidebar dialog.
-        use crate::model::RowFields;
-        app.sidebar.format_focus = RowFields::ISSUE_ORDER.len() + RowFields::PR_ORDER.len() - 1;
+        // Deepest focused widget in the sidebar dialog.
+        app.sidebar.format_focus = app.format_widgets().saturating_sub(1);
         let text = frame_text_sized(&mut app, 100, 24);
         assert!(text.contains("row fields · prs"), "section header fits: {text}");
         assert!(text.contains("ci checks"), "focused row stays visible: {text}");

@@ -24,6 +24,9 @@ pub enum IssueEvent {
 #[derive(Debug)]
 pub enum SectionEvent {
     Progress { done: usize, total: usize },
+    /// The fetch stopped at the shared sidebar row cap. Sent before
+    /// `Done`.
+    Capped,
     Done(Result<Vec<api::Row>, String>),
 }
 
@@ -179,7 +182,13 @@ pub async fn fetch_recent_sections(
         Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
     )
     .await?;
-    let rows = api::merge_rows(fresh, cached.unwrap_or_default(), chrono::Utc::now(), hours);
+    let capped = fresh.capped;
+    let rows = api::merge_rows(fresh.rows, cached.unwrap_or_default(), chrono::Utc::now(), hours);
+    if capped || rows.len() >= api::MAX_SECTION_ROWS {
+        if let Some(tx) = &progress {
+            let _ = tx.send(SectionEvent::Capped);
+        }
+    }
     let rows_c = rows.clone();
     let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &rows_c)).await;
     Ok(rows)
@@ -196,7 +205,7 @@ pub(crate) fn cached_sections(repo: &str, hours: u64) -> Option<Vec<api::Row>> {
 pub use crate::cache::Key;
 
 /// Format-dialog prefs, re-exported so UI layers never touch `cache`.
-pub use crate::cache::{SavedBoardFilter, load_prefs, prefs_owner_key, prefs_repo_key, save_prefs};
+pub use crate::cache::{SavedBoardFilter, SavedSidebarFilter, load_prefs, prefs_owner_key, prefs_repo_key, save_prefs};
 
 /// Drop the named entries. `refresh_current` routes through here so UI
 /// layers never touch `cache` directly.
@@ -217,10 +226,65 @@ pub fn save_pins(repo: &str, numbers: &[u64]) {
 }
 
 /// Server-side issue/PR search scoped to the repo.
-pub async fn search_repo(repo: &str, query: &str) -> Result<Vec<api::Row>, String> {
+pub async fn search_repo(
+    repo: &str, query: &str,
+    progress: Option<std::sync::mpsc::Sender<SectionEvent>>,
+) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::search(repo, query, &token).await
+    let report = |done, total| {
+        if let Some(tx) = &progress { let _ = tx.send(SectionEvent::Progress { done, total }); }
+    };
+    let result = api::search(repo, query, &token, Some(&report)).await?;
+    if result.capped {
+        if let Some(tx) = &progress {
+            let _ = tx.send(SectionEvent::Capped);
+        }
+    }
+    Ok(result.rows)
+}
+
+/// Sidebar row cap, re-exported for the cap notice.
+pub use crate::api::MAX_SECTION_ROWS;
+
+/// Repository labels plus milestones for the Format dialog's pickers,
+/// through the 30-minute cache. A partial cache fills only the missing
+/// half from the network.
+pub async fn fetch_repo_meta(repo: &str) -> Result<(Vec<String>, Vec<model::Milestone>), String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    let labels_name = cache::Key::Labels { repo: repo.to_string() }.name();
+    let milestones_name = cache::Key::Milestones { repo: repo.to_string() }.name();
+    let (read_labels, read_milestones) = (labels_name.clone(), milestones_name.clone());
+    let (labels, milestones) = tokio::task::spawn_blocking(move || {
+        (
+            cache::cache_get::<Vec<String>>(&read_labels),
+            cache::cache_get::<Vec<model::Milestone>>(&read_milestones),
+        )
+    })
+    .await
+    .map_err(|e| format!("cache read failed: {e}"))?;
+    let labels: Vec<String> = match labels {
+        Some(labels) => labels,
+        None => {
+            let fresh = api::repo_labels(repo, &token).await?;
+            let saved = fresh.clone();
+            let name = labels_name.clone();
+            let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &saved)).await;
+            fresh
+        }
+    };
+    let milestones: Vec<model::Milestone> = match milestones {
+        Some(milestones) => milestones,
+        None => {
+            let fresh = api::repo_milestones(repo, &token).await?;
+            let saved = fresh.clone();
+            let name = milestones_name.clone();
+            let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &saved)).await;
+            fresh
+        }
+    };
+    Ok((labels, milestones))
 }
 
 /// First Projects v2 board for an owner, through the read-through cache.
@@ -373,7 +437,8 @@ mod tests {
         // hold with or without auth configured.
         assert!(fetch_number("", 1, false, None).await.is_err());
         assert!(fetch_recent_sections("", 24, None).await.is_err());
-        assert!(search_repo("", "bug").await.is_err());
+        assert!(search_repo("", "bug", None).await.is_err());
+        assert!(fetch_repo_meta("").await.is_err());
         assert!(fetch_board("").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
         assert!(fetch_diff("", 1, false).await.is_err());
