@@ -1633,11 +1633,30 @@ fn card_height(expanded: bool) -> u16 {
     }
 }
 
-/// Column areas with a 1-cell gutter so borders never touch.
-fn column_layout(area: Rect, n_cols: usize, col_width: u16) -> Vec<Rect> {
+/// Narrowest board column: below this the card lines clip.
+const MIN_COL_W: u16 = 36;
+
+/// Column areas with a 1-cell gutter so borders never touch. Columns
+/// share the area evenly, but never shrink past `MIN_COL_W`; when even
+/// the minimum does not fit, they keep it and overflow as before.
+fn column_layout(area: Rect, n_cols: usize) -> Vec<Rect> {
+    if n_cols == 0 {
+        return Vec::new();
+    }
+    let gutters = n_cols - 1;
+    let needed = n_cols * MIN_COL_W as usize + gutters;
+    let widths: Vec<u16> = if area.width as usize >= needed {
+        let share = (area.width as usize - gutters) / n_cols;
+        let extra = (area.width as usize - gutters) % n_cols;
+        (0..n_cols)
+            .map(|i| (if i < extra { share + 1 } else { share }) as u16)
+            .collect()
+    } else {
+        vec![MIN_COL_W; n_cols]
+    };
     let mut constraints = Vec::with_capacity(n_cols * 2);
-    for i in 0..n_cols {
-        constraints.push(Constraint::Length(col_width));
+    for (i, width) in widths.into_iter().enumerate() {
+        constraints.push(Constraint::Length(width));
         if i + 1 < n_cols {
             constraints.push(Constraint::Length(1));
         }
@@ -1728,7 +1747,7 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     while app.board.states.len() < cols.len() {
         app.board.states.push(ListState::default());
     }
-    let col_areas = column_layout(inner, cols.len(), 36);
+    let col_areas = column_layout(inner, cols.len());
     app.hits.board_cells.clear();
     for (i, (name, cards)) in cols.iter().enumerate() {
         let Some(a) = col_areas.get(i) else { continue };
@@ -1867,10 +1886,10 @@ pub(crate) fn card_url(c: &model::BoardItem) -> Option<String> {
     c.content.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
 }
 
-fn card_excerpt(c: &model::BoardItem) -> String {
+fn card_excerpt(c: &model::BoardItem, width: usize) -> String {
     let body = c.content.get("body").and_then(|b| b.as_str()).unwrap_or("");
     match body.lines().map(str::trim).find(|l| !l.is_empty()) {
-        Some(first) => model::slug(first, 28),
+        Some(first) => model::slug(first, width),
         None => "–".to_string(),
     }
 }
@@ -1886,10 +1905,18 @@ fn board_card(
     inner_width: u16,
 ) -> ListItem<'static> {
     use crate::theme::{amber, column_color, ink, muted, paper, teal};
-    let title = model::slug(&c.title, 26);
+    // The slug takes what the line leaves after the 2-cell marker and
+    // the `#num ` prefix, so a wider column shows more title.
+    let title_width = (inner_width as usize).saturating_sub(2);
     let head = match c.number {
-        Some(n) => format!("#{n} {title}"),
-        None => format!("◇ {title}"),
+        Some(n) => {
+            let prefix = format!("#{n} ");
+            let room = title_width.saturating_sub(prefix.chars().count()).max(1);
+            format!("{prefix}{}", model::slug(&c.title, room))
+        }
+        None => {
+            format!("◇ {}", model::slug(&c.title, title_width.saturating_sub(2).max(1)))
+        }
     };
     let first = if sel {
         Line::from(vec![
@@ -1931,12 +1958,13 @@ fn board_card(
     if let Some(login) = card_assignee(c) {
         meta.push_str(&format!(" · @{login}"));
     }
-    // No icon here: expanded date lines already fill the 34-cell column
-    // inner width, so any glyph would push the comment count off-screen.
+    // No icon here: at the minimum column width the date line already
+    // fills the card, so a glyph would push the comment count off-screen.
     let dates = match detail {
         Some(d) => format!("{} → {} · {}", d.created, d.updated, comment_word(d.comments)),
         None => "…".to_string(),
     };
+    let excerpt_width = (inner_width as usize).saturating_sub(4).max(1);
     ListItem::new(vec![
         first,
         Line::from(vec![
@@ -1952,7 +1980,7 @@ fn board_card(
         ]),
         Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
-            Span::styled(card_excerpt(c), Style::new().bg(ink()).fg(paper())),
+            Span::styled(card_excerpt(c, excerpt_width), Style::new().bg(ink()).fg(paper())),
         ]),
         Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
@@ -2060,7 +2088,7 @@ fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
 /// Placeholder columns shown while the network fetch is in flight.
 fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
     use crate::theme::{ink, muted, base};
-    let col_areas = column_layout(area, 3, 36);
+    let col_areas = column_layout(area, 3);
     for a in col_areas.iter() {
         let ghost: Vec<ListItem> = (0..4)
             .map(|_| {
@@ -2113,6 +2141,7 @@ mod render_smoke {
     use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
 
     #[test]
     fn style_links_colors_refs_across_span_edges() {
@@ -2358,6 +2387,31 @@ mod render_smoke {
         let text = frame_text(&mut app);
         assert!(text.contains("Todo (2)"), "todo count missing: {text}");
         assert!(text.contains("Done (1)"), "done count missing: {text}");
+    }
+
+    #[test]
+    fn board_columns_fill_a_wide_modal() {
+        let mut app = board_app(3);
+        let board = app.board.data.as_mut().expect("board");
+        board.order = vec!["Todo".to_string(), "Doing".to_string(), "Done".to_string()];
+        board.items[1].status = Some("Doing".to_string());
+        board.items[2].status = Some("Done".to_string());
+        let backend = TestBackend::new(200, 50);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let mut cards = [Rect::new(0, 0, 0, 0); 3];
+        for (rect, col, _) in &app.hits.board_cells {
+            cards[*col] = *rect;
+        }
+        assert!(cards.iter().all(|r| r.width > 36), "columns stretch: {cards:?}");
+        let (lo, hi) = (cards.iter().map(|r| r.width).min(), cards.iter().map(|r| r.width).max());
+        assert!(hi.zip(lo).is_some_and(|(h, l)| h - l <= 1), "columns share the width evenly: {cards:?}");
+        let popup = super::centered(Rect::new(0, 0, 200, 50), 92, 92);
+        assert_eq!(
+            cards[2].x + cards[2].width + 1,
+            popup.x + popup.width - 1,
+            "last column ends at the modal inner edge: {cards:?}"
+        );
     }
 
     #[test]
