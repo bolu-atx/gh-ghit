@@ -938,6 +938,8 @@ mod tests {
             paired: vec![],
             checks: None,
             milestone: None,
+            parent: None,
+            sub_summary: None,
         }
     }
 

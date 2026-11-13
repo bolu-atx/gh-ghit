@@ -11,7 +11,7 @@ pub use board::fetch_board;
 pub use graph::graph;
 pub use sections::{merge_rows, sections, MAX_SECTION_ROWS};
 
-use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label};
+use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};
 use client::{
     client, get, graphql_auth_failure, graphql_data, graphql_url, http_fail, post_json,
     rest_base,
@@ -92,6 +92,10 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
         updated: updated.get(..10).unwrap_or("").to_owned(),
         comments: v.get("comments").and_then(Value::as_u64).unwrap_or(0) as usize,
     };
+    let sub_summary = v.get("sub_issues_summary").filter(|s| s.is_object()).map(|s| SubSummary {
+        total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
+        completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
+    });
     Ok(Row {
         issue: IssueData {
             number,
@@ -109,6 +113,8 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             paired: vec![],
             checks: None,
             milestone: v.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned),
+            parent: None,
+            sub_summary: if is_pr { None } else { sub_summary },
             is_pr,
         },
         statuses: vec![],
@@ -494,6 +500,20 @@ mod tests {
         let merged = json!({"number":14,"title":"merged","state":"closed","user":{"login":"bo"},"labels":[],"assignees":[],"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","html_url":"https://github.com/o/r/pull/14","body":"","comments":0,"pull_request":{"merged_at":"2026-11-04T00:00:00Z"}});
         assert_eq!(search_row(&merged).unwrap().issue.state, "MERGED");
         assert!(search_row(&json!({"title":"no number"})).is_err());
+    }
+
+    #[test]
+    fn search_rows_carry_sub_issue_summary_and_no_parent() {
+        let item = json!({"number":13,"title":"parent","state":"open",
+            "sub_issues_summary":{"total":3,"completed":2,"percent_completed":66}});
+        let row = search_row(&item).unwrap();
+        assert_eq!(row.issue.sub_summary, Some(SubSummary { total: 3, completed: 2 }));
+        assert_eq!(row.issue.parent, None, "REST search has no parent link");
+        let pr = json!({"number":14,"title":"pr","state":"open","pull_request":{"url":"x"},
+            "sub_issues_summary":{"total":1,"completed":0}});
+        let row = search_row(&pr).unwrap();
+        assert_eq!(row.issue.sub_summary, None, "PR rows leave the summary empty");
+        assert_eq!(row.issue.parent, None);
     }
 
     fn search_hit(number: u64) -> Value {

@@ -164,6 +164,16 @@ pub fn parse_check_state(value: &serde_json::Value) -> Option<CheckState> {
     }
 }
 
+/// Sub-issue counts for a parent issue, from GraphQL `subIssuesSummary`
+/// or REST `sub_issues_summary`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubSummary {
+    #[serde(default)]
+    pub total: u64,
+    #[serde(default)]
+    pub completed: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueData {
@@ -205,6 +215,15 @@ pub struct IssueData {
     /// Defaulted so old file caches without the field still parse.
     #[serde(default)]
     pub milestone: Option<String>,
+    /// Parent issue number when this item is a sub-issue. GraphQL
+    /// sections fill it; REST search has no parent link. Defaulted so
+    /// old file caches without the field still parse.
+    #[serde(default)]
+    pub parent: Option<u64>,
+    /// Sub-issue counts for a parent issue. Defaulted so old file caches
+    /// without the field still parse.
+    #[serde(default)]
+    pub sub_summary: Option<SubSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1482,6 +1501,8 @@ mod tests {
             paired: vec![],
             checks: None,
             milestone: None,
+            parent: None,
+            sub_summary: None,
             is_pr: false,
         }
     }
