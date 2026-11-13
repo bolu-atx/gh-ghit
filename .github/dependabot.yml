@@ -1,0 +1,19 @@
+# Weekly, grouped update PRs: one for Cargo crates, one for Actions.
+# Security fixes for Cargo arrive on their own as soon as an
+# advisory lands (repo setting "Dependabot security updates").
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
