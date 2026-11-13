@@ -164,6 +164,10 @@ pub struct SavedSidebarFilter {
 /// default so older files missing new keys keep working.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prefs {
+    #[serde(default = "default_true")]
+    pub show_sidebar: bool,
+    #[serde(default = "default_true")]
+    pub show_right: bool,
     #[serde(default)]
     pub board_cards: crate::model::CardFields,
     #[serde(default)]
@@ -196,7 +200,7 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { board_cards: crate::model::CardFields::default(),
+        Self { show_sidebar: true, show_right: true, board_cards: crate::model::CardFields::default(),
             board_filters: std::collections::HashMap::new(),
             row_issue: crate::model::RowFields::default(),
             row_pr: crate::model::RowFields::default(),

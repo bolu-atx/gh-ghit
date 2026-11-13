@@ -94,7 +94,7 @@ pub(crate) enum NavIntent {
     Issue(u64),
     Tab(Tab),
     Step(isize),
-    Back,
+    Back(usize),
     Forward,
     Evict,
 }
@@ -264,6 +264,7 @@ pub(crate) type RepoMeta = (Vec<String>, Vec<model::Milestone>);
 /// the `f` format dialog (open toggles, query draft/active, label and
 /// milestone pickers, group-by, row fields), and the two pane list states.
 pub(crate) struct Sidebar {
+    pub(crate) show: bool,
     pub(crate) search: String,
     pub(crate) searching: bool,
     pub(crate) sort: core::SideSort,
@@ -308,7 +309,7 @@ pub(crate) struct Sidebar {
 
 impl Sidebar {
     pub(crate) fn new() -> Self {
-        Self { search: String::new(), searching: false, sort: core::SideSort::Default,
+        Self { show: true, search: String::new(), searching: false, sort: core::SideSort::Default,
             sort_desc: false, show_open_prs: true, show_merged_prs: true,
             show_open_issues: true, show_closed_issues: true, query_edit: false,
             query_draft: String::new(), query_active: String::new(),
@@ -567,6 +568,7 @@ pub(crate) struct HitAreas {
     pub(crate) side_issue_rows: Vec<model::SideRow>,
     pub(crate) side_pr_rows: Vec<model::SideRow>,
     pub(crate) refs_area: Rect,
+    pub(crate) history_rows: Vec<(Rect, usize)>,
     pub(crate) ref_rows: Vec<model::SideRow>,
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
@@ -1395,23 +1397,35 @@ impl App {
     /// issue moves to the forward stack so Ctrl+I can redo it. Restores
     /// without recording, keeping both stacks intact.
     pub(crate) fn go_back(&mut self) {
-        if !self.guard_nav(NavIntent::Back) {
-            self.go_back_inner();
+        self.go_back_n(1);
+    }
+
+    pub(crate) fn go_back_n(&mut self, steps: usize) {
+        if steps > 0 && !self.guard_nav(NavIntent::Back(steps)) {
+            self.go_back_inner(steps);
         }
     }
 
-    fn go_back_inner(&mut self) {
-        let Some(prev) = self.nav.history.pop() else {
+    fn go_back_inner(&mut self, steps: usize) {
+        let count = steps.min(self.nav.history.len());
+        if count == 0 {
             self.notify("no older issue".to_string());
             return;
-        };
-        if let Some(cur) = self.nav.current {
-            if self.nav.future.last() != Some(&cur) {
-                self.nav.future.push(cur);
-            }
         }
-        self.file_visited(prev);
-        self.load_issue(prev, false);
+        let mut current = self.nav.current;
+        for _ in 0..count {
+            let prev = self.nav.history.pop().expect("count is clamped");
+            if let Some(cur) = current {
+                if self.nav.future.last() != Some(&cur) {
+                    self.nav.future.push(cur);
+                }
+            }
+            current = Some(prev);
+        }
+        if let Some(prev) = current {
+            self.file_visited(prev);
+            self.load_issue(prev, false);
+        }
     }
 
     /// Redo a step back (Ctrl+I). The current issue returns to the back
@@ -1610,6 +1624,11 @@ impl App {
         self.refs.show && !(self.refs.numbers.is_empty() && self.refs.paired.is_empty())
     }
 
+    /// The right column shows when toggled on and it has Refs or History.
+    pub(crate) fn right_visible(&self) -> bool {
+        self.refs.show && (self.refs_visible() || !self.nav.history.is_empty())
+    }
+
     /// Display rows for the refs pane: mentioned numbers, then a `Paired`
     /// divider with the will-close counterparts. Empty sections collapse.
     pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
@@ -1642,16 +1661,34 @@ impl App {
         if !self.refs.show && self.nav.pane == Pane::Refs {
             self.nav.pane = Pane::Main;
         }
-        self.notify(if self.refs.show { "refs: shown".to_string() } else { "refs: hidden".to_string() });
+        self.persist_prefs();
+        self.notify(if self.refs.show { "right pane: shown" } else { "right pane: hidden" }.to_string());
     }
 
-    /// Tab cycles Issues → PRs → Refs, skipping Refs while it is hidden.
-    /// The body keeps its dedicated keys so it never takes Tab focus.
+    /// Flip the left sidebar (`E`). Focus leaves the hidden panes.
+    pub(crate) fn toggle_sidebar(&mut self) {
+        self.sidebar.show = !self.sidebar.show;
+        if !self.sidebar.show {
+            if matches!(self.nav.pane, Pane::Issues | Pane::PRs) {
+                self.nav.pane = Pane::Main;
+            }
+            self.hits.side_issue_area = Rect::default();
+            self.hits.side_pr_area = Rect::default();
+        }
+        self.persist_prefs();
+        self.notify(if self.sidebar.show { "sidebar: shown" } else { "sidebar: hidden" }.to_string());
+    }
+
+    /// Tab cycles Issues → PRs → Refs, skipping panes that are hidden.
+    /// With the sidebar hidden it moves between Main and Refs. The body
+    /// keeps its dedicated keys, so it takes Tab focus only as a fallback.
     pub(crate) fn cycle_pane(&mut self) {
         self.nav.pane = match self.nav.pane {
-            Pane::Issues => Pane::PRs,
+            Pane::Issues if self.sidebar.show => Pane::PRs,
             Pane::PRs if self.refs_visible() => Pane::Refs,
-            _ => Pane::Issues,
+            Pane::Main if !self.sidebar.show && self.refs_visible() => Pane::Refs,
+            _ if self.sidebar.show => Pane::Issues,
+            _ => Pane::Main,
         };
     }
 
@@ -2139,6 +2176,8 @@ impl App {
             return;
         }
         let mut prefs = github::load_prefs();
+        prefs.show_sidebar = self.sidebar.show;
+        prefs.show_right = self.refs.show;
         prefs.board_cards = self.board.fields;
         prefs.row_issue = self.sidebar.row_issue;
         prefs.row_pr = self.sidebar.row_pr;
@@ -2187,6 +2226,13 @@ impl App {
     fn apply_prefs(&mut self) {
         self.prefs_loaded = true;
         let prefs = github::load_prefs();
+        self.sidebar.show = prefs.show_sidebar;
+        self.refs.show = prefs.show_right;
+        if (!self.sidebar.show && matches!(self.nav.pane, Pane::Issues | Pane::PRs))
+            || (!self.refs.show && self.nav.pane == Pane::Refs)
+        {
+            self.nav.pane = Pane::Main;
+        }
         self.sidebar.show_open_prs = prefs.show_open_prs;
         self.sidebar.show_merged_prs = prefs.show_merged_prs;
         self.sidebar.show_open_issues = prefs.show_open_issues;
@@ -2733,7 +2779,7 @@ impl App {
             NavIntent::Issue(n) => self.open_issue_inner(n),
             NavIntent::Tab(tab) => self.set_tab_inner(tab),
             NavIntent::Step(delta) => self.step_issue_inner(delta),
-            NavIntent::Back => self.go_back_inner(),
+            NavIntent::Back(steps) => self.go_back_inner(steps),
             NavIntent::Forward => self.go_forward_inner(),
             NavIntent::Evict => self.evict_current_inner(),
         }
@@ -4579,6 +4625,61 @@ mod tests {
         assert_eq!(app.issues.data.get(&9).unwrap().body, "see #7");
         assert_eq!(app.refs.numbers, vec![7], "refs recompute from the full body");
         assert_eq!(app.refs.paired, vec![12]);
+    }
+
+    #[test]
+    fn history_jump_replays_and_clamps() {
+        let mut app = sidebar_app(&[7, 9, 11, 12, 13]);
+        app.nav.current = Some(13);
+        app.nav.history = vec![7, 9, 11, 12];
+        app.go_back_n(3);
+        assert_eq!(app.nav.current, Some(9));
+        assert_eq!(app.nav.history, vec![7]);
+        assert_eq!(app.nav.future, vec![13, 12, 11]);
+        for number in [11, 12, 13] {
+            app.go_forward();
+            assert_eq!(app.nav.current, Some(number));
+        }
+        app.go_back_n(100);
+        assert_eq!(app.nav.current, Some(7));
+        assert!(app.nav.history.is_empty());
+    }
+
+    #[test]
+    fn history_jump_one_matches_back_and_respects_guard() {
+        let mut first = sidebar_app(&[7, 9]);
+        first.nav.current = Some(9);
+        first.nav.history = vec![7];
+        let mut second = sidebar_app(&[7, 9]);
+        second.nav.current = Some(9);
+        second.nav.history = vec![7];
+        first.go_back();
+        second.go_back_n(1);
+        assert_eq!(first.nav.current, second.nav.current);
+        assert_eq!(first.nav.history, second.nav.history);
+        assert_eq!(first.nav.future, second.nav.future);
+        let mut guarded = pending_nav_app();
+        guarded.nav.history = vec![7];
+        guarded.go_back_n(3);
+        assert_eq!(guarded.nav.current, Some(9));
+        assert_eq!(guarded.nav.history, vec![7]);
+        guarded.confirm_choose(1);
+        assert_eq!(guarded.nav.current, Some(7));
+    }
+
+    #[test]
+    fn pane_visibility_survives_prefs_reload() {
+        let (_guard, _dir, saved) = temp_xdg();
+        let mut first = App::new(None);
+        first.prefs_loaded = true;
+        first.toggle_sidebar();
+        first.toggle_refs();
+        let mut second = App::new(None);
+        second.apply_prefs();
+        assert!(!second.sidebar.show);
+        assert!(!second.refs.show);
+        assert_eq!(second.nav.pane, Pane::Main);
+        restore_xdg(saved);
     }
 
     #[test]

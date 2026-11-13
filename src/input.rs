@@ -232,6 +232,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('p') => app.toggle_pin(),
         KeyCode::Char('y') => app.yank(),
         KeyCode::Char('e') => app.toggle_refs(),
+        KeyCode::Char('E') => app.toggle_sidebar(),
         // Sidebar-only: a cycles the row sort, A flips its direction, and
         // x evicts the highlighted row. Diff keeps s for split.
         KeyCode::Char('a') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.cycle_sort(),
@@ -887,6 +888,14 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             app.note_click(Rect::new(x, y, 1, 1));
         }
         return;
+    }
+    if !drag {
+        if let Some((_, steps)) = app.hits.history_rows.iter()
+            .find(|(rect, _)| in_rect(*rect, x, y)).copied()
+        {
+            app.go_back_n(steps);
+            return;
+        }
     }
     // Hit-test against the render-cached pane rows by borrow: computed
     // once per frame in `render`, reused here with no clone.

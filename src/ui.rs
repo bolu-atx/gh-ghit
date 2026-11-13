@@ -23,21 +23,35 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(f.area());
 
-    if app.refs_visible() {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(44), Constraint::Min(1), Constraint::Length(36)])
-            .split(root[0]);
+    app.hits.history_rows.clear();
+    app.hits.refs_area = Rect::default();
+    app.hits.side_issue_area = Rect::default();
+    app.hits.side_pr_area = Rect::default();
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(if app.sidebar.show { 44 } else { 0 }),
+            Constraint::Min(1),
+            Constraint::Length(if app.right_visible() { 36 } else { 0 }),
+        ])
+        .split(root[0]);
+    if app.sidebar.show {
         render_sidebar(f, cols[0], app);
-        render_main(f, cols[1], app);
-        render_refs(f, cols[2], app);
-    } else {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(44), Constraint::Min(1)])
-            .split(root[0]);
-        render_sidebar(f, cols[0], app);
-        render_main(f, cols[1], app);
+    }
+    render_main(f, cols[1], app);
+    if app.right_visible() {
+        let count = if app.nav.current.is_some() && !app.nav.history.is_empty() {
+            app.nav.history.len().min(4) + 1
+        } else { 0 };
+        let height = if count > 0 { (count as u16 + 2).min(cols[2].height) } else { 0 };
+        let panes = Layout::default().direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(height)]).split(cols[2]);
+        if app.refs_visible() {
+            render_refs(f, panes[0], app);
+        }
+        if height > 0 {
+            render_history(f, panes[1], app);
+        }
     }
     app.capture_body_rows(f.buffer_mut());
     // Diff tab bookkeeping from the fresh capture. Only the Diff tab
@@ -232,7 +246,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(block, popup);
     let body = [
         "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
-        "  1/2 details/visual · e refs · n/N search matches",
+        "  1/2 details/visual · e right pane · E sidebar · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
         "Actions", "  : command · / find · g search · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
@@ -1521,6 +1535,47 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.refs.state = state;
 }
 
+/// Last visits under Refs: up to four back entries above the current
+/// issue, bottom-aligned. A click on a row `k` steps up walks back `k`
+/// steps through `go_back_n`, so Ctrl+I replays the skipped entries.
+fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    // Nerd Font Font Awesome fa-history.
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Plain)
+        .border_style(Style::new().bg(theme::ink()).fg(theme::muted()))
+        .style(theme::base())
+        .title(section_title("History", "", "\u{f1da}", false));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let mut numbers: Vec<u64> = app.nav.history.iter().rev().take(4).copied().collect();
+    numbers.reverse();
+    if let Some(current) = app.nav.current {
+        numbers.push(current);
+    }
+    let total = numbers.len();
+    let skip = total.saturating_sub(inner.height as usize);
+    for (index, number) in numbers.into_iter().enumerate().skip(skip) {
+        let row = Rect::new(inner.x, inner.y + (index - skip) as u16, inner.width, 1);
+        let steps = total - index - 1;
+        // `▌`, not the sidebar's `█`: the list selection marker stays
+        // unique on screen (e2e counts it), and "current" is not a
+        // list selection.
+        let marker = if steps == 0 { "▌ " } else { "  " };
+        let head = format!("#{number}");
+        let room = (inner.width as usize).saturating_sub(2 + head.chars().count() + 1);
+        let title = app.issues.data.get(&number)
+            .filter(|issue| !issue.title.is_empty() && room > 1)
+            .map(|issue| format!(" {}", model::slug(&issue.title, room)))
+            .unwrap_or_default();
+        let line = Line::from(vec![
+            Span::styled(marker, Style::new().bg(theme::ink()).fg(theme::amber()).bold()),
+            Span::styled(head, Style::new().bg(theme::ink()).fg(theme::paper())),
+            Span::styled(title, Style::new().bg(theme::ink()).fg(theme::muted())),
+        ]);
+        f.render_widget(Paragraph::new(line).style(theme::base()), row);
+        app.hits.history_rows.push((row, steps));
+    }
+}
+
 /// Greedy word-wrap of styled lines to `width` cells. Words longer than
 /// the width hard-split; single spaces rejoin the words. Blank lines pass
 /// through so paragraph breaks survive. Lets the title/label block above
@@ -2481,6 +2536,56 @@ mod render_smoke {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
+
+    #[test]
+    fn history_window_and_click_follow_drawn_rows() {
+        let mut app = loaded_app();
+        for number in 10..=15 {
+            app.issues.data.insert(number, sample(number));
+        }
+        app.nav.history = vec![7, 9, 10, 11, 12, 13];
+        app.show_issue(15);
+        app.refs.numbers = vec![9];
+        let text = frame_text_sized(&mut app, 160, 40);
+        assert!(text.contains("History"));
+        assert_eq!(app.hits.history_rows.len(), 5);
+        assert_eq!(app.hits.history_rows[4].0.y, 37);
+        assert_eq!(app.hits.refs_area.bottom(), app.hits.history_rows[0].0.y - 1);
+        assert!(text.contains("▌ #15"));
+        assert!(text.matches('█').count() <= 1, "History adds no list selection marker");
+        let row = app.hits.history_rows[2].0;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+        assert_eq!(app.nav.current, Some(12));
+        assert_eq!(app.nav.future, vec![15, 13]);
+    }
+
+    #[test]
+    fn history_alone_and_sidebar_toggle_resize_main() {
+        use crate::app::Pane;
+        let mut app = loaded_app();
+        app.refs.numbers.clear();
+        app.refs.paired.clear();
+        frame_text_sized(&mut app, 160, 40);
+        let full_width = app.hits.body_area.width;
+        assert!(app.hits.history_rows.is_empty());
+        app.nav.history = vec![9];
+        let text = frame_text_sized(&mut app, 160, 40);
+        assert!(text.contains("History"));
+        assert_eq!(app.hits.refs_area.width, 0);
+        assert!(app.hits.body_area.width < full_width);
+        app.nav.pane = Pane::Issues;
+        handle_key(&mut app, key(KeyCode::Char('E')));
+        assert_eq!(app.nav.pane, Pane::Main);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.nav.pane, Pane::Main);
+        let before = app.hits.body_area.width;
+        let text = frame_text_sized(&mut app, 160, 40);
+        assert!(!text.contains("Pull requests"));
+        assert_eq!(app.hits.side_issue_area.width, 0);
+        assert!(app.hits.body_area.width > before);
+        handle_key(&mut app, key(KeyCode::Char('E')));
+        assert!(app.sidebar.show);
+    }
 
     #[test]
     fn style_links_colors_refs_across_span_edges() {
