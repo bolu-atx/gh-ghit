@@ -3588,6 +3588,13 @@ pub(crate) fn poll_issues(app: &mut App) -> bool {
                         // requested. Explicit actions file through
                         // `ensure_visited` at their own site.
                         app.issues.partial.remove(&number);
+                        // REST `issues/{n}` has no parent link: keep the
+                        // sub-issue fields the sections row already carried.
+                        let mut data = data;
+                        if let Some(old) = app.issues.data.get(&number) {
+                            data.parent = data.parent.or(old.parent);
+                            data.sub_summary = data.sub_summary.or(old.sub_summary);
+                        }
                         app.issues.data.insert(number, data);
                         app.issues.statuses.insert(number, statuses);
                         if app.nav.current == Some(number) {
@@ -3678,6 +3685,8 @@ mod tests {
             paired: vec![],
             checks: None,
             milestone: None,
+            parent: None,
+            sub_summary: None,
             is_pr: false,
         }
     }
@@ -4067,6 +4076,23 @@ mod tests {
         assert!(!app.issues.progress.contains_key(&9), "terminal result clears progress");
         assert!(!app.issues.pending.contains(&9));
         assert!(app.issues.data.contains_key(&9));
+    }
+
+    #[test]
+    fn full_fetch_keeps_sub_issue_fields_from_the_sections_row() {
+        let mut app = sidebar_app(&[7]);
+        let mut row = issue(9, "2026-01-05T00:00:00Z");
+        row.parent = Some(3);
+        row.sub_summary = Some(model::SubSummary { total: 2, completed: 1 });
+        app.issues.data.insert(9, row);
+        app.issues.pending.insert(9);
+        let fresh = issue(9, "2026-01-06T00:00:00Z");
+        app.issues.tx.send((9, github::IssueEvent::Done(Ok(Box::new((fresh, vec![])))))).unwrap();
+        poll_issues(&mut app);
+        let data = &app.issues.data[&9];
+        assert_eq!(data.updated_at, "2026-01-06T00:00:00Z", "full fetch wins");
+        assert_eq!(data.parent, Some(3), "parent survives the REST fetch");
+        assert_eq!(data.sub_summary, Some(model::SubSummary { total: 2, completed: 1 }));
     }
 
     #[test]

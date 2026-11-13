@@ -444,6 +444,8 @@ mod tests {
             paired: vec![],
             checks: None,
             milestone: None,
+            parent: None,
+            sub_summary: None,
             is_pr: false,
         };
         let mut app = crate::app::App::new(Some("o/r".to_string()));

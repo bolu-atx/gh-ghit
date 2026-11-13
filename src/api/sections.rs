@@ -1,6 +1,6 @@
 use super::{Row, SectionRows};
 use super::client::{client, graphql_auth_failure, graphql_url, post_json};
-use crate::model::{Author, BoardDetail, IssueData, Label};
+use crate::model::{Author, BoardDetail, IssueData, Label, SubSummary};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -19,6 +19,8 @@ const ISSUE_FIELDS: &str = r#"
  assignees(first: 100) { nodes { login } } createdAt updatedAt url
  milestone { title }
  comments(first: 1) { totalCount }
+ parent { number }
+ subIssuesSummary { total completed }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
@@ -96,7 +98,13 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
             // through the full fetch, so they stay empty here even when a
             // payload carries them.
             let milestone = n.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, is_pr }, statuses, detail, complete: false, window_at });
+            let parent = n.pointer("/parent/number").and_then(Value::as_u64);
+            let summary = n.get("subIssuesSummary").filter(|s| s.is_object());
+            let sub_summary = summary.map(|s| SubSummary {
+                total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
+                completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
+            });
+            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, parent, sub_summary, is_pr }, statuses, detail, complete: false, window_at });
             }
         }
     }
@@ -250,7 +258,7 @@ mod tests {
     #[test]
     fn query_has_both_sections_and_metadata() {
         let q = query();
-        for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter", "commits(last: 1)", "statusCheckRollup"] { assert!(q.contains(field)); }
+        for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter", "commits(last: 1)", "statusCheckRollup", "parent { number }", "subIssuesSummary { total completed }"] { assert!(q.contains(field)); }
     }
     #[test]
     fn sections_query_stays_slim_and_rows_stay_partial() {
@@ -281,6 +289,26 @@ mod tests {
         assert_eq!(row.statuses[0].1.as_deref(), Some("Todo"));
         assert_eq!(row.detail.comments, 2);
         assert_eq!(row.issue.checks, Some(crate::model::CheckState::Pass));
+    }
+    #[test]
+    fn parses_parent_and_sub_issue_summary_on_issue_nodes() {
+        let v = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":1,"title":"pr","state":"OPEN"}]},
+            "merged":{"nodes":[]},
+            "openIssues":{"nodes":[
+                {"number":7,"title":"child","state":"OPEN",
+                 "parent":{"number":3},"subIssuesSummary":{"total":4,"completed":1}},
+                {"number":8,"title":"plain","state":"OPEN"}]},
+            "closedIssues":{"nodes":[]}}}});
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let rows = parse_rows(&[v], now, 24).unwrap();
+        let row = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap();
+        assert_eq!(row(7).issue.parent, Some(3));
+        assert_eq!(row(7).issue.sub_summary, Some(SubSummary { total: 4, completed: 1 }));
+        assert_eq!(row(8).issue.parent, None, "a top-level issue has no parent");
+        assert_eq!(row(8).issue.sub_summary, None, "a leaf issue has no sub-issues");
+        assert_eq!(row(1).issue.parent, None, "PR rows carry no parent");
+        assert_eq!(row(1).issue.sub_summary, None, "PR rows carry no sub-issue summary");
     }
     #[test]
     fn parses_check_rollup_per_state() {
@@ -411,6 +439,7 @@ mod tests {
                 created_at: String::new(), updated_at: String::new(),
                 url: String::new(), body: String::new(), comments: vec![],
                 is_pr, review_threads: vec![], paired: vec![], checks: None, milestone: None,
+                parent: None, sub_summary: None,
             },
             statuses: vec![],
             detail: BoardDetail::default(),
@@ -512,12 +541,28 @@ mod tests {
     }
     #[test]
     fn cached_rows_roundtrip_through_json() {
-        let row = section_row(7, "cached", "MERGED", true, Some("2026-11-10T11:30:00Z"));
+        let mut row = section_row(7, "cached", "MERGED", true, Some("2026-11-10T11:30:00Z"));
+        row.issue.parent = Some(3);
+        row.issue.sub_summary = Some(SubSummary { total: 2, completed: 1 });
         let raw = serde_json::to_string(&row).unwrap();
         let back: Row = serde_json::from_str(&raw).unwrap();
         assert_eq!(back.issue.number, 7);
         assert_eq!(back.issue.title, "cached");
+        assert_eq!(back.issue.parent, Some(3));
+        assert_eq!(back.issue.sub_summary, Some(SubSummary { total: 2, completed: 1 }));
         assert_eq!(back.window_at.as_deref(), Some("2026-11-10T11:30:00Z"));
+    }
+    #[test]
+    fn old_cached_rows_without_sub_issue_fields_still_parse() {
+        let old = json!({
+            "issue": {"number": 7, "title": "cached", "state": "OPEN"},
+            "statuses": [],
+            "detail": {},
+            "complete": false,
+        });
+        let row: Row = serde_json::from_value(old).unwrap();
+        assert_eq!(row.issue.parent, None);
+        assert_eq!(row.issue.sub_summary, None);
     }
 
     #[test]
