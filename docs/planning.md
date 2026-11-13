@@ -22,7 +22,7 @@ sub-issues, blocked-by/blocking, and labels).
   [`ghit dev` board](https://github.com/users/bolu-atx/projects/1).
   Create with `gh issue create -p 'ghit dev' …` or add right after
   filing — no issue floats outside the board. Status moves and
-  the working loop live in [CONTRIBUTING.md](../CONTRIBUTING.md).
+  the working loop live in [maintaining.md](maintaining.md).
 
 ## Issue body
 
@@ -65,6 +65,10 @@ Labels say what an issue is **about**, not its status or priority:
 One subject label per issue. Workflow labels (`duplicate`,
 `invalid`, `wontfix`, …) stay as-is.
 
+Triage labels: issue forms add `needs-triage` to every new issue.
+The maintainer swaps it for `accepted` (open for PRs) or closes the
+issue. `help wanted` also marks an issue open for outside PRs.
+
 ## Pull requests
 
 - Every PR solves an issue. The description opens with
@@ -83,5 +87,5 @@ One subject label per issue. Workflow labels (`duplicate`,
 ## Working the plan
 
 Doing the work — board moves, coordinator dispatch, merge bar —
-lives in [CONTRIBUTING.md](../CONTRIBUTING.md). Agents read that
+lives in [maintaining.md](maintaining.md). Agents read that
 first.

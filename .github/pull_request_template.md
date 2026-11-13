@@ -1,10 +1,14 @@
 Closes #
 
-<!-- One line: what this PR does and why. Keep the `Closes` keyword so merge auto-closes the issue. -->
+<!-- One line: what this PR does and why. The linked issue must be labelled `accepted` or `help wanted`. Keep the `Closes` keyword so merge auto-closes the issue. -->
 
 ## Verification
 
-<!-- Commands run and what was observed (`cargo clippy --all-targets -- -D warnings`, `cargo test`, live drive, …). -->
+<!-- Commands run and what was observed (`cargo clippy --all-targets -- -D warnings`, `cargo test`, live drive, …). Paste real output. -->
+
+## AI assistance
+
+<!-- Tools and models used, if any, and what you checked by hand. "None" is fine. -->
 
 ## Merge readiness
 
