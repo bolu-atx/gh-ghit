@@ -140,6 +140,19 @@ pub fn paper() -> Color {
 pub fn amber() -> Color {
     pal().amber
 }
+/// Faint active-row tint: amber mixed 18% into the background, so the
+/// row reads as selected while its own text colors stay legible.
+pub fn line_hl() -> Color {
+    match (pal().ink, pal().amber) {
+        (Color::Rgb(ir, ig, ib), Color::Rgb(ar, ag, ab)) => {
+            let mix = |i: u8, a: u8| (i as f32 + (a as f32 - i as f32) * 0.18) as u8;
+            Color::Rgb(mix(ir, ar), mix(ig, ag), mix(ib, ab))
+        }
+        // System theme: the terminal's own background is unknown, so use
+        // ANSI bright black, which stays faint on dark and light schemes.
+        _ => Color::DarkGray,
+    }
+}
 pub fn teal() -> Color {
     pal().teal
 }

@@ -101,16 +101,22 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
             }
         }
         // Active-line highlight, painted on the buffer after the paragraph
-        // so wrapped rows light up exactly. Same amber/ink vocabulary as
-        // the refs mention highlight.
+        // so wrapped rows light up exactly. Only the background tints, so
+        // add/del colors stay readable on the active row.
         if let Some(abs) = app.diff.line {
-            use crate::theme::{amber, ink};
+            use crate::theme::line_hl;
             let vis = abs.saturating_sub(app.nav.scroll as usize);
             if vis < app.hits.body_area.height as usize {
                 let y = app.hits.body_area.y + vis as u16;
                 let buf = f.buffer_mut();
                 for x in app.hits.body_area.x..app.hits.body_area.x + app.hits.body_area.width {
-                    buf[(x, y)].set_style(Style::new().bg(amber()).fg(ink()));
+                    let cell = &mut buf[(x, y)];
+                    cell.set_bg(line_hl());
+                    // Text that matches the tint (muted on the system
+                    // theme) would vanish; lift it to body text.
+                    if cell.fg == line_hl() {
+                        cell.set_fg(crate::theme::paper());
+                    }
                 }
             }
         }
@@ -901,7 +907,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         ]);
         if at_cursor {
             for span in head.spans.iter_mut() {
-                span.style = span.style.patch(Style::new().bg(amber()).fg(ink()));
+                span.style = span.style.patch(Style::new().bg(crate::theme::line_hl()));
             }
         }
         lines.push(Line::from(""));
@@ -4260,7 +4266,14 @@ mod render_smoke {
         let buf = terminal.backend().buffer().clone();
         let vis = h0 + 2;
         let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y + vis as u16)];
-        assert_eq!(cell.bg, crate::theme::amber(), "active line highlighted");
+        assert_eq!(cell.bg, crate::theme::line_hl(), "active line tinted");
+        let row_y = app.hits.body_area.y + vis as u16;
+        let code = (app.hits.body_area.x..app.hits.body_area.x + app.hits.body_area.width)
+            .map(|x| &buf[(x, row_y)])
+            .find(|c| c.symbol() == "-")
+            .expect("deletion marker on the active row");
+        assert_eq!(code.fg, crate::theme::red(), "deletion keeps its color");
+        assert_eq!(code.bg, crate::theme::line_hl(), "code cells share the tint");
     }
 
     #[test]
@@ -4291,7 +4304,7 @@ mod render_smoke {
         let buf = terminal.backend().buffer().clone();
         let hrow = app.diff.headers[0];
         let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y + hrow as u16)];
-        assert_eq!(cell.bg, crate::theme::amber(), "expanded row highlighted");
+        assert_eq!(cell.bg, crate::theme::line_hl(), "expanded row highlighted");
     }
 
     #[test]
