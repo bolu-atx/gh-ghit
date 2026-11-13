@@ -236,15 +236,6 @@ pub(super) fn graphql_url() -> String {
     api_endpoints(&gh_host(), std::env::var("GHIT_API_BASE").ok().as_deref()).1
 }
 
-/// Unwrap a GraphQL response: transport errors already surfaced, so a
-/// top-level `errors` array is the failure, and `data` the payload.
-pub(super) fn graphql_data(value: &Value) -> Result<&Value, String> {
-    if let Some(errors) = value.get("errors") {
-        return Err(format!("GitHub GraphQL: {errors}"));
-    }
-    value.get("data").filter(|v| v.is_object()).ok_or_else(|| format!("GitHub GraphQL: {value}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

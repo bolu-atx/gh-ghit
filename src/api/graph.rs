@@ -323,10 +323,11 @@ async fn resolve_graph_refs(
 /// (no tracked-issues endpoint), the REST timeline has no
 /// `willCloseTarget` (see `issue`), and every node carries Projects
 /// v2 status (GraphQL-only, see `sections`). Sub-issues are the one
-/// confirmed equivalent and load through REST below. Follow-up worth
-/// probing: REST `issues/{n}/dependencies/blocked_by|blocking`
-/// returned 200 on #117, but plain issue objects without project
-/// status or closing-PR refs, so they stay in this query for now.
+/// confirmed equivalent and load through REST below. Re-probe (#120):
+/// REST `issues/{n}/dependencies/blocked_by|blocking` on a public issue
+/// with 3 blockers returns plain issue objects (labels, milestone, state,
+/// sub_issues_summary, empty issue_field_values) with no project status
+/// and no closing-PR refs, so blockers stay in this query.
 pub async fn graph(repo: &str, number: u64, bearer: &str) -> Result<GraphData, String> {
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let url = graphql_url();
