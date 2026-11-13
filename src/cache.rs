@@ -158,6 +158,12 @@ pub struct SavedSidebarFilter {
     pub milestones: Vec<Option<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedQuery {
+    pub name: String,
+    pub query: String,
+}
+
 /// Cross-session Format dialog state, one file for every repo and board.
 /// Missing or unreadable files load as defaults; unknown fields are
 /// ignored so newer files still parse. Every field carries a serde
@@ -189,6 +195,8 @@ pub struct Prefs {
     #[serde(default)]
     pub queries: std::collections::HashMap<String, String>,
     #[serde(default)]
+    pub saved_queries: Vec<SavedQuery>,
+    #[serde(default)]
     pub sidebar_filters: std::collections::HashMap<String, SavedSidebarFilter>,
     #[serde(default)]
     pub group_by: crate::model::GroupBy,
@@ -208,6 +216,7 @@ impl Default for Prefs {
             show_open_issues: true, show_closed_issues: true,
             merged_window_hours: default_window(),
             queries: std::collections::HashMap::new(),
+            saved_queries: Vec::new(),
             sidebar_filters: std::collections::HashMap::new(),
             group_by: crate::model::GroupBy::None,
             sort: crate::core::SideSort::Default,
@@ -266,6 +275,16 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_queries_round_trip_and_default_for_old_prefs() {
+        let old: Prefs = serde_json::from_str("{}").unwrap();
+        assert!(old.saved_queries.is_empty());
+        let mut prefs = old;
+        prefs.saved_queries.push(SavedQuery { name: "bugs".into(), query: "label:bug".into() });
+        let decoded: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(decoded.saved_queries, prefs.saved_queries);
+    }
 
     #[test]
     fn keys_include_host_and_differ_across_hosts() {

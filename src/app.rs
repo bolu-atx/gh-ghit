@@ -276,6 +276,9 @@ pub(crate) struct Sidebar {
     pub(crate) query_edit: bool,
     pub(crate) query_draft: String,
     pub(crate) query_active: String,
+    pub(crate) saved_queries: Vec<github::SavedQuery>,
+    pub(crate) name_edit: bool,
+    pub(crate) name_draft: String,
     pub(crate) group_by: model::GroupBy,
     /// Selected label pills. Empty means no label filter. Pins and
     /// requested rows skip it.
@@ -313,6 +316,7 @@ impl Sidebar {
             sort_desc: false, show_open_prs: true, show_merged_prs: true,
             show_open_issues: true, show_closed_issues: true, query_edit: false,
             query_draft: String::new(), query_active: String::new(),
+            saved_queries: Vec::new(), name_edit: false, name_draft: String::new(),
             group_by: model::GroupBy::None, label_filter: HashSet::new(),
             milestone_filter: HashSet::new(),
             labels: vec![], milestones: vec![],
@@ -1176,11 +1180,55 @@ impl App {
         if q.is_empty() { QueryAction::Refetch } else { QueryAction::Run(q) }
     }
 
+    pub(crate) fn query_tag(&self) -> Option<&str> {
+        let query = self.sidebar.query_active.trim();
+        if query.is_empty() { return None; }
+        Some(self.sidebar.saved_queries.iter().find(|saved| saved.query == query)
+            .map_or("query", |saved| saved.name.as_str()))
+    }
+
+    pub(crate) fn start_name_edit(&mut self) {
+        if self.sidebar.query_active.trim().is_empty() {
+            self.notify("no active query to save".to_string());
+            return;
+        }
+        self.sidebar.name_draft = self.sidebar.saved_queries.iter()
+            .find(|saved| saved.query == self.sidebar.query_active.trim())
+            .map_or_else(String::new, |saved| saved.name.clone());
+        self.sidebar.name_edit = true;
+    }
+
+    pub(crate) fn save_named_query(&mut self) {
+        let name = self.sidebar.name_draft.trim().to_string();
+        if name.is_empty() {
+            self.notify("query name is empty".to_string());
+            return;
+        }
+        let query = self.sidebar.query_active.trim().to_string();
+        if let Some(saved) = self.sidebar.saved_queries.iter_mut().find(|saved| saved.name == name) {
+            saved.query = query;
+        } else {
+            self.sidebar.saved_queries.push(github::SavedQuery { name, query });
+        }
+        self.sidebar.name_edit = false;
+        self.persist_prefs();
+    }
+
+    pub(crate) fn delete_named_query(&mut self) {
+        let focus = self.sidebar.format_focus;
+        if (1..=self.sidebar.saved_queries.len()).contains(&focus) {
+            self.sidebar.saved_queries.remove(focus - 1);
+            self.sidebar.format_focus = focus.min(self.format_widgets() - 1);
+            self.persist_prefs();
+        }
+    }
+
     /// Open the sidebar Format dialog in navigate mode. The picker lists
     /// load lazily the first time.
     pub(crate) fn open_sidebar_format(&mut self) {
         self.sidebar.filter_open = true;
         self.sidebar.query_edit = false;
+        self.sidebar.name_edit = false;
         self.ensure_repo_meta();
     }
 
@@ -1201,7 +1249,7 @@ impl App {
 
     /// Number of controls in the left column of the sidebar format dialog.
     pub(crate) fn format_left_widgets(&self) -> usize {
-        6 + self.sidebar.labels.len() + self.milestone_pills().len()
+        6 + self.sidebar.saved_queries.len() + self.sidebar.labels.len() + self.milestone_pills().len()
     }
 
     pub(crate) fn format_widgets(&self) -> usize {
@@ -1214,6 +1262,17 @@ impl App {
         let labels = self.sidebar.labels.len();
         let pills = self.milestone_pills();
         let left = self.format_left_widgets();
+        let saved = self.sidebar.saved_queries.len();
+        if (1..=saved).contains(&focus) {
+            let query = self.sidebar.saved_queries[focus - 1].query.clone();
+            self.sidebar.query_active = query.clone();
+            self.sidebar.query_draft = query.clone();
+            self.run_gh_search(query);
+            self.persist_prefs();
+            return;
+        }
+        let focus = if focus > saved { focus - saved } else { focus };
+        let left = left - saved;
         match focus {
             0 => self.start_query_edit(),
             1 => self.set_window(core::cycle_window(self.sections.merged_window_hours)),
@@ -1300,20 +1359,21 @@ impl App {
         (p.len(), v.len(), r.len())
     }
 
-    /// Title subtitle for Issues/PRs: row count, the active query (or
-    /// "recent"), a filter marker, and the sort state.
+    /// Title subtitle for Issues/PRs: row count, recent mode, filters, and sort.
     pub(crate) fn side_subtitle(&self, want_pr: bool) -> String {
         let (p, v, r) = self.side_counts(want_pr);
         let query = self.sidebar.query_active.trim();
-        let context = if query.is_empty() { "recent".to_string() } else { format!("\"{query}\"") };
+        let context = if query.is_empty() { " · recent" } else { "" };
         let filtered = if self.filters_active() { " · filtered" } else { "" };
-        format!("{} · {context}{filtered} · {}", p + v + r, self.sort_label())
+        format!("{}{context}{filtered} · {}", p + v + r, self.sort_label())
     }
 
     /// Footer for Issues/PRs: per-group counts.
     pub(crate) fn side_footer(&self, want_pr: bool) -> String {
         let (p, v, r) = self.side_counts(want_pr);
-        format!("pinned ({p}) · requested ({v}) · recent ({r})")
+        let query = self.sidebar.query_active.trim();
+        let suffix = if query.is_empty() { String::new() } else { format!(" · {query}") };
+        format!("pinned ({p}) · requested ({v}) · recent ({r}){suffix}")
     }
 
     /// Title subtitle for Refs: mention/pair counts (Refs has no sort).
@@ -2176,6 +2236,7 @@ impl App {
             return;
         }
         let mut prefs = github::load_prefs();
+        prefs.saved_queries = self.sidebar.saved_queries.clone();
         prefs.show_sidebar = self.sidebar.show;
         prefs.show_right = self.refs.show;
         prefs.board_cards = self.board.fields;
@@ -2226,6 +2287,7 @@ impl App {
     fn apply_prefs(&mut self) {
         self.prefs_loaded = true;
         let prefs = github::load_prefs();
+        self.sidebar.saved_queries = prefs.saved_queries.clone();
         self.sidebar.show = prefs.show_sidebar;
         self.refs.show = prefs.show_right;
         if (!self.sidebar.show && matches!(self.nav.pane, Pane::Issues | Pane::PRs))

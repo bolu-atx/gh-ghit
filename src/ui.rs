@@ -497,8 +497,18 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         }
     }
     left.field(0, Some("search"), search);
+    let saved_count = app.sidebar.saved_queries.len();
+    if app.sidebar.name_edit {
+        left.field(1, Some("name"), vec![Span::styled(
+            format!("{}▌", app.sidebar.name_draft), Style::new().fg(theme::amber()))]);
+    } else if saved_count == 0 {
+        left.empty("saved", "none (s saves the query)");
+    } else {
+        left.chips(Some("saved"), app.sidebar.saved_queries.iter().enumerate().map(|(i, saved)|
+            (1 + i, saved.query == app.sidebar.query_active.trim(), saved.name.clone())).collect());
+    }
     let hours = app.sections.merged_window_hours;
-    left.choice(1, Some("window"), &[
+    left.choice(1 + saved_count, Some("window"), &[
         (hours == 1, "1h"),
         (hours == 24, "24h"),
         (hours == 168, "7d"),
@@ -506,13 +516,13 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     ]);
     left.section(2, "Filter");
     left.chips(Some("states"), vec![
-        (2, app.sidebar.show_open_prs, "open PRs".into()),
-        (3, app.sidebar.show_merged_prs, "merged PRs".into()),
-        (4, app.sidebar.show_open_issues, "open issues".into()),
-        (5, app.sidebar.show_closed_issues, "closed issues".into()),
+        (2 + saved_count, app.sidebar.show_open_prs, "open PRs".into()),
+        (3 + saved_count, app.sidebar.show_merged_prs, "merged PRs".into()),
+        (4 + saved_count, app.sidebar.show_open_issues, "open issues".into()),
+        (5 + saved_count, app.sidebar.show_closed_issues, "closed issues".into()),
     ]);
     let label_chips: Vec<_> = app.sidebar.labels.iter().enumerate().map(|(i, name)|
-        (6 + i, app.sidebar.label_filter.contains(name), name.clone())).collect();
+        (6 + saved_count + i, app.sidebar.label_filter.contains(name), name.clone())).collect();
     if label_chips.is_empty() {
         left.empty("labels", if app.sidebar.meta_rx.is_some() {
             "loading labels …" } else { "No labels in this repo" });
@@ -521,7 +531,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     let pills = app.milestone_pills();
     let milestone_chips: Vec<_> = pills.iter().enumerate().map(|(i, pill)|
-        (6 + app.sidebar.labels.len() + i, app.sidebar.milestone_filter.contains(pill),
+        (6 + saved_count + app.sidebar.labels.len() + i, app.sidebar.milestone_filter.contains(pill),
          pill.clone().unwrap_or_else(|| "(no milestone)".into()))).collect();
     if milestone_chips.is_empty() {
         left.empty("milestones", if app.sidebar.meta_rx.is_some() {
@@ -560,9 +570,13 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     for &(index, row) in left.rows.iter().chain(&right.rows) {
         app.sidebar.format_rows[index] = row;
     }
-    let focus_line = left.focus_line.or_else(|| right.focus_line.map(|row| {
-        if two_columns { row } else { row + left.lines.len() }
-    })).unwrap_or(0);
+    // The name prompt replaces the saved row (index 1) while it edits.
+    let name_line = left.rows.iter().find(|&&(index, _)| index == 1).map_or(3, |&(_, row)| row);
+    let focus_line = if app.sidebar.name_edit { name_line } else {
+        left.focus_line.or_else(|| right.focus_line.map(|row| {
+            if two_columns { row } else { row + left.lines.len() }
+        })).unwrap_or(0)
+    };
     let content_height = if two_columns {
         left.lines.len().max(right.lines.len())
     } else {
@@ -582,7 +596,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(block, popup);
     let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
     let content = Rect { height: inner.height.saturating_sub(2), ..inner };
-    let scroll = scroll_to(content, focus_line, app.sidebar.query_edit);
+    let scroll = scroll_to(content, focus_line, app.sidebar.query_edit || app.sidebar.name_edit);
     if two_columns {
         let left_area = Rect { width: column_width as u16, ..content };
         let divider = Rect { x: left_area.right(), width: 3, ..content };
@@ -618,7 +632,12 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }).collect::<Vec<_>>());
     f.render_widget(Paragraph::new(hint)
         .style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
-    if app.sidebar.query_edit && content.height > 1 {
+    if app.sidebar.name_edit && content.height > 1 {
+        let x = inner.x + left.gutter as u16 + 3
+            + Line::raw(app.sidebar.name_draft.as_str()).width() as u16;
+        let y = inner.y + (name_line as u16).saturating_sub(scroll);
+        f.set_cursor_position((x.min(inner.right().saturating_sub(1)), y));
+    } else if app.sidebar.query_edit && content.height > 1 {
         let x = inner.x + left.gutter as u16 + 3
             + Line::raw(app.sidebar.query_draft.as_str()).width() as u16;
         // The search row sits under the Query header and its blank line.
@@ -1431,6 +1450,16 @@ fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line
     Line::from(vec![icon_span, name_span, detail_span])
 }
 
+fn side_section_title(name: &str, detail: &str, icon: &str, active: bool,
+    tag: Option<&str>) -> Line<'static> {
+    let mut title = section_title(name, detail, icon, active);
+    if let Some(tag) = tag {
+        title.spans.insert(2, Span::styled(format!("[{tag}] "),
+            Style::new().fg(theme::amber())));
+    }
+    title
+}
+
 /// Bottom border label for a list pane: per-group counts in the same
 /// muted voice as the title subtitle. Overlong footers clip at the
 /// border; callers order counts before context so counts survive.
@@ -1463,7 +1492,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let il = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
-            title: section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused),
+            title: side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag()),
             footer: footer_line(&app.side_footer(false)),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
@@ -1483,7 +1512,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let pl = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
-            title: section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused),
+            title: side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag()),
             footer: footer_line(&app.side_footer(true)),
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
@@ -3374,11 +3403,11 @@ mod render_smoke {
         assert!(text.contains("1 · recent · updated ↑"), "reverse indicator: {text}");
         // An active query names itself and any filter marks the pane.
         app.sidebar.query_active = "is:open".to_string();
-        assert!(app.side_subtitle(true).contains("\"is:open\""), "query in title");
+        assert_eq!(app.query_tag(), Some("query"));
         assert!(!app.side_subtitle(true).contains("filtered"), "no marker without filters");
         app.sidebar.show_open_issues = false;
         assert!(app.side_subtitle(true).contains("filtered"), "filter marker in title");
-        assert!(!app.side_footer(true).contains("is:open"), "query out of footer");
+        assert!(app.side_footer(true).contains("is:open"), "query in footer");
     }
 
     #[test]
@@ -3700,6 +3729,49 @@ mod render_smoke {
         assert!(!app.sidebar.format_columns);
         assert!(text.contains("ci checks") && text.contains("▌"), "{text}");
         assert!(text.contains("j/k move"), "footer remains visible: {text}");
+    }
+
+    #[test]
+    fn saved_queries_save_overwrite_apply_delete_and_render() {
+        let _prefs = TempPrefs::new();
+        let mut app = loaded_app();
+        app.prefs_loaded = true;
+        app.sidebar.filter_open = true;
+        assert!(frame_text(&mut app).contains("none (s saves the query)"));
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        assert!(!app.sidebar.name_edit);
+        assert_eq!(app.query_tag(), None);
+        app.sidebar.query_active = "label:bug".into();
+        assert_eq!(app.query_tag(), Some("query"));
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        app.sidebar.name_draft = "bugs".into();
+        assert!(frame_text(&mut app).contains("bugs▌"));
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.query_tag(), Some("bugs"));
+        let text = frame_text(&mut app);
+        assert!(text.contains("[bugs]") && text.contains("label:bug"), "{text}");
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        assert_eq!(app.sidebar.name_draft, "bugs");
+        handle_key(&mut app, key(KeyCode::Esc));
+        app.sidebar.query_active = "is:open".into();
+        handle_key(&mut app, key(KeyCode::Char('s')));
+        app.sidebar.name_draft = "bugs".into();
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.sidebar.saved_queries.len(), 1);
+        assert_eq!(app.sidebar.saved_queries[0].query, "is:open");
+        assert_eq!(crate::github::load_prefs().saved_queries, app.sidebar.saved_queries);
+        app.sidebar.labels = vec!["bug".into()];
+        app.sidebar.format_focus = 7;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.label_filter.contains("bug"));
+        app.sidebar.query_active = "other".into();
+        app.sidebar.format_focus = 1;
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert_eq!(app.sidebar.query_active, "is:open");
+        assert_eq!(app.query_tag(), Some("bugs"));
+        handle_key(&mut app, key(KeyCode::Char('x')));
+        assert!(app.sidebar.saved_queries.is_empty());
+        assert_eq!(app.query_tag(), Some("query"));
     }
 
     #[test]
