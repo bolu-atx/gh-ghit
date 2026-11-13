@@ -220,6 +220,31 @@ fn parse_sub_issues(value: &Value) -> Vec<GraphNode> {
     value.as_array().into_iter().flatten().filter_map(sub_issue_node).collect()
 }
 
+/// Sub-issues for the opt-in sidebar tree. The tree shows every child,
+/// so it pages once at the REST maximum instead of the graph pane's
+/// old GraphQL cap of 10.
+pub async fn sub_issues(
+    repo: &str, number: u64, bearer: &str,
+) -> Result<Vec<model::IssueData>, String> {
+    let url = format!("{}/repos/{repo}/issues/{number}/sub_issues?per_page=100", rest_base());
+    let value = get(&client(), &url, bearer).await?;
+    Ok(value.as_array().into_iter().flatten().filter_map(sub_issue_row).collect())
+}
+
+/// One REST sub-issue as a sidebar row: the graph parser carries number,
+/// title, state, and labels, which is all a dim tree row renders. The
+/// full fetch fills the rest when the row opens.
+fn sub_issue_row(v: &Value) -> Option<model::IssueData> {
+    let node = sub_issue_node(v)?;
+    Some(model::IssueData {
+        number: node.number,
+        title: node.title,
+        state: node.state,
+        labels: node.labels,
+        ..model::IssueData::default()
+    })
+}
+
 /// Splice REST sub-issues into GraphQL neighbors at their pane
 /// priority slot: after blockers and parent, before every other kind,
 /// so a duplicate number still wins as a child (`build_graph` keeps

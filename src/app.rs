@@ -486,6 +486,21 @@ impl GraphView {
     }
 }
 
+/// REST sub-issue loads for the opt-in sidebar tree: per-parent session
+/// state (loading or loaded children) plus the fetch channel.
+pub(crate) struct SubIssueLoads {
+    pub(crate) state: HashMap<u64, model::LazyChildren>,
+    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::IssueData>, String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::IssueData>, String>)>,
+}
+
+impl SubIssueLoads {
+    pub(crate) fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self { state: HashMap::new(), tx, rx }
+    }
+}
+
 /// Refs pane: related issues mentioned in the current body, with its
 /// highlight selection and list state.
 pub(crate) struct RefsPane {
@@ -597,6 +612,7 @@ pub(crate) struct App {
     pub(crate) board: BoardView,
     pub(crate) diff: DiffView,
     pub(crate) graph: GraphView,
+    pub(crate) subs: SubIssueLoads,
     pub(crate) refs: RefsPane,
     pub(crate) auth: AuthState,
     pub(crate) compose: ComposeSlot,
@@ -649,6 +665,7 @@ impl App {
             board: BoardView::new(detail_tx, detail_rx),
             diff: DiffView::new(diff_tx, diff_rx),
             graph: GraphView::new(graph_tx, graph_rx),
+            subs: SubIssueLoads::new(),
             quit: false,
             hits: HitAreas::default(),
             refs: RefsPane::new(),
@@ -889,10 +906,17 @@ impl App {
 
     /// Drop background rows the user never opened, with their cached data.
     fn drop_unvisited_background(&mut self) {
-        let keep: HashSet<u64> = self.nav.visited.iter().copied()
+        let mut keep: HashSet<u64> = self.nav.visited.iter().copied()
             .chain(self.nav.pin_order.iter().copied())
             .chain(self.nav.pinned.iter().copied())
             .collect();
+        // REST sub-issue rows are a session cache: keep them so the next
+        // expand of their parent still renders titles.
+        for state in self.subs.state.values() {
+            if let model::LazyChildren::Loaded(numbers) = state {
+                keep.extend(numbers.iter().copied());
+            }
+        }
         self.nav.recent.retain(|n| keep.contains(n));
         for n in self.issues.partial.iter().copied().collect::<Vec<_>>() {
             if !keep.contains(&n) {
@@ -1104,13 +1128,15 @@ impl App {
                     .find(|m| m.title == title).and_then(|m| m.due_on.clone());
                 for (label, rows) in core::milestone_groups(&r, &milestone_of, &due_of) {
                     out.push(model::SideRow::Divider(format!("{label} ({})", rows.len())));
-                    out.extend(core::tree_rows(&rows, &self.issues.data, &self.sidebar.folded_issues));
+                    out.extend(core::tree_rows(
+                        &rows, &self.issues.data, &self.sidebar.folded_issues, &self.subs.state));
                 }
             } else {
                 if !out.is_empty() && !r.is_empty() {
                     out.push(model::SideRow::Divider("recent".into()));
                 }
-                out.extend(core::tree_rows(&r, &self.issues.data, &self.sidebar.folded_issues));
+                out.extend(core::tree_rows(
+                    &r, &self.issues.data, &self.sidebar.folded_issues, &self.subs.state));
             }
             return out;
         }
@@ -1902,6 +1928,24 @@ impl App {
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         rt().spawn(async move {
             let _ = tx.send((number, github::fetch_graph(&repo, number, force).await));
+        });
+    }
+
+    /// Expand-time REST load for the opt-in tree: at most one fetch per
+    /// parent per session, and only when the summary reports children
+    /// the fetched rows do not cover. The row renders a loading child
+    /// until `poll_sub_issues` lands the result.
+    pub(crate) fn load_sub_issues(&mut self, number: u64) {
+        if !self.sidebar.sub_issue_tree
+            || !core::needs_lazy_children(number, &self.issues.data, &self.subs.state)
+        {
+            return;
+        }
+        self.subs.state.insert(number, model::LazyChildren::Loading);
+        let tx = self.subs.tx.clone();
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        rt().spawn(async move {
+            let _ = tx.send((number, github::fetch_sub_issues(&repo, number).await));
         });
     }
 
@@ -3359,6 +3403,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= poll_issues(app);
     landed |= poll_diffs(app);
     landed |= poll_graphs(app);
+    landed |= poll_sub_issues(app);
     landed |= poll_board(app);
     landed |= poll_details(app);
     landed |= poll_compose(app);
@@ -3695,6 +3740,37 @@ pub(crate) fn poll_graphs(app: &mut App) -> bool {
                 }
             }
             Err(e) => { auth_failure(app, &e); app.notify(e); }
+        }
+    }
+    landed
+}
+
+pub(crate) fn poll_sub_issues(app: &mut App) -> bool {
+    let ready: Vec<_> = app.subs.rx.try_iter().collect();
+    let landed = !ready.is_empty();
+    for (parent, result) in ready {
+        match result {
+            Ok(list) => {
+                let mut numbers = Vec::with_capacity(list.len());
+                for mut data in list {
+                    numbers.push(data.number);
+                    data.parent = Some(parent);
+                    // An outside child is a slim row: opening it runs the
+                    // full fetch. A number the query already fetched keeps
+                    // its richer payload.
+                    if !app.issues.data.contains_key(&data.number) {
+                        app.issues.partial.insert(data.number);
+                        app.issues.data.insert(data.number, data);
+                    }
+                }
+                app.subs.state.insert(parent, model::LazyChildren::Loaded(numbers));
+            }
+            Err(e) => {
+                // Drop the state so the next explicit expand can retry.
+                app.subs.state.remove(&parent);
+                auth_failure(app, &e);
+                app.notify(e);
+            }
         }
     }
     landed

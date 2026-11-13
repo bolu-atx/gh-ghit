@@ -7,7 +7,7 @@
 
 mod tree;
 
-pub(crate) use tree::tree_rows;
+pub(crate) use tree::{needs_lazy_children, tree_rows};
 
 use std::collections::{HashMap, HashSet};
 
@@ -955,14 +955,30 @@ mod tests {
             issue.parent = match n { 1 => None, 2 | 3 => Some(1), _ => Some(n - 1) };
             data.insert(n, issue);
         }
-        let rows = tree_rows(&[1, 3, 2, 4, 5, 6, 7], &data, &HashSet::new());
+        let rows = tree_rows(&[1, 3, 2, 4, 5, 6, 7], &data, &HashSet::new(), &HashMap::new());
         assert_eq!(rows.iter().filter_map(|r| r.number()).collect::<Vec<_>>(),
             vec![1, 3, 4, 5, 6, 7, 2]);
         assert!(matches!(rows[5], crate::model::SideRow::Tree { depth: 4, .. }));
-        let orphan = tree_rows(&[2], &data, &HashSet::new());
+        let orphan = tree_rows(&[2], &data, &HashSet::new(), &HashMap::new());
         assert!(matches!(orphan[0], crate::model::SideRow::Tree { depth: 0, .. }));
-        let folded = tree_rows(&[1, 2, 3], &data, &HashSet::from([1]));
+        let folded = tree_rows(&[1, 2, 3], &data, &HashSet::from([1]), &HashMap::new());
         assert_eq!(folded.len(), 1);
+    }
+
+    #[test]
+    fn unloaded_parent_reads_folded_until_its_children_load() {
+        use crate::model::{LazyChildren, SideRow, SubSummary};
+        let mut data = HashMap::new();
+        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
+        parent.sub_summary = Some(SubSummary { total: 1, completed: 0 });
+        data.insert(1, parent);
+        let folded = |lazy: &HashMap<u64, LazyChildren>| match &tree_rows(&[1], &data,
+            &HashSet::new(), lazy)[0] {
+            SideRow::Tree { folded, has_children, .. } => { assert!(has_children); *folded }
+            other => panic!("{other:?}"),
+        };
+        assert!(folded(&HashMap::new()), "no children yet: show folded");
+        assert!(!folded(&HashMap::from([(1, LazyChildren::Loading)])), "loading opens it");
     }
 
     #[test]
@@ -975,12 +991,88 @@ mod tests {
             issue.parent = parent;
             data.insert(n, issue);
         }
-        let guides: Vec<String> = tree_rows(&[1, 2, 4, 3], &data, &HashSet::new()).into_iter()
+        let guides: Vec<String> = tree_rows(&[1, 2, 4, 3], &data, &HashSet::new(), &HashMap::new())
+            .into_iter()
             .map(|row| match row {
                 crate::model::SideRow::Tree { guide, .. } => guide,
                 other => panic!("{other:?}"),
             }).collect();
         assert_eq!(guides, vec!["", "├─", "│ └─", "└─"]);
+    }
+
+    #[test]
+    fn tree_merges_lazy_children_without_duplicates() {
+        use crate::model::{LazyChildren, SideRow};
+        let mut data = HashMap::new();
+        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
+        parent.sub_summary = Some(crate::model::SubSummary { total: 3, completed: 1 });
+        let mut fetched = sort_issue(2, "", "", "OPEN", &[]);
+        fetched.parent = Some(1);
+        data.insert(1, parent);
+        data.insert(2, fetched);
+        data.insert(3, sort_issue(3, "", "", "CLOSED", &[]));
+        let lazy = HashMap::from([(1, LazyChildren::Loaded(vec![2, 3]))]);
+        let rows = tree_rows(&[1, 2], &data, &HashSet::new(), &lazy);
+        let numbers: Vec<u64> = rows.iter().filter_map(|r| r.number()).collect();
+        assert_eq!(numbers, vec![1, 2, 3]);
+        assert_eq!(numbers.iter().filter(|n| **n == 2).count(), 1, "no duplicate row");
+        assert!(matches!(rows[1], SideRow::Tree { number: 2, depth: 1, outside: false, .. }));
+        assert!(matches!(rows[2], SideRow::Tree { number: 3, depth: 1, outside: true, .. }));
+    }
+
+    #[test]
+    fn tree_summary_marks_parent_and_loading_child() {
+        use crate::model::{LazyChildren, SideRow, SubSummary};
+        let mut data = HashMap::new();
+        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
+        parent.sub_summary = Some(SubSummary { total: 2, completed: 0 });
+        data.insert(1, parent);
+        let lazy = HashMap::from([(1, LazyChildren::Loading)]);
+        let rows = tree_rows(&[1], &data, &HashSet::new(), &lazy);
+        assert!(matches!(rows[0], SideRow::Tree { number: 1, has_children: true, .. }));
+        assert!(matches!(rows[1], SideRow::Loading { .. }));
+        let folded = tree_rows(&[1], &data, &HashSet::from([1]), &lazy);
+        assert_eq!(folded.len(), 1, "a folded parent hides its loading child");
+    }
+
+    #[test]
+    fn tree_nests_a_query_hit_under_its_lazy_parent_once() {
+        use crate::model::{LazyChildren, SideRow};
+        let mut data = HashMap::new();
+        data.insert(1, sort_issue(1, "", "", "OPEN", &[]));
+        data.insert(2, sort_issue(2, "", "", "OPEN", &[]));
+        data.insert(9, sort_issue(9, "", "", "OPEN", &[]));
+        let lazy = HashMap::from([(1, LazyChildren::Loaded(vec![2, 9]))]);
+        // Search rows carry no parent link: #2 arrives top-level and must
+        // move under #1 at normal brightness.
+        let rows = tree_rows(&[1, 2], &data, &HashSet::new(), &lazy);
+        let numbers: Vec<u64> = rows.iter().filter_map(|r| r.number()).collect();
+        assert_eq!(numbers, vec![1, 2, 9]);
+        assert!(matches!(rows[1], SideRow::Tree { number: 2, depth: 1, outside: false, .. }));
+        assert!(matches!(rows[2], SideRow::Tree { number: 9, depth: 1, outside: true, .. }));
+    }
+
+    #[test]
+    fn lazy_fetch_waits_for_missing_children() {
+        use crate::model::{LazyChildren, SubSummary};
+        let mut data = HashMap::new();
+        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
+        parent.sub_summary = Some(SubSummary { total: 2, completed: 0 });
+        let mut child = sort_issue(2, "", "", "OPEN", &[]);
+        child.parent = Some(1);
+        data.insert(1, parent);
+        data.insert(2, child);
+        let mut lazy = HashMap::new();
+        assert!(needs_lazy_children(1, &data, &lazy), "one of two children fetched");
+        lazy.insert(1, LazyChildren::Loading);
+        assert!(!needs_lazy_children(1, &data, &lazy), "one fetch per parent per session");
+        lazy.insert(1, LazyChildren::Loaded(vec![]));
+        assert!(!needs_lazy_children(1, &data, &lazy), "session cache never refetches");
+        lazy.clear();
+        data.get_mut(&1).unwrap().sub_summary = Some(SubSummary { total: 1, completed: 0 });
+        assert!(!needs_lazy_children(1, &data, &lazy), "every child already fetched");
+        data.get_mut(&1).unwrap().sub_summary = None;
+        assert!(!needs_lazy_children(1, &data, &lazy), "no summary means no known children");
     }
 
     fn sort_data() -> HashMap<u64, IssueData> {

@@ -354,6 +354,15 @@ pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::
     Ok(data)
 }
 
+/// REST sub-issues for the opt-in sidebar tree, parsed like the graph
+/// pane's `issues/{n}/sub_issues` call. The app caches the result per
+/// parent for the session.
+pub async fn fetch_sub_issues(repo: &str, number: u64) -> Result<Vec<model::IssueData>, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::sub_issues(repo, number, &token).await
+}
+
 /// Changed files for one PR, cached like single issues.
 pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<model::DiffFile>, String> {
     require_repo(repo)?;
@@ -443,5 +452,6 @@ mod tests {
         assert!(fetch_board_detail("", 1).await.is_err());
         assert!(fetch_diff("", 1, false).await.is_err());
         assert!(fetch_graph("", 1, false).await.is_err());
+        assert!(fetch_sub_issues("", 1).await.is_err());
     }
 }

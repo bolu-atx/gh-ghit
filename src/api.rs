@@ -8,7 +8,7 @@ pub use client::{
     REQUIRED_SCOPES,
 };
 pub use board::fetch_board;
-pub use graph::graph;
+pub use graph::{graph, sub_issues};
 pub use sections::{merge_rows, sections, MAX_SECTION_ROWS};
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};
