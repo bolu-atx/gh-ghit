@@ -13,8 +13,7 @@ pub use sections::{merge_rows, sections, MAX_SECTION_ROWS};
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};
 use client::{
-    client, get, graphql_auth_failure, graphql_data, graphql_url, http_fail, post_json,
-    rest_base,
+    client, get, graphql_auth_failure, graphql_url, http_fail, post_json, rest_base,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -424,23 +423,59 @@ pub async fn add_review_thread(repo: &str, number: u64, body: &str, path: &str, 
     Ok(())
 }
 
-/// Submit the viewer's pending review on a PR. `addPullRequestReviewThread`
-/// lands in a pending review by design, so line comments stay invisible
-/// until this runs with a COMMENT event.
-///
-/// GraphQL kept: this mutation postdates the #117 audit and the REST
-/// list-reviews probe came back empty, so no equivalent is confirmed
-/// yet — re-probe before porting (follow-up).
+/// REST review-submit body: the COMMENT event publishes the pending
+/// review without approving or requesting changes.
+fn review_submit_payload() -> Value {
+    json!({"event": "COMMENT"})
+}
+
+/// Numeric id of the pending review in one REST reviews page. A pending
+/// review is visible only to its author, so the state names the viewer's
+/// review; malformed entries are skipped.
+fn pending_review_id(reviews: &[Value]) -> Option<u64> {
+    reviews
+        .iter()
+        .find(|r| r.get("state").and_then(Value::as_str) == Some("PENDING"))
+        .and_then(|r| r.get("id").and_then(Value::as_u64))
+}
+
+/// The viewer's pending review id across every reviews page.
+async fn find_pending_review(
+    client: &reqwest::Client,
+    base: &str,
+    repo: &str,
+    number: u64,
+    bearer: &str,
+) -> Result<u64, String> {
+    let mut page = 1;
+    loop {
+        let url = format!("{base}/repos/{repo}/pulls/{number}/reviews?per_page=100&page={page}");
+        let items = get(client, &url, bearer).await?;
+        let items = items.as_array().ok_or("bad reviews payload")?;
+        if let Some(id) = pending_review_id(items) {
+            return Ok(id);
+        }
+        if items.len() < 100 {
+            return Err("no pending review: add a line comment first".to_string());
+        }
+        page += 1;
+    }
+}
+
+/// Submit the viewer's pending review on a PR through REST
+/// `POST pulls/{n}/reviews/{id}/events` with a COMMENT event, so pending
+/// line comments go live. Ported in #120: probe `GET pulls/47/reviews`
+/// on bolu-atx/gh-ghit returns review objects with numeric `id` and
+/// `state`. The live PENDING path is unverified: no probe created a
+/// pending review.
 pub async fn submit_pending_review(repo: &str, number: u64, bearer: &str) -> Result<(), String> {
-    let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
-    let url = graphql_url();
+    repo.split_once('/').ok_or("repository must be owner/repo")?;
+    let base = rest_base();
     let client = client();
-    let id_query = "query($owner:String!, $repo:String!, $num:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$num) { id } } }";
-    let id_value = post_json(&client, &url, bearer, &json!({"query": id_query, "variables": {"owner": owner, "repo": name, "num": number}})).await?;
-    let pr_id = graphql_data(&id_value)?.pointer("/repository/pullRequest/id").and_then(Value::as_str).ok_or("PR not found: pending submit needs a pull request")?;
-    let mutation = "mutation($prId:ID!) { submitPullRequestReview(input:{pullRequestId:$prId, event:COMMENT}) { pullRequestReview { id state } } }";
-    let out = post_json(&client, &url, bearer, &json!({"query": mutation, "variables": {"prId": pr_id}})).await?;
-    graphql_data(&out)?.pointer("/submitPullRequestReview/pullRequestReview/id").and_then(Value::as_str).ok_or("submit failed: no review returned")?;
+    let review_id = find_pending_review(&client, &base, repo, number, bearer).await?;
+    let url = format!("{base}/repos/{repo}/pulls/{number}/reviews/{review_id}/events");
+    let out = post_json(&client, &url, bearer, &review_submit_payload()).await?;
+    out.get("id").and_then(Value::as_u64).ok_or("submit failed: no review returned")?;
     Ok(())
 }
 
@@ -564,6 +599,24 @@ mod tests {
         assert!(parse_head_sha(&json!({})).is_err());
     }
 
+    #[test]
+    fn rest_review_submit_payload_and_pending_selection() {
+        assert_eq!(review_submit_payload(), json!({"event": "COMMENT"}));
+        let reviews = json!([
+            {"id": 11, "state": "COMMENTED"},
+            {"id": 12, "state": "PENDING"},
+            {"id": 13, "state": "PENDING"},
+        ]);
+        assert_eq!(pending_review_id(reviews.as_array().unwrap()), Some(12), "first pending wins");
+        assert_eq!(pending_review_id(&[]), None);
+        assert_eq!(
+            pending_review_id(&[json!({"state": "PENDING"})]),
+            None,
+            "a pending review without a numeric id is not selectable"
+        );
+        assert_eq!(pending_review_id(&[json!({"id": 9, "state": "APPROVED"})]), None);
+    }
+
     #[tokio::test]
     async fn rest_review_mutations_validate_before_the_network() {
         assert!(add_review_thread("o/r", 1, "  ", "a.rs", 1, "t").await.is_err());
@@ -573,6 +626,7 @@ mod tests {
         assert!(add_thread_reply("o/r", 1, 99, "  ", "t").await.is_err());
         assert!(add_thread_reply("o/r", 1, 0, "hi", "t").await.is_err());
         assert!(add_thread_reply("badrepo", 1, 99, "hi", "t").await.is_err());
+        assert!(submit_pending_review("badrepo", 1, "t").await.is_err());
     }
     #[test]
     fn diff_file_maps_patch_and_binary() {
