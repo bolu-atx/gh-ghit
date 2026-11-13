@@ -115,6 +115,13 @@ If neither `XDG_DATA_HOME` nor `HOME` is set, ghit uses `.ghit-data`.
 Set `GH_HOST` for a GitHub Enterprise host; it selects the API endpoints and cache namespace.
 Set `EDITOR` to use an external editor for comments.
 
+## Contributing
+
+Bug reports and feature requests are welcome. PRs are welcome for
+issues labelled `accepted` or `help wanted`. See
+[CONTRIBUTING.md](CONTRIBUTING.md). Report security problems
+privately: see [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in ghit does not work as expected.
+labels: [bugfix, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problem? Do not file it here. Use [private reporting](https://github.com/bolu-atx/gh-ghit/security/advisories/new).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact command and keys. A public repo and issue number help most.
+      placeholder: |
+        1. ghit -R owner/repo 123
+        2. press ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ghit version
+      description: Output of `ghit --version`.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and terminal
+      placeholder: macOS 15, Ghostty 1.2, inside tmux 3.5
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Logs, screenshots, other context
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I reproduced this myself. It is not only an AI tool's guess.
+          required: true

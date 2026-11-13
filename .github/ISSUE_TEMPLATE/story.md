@@ -1,3 +1,8 @@
+---
+name: Story (maintainer)
+about: Planned work in the maintainer format. Outside contributors use a bug or feature form.
+---
+
 ## What & why
 
 <!-- One paragraph: what changes for the user, and why it matters. -->

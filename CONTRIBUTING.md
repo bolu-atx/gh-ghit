@@ -1,42 +1,76 @@
-# Contributing — agent workflow
+# Contributing
 
-You are doing the work. Plan conventions live in
-[docs/planning.md](docs/planning.md); this is the doing.
+Thanks for helping. Bug reports, feature requests and fixes are all
+welcome. This page is for people and for the coding agents they use.
+If you are an agent, also read [AGENTS.md](AGENTS.md).
 
-## Start from the plan
+## Issue first
 
-Open `ghit`, pick the milestone, read the story and its `How`
-before touching code.
+1. Search open and closed issues first.
+2. File a bug or feature request with the issue form. Blank issues
+   are off. New issues get the `needs-triage` label.
+3. Wait for the maintainer to add `accepted` (or `help wanted`).
+   That label means a PR is welcome.
 
-## While you work
+A PR that does not close an `accepted` or `help wanted` issue is
+closed automatically. This keeps review time for agreed work.
+Small typo and doc fixes can still go through an issue. Keep that
+issue to one line.
 
-- Workers implement the story's `How`, run verification, and
-  report back. They never edit the story body or touch the board.
-- The coordinator owns all tracking: check off phases in `How`,
-  append real `Verification performed` output, record prompts and
-  verifiers under `Agents supplemental`, move the cards.
-- One issue per story discovered: the worker reports it, the
-  coordinator files it onto the board (`-p 'ghit dev'`);
-  `blocked-by` only when landing order truly matters.
-- Single session: the coordinator is also the worker — update the
-  story as you go.
+## Pull requests
 
-## Board status
+- One issue per PR. Start the description with `Closes #N`.
+- Branch: `feat/…`, `fix/…`, `docs/…`, `refactor/…` or `chore/…`.
+  Title: `feat: …`, `fix: …` and so on. The title states the
+  outcome for the user.
+- Keep the diff small and on topic. Do not reformat, rename or
+  refactor code that the issue does not need.
+- Before you push, run both gates. CI runs the same commands:
 
-- Mark the story `In Progress` when work starts. When the PR
-  opens, add the PR to the board as well (`gh pr create` takes
-  no `-p` flag, so follow with `gh project item-add 1
-  --owner bolu-atx --url <pr-url>`) and move both to `In Review`.
-- Coordinator owns the cards end to end and is the only one
-  who moves them. State the issue number and the board commands
-  in each worker prompt; a fresh worker never knows the board.
-  Single session: move the cards yourself at the two moments
-  above.
-- Only the merge moves cards to Done. Never call a story done on
-  PR open: the worker's last step is to prove mergeability
-  (`gh pr checks` green, no conflicts), the coordinator merges.
+  ```bash
+  cargo clippy --all-targets -- -D warnings
+  cargo test
+  ```
 
-## Safety
+- UI changes need a frame test in `render_smoke` (see `src/ui.rs`).
+  Do not change existing frame snapshots unless the issue asks for it.
+- Fill in the PR template. Paste real command output under
+  Verification. Do not claim checks you did not run.
 
-- Never press `o` during verification (it opens a browser).
-  End every tmux live drive with `q` and kill the session.
+These areas need a maintainer. Do not change them in a contributor
+PR unless the issue says so:
+
+- `.github/` (workflows, templates, CODEOWNERS)
+- `scripts/release.sh`, `rust-toolchain.toml`
+- new dependencies in `Cargo.toml`
+- `AGENTS.md`, `CLAUDE.md`, `docs/maintaining.md`
+
+## AI-assisted work
+
+AI-assisted contributions are welcome. You are responsible for every
+line, as if you wrote it yourself.
+
+- Say in the PR which tools you used and what you checked by hand.
+- Read the full diff before you open the PR. Remove generated noise.
+- Answer review comments yourself. Do not paste them back into an
+  agent and push the output unread.
+- A PR that is clearly unreviewed agent output is closed.
+
+## CI on your PR
+
+CI for outside contributors runs after a maintainer approves the run.
+This is a GitHub setting. It is not a judgement of your PR.
+
+## Security
+
+Do not report vulnerabilities in public issues. See
+[SECURITY.md](SECURITY.md).
+
+## License
+
+By contributing you agree that your work is licensed under the
+project's [MIT license](LICENSE).
+
+## Conduct
+
+Be kind and specific. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

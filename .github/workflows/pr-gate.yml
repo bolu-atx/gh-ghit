@@ -1,0 +1,38 @@
+name: pr-gate
+# Closes outside PRs that do not close an issue labelled `accepted` or
+# `help wanted`. See CONTRIBUTING.md.
+#
+# pull_request_target runs with a write token on fork PRs. So this job
+# never checks out or runs PR code, and PR text reaches the script only
+# through env vars, never through ${{ }} in `run`.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+jobs:
+  linked-issue:
+    if: >-
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          prefix="https://github.com/$REPO/issues/"
+          nums=$(gh pr view "$PR" --repo "$REPO" --json closingIssuesReferences \
+            --jq '.closingIssuesReferences[].url' | { grep -F "$prefix" || true; } | sed "s|$prefix||")
+          for n in $nums; do
+            ok=$(gh issue view "$n" --repo "$REPO" --json state,labels \
+              --jq '.state == "OPEN" and ([.labels[].name] | any(. == "accepted" or . == "help wanted"))')
+            if [ "$ok" = "true" ]; then echo "PR closes accepted issue #$n"; exit 0; fi
+          done
+          msg="Thanks for the PR. This repo takes outside PRs only for issues labelled \`accepted\` or \`help wanted\`, and the PR must start with \`Closes #N\`. This PR does not close such an issue, so it was closed automatically. Please file or find an issue, wait for the label, then open a new PR. See CONTRIBUTING.md."
+          gh pr close "$PR" --repo "$REPO" --comment "$msg"
