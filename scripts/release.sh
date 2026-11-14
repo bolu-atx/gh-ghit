@@ -98,9 +98,7 @@ for _ in $(seq 1 30); do
   esac
 done
 gh pr checks "$PR_NUM" --watch --fail-fast
-# --admin skips only the "main: approval" ruleset (one review needed).
-# The required CI check lives in another ruleset and still applies.
-gh pr merge "$PR_NUM" --squash --delete-branch --admin
+gh pr merge "$PR_NUM" --squash --delete-branch
 git switch --quiet main
 git pull --ff-only --quiet origin main
 git branch -D "$BRANCH" 2>/dev/null || true
