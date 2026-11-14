@@ -1,0 +1,27 @@
+name: owner-approve
+# main needs one approval (ruleset "main: approval"). GitHub does not
+# let you approve your own PR, and the mobile app cannot bypass rules.
+# So this job approves PRs that the repo owner wrote, from a branch in
+# this repo. Outside PRs still need a human approval.
+#
+# pull_request_target runs this file from main, never from the PR, so
+# a PR cannot change who gets approved. No PR code is checked out.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions:
+  pull-requests: write
+jobs:
+  approve:
+    if: >-
+      github.event.pull_request.author_association == 'OWNER' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # synchronize re-approves: a new push dismisses the old approval.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr review "$PR" --repo "$REPO" --approve --body "Auto-approved (PR by the repo owner)."
