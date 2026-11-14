@@ -24,4 +24,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-        run: gh pr review "$PR" --repo "$REPO" --approve --body "Auto-approved: PR by the repo owner."
+        run: gh pr review "$PR" --repo "$REPO" --approve --body "Auto-approved (PR by the repo owner)."
