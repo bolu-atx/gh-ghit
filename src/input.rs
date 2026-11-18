@@ -1242,6 +1242,9 @@ fn open_url(url: &str, app: &mut App) {
 }
 
 #[cfg(test)]
+mod parity;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{Author, IssueData, SideRow};

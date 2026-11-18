@@ -1,0 +1,1561 @@
+issues | ' ' | diff: None/false/false/[] -> None/false/false/[8]
+issues | '/' | focus: false -> true ; search: ""/false -> ""/true
+issues | '2' | tab: Details -> Visual
+issues | ':' | focus: false -> true
+issues | '?' | shortcuts: false -> true
+issues | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+issues | 'N' | message:  -> no search: press /
+issues | 'a' | sort: Default/false/None -> Updated/true/None
+issues | 'c' | compose: None/false -> Some(("", 0, ""))/false
+issues | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
+issues | 'f' | format: false/false/false -> true/false/false
+issues | 'g' | format: false/false/false -> true/true/false
+issues | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+issues | 'k' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
+issues | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+issues | 'n' | message:  -> no search: press /
+issues | 'o' | message:  -> opened #8 in browser
+issues | 'q' | quit: false -> true
+issues | 't' | message:  -> theme: *
+issues | 'x' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
+issues | ctrl-a | sort: Default/false/None -> Updated/true/None
+issues | alt-a | sort: Default/false/None -> Updated/true/None
+issues | ctrl-c | quit: false -> true
+issues | alt-c | compose: None/false -> Some(("", 0, ""))/false
+issues | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+issues | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+issues | ctrl-f | format: false/false/false -> true/false/false
+issues | alt-f | format: false/false/false -> true/false/false
+issues | ctrl-g | format: false/false/false -> true/true/false
+issues | alt-g | format: false/false/false -> true/true/false
+issues | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+issues | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+issues | ctrl-i | message:  -> no newer issue
+issues | ctrl-k | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
+issues | alt-k | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
+issues | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+issues | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+issues | ctrl-n | message:  -> no search: press /
+issues | alt-n | message:  -> no search: press /
+issues | ctrl-o | message:  -> no older issue
+issues | alt-o | message:  -> opened #8 in browser
+issues | ctrl-q | quit: false -> true
+issues | alt-q | quit: false -> true
+issues | ctrl-t | message:  -> theme: *
+issues | alt-t | message:  -> theme: *
+issues | ctrl-x | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
+issues | alt-x | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
+issues | ctrl-S | message:  -> no pending comments to submit
+issues | ctrl-alt-o | message:  -> no older issue
+issues | tab | pane: Issues -> PRs
+issues | backtab | pane: Issues -> Refs
+issues | down | scroll: 0 -> 3
+issues | pagedown | scroll: 0 -> 12
+issues | ctrl-tab | message:  -> no newer issue
+issues | alt-tab | pane: Issues -> PRs
+issues-tree | ' ' | diff: None/false/false/[] -> None/false/false/[7]
+issues-tree | '/' | focus: false -> true ; search: ""/false -> ""/true
+issues-tree | '2' | tab: Details -> Visual
+issues-tree | ':' | focus: false -> true
+issues-tree | '?' | shortcuts: false -> true
+issues-tree | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+issues-tree | 'N' | message:  -> no search: press /
+issues-tree | 'Z' | folded: [] -> [7]
+issues-tree | 'a' | sort: Default/false/None -> Updated/true/None
+issues-tree | 'c' | compose: None/false -> Some(("", 0, ""))/false
+issues-tree | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
+issues-tree | 'f' | format: false/false/false -> true/false/false
+issues-tree | 'g' | format: false/false/false -> true/true/false
+issues-tree | 'h' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | 'j' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
+issues-tree | 'l' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | 'n' | message:  -> no search: press /
+issues-tree | 'o' | message:  -> opened #7 in browser
+issues-tree | 'q' | quit: false -> true
+issues-tree | 't' | message:  -> theme: *
+issues-tree | 'x' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
+issues-tree | 'z' | folded: [] -> [7]
+issues-tree | ctrl-a | sort: Default/false/None -> Updated/true/None
+issues-tree | alt-a | sort: Default/false/None -> Updated/true/None
+issues-tree | ctrl-c | quit: false -> true
+issues-tree | alt-c | compose: None/false -> Some(("", 0, ""))/false
+issues-tree | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+issues-tree | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+issues-tree | ctrl-f | format: false/false/false -> true/false/false
+issues-tree | alt-f | format: false/false/false -> true/false/false
+issues-tree | ctrl-g | format: false/false/false -> true/true/false
+issues-tree | alt-g | format: false/false/false -> true/true/false
+issues-tree | ctrl-h | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | alt-h | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | ctrl-i | message:  -> no newer issue
+issues-tree | ctrl-j | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
+issues-tree | alt-j | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
+issues-tree | ctrl-l | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | alt-l | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | ctrl-n | message:  -> no search: press /
+issues-tree | alt-n | message:  -> no search: press /
+issues-tree | ctrl-o | message:  -> no older issue
+issues-tree | alt-o | message:  -> opened #7 in browser
+issues-tree | ctrl-q | quit: false -> true
+issues-tree | alt-q | quit: false -> true
+issues-tree | ctrl-t | message:  -> theme: *
+issues-tree | alt-t | message:  -> theme: *
+issues-tree | ctrl-x | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
+issues-tree | alt-x | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
+issues-tree | ctrl-z | folded: [] -> [7]
+issues-tree | alt-z | folded: [] -> [7]
+issues-tree | ctrl-S | message:  -> no pending comments to submit
+issues-tree | ctrl-alt-o | message:  -> no older issue
+issues-tree | tab | pane: Issues -> PRs
+issues-tree | backtab | pane: Issues -> Refs
+issues-tree | down | scroll: 0 -> 3
+issues-tree | left | folded: [] -> [7]
+issues-tree | pagedown | scroll: 0 -> 12
+issues-tree | ctrl-tab | message:  -> no newer issue
+issues-tree | alt-tab | pane: Issues -> PRs
+prs | '/' | focus: false -> true ; search: ""/false -> ""/true
+prs | '2' | tab: Details -> Visual
+prs | ':' | focus: false -> true
+prs | '?' | shortcuts: false -> true
+prs | 'E' | pane: PRs -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+prs | 'N' | message:  -> no search: press /
+prs | 'a' | sort: Default/false/None -> Updated/true/None
+prs | 'c' | compose: None/false -> Some(("", 0, ""))/false
+prs | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
+prs | 'f' | format: false/false/false -> true/false/false
+prs | 'g' | format: false/false/false -> true/true/false
+prs | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+prs | 'j' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
+prs | 'k' | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
+prs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+prs | 'n' | message:  -> no search: press /
+prs | 'o' | message:  -> opened #8 in browser
+prs | 'q' | quit: false -> true
+prs | 't' | message:  -> theme: *
+prs | ctrl-a | sort: Default/false/None -> Updated/true/None
+prs | alt-a | sort: Default/false/None -> Updated/true/None
+prs | ctrl-c | quit: false -> true
+prs | alt-c | compose: None/false -> Some(("", 0, ""))/false
+prs | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+prs | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+prs | ctrl-f | format: false/false/false -> true/false/false
+prs | alt-f | format: false/false/false -> true/false/false
+prs | ctrl-g | format: false/false/false -> true/true/false
+prs | alt-g | format: false/false/false -> true/true/false
+prs | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+prs | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+prs | ctrl-i | message:  -> no newer issue
+prs | ctrl-j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
+prs | alt-j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
+prs | ctrl-k | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
+prs | alt-k | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
+prs | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+prs | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+prs | ctrl-n | message:  -> no search: press /
+prs | alt-n | message:  -> no search: press /
+prs | ctrl-o | message:  -> no older issue
+prs | alt-o | message:  -> opened #8 in browser
+prs | ctrl-q | quit: false -> true
+prs | alt-q | quit: false -> true
+prs | ctrl-t | message:  -> theme: *
+prs | alt-t | message:  -> theme: *
+prs | ctrl-S | message:  -> no pending comments to submit
+prs | ctrl-alt-o | message:  -> no older issue
+prs | tab | pane: PRs -> Main
+prs | backtab | pane: PRs -> Issues
+prs | down | scroll: 0 -> 3
+prs | pagedown | scroll: 0 -> 12
+prs | ctrl-tab | message:  -> no newer issue
+prs | alt-tab | pane: PRs -> Main
+main-details | '/' | focus: false -> true ; search: ""/false -> ""/true
+main-details | '2' | tab: Details -> Visual
+main-details | ':' | focus: false -> true
+main-details | '?' | shortcuts: false -> true
+main-details | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+main-details | 'N' | message:  -> no search: press /
+main-details | 'c' | compose: None/false -> Some(("", 0, ""))/false
+main-details | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-details | 'f' | format: false/false/false -> true/false/false
+main-details | 'g' | format: false/false/false -> true/true/false
+main-details | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+main-details | 'j' | scroll: 0 -> 3
+main-details | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+main-details | 'n' | message:  -> no search: press /
+main-details | 'o' | message:  -> opened #8 in browser
+main-details | 'q' | quit: false -> true
+main-details | 't' | message:  -> theme: *
+main-details | ctrl-c | quit: false -> true
+main-details | alt-c | compose: None/false -> Some(("", 0, ""))/false
+main-details | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-details | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-details | ctrl-f | format: false/false/false -> true/false/false
+main-details | alt-f | format: false/false/false -> true/false/false
+main-details | ctrl-g | format: false/false/false -> true/true/false
+main-details | alt-g | format: false/false/false -> true/true/false
+main-details | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+main-details | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+main-details | ctrl-i | message:  -> no newer issue
+main-details | ctrl-j | scroll: 0 -> 3
+main-details | alt-j | scroll: 0 -> 3
+main-details | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+main-details | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+main-details | ctrl-n | message:  -> no search: press /
+main-details | alt-n | message:  -> no search: press /
+main-details | ctrl-o | message:  -> no older issue
+main-details | alt-o | message:  -> opened #8 in browser
+main-details | ctrl-q | quit: false -> true
+main-details | alt-q | quit: false -> true
+main-details | ctrl-t | message:  -> theme: *
+main-details | alt-t | message:  -> theme: *
+main-details | ctrl-S | message:  -> no pending comments to submit
+main-details | ctrl-alt-o | message:  -> no older issue
+main-details | tab | pane: Main -> Refs
+main-details | backtab | pane: Main -> PRs
+main-details | down | scroll: 0 -> 3
+main-details | pagedown | scroll: 0 -> 12
+main-details | ctrl-tab | message:  -> no newer issue
+main-details | alt-tab | pane: Main -> Refs
+main-diff | '/' | focus: false -> true ; search: ""/false -> ""/true
+main-diff | '1' | tab: Visual -> Details
+main-diff | ':' | focus: false -> true
+main-diff | '?' | shortcuts: false -> true
+main-diff | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+main-diff | 'N' | message:  -> no search: press /
+main-diff | 'c' | compose: None/false -> Some(("", 0, ""))/false
+main-diff | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-diff | 'f' | format: false/false/false -> true/false/false
+main-diff | 'g' | format: false/false/false -> true/true/false
+main-diff | 'h' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
+main-diff | 'j' | scroll: 0 -> 3
+main-diff | 'l' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
+main-diff | 'n' | message:  -> no search: press /
+main-diff | 'o' | message:  -> opened #9 in browser
+main-diff | 'q' | quit: false -> true
+main-diff | 's' | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
+main-diff | 't' | message:  -> theme: *
+main-diff | ctrl-c | quit: false -> true
+main-diff | alt-c | compose: None/false -> Some(("", 0, ""))/false
+main-diff | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-diff | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-diff | ctrl-f | format: false/false/false -> true/false/false
+main-diff | alt-f | format: false/false/false -> true/false/false
+main-diff | ctrl-g | format: false/false/false -> true/true/false
+main-diff | alt-g | format: false/false/false -> true/true/false
+main-diff | ctrl-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
+main-diff | alt-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
+main-diff | ctrl-i | message:  -> no newer issue
+main-diff | ctrl-j | scroll: 0 -> 3
+main-diff | alt-j | scroll: 0 -> 3
+main-diff | ctrl-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
+main-diff | alt-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
+main-diff | ctrl-n | message:  -> no search: press /
+main-diff | alt-n | message:  -> no search: press /
+main-diff | ctrl-o | message:  -> no older issue
+main-diff | alt-o | message:  -> opened #9 in browser
+main-diff | ctrl-q | quit: false -> true
+main-diff | alt-q | quit: false -> true
+main-diff | ctrl-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
+main-diff | alt-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
+main-diff | ctrl-t | message:  -> theme: *
+main-diff | alt-t | message:  -> theme: *
+main-diff | ctrl-S | message:  -> no pending comments to submit
+main-diff | ctrl-alt-o | message:  -> no older issue
+main-diff | ctrl-alt-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
+main-diff | tab | pane: Main -> Refs
+main-diff | backtab | pane: Main -> PRs
+main-diff | down | diff: None/false/false/[] -> Some(1)/true/false/[]
+main-diff | pagedown | scroll: 0 -> 12
+main-diff | ctrl-tab | message:  -> no newer issue
+main-diff | alt-tab | pane: Main -> Refs
+main-graph | '/' | focus: false -> true ; search: ""/false -> ""/true
+main-graph | '1' | tab: Visual -> Details
+main-graph | ':' | focus: false -> true
+main-graph | '?' | shortcuts: false -> true
+main-graph | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+main-graph | 'N' | message:  -> no search: press /
+main-graph | 'c' | compose: None/false -> Some(("", 0, ""))/false
+main-graph | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-graph | 'f' | format: false/false/false -> true/false/false
+main-graph | 'g' | format: false/false/false -> true/true/false
+main-graph | 'j' | graph: 0 -> 1
+main-graph | 'l' | graph: 0 -> 1
+main-graph | 'n' | message:  -> no search: press /
+main-graph | 'o' | message:  -> opened #7 in browser
+main-graph | 'q' | quit: false -> true
+main-graph | 't' | message:  -> theme: *
+main-graph | ctrl-c | quit: false -> true
+main-graph | alt-c | compose: None/false -> Some(("", 0, ""))/false
+main-graph | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-graph | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
+main-graph | ctrl-f | format: false/false/false -> true/false/false
+main-graph | alt-f | format: false/false/false -> true/false/false
+main-graph | ctrl-g | format: false/false/false -> true/true/false
+main-graph | alt-g | format: false/false/false -> true/true/false
+main-graph | ctrl-i | message:  -> no newer issue
+main-graph | ctrl-j | graph: 0 -> 1
+main-graph | alt-j | graph: 0 -> 1
+main-graph | ctrl-l | graph: 0 -> 1
+main-graph | alt-l | graph: 0 -> 1
+main-graph | ctrl-n | message:  -> no search: press /
+main-graph | alt-n | message:  -> no search: press /
+main-graph | ctrl-o | message:  -> no older issue
+main-graph | alt-o | message:  -> opened #7 in browser
+main-graph | ctrl-q | quit: false -> true
+main-graph | alt-q | quit: false -> true
+main-graph | ctrl-t | message:  -> theme: *
+main-graph | alt-t | message:  -> theme: *
+main-graph | ctrl-S | message:  -> no pending comments to submit
+main-graph | ctrl-alt-o | message:  -> no older issue
+main-graph | tab | pane: Main -> Refs
+main-graph | backtab | pane: Main -> PRs
+main-graph | down | graph: 0 -> 1
+main-graph | pagedown | scroll: 0 -> 12
+main-graph | ctrl-tab | message:  -> no newer issue
+main-graph | alt-tab | pane: Main -> Refs
+refs | '/' | focus: false -> true ; search: ""/false -> ""/true
+refs | '2' | tab: Details -> Visual
+refs | ':' | focus: false -> true
+refs | '?' | shortcuts: false -> true
+refs | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+refs | 'N' | message:  -> no search: press /
+refs | 'c' | compose: None/false -> Some(("", 0, ""))/false
+refs | 'e' | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+refs | 'f' | format: false/false/false -> true/false/false
+refs | 'g' | format: false/false/false -> true/true/false
+refs | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+refs | 'j' | refs: true/None -> true/Some(7)
+refs | 'k' | refs: true/None -> true/Some(9)
+refs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+refs | 'n' | message:  -> no search: press /
+refs | 'o' | message:  -> opened #8 in browser
+refs | 'q' | quit: false -> true
+refs | 't' | message:  -> theme: *
+refs | ctrl-c | quit: false -> true
+refs | alt-c | compose: None/false -> Some(("", 0, ""))/false
+refs | ctrl-e | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+refs | alt-e | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+refs | ctrl-f | format: false/false/false -> true/false/false
+refs | alt-f | format: false/false/false -> true/false/false
+refs | ctrl-g | format: false/false/false -> true/true/false
+refs | alt-g | format: false/false/false -> true/true/false
+refs | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+refs | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+refs | ctrl-i | message:  -> no newer issue
+refs | ctrl-j | refs: true/None -> true/Some(7)
+refs | alt-j | refs: true/None -> true/Some(7)
+refs | ctrl-k | refs: true/None -> true/Some(9)
+refs | alt-k | refs: true/None -> true/Some(9)
+refs | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+refs | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+refs | ctrl-n | message:  -> no search: press /
+refs | alt-n | message:  -> no search: press /
+refs | ctrl-o | message:  -> no older issue
+refs | alt-o | message:  -> opened #8 in browser
+refs | ctrl-q | quit: false -> true
+refs | alt-q | quit: false -> true
+refs | ctrl-t | message:  -> theme: *
+refs | alt-t | message:  -> theme: *
+refs | ctrl-S | message:  -> no pending comments to submit
+refs | ctrl-alt-o | message:  -> no older issue
+refs | tab | pane: Refs -> Issues
+refs | backtab | pane: Refs -> Main
+refs | down | scroll: 0 -> 3
+refs | pagedown | scroll: 0 -> 12
+refs | ctrl-tab | message:  -> no newer issue
+refs | alt-tab | pane: Refs -> Issues
+labels | ' ' | filters: []/0 -> ["bug"]/0
+labels | '/' | focus: false -> true ; search: ""/false -> ""/true
+labels | '2' | tab: Details -> Visual
+labels | ':' | focus: false -> true
+labels | '?' | shortcuts: false -> true
+labels | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+labels | 'N' | message:  -> no search: press /
+labels | 'c' | compose: None/false -> Some(("", 0, ""))/false
+labels | 'e' | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+labels | 'f' | format: false/false/false -> true/false/false
+labels | 'g' | format: false/false/false -> true/true/false
+labels | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+labels | 'j' | labels-cursor: 0 -> 1
+labels | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+labels | 'n' | message:  -> no search: press /
+labels | 'o' | message:  -> opened #8 in browser
+labels | 'q' | quit: false -> true
+labels | 't' | message:  -> theme: *
+labels | ctrl-c | quit: false -> true
+labels | alt-c | compose: None/false -> Some(("", 0, ""))/false
+labels | ctrl-e | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+labels | alt-e | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+labels | ctrl-f | format: false/false/false -> true/false/false
+labels | alt-f | format: false/false/false -> true/false/false
+labels | ctrl-g | format: false/false/false -> true/true/false
+labels | alt-g | format: false/false/false -> true/true/false
+labels | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+labels | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+labels | ctrl-i | message:  -> no newer issue
+labels | ctrl-j | labels-cursor: 0 -> 1
+labels | alt-j | labels-cursor: 0 -> 1
+labels | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+labels | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
+labels | ctrl-n | message:  -> no search: press /
+labels | alt-n | message:  -> no search: press /
+labels | ctrl-o | message:  -> no older issue
+labels | alt-o | message:  -> opened #8 in browser
+labels | ctrl-q | quit: false -> true
+labels | alt-q | quit: false -> true
+labels | ctrl-t | message:  -> theme: *
+labels | alt-t | message:  -> theme: *
+labels | ctrl-S | message:  -> no pending comments to submit
+labels | ctrl-alt-o | message:  -> no older issue
+labels | enter | filters: []/0 -> ["bug"]/0
+labels | tab | pane: Labels -> Issues
+labels | backtab | pane: Labels -> Refs
+labels | down | scroll: 0 -> 3
+labels | pagedown | scroll: 0 -> 12
+labels | ctrl-tab | message:  -> no newer issue
+labels | alt-tab | pane: Labels -> Issues
+labels | ctrl-enter | filters: []/0 -> ["bug"]/0
+labels | alt-enter | filters: []/0 -> ["bug"]/0
+history | '/' | focus: false -> true ; search: ""/false -> ""/true
+history | '2' | tab: Details -> Visual
+history | ':' | focus: false -> true
+history | '?' | shortcuts: false -> true
+history | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+history | 'N' | message:  -> no search: press /
+history | 'c' | compose: None/false -> Some(("", 0, ""))/false
+history | 'e' | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+history | 'f' | format: false/false/false -> true/false/false
+history | 'g' | format: false/false/false -> true/true/false
+history | 'h' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | 'k' | history: [8, 7]/[]/0 -> [8, 7]/[]/1
+history | 'l' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | 'n' | message:  -> no search: press /
+history | 'o' | message:  -> opened #9 in browser
+history | 'q' | quit: false -> true
+history | 't' | message:  -> theme: *
+history | ctrl-c | quit: false -> true
+history | alt-c | compose: None/false -> Some(("", 0, ""))/false
+history | ctrl-e | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+history | alt-e | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
+history | ctrl-f | format: false/false/false -> true/false/false
+history | alt-f | format: false/false/false -> true/false/false
+history | ctrl-g | format: false/false/false -> true/true/false
+history | alt-g | format: false/false/false -> true/true/false
+history | ctrl-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | alt-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | ctrl-i | message:  -> no newer issue
+history | ctrl-k | history: [8, 7]/[]/0 -> [8, 7]/[]/1
+history | alt-k | history: [8, 7]/[]/0 -> [8, 7]/[]/1
+history | ctrl-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | alt-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | ctrl-n | message:  -> no search: press /
+history | alt-n | message:  -> no search: press /
+history | ctrl-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ; history: [8, 7]/[]/0 -> [8]/[9]/0
+history | alt-o | message:  -> opened #9 in browser
+history | ctrl-q | quit: false -> true
+history | alt-q | quit: false -> true
+history | ctrl-t | message:  -> theme: *
+history | alt-t | message:  -> theme: *
+history | ctrl-S | message:  -> no pending comments to submit
+history | ctrl-alt-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ; history: [8, 7]/[]/0 -> [8]/[9]/0
+history | tab | pane: History -> Issues
+history | backtab | pane: History -> Refs
+history | down | scroll: 0 -> 3
+history | pagedown | scroll: 0 -> 12
+history | ctrl-tab | message:  -> no newer issue
+history | alt-tab | pane: History -> Issues
+shortcuts | '?' | shortcuts: true -> false
+shortcuts | 'q' | shortcuts: true -> false
+shortcuts | ctrl-q | shortcuts: true -> false
+shortcuts | alt-q | shortcuts: true -> false
+shortcuts | esc | shortcuts: true -> false
+compose | ' ' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl d\nx", 11, ""))/false
+compose | '!' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl!d\nx", 11, ""))/false
+compose | '"' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\"d\nx", 11, ""))/false
+compose | '#' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl#d\nx", 11, ""))/false
+compose | '$' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl$d\nx", 11, ""))/false
+compose | '%' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl%d\nx", 11, ""))/false
+compose | '&' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl&d\nx", 11, ""))/false
+compose | '\'' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl'd\nx", 11, ""))/false
+compose | '(' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl(d\nx", 11, ""))/false
+compose | ')' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl)d\nx", 11, ""))/false
+compose | '*' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl*d\nx", 11, ""))/false
+compose | '+' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl+d\nx", 11, ""))/false
+compose | ',' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl,d\nx", 11, ""))/false
+compose | '-' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl-d\nx", 11, ""))/false
+compose | '.' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl.d\nx", 11, ""))/false
+compose | '/' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl/d\nx", 11, ""))/false
+compose | '0' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl0d\nx", 11, ""))/false
+compose | '1' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl1d\nx", 11, ""))/false
+compose | '2' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl2d\nx", 11, ""))/false
+compose | '3' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl3d\nx", 11, ""))/false
+compose | '4' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl4d\nx", 11, ""))/false
+compose | '5' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl5d\nx", 11, ""))/false
+compose | '6' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl6d\nx", 11, ""))/false
+compose | '7' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl7d\nx", 11, ""))/false
+compose | '8' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl8d\nx", 11, ""))/false
+compose | '9' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl9d\nx", 11, ""))/false
+compose | ':' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl:d\nx", 11, ""))/false
+compose | ';' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl;d\nx", 11, ""))/false
+compose | '<' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl<d\nx", 11, ""))/false
+compose | '=' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl=d\nx", 11, ""))/false
+compose | '>' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl>d\nx", 11, ""))/false
+compose | '?' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl?d\nx", 11, ""))/false
+compose | '@' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl@d\nx", 11, ""))/false
+compose | 'A' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlAd\nx", 11, ""))/false
+compose | 'B' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlBd\nx", 11, ""))/false
+compose | 'C' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlCd\nx", 11, ""))/false
+compose | 'D' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlDd\nx", 11, ""))/false
+compose | 'E' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlEd\nx", 11, ""))/false
+compose | 'F' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlFd\nx", 11, ""))/false
+compose | 'G' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlGd\nx", 11, ""))/false
+compose | 'H' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlHd\nx", 11, ""))/false
+compose | 'I' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlId\nx", 11, ""))/false
+compose | 'J' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlJd\nx", 11, ""))/false
+compose | 'K' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlKd\nx", 11, ""))/false
+compose | 'L' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlLd\nx", 11, ""))/false
+compose | 'M' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlMd\nx", 11, ""))/false
+compose | 'N' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlNd\nx", 11, ""))/false
+compose | 'O' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlOd\nx", 11, ""))/false
+compose | 'P' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlPd\nx", 11, ""))/false
+compose | 'Q' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlQd\nx", 11, ""))/false
+compose | 'R' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlRd\nx", 11, ""))/false
+compose | 'T' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlTd\nx", 11, ""))/false
+compose | 'U' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlUd\nx", 11, ""))/false
+compose | 'V' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlVd\nx", 11, ""))/false
+compose | 'W' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlWd\nx", 11, ""))/false
+compose | 'X' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlXd\nx", 11, ""))/false
+compose | 'Y' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlYd\nx", 11, ""))/false
+compose | 'Z' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlZd\nx", 11, ""))/false
+compose | '[' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl[d\nx", 11, ""))/false
+compose | '\\' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\\d\nx", 11, ""))/false
+compose | ']' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl]d\nx", 11, ""))/false
+compose | '^' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl^d\nx", 11, ""))/false
+compose | '_' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl_d\nx", 11, ""))/false
+compose | '`' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl`d\nx", 11, ""))/false
+compose | 'a' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlad\nx", 11, ""))/false
+compose | 'b' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlbd\nx", 11, ""))/false
+compose | 'c' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlcd\nx", 11, ""))/false
+compose | 'd' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worldd\nx", 11, ""))/false
+compose | 'e' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worled\nx", 11, ""))/false
+compose | 'f' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlfd\nx", 11, ""))/false
+compose | 'g' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlgd\nx", 11, ""))/false
+compose | 'h' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlhd\nx", 11, ""))/false
+compose | 'i' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlid\nx", 11, ""))/false
+compose | 'j' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worljd\nx", 11, ""))/false
+compose | 'k' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlkd\nx", 11, ""))/false
+compose | 'l' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlld\nx", 11, ""))/false
+compose | 'm' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlmd\nx", 11, ""))/false
+compose | 'n' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlnd\nx", 11, ""))/false
+compose | 'o' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlod\nx", 11, ""))/false
+compose | 'q' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlqd\nx", 11, ""))/false
+compose | 's' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlsd\nx", 11, ""))/false
+compose | 't' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worltd\nx", 11, ""))/false
+compose | 'u' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlud\nx", 11, ""))/false
+compose | 'v' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlvd\nx", 11, ""))/false
+compose | 'x' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlxd\nx", 11, ""))/false
+compose | 'z' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlzd\nx", 11, ""))/false
+compose | '{' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl{d\nx", 11, ""))/false
+compose | '|' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl|d\nx", 11, ""))/false
+compose | '}' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl}d\nx", 11, ""))/false
+compose | '~' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl~d\nx", 11, ""))/false
+compose | ctrl-a | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 0, ""))/false
+compose | ctrl-b | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 9, ""))/false
+compose | alt-b | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 6, ""))/false
+compose | ctrl-d | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nx", 10, ""))/false
+compose | alt-d | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nx", 10, "d"))/false
+compose | ctrl-e | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
+compose | ctrl-f | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
+compose | alt-f | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
+compose | ctrl-h | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello word\nx", 9, ""))/false
+compose | ctrl-i | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\td\nx", 11, ""))/false
+compose | ctrl-j | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nd\nx", 11, ""))/false
+compose | ctrl-k | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nx", 10, "d"))/false
+compose | ctrl-m | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nd\nx", 11, ""))/false
+compose | ctrl-n | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 13, ""))/false
+compose | ctrl-o | message:  -> no $EDITOR set: export EDITOR to edit comments outside ghit
+compose | ctrl-s | message:  -> sending comment…
+compose | ctrl-t | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello wordl\nx", 11, ""))/false
+compose | ctrl-u | compose: Some(("hello world\nx", 10, ""))/false -> Some(("d\nx", 0, "hello worl"))/false
+compose | ctrl-S | message:  -> sending comment…
+compose | alt-F | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
+compose | enter | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nd\nx", 11, ""))/false
+compose | esc | confirm: None -> Some(("Discard draft", 2))
+compose | tab | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\td\nx", 11, ""))/false
+compose | backspace | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello word\nx", 9, ""))/false
+compose | delete | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nx", 10, ""))/false
+compose | home | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 0, ""))/false
+compose | end | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
+compose | down | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 13, ""))/false
+compose | left | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 9, ""))/false
+compose | right | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
+compose | ctrl-tab | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\td\nx", 11, ""))/false
+compose | alt-tab | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\td\nx", 11, ""))/false
+compose | ctrl-enter | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nd\nx", 11, ""))/false
+compose | alt-backspace | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello d\nx", 6, "worl"))/false
+confirm | 'D' | compose: Some(("hello world\nx", 10, ""))/false -> None/false ; confirm: Some(("Discard draft", 2)) -> None
+confirm | 'K' | confirm: Some(("Discard draft", 2)) -> None
+confirm | 'd' | compose: Some(("hello world\nx", 10, ""))/false -> None/false ; confirm: Some(("Discard draft", 2)) -> None
+confirm | 'k' | confirm: Some(("Discard draft", 2)) -> None
+confirm | ctrl-d | compose: Some(("hello world\nx", 10, ""))/false -> None/false ; confirm: Some(("Discard draft", 2)) -> None
+confirm | alt-d | compose: Some(("hello world\nx", 10, ""))/false -> None/false ; confirm: Some(("Discard draft", 2)) -> None
+confirm | ctrl-k | confirm: Some(("Discard draft", 2)) -> None
+confirm | alt-k | confirm: Some(("Discard draft", 2)) -> None
+confirm | enter | confirm: Some(("Discard draft", 2)) -> None
+confirm | esc | confirm: Some(("Discard draft", 2)) -> None
+confirm | ctrl-enter | confirm: Some(("Discard draft", 2)) -> None
+confirm | alt-enter | confirm: Some(("Discard draft", 2)) -> None
+format | ' ' | format: true/false/false -> true/true/false
+format | '0' | message:  -> recent: default query and window
+format | '1' | message:  -> merged window: open + merged ≤1h ; window: 24 -> 1
+format | '2' | message:  -> merged window: open + merged ≤24h
+format | '3' | message:  -> merged window: open + merged ≤7d ; window: 24 -> 168
+format | '4' | message:  -> merged window: open + merged all time ; window: 24 -> 0
+format | 'c' | show: truetruetruetruetrue -> truetruetruefalsetrue
+format | 'e' | format: true/false/false -> true/true/false
+format | 'f' | format: true/false/false -> false/false/false
+format | 'g' | sort: Default/false/None -> Default/false/Milestone
+format | 'i' | show: truetruetruetruetrue -> truetruefalsetruetrue
+format | 'j' | format-focus: 0 -> 1
+format | 'k' | format-focus: 0 -> 20
+format | 'm' | show: truetruetruetruetrue -> truefalsetruetruetrue
+format | 'o' | show: truetruetruetruetrue -> falsetruetruetruetrue
+format | 'q' | format: true/false/false -> false/false/false
+format | 's' | message:  -> no active query to save
+format | ctrl-c | show: truetruetruetruetrue -> truetruetruefalsetrue
+format | alt-c | show: truetruetruetruetrue -> truetruetruefalsetrue
+format | ctrl-e | format: true/false/false -> true/true/false
+format | alt-e | format: true/false/false -> true/true/false
+format | ctrl-f | format: true/false/false -> false/false/false
+format | alt-f | format: true/false/false -> false/false/false
+format | ctrl-g | sort: Default/false/None -> Default/false/Milestone
+format | alt-g | sort: Default/false/None -> Default/false/Milestone
+format | ctrl-i | show: truetruetruetruetrue -> truetruefalsetruetrue
+format | alt-i | show: truetruetruetruetrue -> truetruefalsetruetrue
+format | ctrl-j | format-focus: 0 -> 1
+format | alt-j | format-focus: 0 -> 1
+format | ctrl-k | format-focus: 0 -> 20
+format | alt-k | format-focus: 0 -> 20
+format | ctrl-m | show: truetruetruetruetrue -> truefalsetruetruetrue
+format | alt-m | show: truetruetruetruetrue -> truefalsetruetruetrue
+format | ctrl-o | show: truetruetruetruetrue -> falsetruetruetruetrue
+format | alt-o | show: truetruetruetruetrue -> falsetruetruetruetrue
+format | ctrl-q | format: true/false/false -> false/false/false
+format | alt-q | format: true/false/false -> false/false/false
+format | ctrl-s | message:  -> no active query to save
+format | alt-s | message:  -> no active query to save
+format | ctrl-alt-o | show: truetruetruetruetrue -> falsetruetruetruetrue
+format | ctrl-alt-s | message:  -> no active query to save
+format | enter | format: true/false/false -> true/true/false
+format | esc | format: true/false/false -> false/false/false
+format | up | format-focus: 0 -> 20
+format | down | format-focus: 0 -> 1
+format | ctrl-enter | format: true/false/false -> true/true/false
+format | alt-enter | format: true/false/false -> true/true/false
+format-query | ' ' | drafts: ""/"" -> " "/""
+format-query | '!' | drafts: ""/"" -> "!"/""
+format-query | '"' | drafts: ""/"" -> "\""/""
+format-query | '#' | drafts: ""/"" -> "#"/""
+format-query | '$' | drafts: ""/"" -> "$"/""
+format-query | '%' | drafts: ""/"" -> "%"/""
+format-query | '&' | drafts: ""/"" -> "&"/""
+format-query | '\'' | drafts: ""/"" -> "'"/""
+format-query | '(' | drafts: ""/"" -> "("/""
+format-query | ')' | drafts: ""/"" -> ")"/""
+format-query | '*' | drafts: ""/"" -> "*"/""
+format-query | '+' | drafts: ""/"" -> "+"/""
+format-query | ',' | drafts: ""/"" -> ","/""
+format-query | '-' | drafts: ""/"" -> "-"/""
+format-query | '.' | drafts: ""/"" -> "."/""
+format-query | '/' | drafts: ""/"" -> "/"/""
+format-query | '0' | drafts: ""/"" -> "0"/""
+format-query | '1' | drafts: ""/"" -> "1"/""
+format-query | '2' | drafts: ""/"" -> "2"/""
+format-query | '3' | drafts: ""/"" -> "3"/""
+format-query | '4' | drafts: ""/"" -> "4"/""
+format-query | '5' | drafts: ""/"" -> "5"/""
+format-query | '6' | drafts: ""/"" -> "6"/""
+format-query | '7' | drafts: ""/"" -> "7"/""
+format-query | '8' | drafts: ""/"" -> "8"/""
+format-query | '9' | drafts: ""/"" -> "9"/""
+format-query | ':' | drafts: ""/"" -> ":"/""
+format-query | ';' | drafts: ""/"" -> ";"/""
+format-query | '<' | drafts: ""/"" -> "<"/""
+format-query | '=' | drafts: ""/"" -> "="/""
+format-query | '>' | drafts: ""/"" -> ">"/""
+format-query | '?' | drafts: ""/"" -> "?"/""
+format-query | '@' | drafts: ""/"" -> "@"/""
+format-query | 'A' | drafts: ""/"" -> "A"/""
+format-query | 'B' | drafts: ""/"" -> "B"/""
+format-query | 'C' | drafts: ""/"" -> "C"/""
+format-query | 'D' | drafts: ""/"" -> "D"/""
+format-query | 'E' | drafts: ""/"" -> "E"/""
+format-query | 'F' | drafts: ""/"" -> "F"/""
+format-query | 'G' | drafts: ""/"" -> "G"/""
+format-query | 'H' | drafts: ""/"" -> "H"/""
+format-query | 'I' | drafts: ""/"" -> "I"/""
+format-query | 'J' | drafts: ""/"" -> "J"/""
+format-query | 'K' | drafts: ""/"" -> "K"/""
+format-query | 'L' | drafts: ""/"" -> "L"/""
+format-query | 'M' | drafts: ""/"" -> "M"/""
+format-query | 'N' | drafts: ""/"" -> "N"/""
+format-query | 'O' | drafts: ""/"" -> "O"/""
+format-query | 'P' | drafts: ""/"" -> "P"/""
+format-query | 'Q' | drafts: ""/"" -> "Q"/""
+format-query | 'R' | drafts: ""/"" -> "R"/""
+format-query | 'T' | drafts: ""/"" -> "T"/""
+format-query | 'U' | drafts: ""/"" -> "U"/""
+format-query | 'V' | drafts: ""/"" -> "V"/""
+format-query | 'W' | drafts: ""/"" -> "W"/""
+format-query | 'X' | drafts: ""/"" -> "X"/""
+format-query | 'Y' | drafts: ""/"" -> "Y"/""
+format-query | 'Z' | drafts: ""/"" -> "Z"/""
+format-query | '[' | drafts: ""/"" -> "["/""
+format-query | '\\' | drafts: ""/"" -> "\\"/""
+format-query | ']' | drafts: ""/"" -> "]"/""
+format-query | '^' | drafts: ""/"" -> "^"/""
+format-query | '_' | drafts: ""/"" -> "_"/""
+format-query | '`' | drafts: ""/"" -> "`"/""
+format-query | 'a' | drafts: ""/"" -> "a"/""
+format-query | 'b' | drafts: ""/"" -> "b"/""
+format-query | 'c' | drafts: ""/"" -> "c"/""
+format-query | 'd' | drafts: ""/"" -> "d"/""
+format-query | 'e' | drafts: ""/"" -> "e"/""
+format-query | 'f' | drafts: ""/"" -> "f"/""
+format-query | 'g' | drafts: ""/"" -> "g"/""
+format-query | 'h' | drafts: ""/"" -> "h"/""
+format-query | 'i' | drafts: ""/"" -> "i"/""
+format-query | 'j' | drafts: ""/"" -> "j"/""
+format-query | 'k' | drafts: ""/"" -> "k"/""
+format-query | 'l' | drafts: ""/"" -> "l"/""
+format-query | 'm' | drafts: ""/"" -> "m"/""
+format-query | 'n' | drafts: ""/"" -> "n"/""
+format-query | 'o' | drafts: ""/"" -> "o"/""
+format-query | 'q' | drafts: ""/"" -> "q"/""
+format-query | 's' | drafts: ""/"" -> "s"/""
+format-query | 't' | drafts: ""/"" -> "t"/""
+format-query | 'u' | drafts: ""/"" -> "u"/""
+format-query | 'v' | drafts: ""/"" -> "v"/""
+format-query | 'x' | drafts: ""/"" -> "x"/""
+format-query | 'z' | drafts: ""/"" -> "z"/""
+format-query | '{' | drafts: ""/"" -> "{"/""
+format-query | '|' | drafts: ""/"" -> "|"/""
+format-query | '}' | drafts: ""/"" -> "}"/""
+format-query | '~' | drafts: ""/"" -> "~"/""
+format-query | ctrl-a | drafts: ""/"" -> "a"/""
+format-query | alt-a | drafts: ""/"" -> "a"/""
+format-query | ctrl-b | drafts: ""/"" -> "b"/""
+format-query | alt-b | drafts: ""/"" -> "b"/""
+format-query | ctrl-c | drafts: ""/"" -> "c"/""
+format-query | alt-c | drafts: ""/"" -> "c"/""
+format-query | ctrl-d | drafts: ""/"" -> "d"/""
+format-query | alt-d | drafts: ""/"" -> "d"/""
+format-query | ctrl-e | drafts: ""/"" -> "e"/""
+format-query | alt-e | drafts: ""/"" -> "e"/""
+format-query | ctrl-f | drafts: ""/"" -> "f"/""
+format-query | alt-f | drafts: ""/"" -> "f"/""
+format-query | ctrl-g | drafts: ""/"" -> "g"/""
+format-query | alt-g | drafts: ""/"" -> "g"/""
+format-query | ctrl-h | drafts: ""/"" -> "h"/""
+format-query | alt-h | drafts: ""/"" -> "h"/""
+format-query | ctrl-i | drafts: ""/"" -> "i"/""
+format-query | alt-i | drafts: ""/"" -> "i"/""
+format-query | ctrl-j | drafts: ""/"" -> "j"/""
+format-query | alt-j | drafts: ""/"" -> "j"/""
+format-query | ctrl-k | drafts: ""/"" -> "k"/""
+format-query | alt-k | drafts: ""/"" -> "k"/""
+format-query | ctrl-l | drafts: ""/"" -> "l"/""
+format-query | alt-l | drafts: ""/"" -> "l"/""
+format-query | ctrl-m | drafts: ""/"" -> "m"/""
+format-query | alt-m | drafts: ""/"" -> "m"/""
+format-query | ctrl-n | drafts: ""/"" -> "n"/""
+format-query | alt-n | drafts: ""/"" -> "n"/""
+format-query | ctrl-o | drafts: ""/"" -> "o"/""
+format-query | alt-o | drafts: ""/"" -> "o"/""
+format-query | ctrl-q | drafts: ""/"" -> "q"/""
+format-query | alt-q | drafts: ""/"" -> "q"/""
+format-query | ctrl-s | drafts: ""/"" -> "s"/""
+format-query | alt-s | drafts: ""/"" -> "s"/""
+format-query | ctrl-t | drafts: ""/"" -> "t"/""
+format-query | alt-t | drafts: ""/"" -> "t"/""
+format-query | ctrl-u | drafts: ""/"" -> "u"/""
+format-query | alt-u | drafts: ""/"" -> "u"/""
+format-query | ctrl-v | drafts: ""/"" -> "v"/""
+format-query | alt-v | drafts: ""/"" -> "v"/""
+format-query | ctrl-x | drafts: ""/"" -> "x"/""
+format-query | alt-x | drafts: ""/"" -> "x"/""
+format-query | ctrl-z | drafts: ""/"" -> "z"/""
+format-query | alt-z | drafts: ""/"" -> "z"/""
+format-query | ctrl-S | drafts: ""/"" -> "S"/""
+format-query | alt-F | drafts: ""/"" -> "F"/""
+format-query | ctrl-alt-o | drafts: ""/"" -> "o"/""
+format-query | ctrl-alt-s | drafts: ""/"" -> "s"/""
+format-query | enter | message:  -> back to recent ; format: true/true/false -> false/false/false
+format-query | esc | format: true/true/false -> true/false/false
+format-query | ctrl-enter | message:  -> back to recent ; format: true/true/false -> false/false/false
+format-query | alt-enter | message:  -> back to recent ; format: true/true/false -> false/false/false
+format-name | ' ' | drafts: ""/"" -> ""/" "
+format-name | '!' | drafts: ""/"" -> ""/"!"
+format-name | '"' | drafts: ""/"" -> ""/"\""
+format-name | '#' | drafts: ""/"" -> ""/"#"
+format-name | '$' | drafts: ""/"" -> ""/"$"
+format-name | '%' | drafts: ""/"" -> ""/"%"
+format-name | '&' | drafts: ""/"" -> ""/"&"
+format-name | '\'' | drafts: ""/"" -> ""/"'"
+format-name | '(' | drafts: ""/"" -> ""/"("
+format-name | ')' | drafts: ""/"" -> ""/")"
+format-name | '*' | drafts: ""/"" -> ""/"*"
+format-name | '+' | drafts: ""/"" -> ""/"+"
+format-name | ',' | drafts: ""/"" -> ""/","
+format-name | '-' | drafts: ""/"" -> ""/"-"
+format-name | '.' | drafts: ""/"" -> ""/"."
+format-name | '/' | drafts: ""/"" -> ""/"/"
+format-name | '0' | drafts: ""/"" -> ""/"0"
+format-name | '1' | drafts: ""/"" -> ""/"1"
+format-name | '2' | drafts: ""/"" -> ""/"2"
+format-name | '3' | drafts: ""/"" -> ""/"3"
+format-name | '4' | drafts: ""/"" -> ""/"4"
+format-name | '5' | drafts: ""/"" -> ""/"5"
+format-name | '6' | drafts: ""/"" -> ""/"6"
+format-name | '7' | drafts: ""/"" -> ""/"7"
+format-name | '8' | drafts: ""/"" -> ""/"8"
+format-name | '9' | drafts: ""/"" -> ""/"9"
+format-name | ':' | drafts: ""/"" -> ""/":"
+format-name | ';' | drafts: ""/"" -> ""/";"
+format-name | '<' | drafts: ""/"" -> ""/"<"
+format-name | '=' | drafts: ""/"" -> ""/"="
+format-name | '>' | drafts: ""/"" -> ""/">"
+format-name | '?' | drafts: ""/"" -> ""/"?"
+format-name | '@' | drafts: ""/"" -> ""/"@"
+format-name | 'A' | drafts: ""/"" -> ""/"A"
+format-name | 'B' | drafts: ""/"" -> ""/"B"
+format-name | 'C' | drafts: ""/"" -> ""/"C"
+format-name | 'D' | drafts: ""/"" -> ""/"D"
+format-name | 'E' | drafts: ""/"" -> ""/"E"
+format-name | 'F' | drafts: ""/"" -> ""/"F"
+format-name | 'G' | drafts: ""/"" -> ""/"G"
+format-name | 'H' | drafts: ""/"" -> ""/"H"
+format-name | 'I' | drafts: ""/"" -> ""/"I"
+format-name | 'J' | drafts: ""/"" -> ""/"J"
+format-name | 'K' | drafts: ""/"" -> ""/"K"
+format-name | 'L' | drafts: ""/"" -> ""/"L"
+format-name | 'M' | drafts: ""/"" -> ""/"M"
+format-name | 'N' | drafts: ""/"" -> ""/"N"
+format-name | 'O' | drafts: ""/"" -> ""/"O"
+format-name | 'P' | drafts: ""/"" -> ""/"P"
+format-name | 'Q' | drafts: ""/"" -> ""/"Q"
+format-name | 'R' | drafts: ""/"" -> ""/"R"
+format-name | 'T' | drafts: ""/"" -> ""/"T"
+format-name | 'U' | drafts: ""/"" -> ""/"U"
+format-name | 'V' | drafts: ""/"" -> ""/"V"
+format-name | 'W' | drafts: ""/"" -> ""/"W"
+format-name | 'X' | drafts: ""/"" -> ""/"X"
+format-name | 'Y' | drafts: ""/"" -> ""/"Y"
+format-name | 'Z' | drafts: ""/"" -> ""/"Z"
+format-name | '[' | drafts: ""/"" -> ""/"["
+format-name | '\\' | drafts: ""/"" -> ""/"\\"
+format-name | ']' | drafts: ""/"" -> ""/"]"
+format-name | '^' | drafts: ""/"" -> ""/"^"
+format-name | '_' | drafts: ""/"" -> ""/"_"
+format-name | '`' | drafts: ""/"" -> ""/"`"
+format-name | 'a' | drafts: ""/"" -> ""/"a"
+format-name | 'b' | drafts: ""/"" -> ""/"b"
+format-name | 'c' | drafts: ""/"" -> ""/"c"
+format-name | 'd' | drafts: ""/"" -> ""/"d"
+format-name | 'e' | drafts: ""/"" -> ""/"e"
+format-name | 'f' | drafts: ""/"" -> ""/"f"
+format-name | 'g' | drafts: ""/"" -> ""/"g"
+format-name | 'h' | drafts: ""/"" -> ""/"h"
+format-name | 'i' | drafts: ""/"" -> ""/"i"
+format-name | 'j' | drafts: ""/"" -> ""/"j"
+format-name | 'k' | drafts: ""/"" -> ""/"k"
+format-name | 'l' | drafts: ""/"" -> ""/"l"
+format-name | 'm' | drafts: ""/"" -> ""/"m"
+format-name | 'n' | drafts: ""/"" -> ""/"n"
+format-name | 'o' | drafts: ""/"" -> ""/"o"
+format-name | 'q' | drafts: ""/"" -> ""/"q"
+format-name | 's' | drafts: ""/"" -> ""/"s"
+format-name | 't' | drafts: ""/"" -> ""/"t"
+format-name | 'u' | drafts: ""/"" -> ""/"u"
+format-name | 'v' | drafts: ""/"" -> ""/"v"
+format-name | 'x' | drafts: ""/"" -> ""/"x"
+format-name | 'z' | drafts: ""/"" -> ""/"z"
+format-name | '{' | drafts: ""/"" -> ""/"{"
+format-name | '|' | drafts: ""/"" -> ""/"|"
+format-name | '}' | drafts: ""/"" -> ""/"}"
+format-name | '~' | drafts: ""/"" -> ""/"~"
+format-name | ctrl-a | drafts: ""/"" -> ""/"a"
+format-name | alt-a | drafts: ""/"" -> ""/"a"
+format-name | ctrl-b | drafts: ""/"" -> ""/"b"
+format-name | alt-b | drafts: ""/"" -> ""/"b"
+format-name | ctrl-c | drafts: ""/"" -> ""/"c"
+format-name | alt-c | drafts: ""/"" -> ""/"c"
+format-name | ctrl-d | drafts: ""/"" -> ""/"d"
+format-name | alt-d | drafts: ""/"" -> ""/"d"
+format-name | ctrl-e | drafts: ""/"" -> ""/"e"
+format-name | alt-e | drafts: ""/"" -> ""/"e"
+format-name | ctrl-f | drafts: ""/"" -> ""/"f"
+format-name | alt-f | drafts: ""/"" -> ""/"f"
+format-name | ctrl-g | drafts: ""/"" -> ""/"g"
+format-name | alt-g | drafts: ""/"" -> ""/"g"
+format-name | ctrl-h | drafts: ""/"" -> ""/"h"
+format-name | alt-h | drafts: ""/"" -> ""/"h"
+format-name | ctrl-i | drafts: ""/"" -> ""/"i"
+format-name | alt-i | drafts: ""/"" -> ""/"i"
+format-name | ctrl-j | drafts: ""/"" -> ""/"j"
+format-name | alt-j | drafts: ""/"" -> ""/"j"
+format-name | ctrl-k | drafts: ""/"" -> ""/"k"
+format-name | alt-k | drafts: ""/"" -> ""/"k"
+format-name | ctrl-l | drafts: ""/"" -> ""/"l"
+format-name | alt-l | drafts: ""/"" -> ""/"l"
+format-name | ctrl-m | drafts: ""/"" -> ""/"m"
+format-name | alt-m | drafts: ""/"" -> ""/"m"
+format-name | ctrl-n | drafts: ""/"" -> ""/"n"
+format-name | alt-n | drafts: ""/"" -> ""/"n"
+format-name | ctrl-o | drafts: ""/"" -> ""/"o"
+format-name | alt-o | drafts: ""/"" -> ""/"o"
+format-name | ctrl-q | drafts: ""/"" -> ""/"q"
+format-name | alt-q | drafts: ""/"" -> ""/"q"
+format-name | ctrl-s | drafts: ""/"" -> ""/"s"
+format-name | alt-s | drafts: ""/"" -> ""/"s"
+format-name | ctrl-t | drafts: ""/"" -> ""/"t"
+format-name | alt-t | drafts: ""/"" -> ""/"t"
+format-name | ctrl-u | drafts: ""/"" -> ""/"u"
+format-name | alt-u | drafts: ""/"" -> ""/"u"
+format-name | ctrl-v | drafts: ""/"" -> ""/"v"
+format-name | alt-v | drafts: ""/"" -> ""/"v"
+format-name | ctrl-x | drafts: ""/"" -> ""/"x"
+format-name | alt-x | drafts: ""/"" -> ""/"x"
+format-name | ctrl-z | drafts: ""/"" -> ""/"z"
+format-name | alt-z | drafts: ""/"" -> ""/"z"
+format-name | ctrl-S | drafts: ""/"" -> ""/"S"
+format-name | alt-F | drafts: ""/"" -> ""/"F"
+format-name | ctrl-alt-o | drafts: ""/"" -> ""/"o"
+format-name | ctrl-alt-s | drafts: ""/"" -> ""/"s"
+format-name | enter | message:  -> query name is empty
+format-name | esc | format: true/false/true -> true/false/false
+format-name | ctrl-enter | message:  -> query name is empty
+format-name | alt-enter | message:  -> query name is empty
+board | ' ' | board: true/0/0/None/0 -> true/0/0/Some((0, 0))/0
+board | 'f' | format: false/false/false -> true/false/false
+board | 'j' | board: true/0/0/None/0 -> true/0/1/None/0
+board | 'l' | board: true/0/0/None/0 -> true/1/0/None/0
+board | 'q' | board: true/0/0/None/0 -> false/0/0/None/0
+board | 't' | message:  -> theme: *
+board | ctrl-f | format: false/false/false -> true/false/false
+board | alt-f | format: false/false/false -> true/false/false
+board | ctrl-j | board: true/0/0/None/0 -> true/0/1/None/0
+board | alt-j | board: true/0/0/None/0 -> true/0/1/None/0
+board | ctrl-l | board: true/0/0/None/0 -> true/1/0/None/0
+board | alt-l | board: true/0/0/None/0 -> true/1/0/None/0
+board | ctrl-q | board: true/0/0/None/0 -> false/0/0/None/0
+board | alt-q | board: true/0/0/None/0 -> false/0/0/None/0
+board | ctrl-t | message:  -> theme: *
+board | alt-t | message:  -> theme: *
+board | enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
+board | esc | board: true/0/0/None/0 -> false/0/0/None/0
+board | down | board: true/0/0/None/0 -> true/0/1/None/0
+board | right | board: true/0/0/None/0 -> true/1/0/None/0
+board | pagedown | board: true/0/0/None/0 -> true/0/1/None/0
+board | ctrl-enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
+board | alt-enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
+board-filter | ' ' | format: true/false/false -> true/true/false ; drafts: ""/"" -> " "/""
+board-filter | '!' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "!"/""
+board-filter | '"' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "\""/""
+board-filter | '#' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "#"/""
+board-filter | '$' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "$"/""
+board-filter | '%' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "%"/""
+board-filter | '&' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "&"/""
+board-filter | '\'' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "'"/""
+board-filter | '(' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "("/""
+board-filter | ')' | format: true/false/false -> true/true/false ; drafts: ""/"" -> ")"/""
+board-filter | '*' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "*"/""
+board-filter | '+' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "+"/""
+board-filter | ',' | format: true/false/false -> true/true/false ; drafts: ""/"" -> ","/""
+board-filter | '-' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "-"/""
+board-filter | '.' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "."/""
+board-filter | '/' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "/"/""
+board-filter | '0' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "0"/""
+board-filter | '1' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "1"/""
+board-filter | '2' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "2"/""
+board-filter | '3' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "3"/""
+board-filter | '4' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "4"/""
+board-filter | '5' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "5"/""
+board-filter | '6' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "6"/""
+board-filter | '7' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "7"/""
+board-filter | '8' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "8"/""
+board-filter | '9' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "9"/""
+board-filter | ':' | format: true/false/false -> true/true/false ; drafts: ""/"" -> ":"/""
+board-filter | ';' | format: true/false/false -> true/true/false ; drafts: ""/"" -> ";"/""
+board-filter | '<' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "<"/""
+board-filter | '=' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "="/""
+board-filter | '>' | format: true/false/false -> true/true/false ; drafts: ""/"" -> ">"/""
+board-filter | '?' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "?"/""
+board-filter | '@' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "@"/""
+board-filter | 'A' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "A"/""
+board-filter | 'B' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "B"/""
+board-filter | 'C' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "C"/""
+board-filter | 'D' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "D"/""
+board-filter | 'E' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "E"/""
+board-filter | 'F' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "F"/""
+board-filter | 'G' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "G"/""
+board-filter | 'H' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "H"/""
+board-filter | 'I' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "I"/""
+board-filter | 'J' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "J"/""
+board-filter | 'K' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "K"/""
+board-filter | 'L' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "L"/""
+board-filter | 'M' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "M"/""
+board-filter | 'N' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "N"/""
+board-filter | 'O' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "O"/""
+board-filter | 'P' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "P"/""
+board-filter | 'Q' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "Q"/""
+board-filter | 'R' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "R"/""
+board-filter | 'T' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "T"/""
+board-filter | 'U' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "U"/""
+board-filter | 'V' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "V"/""
+board-filter | 'W' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "W"/""
+board-filter | 'X' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "X"/""
+board-filter | 'Y' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "Y"/""
+board-filter | 'Z' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "Z"/""
+board-filter | '[' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "["/""
+board-filter | '\\' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "\\"/""
+board-filter | ']' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "]"/""
+board-filter | '^' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "^"/""
+board-filter | '_' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "_"/""
+board-filter | '`' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "`"/""
+board-filter | 'a' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "a"/""
+board-filter | 'b' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "b"/""
+board-filter | 'c' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "c"/""
+board-filter | 'd' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "d"/""
+board-filter | 'e' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "e"/""
+board-filter | 'f' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "f"/""
+board-filter | 'g' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "g"/""
+board-filter | 'h' | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | 'i' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "i"/""
+board-filter | 'j' | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | 'k' | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | 'l' | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | 'm' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "m"/""
+board-filter | 'n' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "n"/""
+board-filter | 'o' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
+board-filter | 'q' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
+board-filter | 's' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
+board-filter | 't' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
+board-filter | 'u' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
+board-filter | 'v' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
+board-filter | 'x' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
+board-filter | 'z' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "z"/""
+board-filter | '{' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "{"/""
+board-filter | '|' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "|"/""
+board-filter | '}' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "}"/""
+board-filter | '~' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "~"/""
+board-filter | ctrl-a | format: true/false/false -> true/true/false ; drafts: ""/"" -> "a"/""
+board-filter | alt-a | format: true/false/false -> true/true/false ; drafts: ""/"" -> "a"/""
+board-filter | ctrl-b | format: true/false/false -> true/true/false ; drafts: ""/"" -> "b"/""
+board-filter | alt-b | format: true/false/false -> true/true/false ; drafts: ""/"" -> "b"/""
+board-filter | ctrl-c | format: true/false/false -> true/true/false ; drafts: ""/"" -> "c"/""
+board-filter | alt-c | format: true/false/false -> true/true/false ; drafts: ""/"" -> "c"/""
+board-filter | ctrl-d | format: true/false/false -> true/true/false ; drafts: ""/"" -> "d"/""
+board-filter | alt-d | format: true/false/false -> true/true/false ; drafts: ""/"" -> "d"/""
+board-filter | ctrl-e | format: true/false/false -> true/true/false ; drafts: ""/"" -> "e"/""
+board-filter | alt-e | format: true/false/false -> true/true/false ; drafts: ""/"" -> "e"/""
+board-filter | ctrl-f | format: true/false/false -> true/true/false ; drafts: ""/"" -> "f"/""
+board-filter | alt-f | format: true/false/false -> true/true/false ; drafts: ""/"" -> "f"/""
+board-filter | ctrl-g | format: true/false/false -> true/true/false ; drafts: ""/"" -> "g"/""
+board-filter | alt-g | format: true/false/false -> true/true/false ; drafts: ""/"" -> "g"/""
+board-filter | ctrl-h | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | alt-h | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | ctrl-i | format: true/false/false -> true/true/false ; drafts: ""/"" -> "i"/""
+board-filter | alt-i | format: true/false/false -> true/true/false ; drafts: ""/"" -> "i"/""
+board-filter | ctrl-j | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | alt-j | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | ctrl-k | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | alt-k | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | ctrl-l | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | alt-l | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | ctrl-m | format: true/false/false -> true/true/false ; drafts: ""/"" -> "m"/""
+board-filter | alt-m | format: true/false/false -> true/true/false ; drafts: ""/"" -> "m"/""
+board-filter | ctrl-n | format: true/false/false -> true/true/false ; drafts: ""/"" -> "n"/""
+board-filter | alt-n | format: true/false/false -> true/true/false ; drafts: ""/"" -> "n"/""
+board-filter | ctrl-o | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
+board-filter | alt-o | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
+board-filter | ctrl-q | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
+board-filter | alt-q | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
+board-filter | ctrl-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
+board-filter | alt-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
+board-filter | ctrl-t | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
+board-filter | alt-t | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
+board-filter | ctrl-u | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
+board-filter | alt-u | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
+board-filter | ctrl-v | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
+board-filter | alt-v | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
+board-filter | ctrl-x | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
+board-filter | alt-x | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
+board-filter | ctrl-z | format: true/false/false -> true/true/false ; drafts: ""/"" -> "z"/""
+board-filter | alt-z | format: true/false/false -> true/true/false ; drafts: ""/"" -> "z"/""
+board-filter | ctrl-S | format: true/false/false -> true/true/false ; drafts: ""/"" -> "S"/""
+board-filter | alt-F | format: true/false/false -> true/true/false ; drafts: ""/"" -> "F"/""
+board-filter | ctrl-alt-o | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
+board-filter | ctrl-alt-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
+board-filter | enter | format: true/false/false -> false/false/false
+board-filter | esc | format: true/false/false -> false/false/false
+board-filter | up | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | down | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | left | board: true/0/0/None/0 -> true/0/0/None/9
+board-filter | right | board: true/0/0/None/0 -> true/0/0/None/1
+board-filter | ctrl-enter | format: true/false/false -> false/false/false
+board-filter | alt-enter | format: true/false/false -> false/false/false
+board-filter-row | ' ' | board-filter: ""/[] -> ""/[None]
+board-filter-row | 'h' | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | 'j' | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | 'k' | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | 'l' | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | ctrl-h | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | alt-h | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | ctrl-j | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | alt-j | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | ctrl-k | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | alt-k | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | ctrl-l | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | alt-l | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | enter | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | esc | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | up | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | down | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | left | board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | right | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | ctrl-enter | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | alt-enter | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
+board-query | ' ' | drafts: ""/"" -> " "/""
+board-query | '!' | drafts: ""/"" -> "!"/""
+board-query | '"' | drafts: ""/"" -> "\""/""
+board-query | '#' | drafts: ""/"" -> "#"/""
+board-query | '$' | drafts: ""/"" -> "$"/""
+board-query | '%' | drafts: ""/"" -> "%"/""
+board-query | '&' | drafts: ""/"" -> "&"/""
+board-query | '\'' | drafts: ""/"" -> "'"/""
+board-query | '(' | drafts: ""/"" -> "("/""
+board-query | ')' | drafts: ""/"" -> ")"/""
+board-query | '*' | drafts: ""/"" -> "*"/""
+board-query | '+' | drafts: ""/"" -> "+"/""
+board-query | ',' | drafts: ""/"" -> ","/""
+board-query | '-' | drafts: ""/"" -> "-"/""
+board-query | '.' | drafts: ""/"" -> "."/""
+board-query | '/' | drafts: ""/"" -> "/"/""
+board-query | '0' | drafts: ""/"" -> "0"/""
+board-query | '1' | drafts: ""/"" -> "1"/""
+board-query | '2' | drafts: ""/"" -> "2"/""
+board-query | '3' | drafts: ""/"" -> "3"/""
+board-query | '4' | drafts: ""/"" -> "4"/""
+board-query | '5' | drafts: ""/"" -> "5"/""
+board-query | '6' | drafts: ""/"" -> "6"/""
+board-query | '7' | drafts: ""/"" -> "7"/""
+board-query | '8' | drafts: ""/"" -> "8"/""
+board-query | '9' | drafts: ""/"" -> "9"/""
+board-query | ':' | drafts: ""/"" -> ":"/""
+board-query | ';' | drafts: ""/"" -> ";"/""
+board-query | '<' | drafts: ""/"" -> "<"/""
+board-query | '=' | drafts: ""/"" -> "="/""
+board-query | '>' | drafts: ""/"" -> ">"/""
+board-query | '?' | drafts: ""/"" -> "?"/""
+board-query | '@' | drafts: ""/"" -> "@"/""
+board-query | 'A' | drafts: ""/"" -> "A"/""
+board-query | 'B' | drafts: ""/"" -> "B"/""
+board-query | 'C' | drafts: ""/"" -> "C"/""
+board-query | 'D' | drafts: ""/"" -> "D"/""
+board-query | 'E' | drafts: ""/"" -> "E"/""
+board-query | 'F' | drafts: ""/"" -> "F"/""
+board-query | 'G' | drafts: ""/"" -> "G"/""
+board-query | 'H' | drafts: ""/"" -> "H"/""
+board-query | 'I' | drafts: ""/"" -> "I"/""
+board-query | 'J' | drafts: ""/"" -> "J"/""
+board-query | 'K' | drafts: ""/"" -> "K"/""
+board-query | 'L' | drafts: ""/"" -> "L"/""
+board-query | 'M' | drafts: ""/"" -> "M"/""
+board-query | 'N' | drafts: ""/"" -> "N"/""
+board-query | 'O' | drafts: ""/"" -> "O"/""
+board-query | 'P' | drafts: ""/"" -> "P"/""
+board-query | 'Q' | drafts: ""/"" -> "Q"/""
+board-query | 'R' | drafts: ""/"" -> "R"/""
+board-query | 'T' | drafts: ""/"" -> "T"/""
+board-query | 'U' | drafts: ""/"" -> "U"/""
+board-query | 'V' | drafts: ""/"" -> "V"/""
+board-query | 'W' | drafts: ""/"" -> "W"/""
+board-query | 'X' | drafts: ""/"" -> "X"/""
+board-query | 'Y' | drafts: ""/"" -> "Y"/""
+board-query | 'Z' | drafts: ""/"" -> "Z"/""
+board-query | '[' | drafts: ""/"" -> "["/""
+board-query | '\\' | drafts: ""/"" -> "\\"/""
+board-query | ']' | drafts: ""/"" -> "]"/""
+board-query | '^' | drafts: ""/"" -> "^"/""
+board-query | '_' | drafts: ""/"" -> "_"/""
+board-query | '`' | drafts: ""/"" -> "`"/""
+board-query | 'a' | drafts: ""/"" -> "a"/""
+board-query | 'b' | drafts: ""/"" -> "b"/""
+board-query | 'c' | drafts: ""/"" -> "c"/""
+board-query | 'd' | drafts: ""/"" -> "d"/""
+board-query | 'e' | drafts: ""/"" -> "e"/""
+board-query | 'f' | drafts: ""/"" -> "f"/""
+board-query | 'g' | drafts: ""/"" -> "g"/""
+board-query | 'h' | drafts: ""/"" -> "h"/""
+board-query | 'i' | drafts: ""/"" -> "i"/""
+board-query | 'j' | drafts: ""/"" -> "j"/""
+board-query | 'k' | drafts: ""/"" -> "k"/""
+board-query | 'l' | drafts: ""/"" -> "l"/""
+board-query | 'm' | drafts: ""/"" -> "m"/""
+board-query | 'n' | drafts: ""/"" -> "n"/""
+board-query | 'o' | drafts: ""/"" -> "o"/""
+board-query | 'q' | drafts: ""/"" -> "q"/""
+board-query | 's' | drafts: ""/"" -> "s"/""
+board-query | 't' | drafts: ""/"" -> "t"/""
+board-query | 'u' | drafts: ""/"" -> "u"/""
+board-query | 'v' | drafts: ""/"" -> "v"/""
+board-query | 'x' | drafts: ""/"" -> "x"/""
+board-query | 'z' | drafts: ""/"" -> "z"/""
+board-query | '{' | drafts: ""/"" -> "{"/""
+board-query | '|' | drafts: ""/"" -> "|"/""
+board-query | '}' | drafts: ""/"" -> "}"/""
+board-query | '~' | drafts: ""/"" -> "~"/""
+board-query | ctrl-a | drafts: ""/"" -> "a"/""
+board-query | alt-a | drafts: ""/"" -> "a"/""
+board-query | ctrl-b | drafts: ""/"" -> "b"/""
+board-query | alt-b | drafts: ""/"" -> "b"/""
+board-query | ctrl-c | drafts: ""/"" -> "c"/""
+board-query | alt-c | drafts: ""/"" -> "c"/""
+board-query | ctrl-d | drafts: ""/"" -> "d"/""
+board-query | alt-d | drafts: ""/"" -> "d"/""
+board-query | ctrl-e | drafts: ""/"" -> "e"/""
+board-query | alt-e | drafts: ""/"" -> "e"/""
+board-query | ctrl-f | drafts: ""/"" -> "f"/""
+board-query | alt-f | drafts: ""/"" -> "f"/""
+board-query | ctrl-g | drafts: ""/"" -> "g"/""
+board-query | alt-g | drafts: ""/"" -> "g"/""
+board-query | ctrl-h | drafts: ""/"" -> "h"/""
+board-query | alt-h | drafts: ""/"" -> "h"/""
+board-query | ctrl-i | drafts: ""/"" -> "i"/""
+board-query | alt-i | drafts: ""/"" -> "i"/""
+board-query | ctrl-j | drafts: ""/"" -> "j"/""
+board-query | alt-j | drafts: ""/"" -> "j"/""
+board-query | ctrl-k | drafts: ""/"" -> "k"/""
+board-query | alt-k | drafts: ""/"" -> "k"/""
+board-query | ctrl-l | drafts: ""/"" -> "l"/""
+board-query | alt-l | drafts: ""/"" -> "l"/""
+board-query | ctrl-m | drafts: ""/"" -> "m"/""
+board-query | alt-m | drafts: ""/"" -> "m"/""
+board-query | ctrl-n | drafts: ""/"" -> "n"/""
+board-query | alt-n | drafts: ""/"" -> "n"/""
+board-query | ctrl-o | drafts: ""/"" -> "o"/""
+board-query | alt-o | drafts: ""/"" -> "o"/""
+board-query | ctrl-q | drafts: ""/"" -> "q"/""
+board-query | alt-q | drafts: ""/"" -> "q"/""
+board-query | ctrl-s | drafts: ""/"" -> "s"/""
+board-query | alt-s | drafts: ""/"" -> "s"/""
+board-query | ctrl-t | drafts: ""/"" -> "t"/""
+board-query | alt-t | drafts: ""/"" -> "t"/""
+board-query | ctrl-u | drafts: ""/"" -> "u"/""
+board-query | alt-u | drafts: ""/"" -> "u"/""
+board-query | ctrl-v | drafts: ""/"" -> "v"/""
+board-query | alt-v | drafts: ""/"" -> "v"/""
+board-query | ctrl-x | drafts: ""/"" -> "x"/""
+board-query | alt-x | drafts: ""/"" -> "x"/""
+board-query | ctrl-z | drafts: ""/"" -> "z"/""
+board-query | alt-z | drafts: ""/"" -> "z"/""
+board-query | ctrl-S | drafts: ""/"" -> "S"/""
+board-query | alt-F | drafts: ""/"" -> "F"/""
+board-query | ctrl-alt-o | drafts: ""/"" -> "o"/""
+board-query | ctrl-alt-s | drafts: ""/"" -> "s"/""
+board-query | enter | format: true/true/false -> false/false/false
+board-query | esc | format: true/true/false -> true/false/false
+board-query | up | format: true/true/false -> true/false/false ; board: true/0/0/None/0 -> true/0/0/None/9
+board-query | down | format: true/true/false -> true/false/false ; board: true/0/0/None/0 -> true/0/0/None/1
+board-query | ctrl-enter | format: true/true/false -> false/false/false
+board-query | alt-enter | format: true/true/false -> false/false/false
+bar | ' ' | bar: "ab" -> "ab "
+bar | '!' | bar: "ab" -> "ab!"
+bar | '"' | bar: "ab" -> "ab\""
+bar | '#' | bar: "ab" -> "ab#"
+bar | '$' | bar: "ab" -> "ab$"
+bar | '%' | bar: "ab" -> "ab%"
+bar | '&' | bar: "ab" -> "ab&"
+bar | '\'' | bar: "ab" -> "ab'"
+bar | '(' | bar: "ab" -> "ab("
+bar | ')' | bar: "ab" -> "ab)"
+bar | '*' | bar: "ab" -> "ab*"
+bar | '+' | bar: "ab" -> "ab+"
+bar | ',' | bar: "ab" -> "ab,"
+bar | '-' | bar: "ab" -> "ab-"
+bar | '.' | bar: "ab" -> "ab."
+bar | '/' | bar: "ab" -> "ab/"
+bar | '0' | bar: "ab" -> "ab0"
+bar | '1' | bar: "ab" -> "ab1"
+bar | '2' | bar: "ab" -> "ab2"
+bar | '3' | bar: "ab" -> "ab3"
+bar | '4' | bar: "ab" -> "ab4"
+bar | '5' | bar: "ab" -> "ab5"
+bar | '6' | bar: "ab" -> "ab6"
+bar | '7' | bar: "ab" -> "ab7"
+bar | '8' | bar: "ab" -> "ab8"
+bar | '9' | bar: "ab" -> "ab9"
+bar | ':' | bar: "ab" -> "ab:"
+bar | ';' | bar: "ab" -> "ab;"
+bar | '<' | bar: "ab" -> "ab<"
+bar | '=' | bar: "ab" -> "ab="
+bar | '>' | bar: "ab" -> "ab>"
+bar | '?' | bar: "ab" -> "ab?"
+bar | '@' | bar: "ab" -> "ab@"
+bar | 'A' | bar: "ab" -> "abA"
+bar | 'B' | bar: "ab" -> "abB"
+bar | 'C' | bar: "ab" -> "abC"
+bar | 'D' | bar: "ab" -> "abD"
+bar | 'E' | bar: "ab" -> "abE"
+bar | 'F' | bar: "ab" -> "abF"
+bar | 'G' | bar: "ab" -> "abG"
+bar | 'H' | bar: "ab" -> "abH"
+bar | 'I' | bar: "ab" -> "abI"
+bar | 'J' | bar: "ab" -> "abJ"
+bar | 'K' | bar: "ab" -> "abK"
+bar | 'L' | bar: "ab" -> "abL"
+bar | 'M' | bar: "ab" -> "abM"
+bar | 'N' | bar: "ab" -> "abN"
+bar | 'O' | bar: "ab" -> "abO"
+bar | 'P' | bar: "ab" -> "abP"
+bar | 'Q' | bar: "ab" -> "abQ"
+bar | 'R' | bar: "ab" -> "abR"
+bar | 'T' | bar: "ab" -> "abT"
+bar | 'U' | bar: "ab" -> "abU"
+bar | 'V' | bar: "ab" -> "abV"
+bar | 'W' | bar: "ab" -> "abW"
+bar | 'X' | bar: "ab" -> "abX"
+bar | 'Y' | bar: "ab" -> "abY"
+bar | 'Z' | bar: "ab" -> "abZ"
+bar | '[' | bar: "ab" -> "ab["
+bar | '\\' | bar: "ab" -> "ab\\"
+bar | ']' | bar: "ab" -> "ab]"
+bar | '^' | bar: "ab" -> "ab^"
+bar | '_' | bar: "ab" -> "ab_"
+bar | '`' | bar: "ab" -> "ab`"
+bar | 'a' | bar: "ab" -> "aba"
+bar | 'b' | bar: "ab" -> "abb"
+bar | 'c' | bar: "ab" -> "abc"
+bar | 'd' | bar: "ab" -> "abd"
+bar | 'e' | bar: "ab" -> "abe"
+bar | 'f' | bar: "ab" -> "abf"
+bar | 'g' | bar: "ab" -> "abg"
+bar | 'h' | bar: "ab" -> "abh"
+bar | 'i' | bar: "ab" -> "abi"
+bar | 'j' | bar: "ab" -> "abj"
+bar | 'k' | bar: "ab" -> "abk"
+bar | 'l' | bar: "ab" -> "abl"
+bar | 'm' | bar: "ab" -> "abm"
+bar | 'n' | bar: "ab" -> "abn"
+bar | 'o' | bar: "ab" -> "abo"
+bar | 'q' | bar: "ab" -> "abq"
+bar | 's' | bar: "ab" -> "abs"
+bar | 't' | bar: "ab" -> "abt"
+bar | 'u' | bar: "ab" -> "abu"
+bar | 'v' | bar: "ab" -> "abv"
+bar | 'x' | bar: "ab" -> "abx"
+bar | 'z' | bar: "ab" -> "abz"
+bar | '{' | bar: "ab" -> "ab{"
+bar | '|' | bar: "ab" -> "ab|"
+bar | '}' | bar: "ab" -> "ab}"
+bar | '~' | bar: "ab" -> "ab~"
+bar | ctrl-a | bar: "ab" -> "aba"
+bar | alt-a | bar: "ab" -> "aba"
+bar | ctrl-b | bar: "ab" -> "abb"
+bar | alt-b | bar: "ab" -> "abb"
+bar | ctrl-c | quit: false -> true
+bar | alt-c | bar: "ab" -> "abc"
+bar | ctrl-d | quit: false -> true
+bar | alt-d | bar: "ab" -> "abd"
+bar | ctrl-e | bar: "ab" -> "abe"
+bar | alt-e | bar: "ab" -> "abe"
+bar | ctrl-f | bar: "ab" -> "abf"
+bar | alt-f | bar: "ab" -> "abf"
+bar | ctrl-g | bar: "ab" -> "abg"
+bar | alt-g | bar: "ab" -> "abg"
+bar | ctrl-h | bar: "ab" -> "abh"
+bar | alt-h | bar: "ab" -> "abh"
+bar | ctrl-i | bar: "ab" -> "abi"
+bar | alt-i | bar: "ab" -> "abi"
+bar | ctrl-j | bar: "ab" -> "abj"
+bar | alt-j | bar: "ab" -> "abj"
+bar | ctrl-k | bar: "ab" -> "abk"
+bar | alt-k | bar: "ab" -> "abk"
+bar | ctrl-l | bar: "ab" -> "abl"
+bar | alt-l | bar: "ab" -> "abl"
+bar | ctrl-m | bar: "ab" -> "abm"
+bar | alt-m | bar: "ab" -> "abm"
+bar | ctrl-n | bar: "ab" -> "abn"
+bar | alt-n | bar: "ab" -> "abn"
+bar | ctrl-o | bar: "ab" -> "abo"
+bar | alt-o | bar: "ab" -> "abo"
+bar | ctrl-q | bar: "ab" -> "abq"
+bar | alt-q | bar: "ab" -> "abq"
+bar | ctrl-s | bar: "ab" -> "abs"
+bar | alt-s | bar: "ab" -> "abs"
+bar | ctrl-t | bar: "ab" -> "abt"
+bar | alt-t | bar: "ab" -> "abt"
+bar | ctrl-u | bar: "ab" -> "abu"
+bar | alt-u | bar: "ab" -> "abu"
+bar | ctrl-v | bar: "ab" -> "abv"
+bar | alt-v | bar: "ab" -> "abv"
+bar | ctrl-x | bar: "ab" -> "abx"
+bar | alt-x | bar: "ab" -> "abx"
+bar | ctrl-z | bar: "ab" -> "abz"
+bar | alt-z | bar: "ab" -> "abz"
+bar | ctrl-S | bar: "ab" -> "abS"
+bar | alt-F | bar: "ab" -> "abF"
+bar | ctrl-alt-o | bar: "ab" -> "abo"
+bar | ctrl-alt-s | bar: "ab" -> "abs"
+bar | enter | message:  -> type an issue number, o, or q
+bar | esc | focus: true -> false ; bar: "ab" -> ""
+bar | backspace | bar: "ab" -> "a"
+bar | ctrl-enter | message:  -> type an issue number, o, or q
+bar | alt-enter | message:  -> type an issue number, o, or q
+bar | ctrl-backspace | bar: "ab" -> "a"
+bar | alt-backspace | bar: "ab" -> "a"
+search-bar | ' ' | search: "ab"/true -> "ab "/true
+search-bar | '!' | search: "ab"/true -> "ab!"/true
+search-bar | '"' | search: "ab"/true -> "ab\""/true
+search-bar | '#' | search: "ab"/true -> "ab#"/true
+search-bar | '$' | search: "ab"/true -> "ab$"/true
+search-bar | '%' | search: "ab"/true -> "ab%"/true
+search-bar | '&' | search: "ab"/true -> "ab&"/true
+search-bar | '\'' | search: "ab"/true -> "ab'"/true
+search-bar | '(' | search: "ab"/true -> "ab("/true
+search-bar | ')' | search: "ab"/true -> "ab)"/true
+search-bar | '*' | search: "ab"/true -> "ab*"/true
+search-bar | '+' | search: "ab"/true -> "ab+"/true
+search-bar | ',' | search: "ab"/true -> "ab,"/true
+search-bar | '-' | search: "ab"/true -> "ab-"/true
+search-bar | '.' | search: "ab"/true -> "ab."/true
+search-bar | '/' | search: "ab"/true -> "ab/"/true
+search-bar | '0' | search: "ab"/true -> "ab0"/true
+search-bar | '1' | search: "ab"/true -> "ab1"/true
+search-bar | '2' | search: "ab"/true -> "ab2"/true
+search-bar | '3' | search: "ab"/true -> "ab3"/true
+search-bar | '4' | search: "ab"/true -> "ab4"/true
+search-bar | '5' | search: "ab"/true -> "ab5"/true
+search-bar | '6' | search: "ab"/true -> "ab6"/true
+search-bar | '7' | search: "ab"/true -> "ab7"/true
+search-bar | '8' | search: "ab"/true -> "ab8"/true
+search-bar | '9' | search: "ab"/true -> "ab9"/true
+search-bar | ':' | search: "ab"/true -> "ab:"/true
+search-bar | ';' | search: "ab"/true -> "ab;"/true
+search-bar | '<' | search: "ab"/true -> "ab<"/true
+search-bar | '=' | search: "ab"/true -> "ab="/true
+search-bar | '>' | search: "ab"/true -> "ab>"/true
+search-bar | '?' | search: "ab"/true -> "ab?"/true
+search-bar | '@' | search: "ab"/true -> "ab@"/true
+search-bar | 'A' | search: "ab"/true -> "abA"/true
+search-bar | 'B' | search: "ab"/true -> "abB"/true
+search-bar | 'C' | search: "ab"/true -> "abC"/true
+search-bar | 'D' | search: "ab"/true -> "abD"/true
+search-bar | 'E' | search: "ab"/true -> "abE"/true
+search-bar | 'F' | search: "ab"/true -> "abF"/true
+search-bar | 'G' | search: "ab"/true -> "abG"/true
+search-bar | 'H' | search: "ab"/true -> "abH"/true
+search-bar | 'I' | search: "ab"/true -> "abI"/true
+search-bar | 'J' | search: "ab"/true -> "abJ"/true
+search-bar | 'K' | search: "ab"/true -> "abK"/true
+search-bar | 'L' | search: "ab"/true -> "abL"/true
+search-bar | 'M' | search: "ab"/true -> "abM"/true
+search-bar | 'N' | search: "ab"/true -> "abN"/true
+search-bar | 'O' | search: "ab"/true -> "abO"/true
+search-bar | 'P' | search: "ab"/true -> "abP"/true
+search-bar | 'Q' | search: "ab"/true -> "abQ"/true
+search-bar | 'R' | search: "ab"/true -> "abR"/true
+search-bar | 'T' | search: "ab"/true -> "abT"/true
+search-bar | 'U' | search: "ab"/true -> "abU"/true
+search-bar | 'V' | search: "ab"/true -> "abV"/true
+search-bar | 'W' | search: "ab"/true -> "abW"/true
+search-bar | 'X' | search: "ab"/true -> "abX"/true
+search-bar | 'Y' | search: "ab"/true -> "abY"/true
+search-bar | 'Z' | search: "ab"/true -> "abZ"/true
+search-bar | '[' | search: "ab"/true -> "ab["/true
+search-bar | '\\' | search: "ab"/true -> "ab\\"/true
+search-bar | ']' | search: "ab"/true -> "ab]"/true
+search-bar | '^' | search: "ab"/true -> "ab^"/true
+search-bar | '_' | search: "ab"/true -> "ab_"/true
+search-bar | '`' | search: "ab"/true -> "ab`"/true
+search-bar | 'a' | search: "ab"/true -> "aba"/true
+search-bar | 'b' | search: "ab"/true -> "abb"/true
+search-bar | 'c' | search: "ab"/true -> "abc"/true
+search-bar | 'd' | search: "ab"/true -> "abd"/true
+search-bar | 'e' | search: "ab"/true -> "abe"/true
+search-bar | 'f' | search: "ab"/true -> "abf"/true
+search-bar | 'g' | search: "ab"/true -> "abg"/true
+search-bar | 'h' | search: "ab"/true -> "abh"/true
+search-bar | 'i' | search: "ab"/true -> "abi"/true
+search-bar | 'j' | search: "ab"/true -> "abj"/true
+search-bar | 'k' | search: "ab"/true -> "abk"/true
+search-bar | 'l' | search: "ab"/true -> "abl"/true
+search-bar | 'm' | search: "ab"/true -> "abm"/true
+search-bar | 'n' | search: "ab"/true -> "abn"/true
+search-bar | 'o' | search: "ab"/true -> "abo"/true
+search-bar | 'q' | search: "ab"/true -> "abq"/true
+search-bar | 's' | search: "ab"/true -> "abs"/true
+search-bar | 't' | search: "ab"/true -> "abt"/true
+search-bar | 'u' | search: "ab"/true -> "abu"/true
+search-bar | 'v' | search: "ab"/true -> "abv"/true
+search-bar | 'x' | search: "ab"/true -> "abx"/true
+search-bar | 'z' | search: "ab"/true -> "abz"/true
+search-bar | '{' | search: "ab"/true -> "ab{"/true
+search-bar | '|' | search: "ab"/true -> "ab|"/true
+search-bar | '}' | search: "ab"/true -> "ab}"/true
+search-bar | '~' | search: "ab"/true -> "ab~"/true
+search-bar | ctrl-a | search: "ab"/true -> "aba"/true
+search-bar | alt-a | search: "ab"/true -> "aba"/true
+search-bar | ctrl-b | search: "ab"/true -> "abb"/true
+search-bar | alt-b | search: "ab"/true -> "abb"/true
+search-bar | ctrl-c | quit: false -> true
+search-bar | alt-c | search: "ab"/true -> "abc"/true
+search-bar | ctrl-d | quit: false -> true
+search-bar | alt-d | search: "ab"/true -> "abd"/true
+search-bar | ctrl-e | search: "ab"/true -> "abe"/true
+search-bar | alt-e | search: "ab"/true -> "abe"/true
+search-bar | ctrl-f | search: "ab"/true -> "abf"/true
+search-bar | alt-f | search: "ab"/true -> "abf"/true
+search-bar | ctrl-g | search: "ab"/true -> "abg"/true
+search-bar | alt-g | search: "ab"/true -> "abg"/true
+search-bar | ctrl-h | search: "ab"/true -> "abh"/true
+search-bar | alt-h | search: "ab"/true -> "abh"/true
+search-bar | ctrl-i | search: "ab"/true -> "abi"/true
+search-bar | alt-i | search: "ab"/true -> "abi"/true
+search-bar | ctrl-j | search: "ab"/true -> "abj"/true
+search-bar | alt-j | search: "ab"/true -> "abj"/true
+search-bar | ctrl-k | search: "ab"/true -> "abk"/true
+search-bar | alt-k | search: "ab"/true -> "abk"/true
+search-bar | ctrl-l | search: "ab"/true -> "abl"/true
+search-bar | alt-l | search: "ab"/true -> "abl"/true
+search-bar | ctrl-m | search: "ab"/true -> "abm"/true
+search-bar | alt-m | search: "ab"/true -> "abm"/true
+search-bar | ctrl-n | search: "ab"/true -> "abn"/true
+search-bar | alt-n | search: "ab"/true -> "abn"/true
+search-bar | ctrl-o | search: "ab"/true -> "abo"/true
+search-bar | alt-o | search: "ab"/true -> "abo"/true
+search-bar | ctrl-q | search: "ab"/true -> "abq"/true
+search-bar | alt-q | search: "ab"/true -> "abq"/true
+search-bar | ctrl-s | search: "ab"/true -> "abs"/true
+search-bar | alt-s | search: "ab"/true -> "abs"/true
+search-bar | ctrl-t | search: "ab"/true -> "abt"/true
+search-bar | alt-t | search: "ab"/true -> "abt"/true
+search-bar | ctrl-u | search: "ab"/true -> "abu"/true
+search-bar | alt-u | search: "ab"/true -> "abu"/true
+search-bar | ctrl-v | search: "ab"/true -> "abv"/true
+search-bar | alt-v | search: "ab"/true -> "abv"/true
+search-bar | ctrl-x | search: "ab"/true -> "abx"/true
+search-bar | alt-x | search: "ab"/true -> "abx"/true
+search-bar | ctrl-z | search: "ab"/true -> "abz"/true
+search-bar | alt-z | search: "ab"/true -> "abz"/true
+search-bar | ctrl-S | search: "ab"/true -> "abS"/true
+search-bar | alt-F | search: "ab"/true -> "abF"/true
+search-bar | ctrl-alt-o | search: "ab"/true -> "abo"/true
+search-bar | ctrl-alt-s | search: "ab"/true -> "abs"/true
+search-bar | enter | focus: true -> false ; search: "ab"/true -> "ab"/false
+search-bar | esc | focus: true -> false ; bar: "ab" -> "" ; search: "ab"/true -> ""/false
+search-bar | backspace | search: "ab"/true -> "a"/true
+search-bar | ctrl-enter | focus: true -> false ; search: "ab"/true -> "ab"/false
+search-bar | alt-enter | focus: true -> false ; search: "ab"/true -> "ab"/false
+search-bar | ctrl-backspace | search: "ab"/true -> "a"/true
+search-bar | alt-backspace | search: "ab"/true -> "a"/true
