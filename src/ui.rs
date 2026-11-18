@@ -5,6 +5,7 @@
 //! during `render`; `input` consumes them on the next event.
 
 mod help;
+mod hints;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -14,6 +15,8 @@ use ratatui::widgets::{
 };
 
 use crate::app::{App, FilterItem, Tab};
+use crate::core::Dialog;
+use crate::keymap::{Action, Context};
 use crate::model::{self, IssueData};
 use crate::theme;
 
@@ -222,20 +225,25 @@ fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             hints.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
             x += 3;
         }
-        let label = format!("{} {}", choice.key, choice.label);
-        let w = label.chars().count() as u16;
+        let w = (1 + 1 + choice.label.chars().count()) as u16;
         if hint_y < inner.y + inner.height && x + w <= inner.x + inner.width {
             app.hits.confirm_choices.push((Rect::new(x, hint_y, w, 1), i));
         }
         x += w;
-        hints.push(Span::styled(label, Style::new().bg(ink()).fg(amber()).bold()));
+        hints.push(Span::styled(choice.key.to_string(), Style::new().bg(ink()).fg(amber())));
+        hints.push(Span::styled(format!(" {}", choice.label), Style::new().bg(ink()).fg(muted())));
     }
-    hints.push(Span::styled(" · esc Cancel", Style::new().bg(ink()).fg(muted())));
+    let legend = hints::collect(&[Context::Dialog(Dialog::Confirm)], app);
+    for (i, hint) in legend.iter().enumerate() {
+        if i == 0 {
+            hints.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+            hints.extend(hint.spans());
+        } else {
+            lines.push(Line::from(hints.split_off(0)));
+            hints.extend(hint.spans());
+        }
+    }
     lines.push(Line::from(hints));
-    lines.push(Line::from(Span::styled(
-        "Enter picks the first choice",
-        Style::new().bg(ink()).fg(muted()),
-    )));
     f.render_widget(Paragraph::new(lines).style(base()).wrap(Wrap { trim: false }), inner);
 }
 
@@ -498,7 +506,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         left.field(1, Some("name"), vec![Span::styled(
             format!("{}▌", app.sidebar.name_draft), Style::new().fg(theme::amber()))]);
     } else if saved_count == 0 {
-        left.empty("saved", "none (s saves the query)");
+        left.empty("saved", &format!("none ({} saves the query)", hints::key_in(Context::Dialog(Dialog::Format), Action::FormatSaveName)));
     } else {
         left.chips(Some("saved"), app.sidebar.saved_queries.iter().enumerate().map(|(i, saved)|
             (1 + i, saved.query == app.sidebar.query_active.trim(), saved.name.clone())).collect());
@@ -581,8 +589,11 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     } else {
         left.lines.len() + right.lines.len()
     };
-    // Content, a blank line, the footer, and one line of air top and bottom.
-    let popup = sized_popup(area, 90, content_height + 4);
+    // Content, a blank line, the legend, and one line of air top and bottom.
+    let legend_width = sized_popup(area, 90, 1).width.saturating_sub(4);
+    let footer_lines = hints::legend(Context::Dialog(Dialog::Format), app, legend_width, 3);
+    let footer_height = footer_lines.len().max(1) as u16;
+    let popup = sized_popup(area, 90, content_height + 3 + footer_height as usize);
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
@@ -594,7 +605,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let framed = block.inner(popup);
     f.render_widget(block, popup);
     let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
-    let content = Rect { height: inner.height.saturating_sub(2), ..inner };
+    let content = Rect { height: inner.height.saturating_sub(1 + footer_height), ..inner };
     let scroll = scroll_to(content, focus_line, app.sidebar.query_edit || app.sidebar.name_edit);
     app.hits.form_popup = popup;
     let right_x = if two_columns { content.x + column_width as u16 + 3 } else { content.x };
@@ -625,24 +636,9 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         f.render_widget(Paragraph::new(left.lines).style(theme::base()).scroll((scroll, 0)),
             content);
     }
-    let footer = Rect { y: inner.y + inner.height.saturating_sub(1),
-        height: inner.height.min(1), ..inner };
-    let hint = Line::from([
-        ("j/k", "move"), ("h/l", "column"), ("space", "toggle"),
-        ("e", "search"), ("0", "reset"), ("esc", "close"),
-    ].iter().enumerate().flat_map(|(i, (key, action))| {
-        let mut spans = Vec::new();
-        if i > 0 {
-            spans.push(Span::styled("  ", Style::new().bg(theme::ink()).fg(theme::muted())));
-        }
-        spans.push(Span::styled((*key).to_string(), Style::new().bg(theme::ink())
-            .fg(theme::paper()).bold()));
-        spans.push(Span::styled(format!(" {action}"),
-            Style::new().bg(theme::ink()).fg(theme::muted())));
-        spans
-    }).collect::<Vec<_>>());
-    f.render_widget(Paragraph::new(hint)
-        .style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
+    let footer = Rect { y: inner.y + inner.height.saturating_sub(footer_height),
+        height: inner.height.min(footer_height), ..inner };
+    f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
     if app.sidebar.name_edit && content.height > 1 {
         let x = inner.x + left.gutter as u16 + 3
             + Line::raw(app.sidebar.name_draft.as_str()).width() as u16;
@@ -730,11 +726,9 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         ]));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "j/k move · space toggle · type filters text · enter apply · esc clear",
-        Style::new().bg(ink()).fg(muted()),
-    )));
-    let popup = sized_popup(area, 62, lines.len());
+    let popup = sized_popup(area, 62, lines.len() + 1);
+    let legend = hints::legend(Context::Dialog(Dialog::BoardFilter), app, popup.width.saturating_sub(2), 1);
+    lines.extend(legend);
     f.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -892,6 +886,8 @@ struct SectionFrame {
     fields: model::RowFields,
     checks: bool,
     loading: bool,
+    /// Shown when the pane has no rows and nothing is loading.
+    empty: Line<'static>,
 }
 
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
@@ -1041,6 +1037,8 @@ fn section_list(
     }
     if rows.is_empty() && frame.loading {
         items.extend(skeleton_lines(4).chunks(3).map(|c| ListItem::new(c.to_vec())));
+    } else if rows.is_empty() && !frame.empty.spans.is_empty() {
+        items.push(ListItem::new(frame.empty.clone()));
     }
     List::new(items)
         .block(theme::pane_block(focused).title(frame.title).title_bottom(frame.footer))
@@ -1573,6 +1571,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
             loading: pane.sidebar,
+            empty: hints::tip("  No issues. Press ", Context::Global, Action::OpenFormat, " to filter."),
         },
         &issue_rows,
         app,
@@ -1594,6 +1593,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
             loading: pane.sidebar,
+            empty: hints::tip("  No pull requests. Press ", Context::Global, Action::OpenFormat, " to filter."),
         },
         &pr_rows,
         app,
@@ -1625,6 +1625,7 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_pr.checks,
             loading: false,
+            empty: Line::default(),
         },
         &rows,
         app,
@@ -1668,8 +1669,12 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(block, area);
     app.hits.labels_area = area;
     if items.is_empty() {
-        let line = Line::styled("  loading …", Style::new().bg(ink()).fg(muted()));
-        f.render_widget(Paragraph::new(line).style(theme::base()), inner);
+        let line = if app.sidebar.meta_rx.is_some() || !app.sidebar.meta_loaded {
+            Line::styled("  loading …", Style::new().bg(ink()).fg(muted()))
+        } else {
+            Line::styled("  No labels or milestones in this repo", Style::new().bg(ink()).fg(muted()))
+        };
+        f.render_widget(Paragraph::new(line).style(theme::base()).wrap(Wrap { trim: false }), inner);
         return;
     }
     // Display lines: a group header before each group, `Some(index)` for items.
@@ -2042,7 +2047,9 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let mut text = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
         Some(d) => match app.nav.tab {
             Tab::Details => {
-                markdown = format!("## Body\n\n{}\n\n## Comments\n\n{}", model::body_md(d), model::build_comments_md(d));
+                let comment_key = hints::key_in(Context::Global, Action::Comment);
+                markdown = format!("## Body\n\n{}\n\n## Comments\n\n{}", model::body_md(d), model::build_comments_md(d))
+                    .replace("_No comments yet._", &format!("_No comments yet. Press `{comment_key}` to write one._"));
                 crate::theme::render_markdown(&markdown)
             }
             Tab::Visual => match model::visual_content(d.is_pr) {
@@ -2051,9 +2058,14 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             },
         },
         None if app.pane_loading().main => ratatui::text::Text::from(skeleton_lines(6)),
-        None => crate::theme::render_markdown(
-            "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
-        ),
+        None => {
+            markdown = format!(
+                "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`{}`), or instantly filter loaded rows (title, label, author) with `{}`.",
+                hints::key_in(Context::Global, Action::CommandBar),
+                hints::key_in(Context::Global, Action::FindBar),
+            );
+            crate::theme::render_markdown(&markdown)
+        }
     };
     // Clickable refs and URLs read as links in the body and the graph.
     if app.nav.tab == Tab::Details || app.visual_graph() {
@@ -2094,17 +2106,9 @@ fn text_rows(text: &ratatui::text::Text, width: usize) -> usize {
 /// dots read as motion at a glance and stay one cell wide.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Right-side shortcut hints, longest first. `render_bar` picks the
-/// longest tier that fits the space left by the repo/status/loading
-/// content, so narrow terminals keep content and shed hints instead
-/// of squeezing either side.
-const BAR_HINT_TIERS: [&str; 2] = [
-    "q quit · tab panes · j/k move · : open · b board · ? shortcuts",
-    "q quit · ? shortcuts",
-];
-
 fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
+    app.hits.bar_hints.clear();
     if app.nav.focus == crate::app::Focus::Bar {
         let text = if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
         let prompt = if app.sidebar.searching { "/ " } else { "❯ " };
@@ -2131,7 +2135,8 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // the space left by the content wins. The spinner truncates
     // against the smallest tier, the most content-favoring reserve,
     // so live fetch feedback never loses to static hints.
-    let short_hint = BAR_HINT_TIERS[BAR_HINT_TIERS.len() - 1].chars().count() as u16;
+    let (hint_rest, hint_essentials) = hints::bar_hints(app);
+    let short_hint = hints::essentials_width(app);
     let left_width = if area.width > short_hint + 1 { area.width - short_hint - 1 } else { area.width };
     let mut segments: Vec<(String, bool)> = Vec::new();
     // Lasting auth warning first, so long project names never clip it.
@@ -2177,13 +2182,11 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         && app.undo_live()
         && app.undo.as_ref().is_some_and(|u| u.message == app.message);
     app.hits.undo_toast = if toast_is_undo { Rect::new(area.x, area.y, left_shown, 1) } else { Rect::default() };
-    // Content wins: a tier only shows when it fits whole beside it,
-    // with one cell of breathing room. Long messages and heavy
-    // fetch labels evict the full set first, then the short one.
-    let tier = BAR_HINT_TIERS.iter().find(|h| {
-        let w = h.chars().count() as u16;
-        left_shown + 1 + w <= area.width
-    });
+    // Content wins: hints only get the cells left beside it, with one
+    // cell of breathing room. Long messages and heavy fetch labels evict
+    // the context hints first, then `q`.
+    let avail = (area.width as usize).saturating_sub(left_shown as usize + 1);
+    let shown = hints::fit(&hint_rest, &hint_essentials, avail);
     let mut spans = Vec::new();
     for (i, (text, accent)) in segments.into_iter().enumerate() {
         if i > 0 { spans.push(Span::styled(" · ", Style::new().fg(muted()))); }
@@ -2192,16 +2195,16 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // The left rect stretches to the hint so the bar background
     // stays continuous; the content itself never reaches past
     // `left_shown`, the rest is `base()` fill.
-    let left_rect_w = match tier {
-        Some(hint) => area.width.saturating_sub(hint.chars().count() as u16 + 1),
-        None => left_shown,
-    };
+    let hint_w = if shown.is_empty() { 0 } else { hints::line_width(&shown) as u16 };
+    let left_rect_w = if shown.is_empty() { left_shown } else { area.width.saturating_sub(hint_w + 1) };
     f.render_widget(Paragraph::new(Line::from(spans)).style(base()), Rect::new(area.x, area.y, left_rect_w, area.height));
-    if let Some(hint) = tier {
-        let w = hint.chars().count() as u16;
+    if !shown.is_empty() {
+        let x = area.x + area.width - hint_w;
+        let (hint_line, rects) = hints::line(&shown, x, area.y);
+        app.hits.bar_hints = rects;
         f.render_widget(
-            Paragraph::new(*hint).style(Style::new().bg(ink()).fg(muted())),
-            Rect::new(area.x + area.width - w, area.y, w, area.height),
+            Paragraph::new(hint_line).style(Style::new().bg(ink()).fg(muted())),
+            Rect::new(x, area.y, hint_w, area.height),
         );
     }
 }
@@ -2310,14 +2313,11 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         ));
         hint.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
     }
-    hint.push(Span::styled(
-        if filtered {
-            "h/l columns · j/k cards · space expand · enter open · f format · esc clear"
-        } else {
-            "h/l columns · j/k cards · space expand · enter open · f format · esc close"
-        },
-        Style::new().bg(ink()).fg(muted()),
-    ));
+    let used: usize = hint.iter().map(|span| span.content.chars().count()).sum();
+    let room = hint_area.width.saturating_sub(used as u16);
+    for line in hints::legend(Context::Dialog(Dialog::Board), app, room, 1) {
+        hint.extend(line.spans);
+    }
     f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
     let Some(board) = &app.board.data else {
@@ -2385,13 +2385,13 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             // An empty lane keeps its width and says so, instead of
             // reading as a broken fetch. A filter that hides every card
             // reads as no match, not as an empty column.
-            let label = if filtered { "  no matches" } else { "  no cards" };
+            let label = if filtered {
+                hints::tip("  no matches · ", Context::Dialog(Dialog::Board), Action::Back, " clears the filter")
+            } else {
+                Line::styled("  no cards", Style::new().bg(ink()).fg(muted()))
+            };
             f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    label,
-                    Style::new().bg(ink()).fg(muted()),
-                )))
-                .style(base()),
+                Paragraph::new(label).style(base()).wrap(Wrap { trim: false }),
                 col_inner,
             );
         }
@@ -2659,21 +2659,12 @@ fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Paragraph::new(preview).style(base()).block(Block::default().title(Span::styled(" preview ", Style::new().bg(ink()).fg(muted())))),
         chunks[1],
     );
-    let editor_hint = crate::app::App::compose_editor()
-        .map(|e| format!("ctrl-o {e}"))
-        .unwrap_or_else(|| "ctrl-o $EDITOR".to_string());
     let footer = if c.sending {
-        "sending… esc closes, the send still lands".to_string()
+        Line::styled("sending… esc closes, the send still lands", Style::new().bg(ink()).fg(muted()))
     } else {
-        format!("emacs keys · tab indents · {editor_hint} · ctrl-s send · esc discard")
+        hints::legend(Context::Dialog(Dialog::Compose), app, chunks[2].width, 1).remove(0)
     };
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            footer,
-            Style::new().bg(ink()).fg(muted()),
-        ))),
-        chunks[2],
-    );
+    f.render_widget(Paragraph::new(footer), chunks[2]);
 }
 
 /// Placeholder columns shown while the network fetch is in flight.
@@ -2751,6 +2742,9 @@ fn centered(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
         ])
         .split(v)[1]
 }
+
+#[cfg(test)]
+mod hint_tests;
 
 #[cfg(test)]
 mod render_smoke {
@@ -2918,7 +2912,7 @@ mod render_smoke {
         assert_eq!(all, "fixes #12 and #5 via https://x.io, #8", "text survives the split");
     }
 
-    fn board_app(n_cards: usize) -> App {
+    pub(super) fn board_app(n_cards: usize) -> App {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         let items: Vec<BoardItem> = (0..n_cards)
@@ -3029,7 +3023,7 @@ mod render_smoke {
     }
 
     /// Sized frame text, for short-terminal dialog fits.
-    fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String {
+    pub(super) fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal.draw(|f| render(f, app)).expect("draw");
@@ -3213,7 +3207,6 @@ mod render_smoke {
         app.diff.pending.insert(9);
         app.graph.pending.insert(7);
         app.board.detail_pending.insert(100);
-        app.board.loading = true;
         let (tx, rx) = std::sync::mpsc::channel();
         app.sections.rx = Some(rx);
         let _ = tx.send(crate::github::SectionEvent::Progress { done: 120, total: 500 });
@@ -3221,8 +3214,8 @@ mod render_smoke {
         // Narrow render must not panic, and the short hint always survives:
         // the loading label truncates first, never the hint.
         let text = frame_text_narrow(&mut app, 80);
-        assert!(text.contains("q quit · ? shortcuts"), "hint survives: {text}");
-        assert!(!text.contains("b board"), "full set drops under load: {text}");
+        assert!(text.contains("? shortcuts · q quit"), "hint survives: {text}");
+        assert!(!text.contains("tab next pane"), "context hints drop under load: {text}");
         assert!(text.contains("⠋"), "spinner shows: {text}");
     }
 
@@ -3340,7 +3333,7 @@ mod render_smoke {
         let narrowed = frame_text(&mut app);
         assert!(narrowed.contains("Todo (1)"), "filtered count: {narrowed}");
         assert!(narrowed.contains("Done (0)"), "empty lane count: {narrowed}");
-        assert!(narrowed.contains("no matches"), "empty lane label: {narrowed}");
+        assert!(narrowed.contains("no matches · esc clears the filter"), "empty lane label: {narrowed}");
         assert!(narrowed.contains("Card 0") && !narrowed.contains("Card 1"), "hit stays, miss hides: {narrowed}");
         assert!(narrowed.contains("milestones v0.3"), "footer names the filter: {narrowed}");
         // Cursor math reads the narrowed grid too: the hit is selected and
@@ -3476,7 +3469,7 @@ mod render_smoke {
         }
     }
 
-    fn loaded_app() -> App {
+    pub(super) fn loaded_app() -> App {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         let mut pr = sample(9);
@@ -3491,7 +3484,7 @@ mod render_smoke {
         app
     }
 
-    fn key(code: KeyCode) -> crossterm::event::KeyEvent {
+    pub(super) fn key(code: KeyCode) -> crossterm::event::KeyEvent {
         crossterm::event::KeyEvent::new(code, KeyModifiers::empty())
     }
 
@@ -3523,7 +3516,7 @@ mod render_smoke {
         }
     }
 
-    fn click(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    pub(super) fn click(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind,
             column,
@@ -4189,7 +4182,7 @@ mod render_smoke {
         let text = frame_text_sized(&mut app, 80, 24);
         assert!(!app.sidebar.format_columns);
         assert!(text.contains("ci checks") && text.contains("▌"), "{text}");
-        assert!(text.contains("j/k move"), "footer remains visible: {text}");
+        assert!(text.contains("esc close"), "footer remains visible: {text}");
     }
 
     #[test]
@@ -4933,10 +4926,7 @@ mod render_smoke {
             "header starts at meta: {:?}",
             app.hits.header_rows
         );
-        assert!(
-            text.contains("q quit · tab panes · j/k move · : open · b board · ? shortcuts"),
-            "full hints: {text}"
-        );
+        assert!(text.contains("x evict row") && text.contains("? shortcuts · q quit"), "hints: {text}");
     }
 
     #[test]
@@ -5487,23 +5477,6 @@ mod render_smoke {
     }
 
     #[test]
-    fn status_bar_hint_tiers_respond_to_width() {
-        // Wide terminals get the full minimalist set.
-        let mut app = loaded_app();
-        let wide = frame_text(&mut app);
-        assert!(
-            wide.contains("q quit · tab panes · j/k move · : open · b board · ? shortcuts"),
-            "full hints: {wide}"
-        );
-        // Narrow terminals keep the repo and shed the long set for the short one.
-        let mut narrow_app = loaded_app();
-        let narrow = frame_text_narrow(&mut narrow_app, 60);
-        assert!(narrow.contains("q quit · ? shortcuts"), "short hints: {narrow}");
-        assert!(!narrow.contains("b board"), "long set drops: {narrow}");
-        assert!(narrow.contains("o/r"), "repo survives: {narrow}");
-    }
-
-    #[test]
     fn content_tab_names_diff_view_for_prs() {
         // loaded_app files issue 7 and PR 9; parking on the PR renames it.
         let mut app = loaded_app();
@@ -5676,8 +5649,8 @@ mod render_smoke {
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("o/r"), "{line}");
         assert!(line.contains("ghit demo (Todo)"), "{line}");
-        assert!(line.contains("b board · ? shortcuts"), "{line}");
-        assert!(line.ends_with("? shortcuts"), "{line}");
+        assert!(line.contains("? shortcuts · q quit"), "{line}");
+        assert!(line.ends_with("q quit"), "{line}");
     }
 
     #[test]
@@ -5701,8 +5674,8 @@ mod render_smoke {
         assert_eq!(text.matches("hello status").count(), 1);
         let line: String = text.chars().skip(120 * 39).take(120).collect();
         assert!(line.contains("hello status"), "{line}");
-        assert!(line.contains("b board · ? shortcuts"), "{line}");
-        assert!(line.ends_with("? shortcuts"), "{line}");
+        assert!(line.contains("? shortcuts · q quit"), "{line}");
+        assert!(line.ends_with("q quit"), "{line}");
     }
 
     #[test]
@@ -5726,7 +5699,7 @@ mod render_smoke {
         assert!(app.shortcuts_open);
         let text = frame_text(&mut app);
         assert!(text.contains("Everywhere"), "sections render first: {text}");
-        assert!(text.contains("Esc / ? / q close"), "closer survives: {text}");
+        assert!(text.contains("esc close · j scroll down · k scroll up"), "closer survives: {text}");
         // The credit block ends the scrolling list.
         for _ in 0..40 {
             handle_key(&mut app, key(KeyCode::PageDown));
@@ -5879,8 +5852,8 @@ mod render_smoke {
         ));
         let text = frame_text(&mut app);
         assert!(text.contains("yanked #7"), "{text}");
-        assert!(text.contains("q quit · ? shortcuts"), "status keeps the hint");
-        assert!(!text.contains("b board"), "full set drops under a long toast: {text}");
+        assert!(text.contains("? shortcuts · q quit"), "status keeps the hint");
+        assert!(!text.contains("open board"), "context hints drop under a long toast: {text}");
     }
 
     #[test]

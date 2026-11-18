@@ -661,6 +661,9 @@ pub(crate) struct HitAreas {
     pub(crate) confirm_choices: Vec<(Rect, usize)>,
     /// Status-bar rect of the undo toast while it shows; empty otherwise.
     pub(crate) undo_toast: Rect,
+    /// Status-bar hints as drawn: rect plus the action a click runs.
+    /// Rebuilt every frame in `render_bar`.
+    pub(crate) bar_hints: Vec<(Rect, crate::keymap::Action)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).

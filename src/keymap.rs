@@ -123,6 +123,8 @@ pub(crate) struct Binding {
     pub(crate) group: &'static str,
     /// Status-bar hint rank; lower shows first. `None` never shows.
     pub(crate) hint: Option<u8>,
+    /// Extra condition for showing the hint; the key works either way.
+    pub(crate) hint_when: Option<fn(&App) -> bool>,
     pub(crate) mouse: Gesture,
     /// State beyond context. The binding is skipped while it is false.
     pub(crate) when: Option<fn(&App) -> bool>,
@@ -136,7 +138,7 @@ impl Binding {
         group: &'static str,
         mouse: Gesture,
     ) -> Self {
-        Self { key, prefix: None, mods: Mods::Plain, action, label, group, hint: None, mouse, when: None }
+        Self { key, prefix: None, mods: Mods::Plain, action, label, group, hint: None, hint_when: None, mouse, when: None }
     }
 
     pub(crate) const fn ctrl(mut self) -> Self {
@@ -161,6 +163,13 @@ impl Binding {
 
     pub(crate) const fn hint(mut self, rank: u8) -> Self {
         self.hint = Some(rank);
+        self
+    }
+
+    /// Like `hint`, but the hint shows only while `predicate` holds.
+    pub(crate) const fn hint_if(mut self, rank: u8, predicate: fn(&App) -> bool) -> Self {
+        self.hint = Some(rank);
+        self.hint_when = Some(predicate);
         self
     }
 
@@ -443,6 +452,14 @@ pub(crate) fn help_sections(app: &App) -> Vec<(Context, bool)> {
         .chain(rest.map(|context| (context, false)))
         .filter(|(context, _)| bindings(*context).next().is_some())
         .collect()
+}
+
+fn main_pane(app: &App) -> bool {
+    app.nav.pane == Pane::Main
+}
+
+fn side_pane(app: &App) -> bool {
+    app.nav.pane != Pane::Main
 }
 
 fn undo_live(app: &App) -> bool {
