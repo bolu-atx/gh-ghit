@@ -98,6 +98,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::DiffLineUp => move_diff_cursor(app, -1),
         Action::DiffSplit => app.toggle_diff_split(),
         Action::DiffToggleFile => app.toggle_diff_file(),
+        Action::DiffExpandAll => app.diff_expand_all(),
         Action::DiffFold => app.set_diff_file(Some(false)),
         Action::DiffUnfold => app.set_diff_file(Some(true)),
         Action::GraphNext => app.graph_move(1),

@@ -49,7 +49,7 @@ actions! {
     TreeExpand, TreeCollapse, TreeToggle, TreeFoldAll, CycleSort, ReverseSort, Evict,
     OpenRef, ToggleLabel, ClearLabels, OpenHistoryRow, OpenRow,
     // Main sub-modes.
-    DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile,
+    DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile, DiffExpandAll,
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen,
     // Shortcuts, confirm, compose.
     CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,

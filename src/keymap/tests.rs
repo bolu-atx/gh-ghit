@@ -403,3 +403,11 @@ fn close_item_has_key_mouse_and_hint() {
     assert_eq!(binding.mouse, Gesture::Title);
     assert!(binding.hint.is_some());
 }
+
+#[test]
+fn diff_expand_all_has_key_toolbar_button_and_hint() {
+    let b = describe(Action::DiffExpandAll).expect("bound");
+    assert_eq!(b.key_name(), "a");
+    assert!(matches!(b.mouse, Gesture::Title), "toolbar button is its mouse path");
+    assert!(b.hint.is_some(), "bar hint ranked");
+}

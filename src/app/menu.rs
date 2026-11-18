@@ -46,7 +46,7 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
                 actions.extend([GraphPrev, GraphNext, GraphOpen]);
             }
             if app.visual_diff() {
-                actions.extend([DiffPrevFile, DiffNextFile, DiffSplit, DiffToggleFile]);
+                actions.extend([DiffPrevFile, DiffNextFile, DiffSplit, DiffToggleFile, DiffExpandAll]);
             }
             actions
         }

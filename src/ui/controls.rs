@@ -81,6 +81,9 @@ fn tools(app: &App) -> Vec<Tool> {
     let mut tools = vec![];
     if app.visual_diff() {
         tools.push(Tool { icon: theme::TOOL_SPLIT, label: "split", action: Action::DiffSplit });
+        let (icon, label) =
+            if app.diff_will_expand() { (theme::TOOL_EXPAND, "expand") } else { (theme::TOOL_FOLD, "fold") };
+        tools.push(Tool { icon, label, action: Action::DiffExpandAll });
     }
     tools.push(Tool { icon: theme::TOOL_COMMENT, label: "comment", action: Action::Comment });
     match data.state.as_str() {

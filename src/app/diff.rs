@@ -126,6 +126,50 @@ impl App {
         }
     }
 
+    /// Files expand-all would open: shown, with a patch, not large.
+    fn small_files(&self, n: u64) -> Vec<&model::DiffFile> {
+        let files = self.diff.files.get(&n).map(|f| f.as_slice()).unwrap_or(&[]);
+        files.iter().take(crate::core::MAX_DIFF_FILES).filter(|f| !f.is_large() && f.has_patch()).collect()
+    }
+
+    /// The next expand-all press opens files: some small file is folded.
+    pub(crate) fn diff_will_expand(&self) -> bool {
+        let Some(n) = self.nav.current else { return false };
+        self.small_files(n).iter().any(|f| !self.diff.expanded_files.contains(&(n, f.filename.clone())))
+    }
+
+    /// Open every small file, or fold every file when all small files are
+    /// already open. Like `J`/`K`, it keeps the file under the line cursor
+    /// in view: it queues a jump to that file's header for the next render.
+    pub(crate) fn diff_expand_all(&mut self) {
+        let Some(n) = self.nav.current else { return };
+        let count = self.diff.files.get(&n).map_or(0, |f| f.len().min(crate::core::MAX_DIFF_FILES));
+        if count == 0 {
+            return;
+        }
+        self.nav.pane = Pane::Main;
+        let fi = self.diff_file_at_cursor().unwrap_or(self.diff.cursor).min(count - 1);
+        let expand = self.diff_will_expand();
+        let msg = if expand {
+            let names: Vec<String> = self.small_files(n).iter().map(|f| f.filename.clone()).collect();
+            let large = count - names.len();
+            let opened = names.len();
+            self.diff.expanded_files.extend(names.into_iter().map(|name| (n, name)));
+            let mut msg = format!("expanded {opened} files");
+            if large > 0 {
+                msg.push_str(&format!(" · {large} left folded"));
+            }
+            msg
+        } else {
+            self.diff.expanded_files.retain(|(i, _)| *i != n);
+            "folded all files".to_string()
+        };
+        self.diff.cursor = fi;
+        self.diff.touched = false;
+        self.diff.pending_jump = Some((fi, if expand { 1 } else { -1 }));
+        self.notify(msg);
+    }
+
     /// `J`/`K` jumps between diff file headers, landing the target header
     /// at the top of the viewport. The jump unfolds the target and records
     /// it in `diff.pending_jump`; the next render measures the header with
@@ -170,7 +214,8 @@ impl App {
         if let Some(off) = offset {
             self.nav.scroll = off;
             self.diff.line = Some(usize::from(off));
-            self.diff.touched = true;
+            // J/K already opened the target; expand-all's fold must stay folded.
+            self.diff.touched = false;
             return;
         }
         let base = usize::from(self.hits.body_base);
@@ -184,7 +229,7 @@ impl App {
         };
         if let Some(h) = target {
             self.diff.line = Some(base + h);
-            self.diff.touched = true;
+            self.diff.touched = false;
         } else {
             let page = self.hits.body_area.height;
             if delta > 0 {

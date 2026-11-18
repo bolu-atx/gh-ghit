@@ -15,7 +15,7 @@ pub(crate) use focus::{
     Dialog, Layer, Pane, PaneVisibility, TextInput, step_pane,
     visible_panes,
 };
-pub(crate) use layout::{MAX_DIFF_FILES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
+pub(crate) use layout::{MAX_DIFF_FILES, SMALL_DIFF_LINES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
 #[cfg(test)]
 pub(crate) use layout::MIN_MAIN_WIDTH;
 pub(crate) use tree::{needs_lazy_children, tree_rows};

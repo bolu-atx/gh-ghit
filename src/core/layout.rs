@@ -26,6 +26,10 @@ pub(crate) fn columns(total: u16, sidebar_wanted: bool, right_wanted: bool) -> (
 /// huge PR cannot flood the pane.
 pub(crate) const MAX_DIFF_FILES: usize = 50;
 
+/// Largest diff (additions plus deletions, the count a file header shows)
+/// that expand-all opens. Bigger files stay folded until opened by hand.
+pub(crate) const SMALL_DIFF_LINES: usize = 300;
+
 #[cfg(test)]
 mod tests {
     use super::*;
