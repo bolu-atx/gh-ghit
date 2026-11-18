@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fixture: startup opens 9, 19, 24. `x` evicts the highlighted sidebar row
 # and arms an undo toast; `u` inside the window brings the row back and
-# re-selects it. Keyboard only (mouse cells are not 1->0 converted, #173).
+# re-selects it. Keyboard only.
 source "$(dirname "$0")/lib.sh"
 e2e_start
 e2e_bar 9
