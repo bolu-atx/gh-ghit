@@ -4,7 +4,7 @@ mod graph;
 mod sections;
 
 pub use client::{
-    check_auth, check_repo_access, forget_token, is_auth_error, reauth_command, token,
+    check_auth, check_repo_access, forget_token, is_auth_error, rate_limited, reauth_command, token,
     REQUIRED_SCOPES,
 };
 pub use board::fetch_board;
@@ -173,6 +173,7 @@ pub async fn search(
             .send()
             .await
             .map_err(|e| format!("GitHub search failed: {e}"))?;
+        client::note_rate_limit(&res);
         if res.status().is_client_error() || res.status().is_server_error() {
             return Err(http_fail("GitHub search failed", &url, res).await);
         }
@@ -193,6 +194,38 @@ pub async fn search(
         page += 1;
     }
     Ok(SectionRows { rows, capped: false })
+}
+
+/// Last ETag seen per repo for the change probe below.
+static PROBE_ETAGS: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+/// Cheap "did anything change?" check before an auto-refresh: the most
+/// recently updated issue or PR, sent with the last ETag. GitHub does not
+/// charge a 304 against the rate limit, so an idle repo costs nothing.
+/// The first call (no ETag yet) reports a change.
+pub async fn repo_changed(repo: &str, bearer: &str) -> Result<bool, String> {
+    let url = format!("{}/repos/{repo}/issues?state=all&sort=updated&direction=desc&per_page=1", rest_base());
+    let etag = PROBE_ETAGS.lock().unwrap().as_ref().and_then(|m| m.get(repo).cloned());
+    let mut req = client()
+        .get(&url)
+        .bearer_auth(bearer)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(tag) = &etag {
+        req = req.header("If-None-Match", tag);
+    }
+    let res = req.send().await.map_err(|e| format!("GitHub request failed: {e}"))?;
+    client::note_rate_limit(&res);
+    if res.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(false);
+    }
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub change probe failed", &url, res).await);
+    }
+    if let Some(tag) = res.headers().get("etag").and_then(|v| v.to_str().ok()) {
+        PROBE_ETAGS.lock().unwrap().get_or_insert_with(Default::default).insert(repo.to_string(), tag.to_string());
+    }
+    Ok(true)
 }
 
 /// Repository labels for the Format dialog's picker, one REST page.
