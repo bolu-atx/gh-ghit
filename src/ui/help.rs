@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
-use crate::keymap;
+use super::hints;
+use crate::core::Dialog;
+use crate::keymap::{self, Context};
 use crate::theme::{amber, base, ink, muted, paper, teal};
 
 /// Widest key column; longer key lists wrap into the label column.
@@ -87,7 +89,7 @@ pub(super) fn render_shortcuts(f: &mut ratatui::Frame, area: Rect, app: &mut App
     let body = Rect::new(inner.x, inner.y, inner.width, body_height);
     f.render_widget(Paragraph::new(lines).scroll((app.help_scroll, 0)), body);
 
-    let hint = if max_scroll > 0 { "Esc / ? / q close · j/k ↑/↓ scroll" } else { "Esc / ? / q close" };
     let footer = Rect::new(inner.x, inner.y + body_height, inner.width, inner.height.min(1));
-    f.render_widget(Paragraph::new(Line::styled(hint, Style::new().bg(ink()).fg(muted()))), footer);
+    let legend = hints::legend(Context::Dialog(Dialog::Shortcuts), app, footer.width, 1);
+    f.render_widget(Paragraph::new(legend), footer);
 }
