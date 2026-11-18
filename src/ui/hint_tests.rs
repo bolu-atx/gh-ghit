@@ -3,7 +3,7 @@
 use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 
 use super::hints;
-use super::render_smoke::{board_app, click, frame_text_sized, key, loaded_app};
+use super::test_support::{board_app, click, frame_text_sized, key, loaded_app};
 use crate::app::{App, Tab};
 use crate::core::{Dialog, Pane};
 use crate::input::{handle_key, handle_mouse};
