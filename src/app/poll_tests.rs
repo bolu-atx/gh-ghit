@@ -157,6 +157,25 @@ fn section_landing_keeps_visited_body_comments_and_threads() {
 }
 
 #[test]
+fn an_older_listing_row_never_overwrites_a_fresher_fetch() {
+    // The full fetch saw the close; the listing (search index lag or a
+    // cached page) still says open with an older updated_at.
+    let mut app = sidebar_app(&[7]);
+    {
+        let d = app.issues.data.get_mut(&7).unwrap();
+        d.state = "CLOSED".to_string();
+        d.updated_at = "2026-01-06T00:00:00Z".to_string();
+    }
+    land_sections(&mut app, vec![section_row(issue(7, "2026-01-05T00:00:00Z"))]);
+    assert_eq!(app.issues.data[&7].state, "CLOSED", "stale listing loses");
+
+    let mut reopened = issue(7, "2026-01-07T00:00:00Z");
+    reopened.state = "OPEN".to_string();
+    land_sections(&mut app, vec![section_row(reopened)]);
+    assert_eq!(app.issues.data[&7].state, "OPEN", "a newer listing still wins");
+}
+
+#[test]
 fn section_landing_evicts_unvisited_rows_missing_from_the_window() {
     let mut app = sidebar_app(&[7]);
     app.issues.data.insert(9, issue(9, "2026-01-05T00:00:00Z"));

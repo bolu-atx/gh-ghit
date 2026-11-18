@@ -214,10 +214,14 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                             // the full fetch and stay. Search hits carry no
                             // statuses, so replace mode never touches known
                             // rows — dropped unvisited rows reinsert below.
-                            if !replace {
+                            // A listing older than what we hold (search index
+                            // lag, a cached page) never overwrites it: a
+                            // just-closed item must not flip back to open.
+                            if !replace && row.issue.updated_at >= d.updated_at {
                                 d.title = row.issue.title;
                                 d.state = row.issue.state;
                                 d.labels = row.issue.labels;
+                                d.updated_at = row.issue.updated_at;
                                 app.issues.statuses.insert(n, row.statuses);
                                 app.board.details.insert(n, row.detail);
                             }
