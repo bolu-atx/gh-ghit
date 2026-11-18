@@ -85,6 +85,8 @@ refactors.
   for UI changes (see `docs/routers.md` for the live-drive procedure).
 - Live check in tmux before pushing anything interactive. Never press `o`
   during verification (it opens a browser).
+- Every new control ships with a key binding, a mouse gesture, and a hint
+  (status bar or help). If one is impossible, the PR records why.
 - Mouse is real SGR: `tmux send-keys -l $'\x1b[<0;x;ym'` (press) and
   `$'\x1b[<3;x;my'` (release), 1-based cells.
 

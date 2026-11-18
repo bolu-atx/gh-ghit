@@ -164,6 +164,12 @@ What good code looks like here:
 - `Frame::set_cursor_position` takes absolute cells; recompute it whenever
   the bar layout changes.
 
+## Input
+
+- Every new control has a key binding, a mouse gesture, and a hint in the
+  status bar or the help modal. The PR records why if one is impossible.
+- Focus and selection look the same for mouse and keyboard.
+
 ## State and IO
 
 - The event loop never blocks on the network. Fetch on a thread, deliver via
