@@ -52,7 +52,7 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
         }
         MenuKind::Board => vec![BoardOpen, BoardExpand, BoardFilter, BoardClearFilter, CloseBoard],
         MenuKind::Global => vec![
-            Refresh, CycleTheme, OpenBoard, OpenFormat, QuerySearch, FindBar, ToggleSidebar, ToggleRefs,
+            Refresh, CycleTheme, OpenBoard, OpenFinder, OpenFormat, QuerySearch, FindBar, ToggleSidebar, ToggleRefs,
             MergedWindow, HistoryBack, HistoryForward, ShowHelp, Reauth, Quit,
         ],
     }

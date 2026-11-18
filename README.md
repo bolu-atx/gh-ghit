@@ -102,6 +102,7 @@ The essentials:
 | `Ctrl+S` | Submit the pending review |
 | `1` / `2` | Details / Visual tab |
 | `:` / `/` | Command bar / find |
+| `Ctrl+P` | Fuzzy finder: type part of a number or title, `↑` / `↓` or `Ctrl+N` / `Ctrl+P` move, `Enter` opens |
 | `f` / `b` / `F` | Format and filter / board / search GitHub |
 | `c` | Comment |
 | `C` | Close the open issue or PR, or reopen it (asks first) |

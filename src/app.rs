@@ -14,10 +14,12 @@ mod dialogs;
 pub(crate) use dialogs::{Entry, FormatEdit, Slot};
 mod diff;
 mod fetch_queue;
+mod finder;
 mod format;
 mod issue;
 mod menu;
 pub(crate) use menu::{MenuKind, MenuState};
+pub(crate) use finder::FinderRow;
 mod nav;
 mod poll;
 mod sidebar;
@@ -214,6 +216,8 @@ pub(crate) struct HitAreas {
     pub(crate) popup: Rect,
     /// Menu rows as drawn: rect plus entry index.
     pub(crate) menu_rows: Vec<(Rect, usize)>,
+    /// Finder result rows, each with its index in the ranked results.
+    pub(crate) finder_rows: Vec<(Rect, usize)>,
     /// The repo segment of the status bar.
     pub(crate) repo: Rect,
 }

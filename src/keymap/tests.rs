@@ -48,9 +48,10 @@ fn a_plain_row_never_shadows_a_chord_row_below_it() {
 /// layers type `?`, so they have no help key.
 #[test]
 fn modal_contexts_have_esc_and_help_except_where_documented() {
-    const NO_HELP_KEY: [Context; 6] = [
+    const NO_HELP_KEY: [Context; 7] = [
         Context::Dialog(Dialog::Compose),
         Context::Dialog(Dialog::Menu),
+        Context::Dialog(Dialog::Finder),
         Context::Input(TextInput::Bar),
         Context::Input(TextInput::Query),
         Context::Input(TextInput::Name),
@@ -410,4 +411,20 @@ fn diff_expand_all_has_key_toolbar_button_and_hint() {
     assert_eq!(b.key_name(), "a");
     assert!(matches!(b.mouse, Gesture::Title), "toolbar button is its mouse path");
     assert!(b.hint.is_some(), "bar hint ranked");
+}
+
+#[test]
+fn finder_has_key_mouse_and_hint() {
+    let open = describe(Action::OpenFinder).expect("bound");
+    assert_eq!((open.key, open.mods, open.mouse), (KeyCode::Char('p'), Mods::Ctrl, Gesture::Menu));
+    let app = app_in(Pane::Main);
+    assert_eq!(resolve(&app, ctrl('p')), Some(Action::OpenFinder));
+    let menu = crate::app::MenuState::new(crate::app::MenuKind::Global, &app, (0, 0));
+    assert!(menu.entries.iter().any(|e| e.action == Action::OpenFinder), "the global menu lists it");
+    let finder = Context::Dialog(Dialog::Finder);
+    let hinted: Vec<Action> = bindings(finder).filter(|b| b.hint.is_some()).map(|b| b.action).collect();
+    assert_eq!(hinted, vec![Action::Back, Action::FinderRun, Action::FinderUp, Action::FinderDown]);
+    assert!(bindings(finder).any(|b| b.action == Action::FinderRun && b.mouse == Gesture::Click));
+    assert!(bindings(finder).any(|b| b.action == Action::FinderDown && b.mouse == Gesture::Wheel));
+    assert!(bindings(finder).any(|b| b.action == Action::Back && b.mouse == Gesture::Outside));
 }

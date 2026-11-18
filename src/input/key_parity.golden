@@ -24,6 +24,7 @@ issues | 'x' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; mes
 issues | ctrl-c | quit: false -> true
 issues | ctrl-i | message:  -> no newer issue
 issues | ctrl-o | message:  -> no older issue
+issues | ctrl-p | finder: None -> Some(("", 0))
 issues | ctrl-s | message:  -> no pending comments to submit
 issues | ctrl-u | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
 issues | tab | pane: Issues -> PRs
@@ -61,6 +62,7 @@ issues-tree | ctrl-c | quit: false -> true
 issues-tree | ctrl-d | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 issues-tree | ctrl-i | message:  -> no newer issue
 issues-tree | ctrl-o | message:  -> no older issue
+issues-tree | ctrl-p | finder: None -> Some(("", 0))
 issues-tree | ctrl-s | message:  -> no pending comments to submit
 issues-tree | tab | pane: Issues -> PRs
 issues-tree | backtab | pane: Issues -> Refs
@@ -96,6 +98,7 @@ prs | ctrl-c | quit: false -> true
 prs | ctrl-d | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | ctrl-i | message:  -> no newer issue
 prs | ctrl-o | message:  -> no older issue
+prs | ctrl-p | finder: None -> Some(("", 0))
 prs | ctrl-s | message:  -> no pending comments to submit
 prs | ctrl-u | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
 prs | tab | pane: PRs -> Main
@@ -130,6 +133,7 @@ main-details | 'q' | quit: false -> true
 main-details | ctrl-c | quit: false -> true
 main-details | ctrl-i | message:  -> no newer issue
 main-details | ctrl-o | message:  -> no older issue
+main-details | ctrl-p | finder: None -> Some(("", 0))
 main-details | ctrl-s | message:  -> no pending comments to submit
 main-details | tab | pane: Main -> Refs
 main-details | backtab | pane: Main -> PRs
@@ -159,6 +163,7 @@ main-diff | 's' | message:  -> diff: split ; diff: None/false/false/[] -> None/f
 main-diff | ctrl-c | quit: false -> true
 main-diff | ctrl-i | message:  -> no newer issue
 main-diff | ctrl-o | message:  -> no older issue
+main-diff | ctrl-p | finder: None -> Some(("", 0))
 main-diff | ctrl-s | message:  -> no pending comments to submit
 main-diff | tab | pane: Main -> Refs
 main-diff | backtab | pane: Main -> PRs
@@ -190,6 +195,7 @@ main-graph | ctrl-c | quit: false -> true
 main-graph | ctrl-d | graph: 0 -> 1
 main-graph | ctrl-i | message:  -> no newer issue
 main-graph | ctrl-o | message:  -> no older issue
+main-graph | ctrl-p | finder: None -> Some(("", 0))
 main-graph | ctrl-s | message:  -> no pending comments to submit
 main-graph | tab | pane: Main -> Refs
 main-graph | backtab | pane: Main -> PRs
@@ -223,6 +229,7 @@ refs | ctrl-c | quit: false -> true
 refs | ctrl-d | refs: true/None -> true/Some(7)
 refs | ctrl-i | message:  -> no newer issue
 refs | ctrl-o | message:  -> no older issue
+refs | ctrl-p | finder: None -> Some(("", 0))
 refs | ctrl-s | message:  -> no pending comments to submit
 refs | ctrl-u | refs: true/None -> true/Some(9)
 refs | tab | pane: Refs -> Issues
@@ -260,6 +267,7 @@ labels | ctrl-c | quit: false -> true
 labels | ctrl-d | labels-cursor: 0 -> 1
 labels | ctrl-i | message:  -> no newer issue
 labels | ctrl-o | message:  -> no older issue
+labels | ctrl-p | finder: None -> Some(("", 0))
 labels | ctrl-s | message:  -> no pending comments to submit
 labels | enter | filters: []/0 -> ["bug"]/0
 labels | tab | pane: Labels -> Issues
@@ -291,6 +299,7 @@ history | 'q' | quit: false -> true
 history | ctrl-c | quit: false -> true
 history | ctrl-i | message:  -> no newer issue
 history | ctrl-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ; history: [8, 7]/[]/0 -> [8]/[9]/0
+history | ctrl-p | finder: None -> Some(("", 0))
 history | ctrl-s | message:  -> no pending comments to submit
 history | ctrl-u | history: [8, 7]/[]/0 -> [8, 7]/[]/1
 history | tab | pane: History -> Issues
@@ -439,6 +448,102 @@ confirm | ctrl-k | confirm: Some(("Discard draft", 2)) -> None
 confirm | alt-k | confirm: Some(("Discard draft", 2)) -> None
 confirm | enter | confirm: Some(("Discard draft", 2)) -> None
 confirm | esc | confirm: Some(("Discard draft", 2)) -> None
+finder | ' ' | finder: Some(("", 0)) -> Some((" ", 0))
+finder | '!' | finder: Some(("", 0)) -> Some(("!", 0))
+finder | '"' | finder: Some(("", 0)) -> Some(("\"", 0))
+finder | '#' | finder: Some(("", 0)) -> Some(("#", 0))
+finder | '$' | finder: Some(("", 0)) -> Some(("$", 0))
+finder | '%' | finder: Some(("", 0)) -> Some(("%", 0))
+finder | '&' | finder: Some(("", 0)) -> Some(("&", 0))
+finder | '\'' | finder: Some(("", 0)) -> Some(("'", 0))
+finder | '(' | finder: Some(("", 0)) -> Some(("(", 0))
+finder | ')' | finder: Some(("", 0)) -> Some((")", 0))
+finder | '*' | finder: Some(("", 0)) -> Some(("*", 0))
+finder | '+' | finder: Some(("", 0)) -> Some(("+", 0))
+finder | ',' | finder: Some(("", 0)) -> Some((",", 0))
+finder | '-' | finder: Some(("", 0)) -> Some(("-", 0))
+finder | '.' | finder: Some(("", 0)) -> Some((".", 0))
+finder | '/' | finder: Some(("", 0)) -> Some(("/", 0))
+finder | '0' | finder: Some(("", 0)) -> Some(("0", 0))
+finder | '1' | finder: Some(("", 0)) -> Some(("1", 0))
+finder | '2' | finder: Some(("", 0)) -> Some(("2", 0))
+finder | '3' | finder: Some(("", 0)) -> Some(("3", 0))
+finder | '4' | finder: Some(("", 0)) -> Some(("4", 0))
+finder | '5' | finder: Some(("", 0)) -> Some(("5", 0))
+finder | '6' | finder: Some(("", 0)) -> Some(("6", 0))
+finder | '7' | finder: Some(("", 0)) -> Some(("7", 0))
+finder | '8' | finder: Some(("", 0)) -> Some(("8", 0))
+finder | '9' | finder: Some(("", 0)) -> Some(("9", 0))
+finder | ':' | finder: Some(("", 0)) -> Some((":", 0))
+finder | ';' | finder: Some(("", 0)) -> Some((";", 0))
+finder | '<' | finder: Some(("", 0)) -> Some(("<", 0))
+finder | '=' | finder: Some(("", 0)) -> Some(("=", 0))
+finder | '>' | finder: Some(("", 0)) -> Some((">", 0))
+finder | '?' | finder: Some(("", 0)) -> Some(("?", 0))
+finder | '@' | finder: Some(("", 0)) -> Some(("@", 0))
+finder | 'A' | finder: Some(("", 0)) -> Some(("A", 0))
+finder | 'B' | finder: Some(("", 0)) -> Some(("B", 0))
+finder | 'C' | finder: Some(("", 0)) -> Some(("C", 0))
+finder | 'D' | finder: Some(("", 0)) -> Some(("D", 0))
+finder | 'E' | finder: Some(("", 0)) -> Some(("E", 0))
+finder | 'F' | finder: Some(("", 0)) -> Some(("F", 0))
+finder | 'G' | finder: Some(("", 0)) -> Some(("G", 0))
+finder | 'H' | finder: Some(("", 0)) -> Some(("H", 0))
+finder | 'I' | finder: Some(("", 0)) -> Some(("I", 0))
+finder | 'J' | finder: Some(("", 0)) -> Some(("J", 0))
+finder | 'K' | finder: Some(("", 0)) -> Some(("K", 0))
+finder | 'L' | finder: Some(("", 0)) -> Some(("L", 0))
+finder | 'M' | finder: Some(("", 0)) -> Some(("M", 0))
+finder | 'N' | finder: Some(("", 0)) -> Some(("N", 0))
+finder | 'O' | finder: Some(("", 0)) -> Some(("O", 0))
+finder | 'P' | finder: Some(("", 0)) -> Some(("P", 0))
+finder | 'Q' | finder: Some(("", 0)) -> Some(("Q", 0))
+finder | 'R' | finder: Some(("", 0)) -> Some(("R", 0))
+finder | 'S' | finder: Some(("", 0)) -> Some(("S", 0))
+finder | 'T' | finder: Some(("", 0)) -> Some(("T", 0))
+finder | 'U' | finder: Some(("", 0)) -> Some(("U", 0))
+finder | 'V' | finder: Some(("", 0)) -> Some(("V", 0))
+finder | 'W' | finder: Some(("", 0)) -> Some(("W", 0))
+finder | 'X' | finder: Some(("", 0)) -> Some(("X", 0))
+finder | 'Y' | finder: Some(("", 0)) -> Some(("Y", 0))
+finder | 'Z' | finder: Some(("", 0)) -> Some(("Z", 0))
+finder | '[' | finder: Some(("", 0)) -> Some(("[", 0))
+finder | '\\' | finder: Some(("", 0)) -> Some(("\\", 0))
+finder | ']' | finder: Some(("", 0)) -> Some(("]", 0))
+finder | '^' | finder: Some(("", 0)) -> Some(("^", 0))
+finder | '_' | finder: Some(("", 0)) -> Some(("_", 0))
+finder | '`' | finder: Some(("", 0)) -> Some(("`", 0))
+finder | 'a' | finder: Some(("", 0)) -> Some(("a", 0))
+finder | 'b' | finder: Some(("", 0)) -> Some(("b", 0))
+finder | 'c' | finder: Some(("", 0)) -> Some(("c", 0))
+finder | 'd' | finder: Some(("", 0)) -> Some(("d", 0))
+finder | 'e' | finder: Some(("", 0)) -> Some(("e", 0))
+finder | 'f' | finder: Some(("", 0)) -> Some(("f", 0))
+finder | 'g' | finder: Some(("", 0)) -> Some(("g", 0))
+finder | 'h' | finder: Some(("", 0)) -> Some(("h", 0))
+finder | 'i' | finder: Some(("", 0)) -> Some(("i", 0))
+finder | 'j' | finder: Some(("", 0)) -> Some(("j", 0))
+finder | 'k' | finder: Some(("", 0)) -> Some(("k", 0))
+finder | 'l' | finder: Some(("", 0)) -> Some(("l", 0))
+finder | 'm' | finder: Some(("", 0)) -> Some(("m", 0))
+finder | 'n' | finder: Some(("", 0)) -> Some(("n", 0))
+finder | 'o' | finder: Some(("", 0)) -> Some(("o", 0))
+finder | 'q' | finder: Some(("", 0)) -> Some(("q", 0))
+finder | 's' | finder: Some(("", 0)) -> Some(("s", 0))
+finder | 'u' | finder: Some(("", 0)) -> Some(("u", 0))
+finder | 'v' | finder: Some(("", 0)) -> Some(("v", 0))
+finder | 'x' | finder: Some(("", 0)) -> Some(("x", 0))
+finder | 'z' | finder: Some(("", 0)) -> Some(("z", 0))
+finder | '{' | finder: Some(("", 0)) -> Some(("{", 0))
+finder | '|' | finder: Some(("", 0)) -> Some(("|", 0))
+finder | '}' | finder: Some(("", 0)) -> Some(("}", 0))
+finder | '~' | finder: Some(("", 0)) -> Some(("~", 0))
+finder | ctrl-n | finder: Some(("", 0)) -> Some(("", 1))
+finder | enter | finder: Some(("", 0)) -> None
+finder | esc | finder: Some(("", 0)) -> None
+finder | down | finder: Some(("", 0)) -> Some(("", 1))
+finder | g g | finder: Some(("", 0)) -> Some(("gg", 0))
+finder | g j | finder: Some(("", 0)) -> Some(("gj", 0))
 format | ' ' | format: true/false/false -> true/true/false
 format | '0' | message:  -> recent: default query and window
 format | '1' | message:  -> merged window: open + merged ≤1h ; window: 24 -> 1
@@ -582,6 +687,8 @@ format-query | ctrl-n | drafts: ""/"" -> "n"/""
 format-query | alt-n | drafts: ""/"" -> "n"/""
 format-query | ctrl-o | drafts: ""/"" -> "o"/""
 format-query | alt-o | drafts: ""/"" -> "o"/""
+format-query | ctrl-p | drafts: ""/"" -> "p"/""
+format-query | alt-p | drafts: ""/"" -> "p"/""
 format-query | ctrl-q | drafts: ""/"" -> "q"/""
 format-query | alt-q | drafts: ""/"" -> "q"/""
 format-query | ctrl-s | drafts: ""/"" -> "s"/""
@@ -724,6 +831,8 @@ format-name | ctrl-n | drafts: ""/"" -> ""/"n"
 format-name | alt-n | drafts: ""/"" -> ""/"n"
 format-name | ctrl-o | drafts: ""/"" -> ""/"o"
 format-name | alt-o | drafts: ""/"" -> ""/"o"
+format-name | ctrl-p | drafts: ""/"" -> ""/"p"
+format-name | alt-p | drafts: ""/"" -> ""/"p"
 format-name | ctrl-q | drafts: ""/"" -> ""/"q"
 format-name | alt-q | drafts: ""/"" -> ""/"q"
 format-name | ctrl-s | drafts: ""/"" -> ""/"s"
@@ -993,6 +1102,8 @@ board-query | ctrl-n | drafts: ""/"" -> "n"/""
 board-query | alt-n | drafts: ""/"" -> "n"/""
 board-query | ctrl-o | drafts: ""/"" -> "o"/""
 board-query | alt-o | drafts: ""/"" -> "o"/""
+board-query | ctrl-p | drafts: ""/"" -> "p"/""
+board-query | alt-p | drafts: ""/"" -> "p"/""
 board-query | ctrl-q | drafts: ""/"" -> "q"/""
 board-query | alt-q | drafts: ""/"" -> "q"/""
 board-query | ctrl-s | drafts: ""/"" -> "s"/""
@@ -1137,6 +1248,8 @@ bar | ctrl-n | bar: "ab" -> "abn"
 bar | alt-n | bar: "ab" -> "abn"
 bar | ctrl-o | bar: "ab" -> "abo"
 bar | alt-o | bar: "ab" -> "abo"
+bar | ctrl-p | bar: "ab" -> "abp"
+bar | alt-p | bar: "ab" -> "abp"
 bar | ctrl-q | bar: "ab" -> "abq"
 bar | alt-q | bar: "ab" -> "abq"
 bar | ctrl-s | bar: "ab" -> "abs"
@@ -1282,6 +1395,8 @@ search-bar | ctrl-n | search: "ab"/true -> "abn"/true
 search-bar | alt-n | search: "ab"/true -> "abn"/true
 search-bar | ctrl-o | search: "ab"/true -> "abo"/true
 search-bar | alt-o | search: "ab"/true -> "abo"/true
+search-bar | ctrl-p | search: "ab"/true -> "abp"/true
+search-bar | alt-p | search: "ab"/true -> "abp"/true
 search-bar | ctrl-q | search: "ab"/true -> "abq"/true
 search-bar | alt-q | search: "ab"/true -> "abq"/true
 search-bar | ctrl-s | search: "ab"/true -> "abs"/true
