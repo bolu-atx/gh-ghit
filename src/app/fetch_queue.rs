@@ -103,6 +103,10 @@ pub(super) struct Fetches {
     /// Tests freeze the queue to inspect its order.
     #[cfg(test)]
     pub hold: bool,
+    /// Tests run queued tasks on their own runtime, so other tests'
+    /// fetches on the shared one cannot starve them.
+    #[cfg(test)]
+    pub runtime: Option<tokio::runtime::Handle>,
 }
 
 impl Default for Fetches {
@@ -113,6 +117,8 @@ impl Default for Fetches {
             limit: MAX_RUNNING,
             #[cfg(test)]
             hold: false,
+            #[cfg(test)]
+            runtime: None,
         }
     }
 }
@@ -142,10 +148,16 @@ impl Fetches {
     fn spawn(&mut self, task: Task) {
         self.running.fetch_add(1, Ordering::Relaxed);
         let slot = Slot(self.running.clone());
-        super::rt().spawn(async move {
+        let run = async move {
             let _slot = slot;
             task.await;
-        });
+        };
+        #[cfg(test)]
+        if let Some(handle) = &self.runtime {
+            handle.spawn(run);
+            return;
+        }
+        super::rt().spawn(run);
     }
 
     #[cfg(test)]
@@ -224,7 +236,8 @@ mod tests {
 
     #[test]
     fn concurrency_cap_holds_and_slots_free_on_completion() {
-        let mut f = Fetches::default();
+        let own = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let mut f = Fetches { runtime: Some(own.handle().clone()), ..Fetches::default() };
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let rx = Arc::new(std::sync::Mutex::new(rx));
         for n in 0..6u64 {
@@ -238,7 +251,6 @@ mod tests {
         assert_eq!(f.running.load(Ordering::Relaxed), MAX_RUNNING);
         assert_eq!(f.queue.len(), 6 - MAX_RUNNING);
         drop(tx);
-        // Generous deadline: shared CI runners schedule the blocking pool slowly.
         for _ in 0..500 {
             f.start(&view(None, false), false);
             if f.queue.len() == 0 && f.running.load(Ordering::Relaxed) == 0 {
@@ -251,7 +263,8 @@ mod tests {
 
     #[test]
     fn current_issue_starts_even_when_background_fills_every_slot() {
-        let mut f = Fetches::default();
+        let own = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let mut f = Fetches { runtime: Some(own.handle().clone()), ..Fetches::default() };
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let rx = Arc::new(std::sync::Mutex::new(rx));
         let blocked = |rx: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>| -> Task {
