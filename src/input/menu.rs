@@ -4,17 +4,13 @@
 //! the rects `ui` recorded in `app.hits.ctl`.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Position;
-
-use super::{actions, handle_left, in_rect, sidebar_hit};
+use ratatui::layout::Rect;
+use super::hit::{hit, in_rect};
+use super::{actions, handle_left, sidebar_hit};
 use crate::app::{App, Focus};
 use crate::controls::{MenuKind, MenuState};
 use crate::core::Pane;
 use crate::keymap::Action;
-
-fn at(m: &MouseEvent) -> Position {
-    Position::new(m.column, m.row)
-}
 
 fn open(app: &mut App, kind: MenuKind, anchor: (u16, u16)) {
     let menu = MenuState::new(kind, app, anchor);
@@ -60,8 +56,7 @@ pub(super) fn step(app: &mut App, delta: isize) {
 pub(super) fn handle_menu_mouse(app: &mut App, m: MouseEvent) {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            let row = app.hits.ctl.menu_rows.iter().find(|(rect, _)| rect.contains(at(&m))).copied();
-            match row {
+            match hit(&app.hits.ctl.menu_rows, m.column, m.row) {
                 Some((rect, index)) => {
                     if let Some(menu) = &mut app.menu {
                         menu.cursor = index;
@@ -69,15 +64,23 @@ pub(super) fn handle_menu_mouse(app: &mut App, m: MouseEvent) {
                     app.note_click(rect);
                     run(app);
                 }
-                None if !app.hits.ctl.popup.contains(at(&m)) => app.menu = None,
+                None if !in_rect(app.hits.ctl.popup, m.column, m.row) => app.menu = None,
                 None => {}
             }
         }
-        MouseEventKind::Down(_) if !app.hits.ctl.popup.contains(at(&m)) => app.menu = None,
+        MouseEventKind::Down(_) if !in_rect(app.hits.ctl.popup, m.column, m.row) => app.menu = None,
         MouseEventKind::ScrollDown => step(app, 1),
         MouseEventKind::ScrollUp => step(app, -1),
         _ => {}
     }
+}
+
+/// Flash the clicked hint and run its action. `false` when nothing was hit.
+pub(super) fn press(app: &mut App, hint: Option<(Rect, Action)>) -> bool {
+    let Some((rect, action)) = hint else { return false };
+    app.note_click(rect);
+    actions::perform(app, action);
+    true
 }
 
 /// A press on a dialog-footer hint runs the hint's action.
@@ -85,11 +88,8 @@ pub(super) fn legend_click(app: &mut App, m: &MouseEvent) -> bool {
     if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         return false;
     }
-    let hit = app.hits.ctl.legend.iter().find(|(rect, _)| rect.contains(at(m))).copied();
-    let Some((rect, action)) = hit else { return false };
-    app.note_click(rect);
-    actions::perform(app, action);
-    true
+    let hint = hit(&app.hits.ctl.legend, m.column, m.row);
+    press(app, hint)
 }
 
 /// Mouse path while the help screen or the comment editor is open. Both
@@ -100,7 +100,7 @@ pub(super) fn handle_modal_mouse(app: &mut App, m: MouseEvent, help: bool) {
         return;
     }
     match m.kind {
-        MouseEventKind::Down(MouseButton::Left) if !app.hits.ctl.popup.contains(at(&m)) => {
+        MouseEventKind::Down(MouseButton::Left) if !in_rect(app.hits.ctl.popup, m.column, m.row) => {
             app.shortcuts_open = false;
         }
         MouseEventKind::ScrollDown => app.help_scroll = app.help_scroll.saturating_add(3),
@@ -111,9 +111,7 @@ pub(super) fn handle_modal_mouse(app: &mut App, m: MouseEvent, help: bool) {
 
 /// A press on a pane-title or footer control: focus its pane, run it.
 pub(super) fn control_click(app: &mut App, x: u16, y: u16) -> bool {
-    let pos = Position::new(x, y);
-    let hit = app.hits.ctl.controls.iter().find(|(rect, _, _)| rect.contains(pos)).copied();
-    let Some((rect, action, pane)) = hit else { return false };
+    let Some((rect, action, pane)) = hit(&app.hits.ctl.controls, x, y) else { return false };
     app.nav.focus = Focus::Main;
     app.nav.pane = pane;
     app.note_click(rect);
@@ -175,7 +173,7 @@ pub(super) fn right_click(app: &mut App, x: u16, y: u16) {
         }
         MenuKind::Ref
     } else if in_rect(h.history_area, x, y) {
-        let row = h.history_rows.iter().find(|(rect, _)| in_rect(*rect, x, y)).map(|(_, steps)| *steps);
+        let row = hit(&h.history_rows, x, y).map(|(_, steps)| steps);
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::History;
         if let Some(steps) = row {
@@ -183,7 +181,7 @@ pub(super) fn right_click(app: &mut App, x: u16, y: u16) {
         }
         MenuKind::History
     } else if in_rect(h.labels_area, x, y) {
-        let row = h.labels_rows.iter().find(|(rect, _)| in_rect(*rect, x, y)).map(|(_, index)| *index);
+        let row = hit(&h.labels_rows, x, y).map(|(_, index)| index);
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::Labels;
         if let Some(index) = row {
@@ -201,8 +199,7 @@ pub(super) fn right_click(app: &mut App, x: u16, y: u16) {
 /// Right press over the board: the card under the pointer takes the
 /// cursor, then the board menu opens.
 pub(super) fn board_right_click(app: &mut App, x: u16, y: u16) {
-    let cell = app.hits.board_cells.iter().find(|(rect, _, _)| in_rect(*rect, x, y)).copied();
-    if let Some((rect, col, row)) = cell {
+    if let Some((rect, col, row)) = hit(&app.hits.board_cells, x, y) {
         app.board.col = col;
         app.board.row = row;
         app.board.expanded = None;

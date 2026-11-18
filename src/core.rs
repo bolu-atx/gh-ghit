@@ -6,12 +6,16 @@
 //! these functions instead of reimplementing the rules inline.
 
 mod focus;
+mod layout;
 mod tree;
 
 pub(crate) use focus::{
-    Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, columns, layer_stack, step_pane,
+    Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, layer_stack, step_pane,
     visible_panes,
 };
+pub(crate) use layout::{MAX_DIFF_FILES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
+#[cfg(test)]
+pub(crate) use layout::MIN_MAIN_WIDTH;
 pub(crate) use tree::{needs_lazy_children, tree_rows};
 
 use std::collections::{HashMap, HashSet};

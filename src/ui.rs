@@ -16,34 +16,10 @@ use ratatui::widgets::{
 };
 
 use crate::app::{App, FilterItem, Tab};
-use crate::core::Dialog;
+use crate::core::{Dialog, MAX_DIFF_FILES};
 use crate::keymap::{Action, Context};
 use crate::model::{self, IssueData};
 use crate::theme;
-
-/// Record which columns this frame hides for width, drop focus from a
-/// hidden pane, and toast once when a column newly goes away.
-fn apply_narrow(app: &mut App, sidebar_w: u16, right_w: u16) {
-    use crate::core::Pane;
-    let sidebar = app.sidebar.show && sidebar_w == 0;
-    let right = app.right_wanted() && right_w == 0;
-    let notice = match (sidebar && !app.hits.narrow_sidebar, right && !app.hits.narrow_right) {
-        (true, _) => Some("narrow terminal: sidebar hidden"),
-        (_, true) => Some("narrow terminal: right column hidden"),
-        _ => None,
-    };
-    app.hits.narrow_sidebar = sidebar;
-    app.hits.narrow_right = right;
-    if sidebar && matches!(app.nav.pane, Pane::Issues | Pane::PRs) {
-        app.nav.pane = Pane::Main;
-    }
-    if right && matches!(app.nav.pane, Pane::Refs | Pane::Labels | Pane::History) {
-        app.nav.pane = Pane::Main;
-    }
-    if let Some(msg) = notice {
-        app.notify(msg.to_string());
-    }
-}
 
 pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     use crate::theme::ink;
@@ -64,9 +40,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     app.hits.labels_rows.clear();
     app.hits.side_issue_area = Rect::default();
     app.hits.side_pr_area = Rect::default();
-    let (sidebar_w, right_w) =
-        crate::core::columns(root[0].width, app.sidebar.show, app.right_wanted());
-    apply_narrow(app, sidebar_w, right_w);
+    let (sidebar_w, right_w) = (app.layout.sidebar, app.layout.right);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -1135,10 +1109,6 @@ fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Lin
     }
     lines
 }
-
-/// First 50 files render; the rest collapse to a one-line note so a
-/// huge PR cannot flood the pane.
-pub(crate) const MAX_DIFF_FILES: usize = 50;
 
 /// Diff tab body: one ruled section per file, folded by default.
 /// Issues get a short note, PRs without data yet get a loading line.
@@ -2534,10 +2504,6 @@ fn card_kind(c: &model::BoardItem) -> String {
     }
 }
 
-pub(crate) fn card_url(c: &model::BoardItem) -> Option<String> {
-    c.content.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
-}
-
 fn card_excerpt(c: &model::BoardItem, width: usize) -> String {
     let body = c.content.get("body").and_then(|b| b.as_str()).unwrap_or("");
     match body.lines().map(str::trim).find(|l| !l.is_empty()) {
@@ -2639,7 +2605,7 @@ fn board_card(
         Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
             Span::styled(
-                card_url(c).unwrap_or_else(|| "–".to_string()),
+                c.url().unwrap_or_else(|| "–".to_string()),
                 Style::new().bg(ink()).fg(teal()).underlined(),
             ),
         ]),
@@ -2821,7 +2787,6 @@ mod mouse_tests;
 
 #[cfg(test)]
 mod render_smoke {
-    use super::render;
     use crate::app::{App, Tab, board_move, poll_sections};
     use crate::input::{handle_key, handle_mouse};
     use crate::model::{
@@ -3099,7 +3064,7 @@ mod render_smoke {
     pub(super) fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         terminal
             .backend()
             .buffer()
@@ -3113,7 +3078,7 @@ mod render_smoke {
     fn frame_text_narrow(app: &mut App, width: u16) -> String {
         let backend = TestBackend::new(width, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         terminal
             .backend()
             .buffer()
@@ -3239,7 +3204,7 @@ mod render_smoke {
         // The next frame inverts the clicked rect, style-only.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         assert_eq!(app.hits.body_rows, body_before, "flash paint keeps hit areas");
         let buf = terminal.backend().buffer();
         let flashed = (rect.y..rect.y + rect.height).any(|yy| {
@@ -3275,7 +3240,7 @@ mod render_smoke {
 
     fn frame_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| (0..width).map(|x| buf[(x, y)].symbol().to_string()).collect())
@@ -3293,8 +3258,7 @@ mod render_smoke {
     #[test]
     fn narrow_frames_keep_main_wide_and_drop_columns_in_order() {
         use crate::core::Pane;
-        // Pins the rule: main keeps 40 columns.
-        const MIN_MAIN_WIDTH: u16 = 40;
+        use crate::core::MIN_MAIN_WIDTH;
         // Main's border and padding take this many columns off the body.
         const MAIN_CHROME: u16 = 5;
         for (width, sidebar, right) in [(80u16, false, false), (100, true, false), (120, true, true)] {
@@ -3406,7 +3370,7 @@ mod render_smoke {
         board.items[2].status = Some("Done".to_string());
         let backend = TestBackend::new(200, 50);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let mut cards = [Rect::new(0, 0, 0, 0); 3];
         for (rect, col, _) in &app.hits.board_cells {
             cards[*col] = *rect;
@@ -3791,7 +3755,7 @@ mod render_smoke {
         assert_eq!(app.nav.pane, Pane::Issues);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         // Focused pane: thick double border, amber title, row marker.
         assert_eq!(buf[(40, 0)].symbol(), "═", "active pane has the thick border");
@@ -3808,7 +3772,7 @@ mod render_smoke {
         assert_eq!(app.nav.pane, Pane::PRs);
         assert_eq!(app.nav.current, Some(7));
         assert_eq!(app.sidebar.issue_state.selected(), Some(1), "cursor kept while blurred");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         assert_eq!(buf[(40, 0)].symbol(), "─", "inactive pane thins its border");
         assert_eq!(title_fg(&buf, 0, "Issues"), Some(crate::theme::muted()));
@@ -3817,7 +3781,7 @@ mod render_smoke {
         // Shift-Tab back: everything returns on the same row.
         handle_key(&mut app, key(KeyCode::BackTab));
         assert_eq!(app.nav.pane, Pane::Issues);
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         assert_eq!(buf[(40, 0)].symbol(), "═");
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
@@ -3827,7 +3791,7 @@ mod render_smoke {
 
     fn draw_buffer(app: &mut App) -> ratatui::buffer::Buffer {
         let mut terminal = Terminal::new(TestBackend::new(160, 40)).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         terminal.backend().buffer().clone()
     }
 
@@ -3905,7 +3869,7 @@ mod render_smoke {
         app.nav.pane = Pane::Main;
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let area = app.hits.side_pr_area;
         let buf = terminal.backend().buffer().clone();
         let mut pr_text = String::new();
@@ -4130,7 +4094,7 @@ mod render_smoke {
         // The mentioning line renders highlighted at the top of the pane.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y)];
         assert_eq!(cell.bg, crate::theme::amber(), "source line highlighted");
@@ -4485,7 +4449,7 @@ mod render_smoke {
         app.subs.state.insert(1, crate::model::LazyChildren::Loaded(vec![2, 3]));
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let area = app.hits.side_issue_area;
         let buf = terminal.backend().buffer();
         let cell = |number: char| -> (u16, u16) {
@@ -4767,7 +4731,7 @@ mod render_smoke {
     fn pr_sidebar_text(app: &mut App) -> String {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         let area = app.hits.side_pr_area;
         let buf = terminal.backend().buffer();
         let mut text = String::new();
@@ -4837,10 +4801,10 @@ mod render_smoke {
     fn masthead_text(app: &mut App) -> String {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         let buf = terminal.backend().buffer();
         (0..2)
-            .map(|y| (44..120).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .map(|y| (crate::core::SIDEBAR_WIDTH..120).map(|x| buf[(x, y)].symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -4989,7 +4953,7 @@ mod render_smoke {
     fn frame_text(app: &mut App) -> String {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         terminal
             .backend()
             .buffer()
@@ -5004,7 +4968,7 @@ mod render_smoke {
     fn sidebar_text(app: &mut App) -> String {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         let area = app.hits.side_issue_area;
         let buf = terminal.backend().buffer();
         let mut text = String::new();
@@ -5542,7 +5506,7 @@ mod render_smoke {
         // The active row paints amber across the body width.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         let vis = h0 + 2;
         let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y + vis as u16)];
@@ -5580,7 +5544,7 @@ mod render_smoke {
         // The expanded header renders with the accent background.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
         let hrow = app.diff.headers[0];
         let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y + hrow as u16)];
@@ -5703,7 +5667,7 @@ mod render_smoke {
         d.labels = vec![Label { name: "modernization".to_string() }, Label { name: "new-modernization".to_string() }];
         let backend = TestBackend::new(70, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let text: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("modernization"), "{text}");
         assert!(text.contains("new-modernization"), "{text}");
@@ -5791,7 +5755,7 @@ mod render_smoke {
         app.nav.focus = crate::app::Focus::Bar;
         app.bar = "123".into();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal.draw(|f| render(f, &mut app)).unwrap();
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).unwrap();
         let line: String = (0..120).map(|x| terminal.backend().buffer()[(x, 39)].symbol()).collect();
         assert!(line.starts_with("❯ 123"), "{line}");
         assert!(!line.contains("? shortcuts"), "{line}");
@@ -5850,7 +5814,7 @@ mod render_smoke {
     fn help_titles(app: &mut App) -> Vec<String> {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, app)).expect("draw");
         let buffer = terminal.backend().buffer().clone();
         let mut titles = vec![];
         for y in 0..buffer.area.height {
@@ -5876,7 +5840,7 @@ mod render_smoke {
         // The key column is amber, the label muted.
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
         let buffer = terminal.backend().buffer().clone();
         let (row, label_x) = (0..buffer.area.height)
             .find_map(|y| {

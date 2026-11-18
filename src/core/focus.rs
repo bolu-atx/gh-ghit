@@ -123,28 +123,6 @@ pub(crate) fn visible_panes(v: &PaneVisibility) -> Vec<Pane> {
     order
 }
 
-/// Fixed widths of the side columns.
-pub(crate) const SIDEBAR_WIDTH: u16 = 44;
-pub(crate) const RIGHT_WIDTH: u16 = 36;
-/// Narrowest main pane. The issue title and body stay readable at this
-/// width; below it the body turns into a vertical strip.
-pub(crate) const MIN_MAIN_WIDTH: u16 = 40;
-
-/// Widths of the sidebar and right column for a terminal `total` columns
-/// wide. A column that is not wanted gets 0. When main would fall under
-/// `MIN_MAIN_WIDTH`, the right column drops first, then the sidebar.
-pub(crate) fn columns(total: u16, sidebar_wanted: bool, right_wanted: bool) -> (u16, u16) {
-    let mut sidebar = if sidebar_wanted { SIDEBAR_WIDTH } else { 0 };
-    let mut right = if right_wanted { RIGHT_WIDTH } else { 0 };
-    if total < sidebar + right + MIN_MAIN_WIDTH {
-        right = 0;
-    }
-    if total < sidebar + right + MIN_MAIN_WIDTH {
-        sidebar = 0;
-    }
-    (sidebar, right)
-}
-
 /// Next pane in `order` after `current`, wrapping. `delta` is 1 for Tab
 /// and -1 for Shift-Tab. A pane that is not in `order` falls to `Main`.
 pub(crate) fn step_pane(order: &[Pane], current: Pane, delta: isize) -> Pane {
@@ -219,18 +197,5 @@ mod tests {
         assert_eq!(step_pane(&order, Pane::Refs, 1), Pane::Main, "an unseen pane falls to Main");
         let solo = visible_panes(&PaneVisibility { sidebar: false, refs: false, labels: false, history: false });
         assert_eq!(step_pane(&solo, Pane::Main, 1), Pane::Main);
-    }
-
-    #[test]
-    fn narrow_terminal_drops_right_then_sidebar() {
-        let full = SIDEBAR_WIDTH + RIGHT_WIDTH + MIN_MAIN_WIDTH;
-        assert_eq!(columns(full, true, true), (SIDEBAR_WIDTH, RIGHT_WIDTH));
-        assert_eq!(columns(full - 1, true, true), (SIDEBAR_WIDTH, 0), "right drops first");
-        let both = SIDEBAR_WIDTH + MIN_MAIN_WIDTH;
-        assert_eq!(columns(both, true, true), (SIDEBAR_WIDTH, 0));
-        assert_eq!(columns(both - 1, true, true), (0, 0), "then the sidebar");
-        assert_eq!(columns(80, true, false), (0, 0));
-        assert_eq!(columns(200, false, true), (0, RIGHT_WIDTH), "unwanted stays 0");
-        assert_eq!(columns(MIN_MAIN_WIDTH + RIGHT_WIDTH - 1, false, true), (0, 0));
     }
 }

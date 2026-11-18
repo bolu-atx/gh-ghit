@@ -679,11 +679,23 @@ pub(crate) struct HitAreas {
     pub(crate) last_click: Option<(Rect, Instant)>,
     /// Title controls, dialog-footer hints, popup and menu rows.
     pub(crate) ctl: crate::controls::ControlHits,
-    /// Columns this frame hid for lack of width. Set by `render` before it
-    /// draws, read by every "is this pane visible" check. The saved
-    /// toggles (`sidebar.show`, `refs.show`) stay untouched.
-    pub(crate) narrow_sidebar: bool,
-    pub(crate) narrow_right: bool,
+}
+
+/// Side column widths for the current terminal width, set once per frame
+/// by `App::apply_width` before drawing. A wanted column the width removed
+/// is `cut`. The saved toggles (`sidebar.show`, `refs.show`) stay untouched.
+#[derive(Clone, Copy)]
+pub(crate) struct Columns {
+    pub(crate) sidebar: u16,
+    pub(crate) right: u16,
+    sidebar_cut: bool,
+    right_cut: bool,
+}
+
+impl Default for Columns {
+    fn default() -> Self {
+        Columns { sidebar: core::SIDEBAR_WIDTH, right: core::RIGHT_WIDTH, sidebar_cut: false, right_cut: false }
+    }
 }
 
 pub(crate) struct App {
@@ -700,6 +712,7 @@ pub(crate) struct App {
     pub(crate) auth: AuthState,
     pub(crate) compose: ComposeSlot,
     pub(crate) hits: HitAreas,
+    pub(crate) layout: Columns,
     /// Open actions menu (right-click or `m`).
     pub(crate) menu: Option<crate::controls::MenuState>,
     pub(crate) repo_flag: Option<String>,
@@ -762,6 +775,7 @@ impl App {
             subs: SubIssueLoads::new(),
             quit: false,
             hits: HitAreas::default(),
+            layout: Columns::default(),
             menu: None,
             refs: RefsPane::new(),
             labels: LabelsPane::default(),
@@ -1870,7 +1884,7 @@ impl App {
         let Some(n) = self.nav.current else { return };
         self.nav.pane = Pane::Main;
         let Some(files) = self.diff.files.get(&n) else { return };
-        let count = files.len().min(crate::ui::MAX_DIFF_FILES);
+        let count = files.len().min(crate::core::MAX_DIFF_FILES);
         if count == 0 {
             return;
         }
@@ -1900,7 +1914,7 @@ impl App {
             return;
         }
         let Some(n) = self.nav.current else { return };
-        let count = self.diff.files.get(&n).map(|f| f.len().min(crate::ui::MAX_DIFF_FILES)).unwrap_or(0);
+        let count = self.diff.files.get(&n).map(|f| f.len().min(crate::core::MAX_DIFF_FILES)).unwrap_or(0);
         if count == 0 {
             return;
         }
@@ -1990,11 +2004,11 @@ impl App {
     /// The right column shows when toggled on and it has Refs, History or
     /// the Labels pane.
     pub(crate) fn right_visible(&self) -> bool {
-        !self.hits.narrow_right && self.right_wanted()
+        !self.layout.right_cut && self.right_wanted()
     }
 
     /// The right column's content rule, before the terminal width has a say.
-    pub(crate) fn right_wanted(&self) -> bool {
+    fn right_wanted(&self) -> bool {
         self.refs.show
             && (self.refs_visible() || !self.nav.history.is_empty() || self.labels_visible())
     }
@@ -2035,9 +2049,33 @@ impl App {
         self.notify(if self.refs.show { "right pane: shown" } else { "right pane: hidden" }.to_string());
     }
 
+    /// Fit the side columns to a terminal `total` columns wide. Focus leaves
+    /// a pane the width removed, and a column that newly goes away toasts
+    /// once. Runs before each draw.
+    pub(crate) fn apply_width(&mut self, total: u16) {
+        let (sidebar, right) = core::columns(total, self.sidebar.show, self.right_wanted());
+        let sidebar_cut = self.sidebar.show && sidebar == 0;
+        let right_cut = self.right_wanted() && right == 0;
+        let notice = match (sidebar_cut && !self.layout.sidebar_cut, right_cut && !self.layout.right_cut) {
+            (true, _) => Some("narrow terminal: sidebar hidden"),
+            (_, true) => Some("narrow terminal: right column hidden"),
+            _ => None,
+        };
+        self.layout = Columns { sidebar, right, sidebar_cut, right_cut };
+        if sidebar_cut && matches!(self.nav.pane, Pane::Issues | Pane::PRs) {
+            self.nav.pane = Pane::Main;
+        }
+        if right_cut && matches!(self.nav.pane, Pane::Refs | Pane::Labels | Pane::History) {
+            self.nav.pane = Pane::Main;
+        }
+        if let Some(msg) = notice {
+            self.notify(msg.to_string());
+        }
+    }
+
     /// The sidebar is on screen: toggled on and not hidden by width.
     pub(crate) fn sidebar_visible(&self) -> bool {
-        self.sidebar.show && !self.hits.narrow_sidebar
+        self.sidebar.show && !self.layout.sidebar_cut
     }
 
     /// Flip the left sidebar (`E`). Focus leaves the hidden panes.
@@ -3517,6 +3555,12 @@ impl App {
 }
 
 /// The board modal is up, whether still fetching or fully loaded.
+/// Draw one frame: fit the columns to the terminal width, then render.
+pub(crate) fn draw_frame(f: &mut ratatui::Frame, app: &mut App) {
+    app.apply_width(f.area().width);
+    crate::ui::render(f, app);
+}
+
 pub(crate) fn board_open(app: &App) -> bool {
     app.board.data.is_some() || app.board.loading
 }
@@ -3904,7 +3948,7 @@ fn event_loop(
             // Cheap frame tick for the status bar spinner: one bump per
             // paint, no timers, no extra wakeups.
             app.tick = app.tick.wrapping_add(1);
-            terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| e.to_string())?;
+            terminal.draw(|f| draw_frame(f, app)).map_err(|e| e.to_string())?;
             if spin_owed {
                 spin_painted_at = Instant::now();
             }

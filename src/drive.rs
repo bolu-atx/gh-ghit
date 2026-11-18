@@ -273,7 +273,7 @@ pub(crate) fn serve(
     loop {
         // Same shape as the terminal loop: tick, draw, events, landers.
         app.tick = app.tick.wrapping_add(1);
-        terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| format!("{e:?}"))?;
+        terminal.draw(|f| crate::app::draw_frame(f, app)).map_err(|e| format!("{e:?}"))?;
         let frame = capture_frame(&mut terminal, app, size);
         if send_msg(&mut stream, &frame).is_err() {
             return Ok(());
@@ -303,7 +303,7 @@ pub(crate) fn serve(
         land_editor_request_drive(app);
         if app.quit {
             app.tick = app.tick.wrapping_add(1);
-            terminal.draw(|f| crate::ui::render(f, app)).map_err(|e| format!("{e:?}"))?;
+            terminal.draw(|f| crate::app::draw_frame(f, app)).map_err(|e| format!("{e:?}"))?;
             let frame = capture_frame(&mut terminal, app, size);
             let _ = send_msg(&mut stream, &frame);
             return Ok(());
@@ -470,7 +470,7 @@ mod tests {
 
     fn drive_on(app: &mut crate::app::App, width: u16, height: u16) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+        terminal.draw(|f| crate::app::draw_frame(f, app)).unwrap();
         // Warm the capture the way the loop does: one draw first so
         // hit areas and body rows exist before any key lands.
         let _ = capture_frame(&mut terminal, app, (width, height));
