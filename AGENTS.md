@@ -52,7 +52,8 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/github.rs` | Data-access facade over `api`/`cache`; UI layers never import those directly |
 | `src/api.rs` + `src/api/{client,sections,graph,board}.rs` | Token-backed GraphQL/REST calls |
 | `src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
-| `src/input.rs` | Key/mouse mapping into `App` calls; reads `ui` hit areas, never draws |
+| `src/keymap.rs` + `src/keymap/` | The key table: one binding list per focus context. Input, `?` help and hints read it. Change a key here, not in `input` |
+| `src/input.rs` + `src/input/` | Looks keys up in `keymap`, runs actions (`input/actions.rs`), maps mouse into `App` calls; reads `ui` hit areas, never draws |
 | `src/ui.rs` | All rendering + frame tests; reads `App`, never fetches |
 | `src/theme.rs` | Palettes (ayu mirage, ayu dark), `GhitSheet` markdown stylesheet, `cycle()` |
 
