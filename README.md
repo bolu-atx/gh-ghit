@@ -90,6 +90,7 @@ Press `?` for the in-app shortcuts modal.
 | Actions | `o` / `r` / `p` / `y` | Open in browser / refresh / pin / yank |
 | Actions | `t` / `q` / `c` | Cycle theme / quit / comment |
 | Actions | `a` / `A` / `x` | Sort sidebar / reverse sort / evict row |
+| Actions | `u` | Undo the last evict or saved-query delete (within 4 s) |
 | Labels pane | `j` / `k`, `Space` / `Enter`, `X` | Move / toggle label or milestone filter / clear all |
 | Board | `h` / `l`, `j` / `k` | Move between columns / cards |
 | Board | `Space` / `Enter` / `f` | Expand card / open card / filter board |

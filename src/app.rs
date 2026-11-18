@@ -121,7 +121,39 @@ pub(crate) enum ConfirmKind {
     /// Re-auth question for a dead or under-scoped token. Choice 0
     /// re-auths now, choice 1 (and `Esc`) dismisses to a status hint.
     Reauth,
+    /// `Esc` on a non-empty compose draft. Choice 0 (and `Esc`) keeps
+    /// editing, choice 1 discards the draft.
+    DiscardDraft,
+    /// Quit with an unsent draft or unsubmitted review comments.
+    /// Choice 0 (and `Esc`) stays, choice 1 quits.
+    Quit,
 }
+
+/// What `u` restores while its toast is up. Each variant carries exactly
+/// what the removal dropped.
+#[derive(Clone, Debug)]
+pub(crate) enum UndoAction {
+    Evict {
+        number: u64,
+        visited_at: Option<usize>,
+        recent_at: Option<usize>,
+        data: Option<Box<IssueData>>,
+        statuses: Option<Vec<(String, Option<String>)>>,
+        row_expanded: bool,
+    },
+    Query { index: usize, query: github::SavedQuery },
+}
+
+/// One live undo: the action, when it was armed, and the toast text.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingUndo {
+    pub(crate) action: UndoAction,
+    pub(crate) at: Instant,
+    pub(crate) message: String,
+}
+
+/// How long `u` can still undo; matches the toast lifetime.
+const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// One line of a generic confirm body. Plain lines render as body
 /// text; an emphasized line names the actionable fact in amber bold.
@@ -622,6 +654,11 @@ pub(crate) struct HitAreas {
     /// (rect, widget index, option index). Rebuilt every frame.
     pub(crate) form_popup: Rect,
     pub(crate) form_cells: Vec<(Rect, usize, Option<usize>)>,
+    /// Confirm modal choice labels as drawn: rect plus choice index.
+    /// Rebuilt every frame in `render_confirm`.
+    pub(crate) confirm_choices: Vec<(Rect, usize)>,
+    /// Status-bar rect of the undo toast while it shows; empty otherwise.
+    pub(crate) undo_toast: Rect,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
@@ -657,6 +694,8 @@ pub(crate) struct App {
     /// Generic confirm modal plus its deferred decision. While set, all
     /// keys and clicks route to the dialog until it resolves.
     pub(crate) confirm: Option<ConfirmDialog>,
+    /// Armed by `x` evict and saved-query delete; `u` consumes it.
+    pub(crate) undo: Option<PendingUndo>,
     /// Frame counter, bumped once per event-loop pass. Drives the status
     /// bar spinner; cheap because the loop already redraws every pass.
     pub(crate) tick: u64,
@@ -685,6 +724,7 @@ impl App {
             message: String::new(),
             message_at: None,
             confirm: None,
+            undo: None,
             compose: ComposeSlot::new(compose_tx, compose_rx, review_submit_tx, review_submit_rx),
             tick: 0,
             board: BoardView::new(detail_tx, detail_rx),
@@ -703,6 +743,54 @@ impl App {
     pub(crate) fn notify(&mut self, msg: String) {
         self.message = msg;
         self.message_at = Some(std::time::Instant::now());
+    }
+
+    /// Arm one undo and show its toast. Replaces any earlier undo.
+    fn arm_undo(&mut self, action: UndoAction, message: String) {
+        self.notify(message.clone());
+        self.undo = Some(PendingUndo { action, at: Instant::now(), message });
+    }
+
+    /// An undo is armed, inside the toast window, and its toast is still
+    /// the visible message: a later toast hides the offer, so `u` stops.
+    pub(crate) fn undo_live(&self) -> bool {
+        self.undo.as_ref().is_some_and(|u| u.at.elapsed() < UNDO_WINDOW && self.message == u.message)
+    }
+
+    /// Restore what the last `x`/delete removed, if its window is open.
+    pub(crate) fn undo_last(&mut self) {
+        if !self.undo_live() {
+            self.undo = None;
+            return;
+        }
+        let Some(undo) = self.undo.take() else { return };
+        match undo.action {
+            UndoAction::Evict { number: n, visited_at, recent_at, data, statuses, row_expanded } => {
+                if let Some(i) = visited_at {
+                    self.nav.visited.insert(i.min(self.nav.visited.len()), n);
+                }
+                if let Some(i) = recent_at {
+                    self.nav.recent.insert(i.min(self.nav.recent.len()), n);
+                }
+                if let Some(d) = data {
+                    self.issues.data.insert(n, *d);
+                }
+                if let Some(st) = statuses {
+                    self.issues.statuses.insert(n, st);
+                }
+                if row_expanded {
+                    self.diff.expanded_rows.insert(n);
+                }
+                self.show_issue(n);
+                self.notify(format!("restored #{n}"));
+            }
+            UndoAction::Query { index, query } => {
+                let name = query.name.clone();
+                self.sidebar.saved_queries.insert(index.min(self.sidebar.saved_queries.len()), query);
+                self.persist_prefs();
+                self.notify(format!("restored query {name}"));
+            }
+        }
     }
 
     pub(crate) fn message_visible(&self) -> bool {
@@ -1005,6 +1093,14 @@ impl App {
             _ => return,
         };
         let Some(pos) = order.iter().position(|x| *x == n) else { return };
+        let action = UndoAction::Evict {
+            number: n,
+            visited_at: self.nav.visited.iter().position(|x| *x == n),
+            recent_at: self.nav.recent.iter().position(|x| *x == n),
+            data: self.issues.data.get(&n).cloned().map(Box::new),
+            statuses: self.issues.statuses.get(&n).cloned(),
+            row_expanded: self.diff.expanded_rows.contains(&n),
+        };
         self.nav.visited.retain(|x| *x != n);
         self.nav.recent.retain(|x| *x != n);
         self.diff.expanded_rows.remove(&n);
@@ -1027,7 +1123,7 @@ impl App {
                 self.sync_selection();
             }
         }
-        self.notify(format!("evicted #{n}"));
+        self.arm_undo(action, format!("removed #{n} · u undo"));
     }
 
     pub(crate) fn window_label(&self) -> String {
@@ -1313,9 +1409,11 @@ impl App {
     pub(crate) fn delete_named_query(&mut self) {
         let focus = self.sidebar.format_focus;
         if (1..=self.sidebar.saved_queries.len()).contains(&focus) {
-            self.sidebar.saved_queries.remove(focus - 1);
+            let query = self.sidebar.saved_queries.remove(focus - 1);
             self.sidebar.format_focus = focus.min(self.format_widgets() - 1);
             self.persist_prefs();
+            let message = format!("deleted query {} · u undo", query.name);
+            self.arm_undo(UndoAction::Query { index: focus - 1, query }, message);
         }
     }
 
@@ -1972,7 +2070,7 @@ impl App {
         match self.focus().layer {
             Layer::Dialog(Dialog::Shortcuts) => self.shortcuts_open = false,
             Layer::Dialog(Dialog::Confirm) => self.confirm_cancel(),
-            Layer::Dialog(Dialog::Compose) => self.discard_compose(),
+            Layer::Dialog(Dialog::Compose) => self.request_discard_compose(),
             Layer::Dialog(Dialog::Format) => self.sidebar.filter_open = false,
             Layer::Dialog(Dialog::BoardFilter) => {
                 self.sidebar.filter_open = false;
@@ -2700,6 +2798,49 @@ impl App {
         self.compose.draft = None;
     }
 
+    /// `Esc` in compose: an empty draft closes at once, a typed one asks.
+    pub(crate) fn request_discard_compose(&mut self) {
+        let typed = self.compose.draft.as_ref().is_some_and(|d| !d.body.is_empty());
+        if !typed {
+            self.discard_compose();
+            return;
+        }
+        self.confirm = Some(ConfirmDialog {
+            title: "Discard draft".to_string(),
+            body: vec![ConfirmLine::plain("The comment draft has text that will be lost.".to_string())],
+            choices: vec![
+                ConfirmChoice { key: 'k', label: "keep editing".to_string() },
+                ConfirmChoice { key: 'd', label: "discard".to_string() },
+            ],
+            kind: ConfirmKind::DiscardDraft,
+        });
+    }
+
+    /// Quit now, unless a typed draft or unsubmitted review comments
+    /// would be lost: then ask first.
+    pub(crate) fn request_quit(&mut self) {
+        let draft = self.compose.draft.as_ref().is_some_and(|d| !d.body.is_empty());
+        let pending = self.pending_threads();
+        if !draft && pending == 0 {
+            self.quit = true;
+            return;
+        }
+        let line = if draft {
+            "An unsent comment draft will be lost.".to_string()
+        } else {
+            format!("{pending} unsubmitted review comment thread{} stay pending on GitHub.", if pending == 1 { "" } else { "s" })
+        };
+        self.confirm = Some(ConfirmDialog {
+            title: "Quit ghit".to_string(),
+            body: vec![ConfirmLine::plain(line)],
+            choices: vec![
+                ConfirmChoice { key: 'c', label: "cancel".to_string() },
+                ConfirmChoice { key: 'q', label: "quit".to_string() },
+            ],
+            kind: ConfirmKind::Quit,
+        });
+    }
+
     /// Byte offset of a char index, clamped to the end.
     fn compose_byte(body: &str, cursor: usize) -> usize {
         body.char_indices().nth(cursor).map(|(b, _)| b).unwrap_or(body.len())
@@ -3121,6 +3262,16 @@ impl App {
                 1 => self.run_nav(intent),
                 _ => {}
             },
+            ConfirmKind::DiscardDraft => {
+                if index == 1 {
+                    self.discard_compose();
+                }
+            }
+            ConfirmKind::Quit => {
+                if index == 1 {
+                    self.quit = true;
+                }
+            }
             ConfirmKind::Reauth => match index {
                 0 => {
                     self.auth.reauth_requested = true;
@@ -4401,6 +4552,123 @@ mod tests {
         assert!(app.nav.visited.contains(&7));
         assert_eq!(app.nav.current, Some(7));
         assert!(app.message.contains("pinned"), "{}", app.message);
+    }
+
+    fn draft_app(body: &str) -> App {
+        let mut app = sidebar_app(&[7]);
+        app.compose.draft = Some(ComposeState {
+            number: 7,
+            target: ComposeTarget::Thread,
+            body: body.to_string(),
+            cursor: body.chars().count(),
+            sending: false,
+            kill: String::new(),
+        });
+        app
+    }
+
+    fn pending_review_app() -> App {
+        let mut app = sidebar_app(&[7]);
+        let d = app.issues.data.get_mut(&7).unwrap();
+        d.is_pr = true;
+        d.review_threads = vec![model::ReviewThread {
+            id: "t1".into(),
+            path: "a.rs".into(),
+            line: Some(1),
+            comments: vec![model::ReviewComment { id: "c".into(), body: "x".into(), state: "PENDING".into(), ..Default::default() }],
+            ..Default::default()
+        }];
+        app
+    }
+
+    #[test]
+    fn esc_on_typed_draft_asks_and_keep_leaves_it() {
+        let mut app = draft_app("hello");
+        app.request_discard_compose();
+        assert!(matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::DiscardDraft)));
+        app.confirm_choose(0);
+        assert!(app.compose_open(), "keep editing leaves the draft");
+        app.request_discard_compose();
+        app.confirm_choose(1);
+        assert!(!app.compose_open(), "discard drops it");
+        let mut empty = draft_app("");
+        empty.request_discard_compose();
+        assert!(!empty.compose_open() && empty.confirm.is_none());
+    }
+
+    #[test]
+    fn quit_with_draft_asks_first() {
+        let mut app = draft_app("hello");
+        app.request_quit();
+        assert!(!app.quit && app.confirm_open());
+        app.confirm_cancel();
+        assert!(!app.quit);
+        app.request_quit();
+        app.confirm_choose(1);
+        assert!(app.quit);
+        let mut plain = sidebar_app(&[7]);
+        plain.request_quit();
+        assert!(plain.quit && plain.confirm.is_none(), "nothing at risk quits at once");
+    }
+
+    #[test]
+    fn quit_with_pending_review_asks_first() {
+        let mut app = pending_review_app();
+        app.request_quit();
+        assert!(!app.quit && app.confirm_open());
+        app.confirm_choose(0);
+        assert!(!app.quit, "cancel stays");
+        app.request_quit();
+        app.confirm_choose(1);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn evict_undo_restores_row_in_place() {
+        let mut app = sidebar_app(&[7, 9, 11]);
+        app.nav.current = Some(9);
+        app.diff.expanded_rows.insert(9);
+        app.evict_current();
+        assert!(app.message.contains("removed #9 · u undo"), "{}", app.message);
+        assert_eq!(app.nav.visited, vec![7, 11]);
+        app.undo_last();
+        assert_eq!(app.nav.visited, vec![7, 9, 11], "same order");
+        assert!(app.issues.data.contains_key(&9) && app.issues.statuses.contains_key(&9));
+        assert!(app.diff.expanded_rows.contains(&9));
+        assert_eq!(app.nav.current, Some(9));
+        assert!(app.undo.is_none(), "one shot");
+    }
+
+    #[test]
+    fn saved_query_delete_undo_restores_index() {
+        let mut app = sidebar_app(&[7]);
+        for (name, query) in [("a", "is:open"), ("b", "label:bug"), ("c", "is:pr")] {
+            app.sidebar.saved_queries.push(github::SavedQuery { name: name.into(), query: query.into() });
+        }
+        app.sidebar.format_focus = 2;
+        app.delete_named_query();
+        assert!(app.message.contains("deleted query b · u undo"), "{}", app.message);
+        assert_eq!(app.sidebar.saved_queries.len(), 2);
+        app.undo_last();
+        let names: Vec<&str> = app.sidebar.saved_queries.iter().map(|q| q.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(app.sidebar.saved_queries[1].query, "label:bug");
+    }
+
+    #[test]
+    fn undo_expires_with_its_window() {
+        let mut app = sidebar_app(&[7, 9]);
+        app.nav.current = Some(7);
+        app.evict_current();
+        assert!(app.undo_live());
+        app.undo.as_mut().unwrap().at = Instant::now() - Duration::from_secs(10);
+        assert!(!app.undo_live());
+        app.undo_last();
+        assert_eq!(app.nav.visited, vec![9], "expired undo restores nothing");
+        app.nav.current = Some(9);
+        app.evict_current();
+        app.notify("other news".to_string());
+        assert!(!app.undo_live(), "a later toast hides the undo offer");
     }
 
     #[test]

@@ -187,9 +187,9 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
 /// per choice (`s Submit them · d Discard`), plus `esc Cancel`. The
 /// renderer never interprets the kind — choices carry their own keys
 /// and labels, so new specializations reuse it untouched.
-fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &App) {
+fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
-    let Some(d) = app.confirm.as_ref() else { return };
+    let Some(d) = app.confirm.clone() else { return };
     let popup = centered(area, 64, 30);
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
@@ -207,12 +207,26 @@ fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Line::from(Span::styled(l.text.clone(), style))
     }).collect();
     lines.push(Line::from(""));
+    // Click rects for the choice labels. The hint row sits below the
+    // body lines (wrapped ones counted by width) and one blank row.
+    let width = inner.width.max(1) as usize;
+    let body_rows: usize = d.body.iter().map(|l| l.text.chars().count().div_ceil(width).max(1)).sum();
+    let hint_y = inner.y + body_rows as u16 + 1;
+    app.hits.confirm_choices.clear();
+    let mut x = inner.x;
     let mut hints = vec![];
     for (i, choice) in d.choices.iter().enumerate() {
         if i > 0 {
             hints.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+            x += 3;
         }
-        hints.push(Span::styled(format!("{} {}", choice.key, choice.label), Style::new().bg(ink()).fg(amber()).bold()));
+        let label = format!("{} {}", choice.key, choice.label);
+        let w = label.chars().count() as u16;
+        if hint_y < inner.y + inner.height && x + w <= inner.x + inner.width {
+            app.hits.confirm_choices.push((Rect::new(x, hint_y, w, 1), i));
+        }
+        x += w;
+        hints.push(Span::styled(label, Style::new().bg(ink()).fg(amber()).bold()));
     }
     hints.push(Span::styled(" · esc Cancel", Style::new().bg(ink()).fg(muted())));
     lines.push(Line::from(hints));
@@ -267,7 +281,7 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "  ctrl-o back · ctrl-i forward", "",
         "Actions", "  : command · / find · g search · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
-        "  a sort · A reverse · x evict",
+        "  a sort · A reverse · x evict · u undo evict/delete",
         "  Labels pane: j/k move · space toggle · X clear all",
         "  History pane: j/k move · enter go back", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
@@ -2129,7 +2143,7 @@ const BAR_HINT_TIERS: [&str; 2] = [
     "q quit · ? shortcuts",
 ];
 
-fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
+fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
     if app.nav.focus == crate::app::Focus::Bar {
         let text = if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
@@ -2196,6 +2210,10 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let left_used: usize =
         segments.iter().map(|(s, _)| s.chars().count()).sum::<usize>() + segments.len().saturating_sub(1) * 3;
     let left_shown = (left_used as u16).min(area.width);
+    let toast_is_undo = app.message_visible()
+        && app.undo_live()
+        && app.undo.as_ref().is_some_and(|u| u.message == app.message);
+    app.hits.undo_toast = if toast_is_undo { Rect::new(area.x, area.y, left_shown, 1) } else { Rect::default() };
     // Content wins: a tier only shows when it fits whole beside it,
     // with one cell of breathing room. Long messages and heavy
     // fetch labels evict the full set first, then the short one.
@@ -5089,7 +5107,40 @@ mod render_smoke {
         assert!(text.contains("Reply"), "{text}");
         assert!(text.contains("reply"), "{text}");
         handle_key(&mut app, key(KeyCode::Esc));
+        assert!(app.confirm_open(), "typed draft asks first");
+        handle_key(&mut app, key(KeyCode::Char('d')));
         assert!(!app.compose_open());
+    }
+
+    #[test]
+    fn confirm_frame_shows_choices_and_click_picks() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('c')));
+        handle_key(&mut app, key(KeyCode::Char('h')));
+        handle_key(&mut app, key(KeyCode::Esc));
+        let text = frame_text(&mut app);
+        assert!(text.contains("Discard draft"), "{text}");
+        assert!(text.contains("k keep editing"), "{text}");
+        assert!(text.contains("d discard"), "{text}");
+        assert_eq!(app.hits.confirm_choices.len(), 2);
+        let rect = app.hits.confirm_choices[1].0;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y));
+        assert!(!app.confirm_open() && !app.compose_open(), "click on d discards");
+    }
+
+    #[test]
+    fn undo_toast_frame_and_click_restores() {
+        let mut app = loaded_app();
+        app.nav.pane = crate::core::Pane::Issues;
+        app.nav.current = Some(7);
+        handle_key(&mut app, key(KeyCode::Char('x')));
+        let text = frame_text(&mut app);
+        assert!(text.contains("removed #7 · u undo"), "{text}");
+        let toast = app.hits.undo_toast;
+        assert!(toast.width > 0, "toast rect recorded");
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), toast.x, toast.y));
+        assert!(app.nav.visited.contains(&7), "click undoes");
+        assert!(app.undo.is_none());
     }
 
     #[test]
