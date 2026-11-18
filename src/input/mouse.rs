@@ -82,7 +82,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
             if let Some((_, i)) = hit(&app.hits.confirm_choices, m.column, m.row) {
                 app.confirm_choose(i);
-            } else if !in_rect(app.hits.ctl.popup, m.column, m.row) {
+            } else if !in_rect(app.hits.popup, m.column, m.row) {
                 app.confirm_cancel();
             }
         }
@@ -206,7 +206,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
             return;
         }
         MouseEventKind::Down(MouseButton::Left)
-            if !in_rect(app.hits.ctl.popup, m.column, m.row) =>
+            if !in_rect(app.hits.popup, m.column, m.row) =>
         {
             app.pop_layer();
             return;

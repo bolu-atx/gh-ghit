@@ -13,7 +13,7 @@ use super::spinner_frame;
 pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
     app.hits.bar_hints.clear();
-    app.hits.ctl.repo = Rect::default();
+    app.hits.repo = Rect::default();
     if app.nav.focus == crate::app::Focus::Bar {
         let text = if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
         let prompt = if app.sidebar.searching { "/ " } else { "❯ " };
@@ -87,7 +87,7 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let width = segments[at].0.chars().count() as u16;
         let x = area.x + before as u16;
         if x + width <= area.right() {
-            app.hits.ctl.repo = Rect::new(x, area.y, width, 1);
+            app.hits.repo = Rect::new(x, area.y, width, 1);
         }
     }
     let left_used: usize =

@@ -32,7 +32,7 @@ fn right(app: &mut App, x: u16, y: u16) {
 }
 
 fn control(app: &App, action: Action) -> ratatui::layout::Rect {
-    app.hits.ctl.controls.iter().find(|(_, a, _)| *a == action).map(|(rect, _, _)| *rect)
+    app.hits.controls.iter().find(|(_, a, _)| *a == action).map(|(rect, _, _)| *rect)
         .unwrap_or_else(|| panic!("no {action:?} control drawn"))
 }
 
@@ -48,7 +48,7 @@ fn menu_labels(app: &App) -> Vec<&'static str> {
 fn click_menu_row(app: &mut App, action: Action) {
     let menu = app.menu.as_ref().expect("menu open");
     let index = menu.entries.iter().position(|e| e.action == action).expect("entry listed");
-    let rect = app.hits.ctl.menu_rows.iter().find(|(_, i)| *i == index).map(|(r, _)| *r).expect("row drawn");
+    let rect = app.hits.menu_rows.iter().find(|(_, i)| *i == index).map(|(r, _)| *r).expect("row drawn");
     left(app, rect.x + 2, rect.y);
 }
 
@@ -75,7 +75,7 @@ fn list_state_and_footer_open_format() {
     for index in [0, 1] {
         let mut app = loaded_app();
         draw(&mut app);
-        let rects: Vec<_> = app.hits.ctl.controls.iter().filter(|(_, a, _)| *a == Action::OpenFormat).collect();
+        let rects: Vec<_> = app.hits.controls.iter().filter(|(_, a, _)| *a == Action::OpenFormat).collect();
         let (rect, _, _) = *rects[index];
         left(&mut app, rect.x, rect.y);
         assert!(app.sidebar.filter_open, "control {index}");
@@ -94,7 +94,7 @@ fn filters_title_clears_every_filter() {
     click_control(&mut app, Action::ClearLabels);
     assert!(app.sidebar.label_filter.is_empty());
     draw(&mut app);
-    assert!(app.hits.ctl.controls.iter().all(|(_, a, _)| *a != Action::ClearLabels), "the control goes with the filters");
+    assert!(app.hits.controls.iter().all(|(_, a, _)| *a != Action::ClearLabels), "the control goes with the filters");
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn repo_segment_opens_the_global_menu_by_either_button() {
     for button in [MouseButton::Left, MouseButton::Right] {
         let mut app = loaded_app();
         draw(&mut app);
-        let repo = app.hits.ctl.repo;
+        let repo = app.hits.repo;
         assert!(repo.width > 0, "repo segment drawn");
         press(&mut app, button, repo.x + 1, repo.y);
         let labels = menu_labels(&app);
@@ -260,13 +260,13 @@ fn repo_segment_opens_the_global_menu_by_either_button() {
 fn global_menu_runs_help_and_toggles_the_sidebar() {
     let mut app = loaded_app();
     draw(&mut app);
-    let repo = app.hits.ctl.repo;
+    let repo = app.hits.repo;
     left(&mut app, repo.x, repo.y);
     draw(&mut app);
     click_menu_row(&mut app, Action::ToggleSidebar);
     assert!(!app.sidebar.show);
     draw(&mut app);
-    let repo = app.hits.ctl.repo;
+    let repo = app.hits.repo;
     left(&mut app, repo.x, repo.y);
     draw(&mut app);
     click_menu_row(&mut app, Action::ShowHelp);
@@ -360,13 +360,13 @@ fn dialog_footer_hints_click_like_their_keys() {
     let mut app = loaded_app();
     handle_key(&mut app, key(KeyCode::Char('f')));
     draw(&mut app);
-    let (rect, _) = *app.hits.ctl.legend.iter().find(|(_, a)| *a == Action::FormatEditQuery).expect("e hint");
+    let (rect, _) = *app.hits.legend.iter().find(|(_, a)| *a == Action::FormatEditQuery).expect("e hint");
     left(&mut app, rect.x, rect.y);
     assert!(app.sidebar.query_edit);
 
     let mut app = board_app(2);
     draw(&mut app);
-    let (rect, _) = *app.hits.ctl.legend.iter().find(|(_, a)| *a == Action::BoardFilter).expect("f hint");
+    let (rect, _) = *app.hits.legend.iter().find(|(_, a)| *a == Action::BoardFilter).expect("f hint");
     left(&mut app, rect.x, rect.y);
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::BoardFilter));
 }
@@ -392,7 +392,7 @@ fn the_menu_frame_shows_actions_with_keys_and_one_focus() {
     right(&mut app, x, y);
     terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
     let buf = terminal.backend().buffer();
-    let popup = app.hits.ctl.popup;
+    let popup = app.hits.popup;
     let row_text = |y: u16| -> String { (popup.x..popup.right()).map(|x| buf[(x, y)].symbol()).collect() };
     let rows: Vec<String> = (popup.y..popup.bottom()).map(row_text).collect();
     let joined = rows.join("\n");

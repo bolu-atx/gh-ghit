@@ -1,14 +1,8 @@
-//! Mouse controls beyond rows: the actions menu and the hit areas of
-//! pane-title controls and dialog-footer hints.
-//!
-//! Render records the areas in `ControlHits`; input reads them. Menu
-//! entries come from the keymap registry, so a label and its key never
-//! drift from the real binding.
-
-use ratatui::layout::Rect;
+//! The actions menu state. It lives with `App` because `ui` draws it and
+//! `input` drives it. Entries come from the keymap registry, so a label
+//! and its key never drift from the real binding.
 
 use crate::app::App;
-use crate::core::Pane;
 use crate::keymap::{self, Action};
 
 /// What a menu is about. It picks the entries.
@@ -34,21 +28,6 @@ pub(crate) struct MenuState {
     pub(crate) cursor: usize,
     /// Top-left cell the popup wants; render clamps it into the frame.
     pub(crate) anchor: (u16, u16),
-}
-
-/// Hit areas of the frame last drawn. Render rebuilds them each frame.
-#[derive(Default)]
-pub(crate) struct ControlHits {
-    /// Title and footer controls: rect, action, pane the click focuses.
-    pub(crate) controls: Vec<(Rect, Action, Pane)>,
-    /// Dialog footer hints: rect plus the action a click runs.
-    pub(crate) legend: Vec<(Rect, Action)>,
-    /// Rect of the top dialog; a click outside it dismisses the dialog.
-    pub(crate) popup: Rect,
-    /// Menu rows as drawn: rect plus entry index.
-    pub(crate) menu_rows: Vec<(Rect, usize)>,
-    /// The repo segment of the status bar.
-    pub(crate) repo: Rect,
 }
 
 fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
@@ -94,11 +73,6 @@ impl MenuState {
             })
             .collect();
         Self { entries, cursor: 0, anchor }
-    }
-
-    pub(crate) fn step(&mut self, delta: isize) {
-        let last = self.entries.len().saturating_sub(1) as isize;
-        self.cursor = (self.cursor as isize + delta).clamp(0, last) as usize;
     }
 }
 

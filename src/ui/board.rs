@@ -110,7 +110,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
     if let Some(y) = legend_line.checked_sub(scroll as usize).filter(|y| *y < inner.height as usize) {
         let at = (inner.x, inner.y + y as u16);
         let legend_hits = hints::legend_hits(Context::Dialog(Dialog::BoardFilter), app, legend_width, 1, at);
-        app.hits.ctl.legend.extend(legend_hits);
+        app.hits.legend.extend(legend_hits);
     }
     // Widget rows: the text row, then pills and card fields at the
     // lines `lines` laid out (2 header lines, blank and label gaps).
@@ -182,7 +182,7 @@ fn column_layout(area: Rect, n_cols: usize) -> Vec<Rect> {
 pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, base};
     let popup = centered(area, 92, 92);
-    app.hits.ctl.popup = popup;
+    app.hits.popup = popup;
     f.render_widget(Clear, popup);
     // Nerd Font Font Awesome fa-columns; the board name keeps its label.
     // Column headers stay icon-free: their vocabularies are user-defined
@@ -244,7 +244,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     let legend_at = (hint_area.x + used as u16, hint_area.y);
     let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Board), app, room, 1, legend_at);
-    app.hits.ctl.legend.extend(legend_hits);
+    app.hits.legend.extend(legend_hits);
     f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
     let Some(board) = &app.board.data else {
