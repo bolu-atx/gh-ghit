@@ -68,6 +68,8 @@ pub(super) fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     }
     let room = popup.width.saturating_sub(switch_w + 5) as usize;
     head.push(Span::styled(clip(&title, room.saturating_sub(if sending { 12 } else { 0 })), Style::new().bg(ink()).fg(paper()).bold()));
+    // A gap before the border line resumes, like every other pane title.
+    head.push(Span::raw(" "));
     let title_rect = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
     f.render_widget(Paragraph::new(Line::from(head)), title_rect);
     let switch_x = popup.right().saturating_sub(1 + switch_w);
