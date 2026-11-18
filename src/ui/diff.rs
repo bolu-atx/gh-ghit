@@ -94,6 +94,12 @@ pub(super) fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text
                 Style::new().bg(ink()).fg(red()),
             ),
         ]);
+        if !expanded && f.is_large() && f.has_patch() {
+            head.spans.push(Span::styled(
+                "  large diff · space to expand",
+                Style::new().bg(ink()).fg(muted()),
+            ));
+        }
         if at_cursor {
             for span in head.spans.iter_mut() {
                 span.style = span.style.patch(Style::new().bg(crate::theme::line_hl()));

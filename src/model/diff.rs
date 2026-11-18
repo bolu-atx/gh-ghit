@@ -17,6 +17,23 @@ pub struct DiffFile {
     pub patch: String,
 }
 
+impl DiffFile {
+    /// Lines the header reports as changed.
+    pub fn changed(&self) -> usize {
+        self.additions + self.deletions
+    }
+
+    /// Hunk text exists (binary and API-truncated files have none).
+    pub fn has_patch(&self) -> bool {
+        !diff_lines(&self.patch).is_empty()
+    }
+
+    /// Past the size that expand-all opens.
+    pub fn is_large(&self) -> bool {
+        self.changed() > crate::core::SMALL_DIFF_LINES
+    }
+}
+
 /// Semantic role of one patch line; the UI maps each to a theme color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffKind {

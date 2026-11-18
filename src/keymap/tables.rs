@@ -132,6 +132,7 @@ const DIFF: &[Binding] = &[
     key(ch('l'), Action::DiffUnfold, "Unfold file", "Diff", Gesture::Click),
     key(ch('s'), Action::DiffSplit, "Split view", "Diff", TITLE).hint(4),
     key(ch(' '), Action::DiffToggleFile, "Expand or fold file", "Diff", Gesture::Click).hint(3),
+    key(ch('a'), Action::DiffExpandAll, "Expand or fold all files", "Diff", TITLE).hint(5),
 ];
 
 const GRAPH: &[Binding] = &[

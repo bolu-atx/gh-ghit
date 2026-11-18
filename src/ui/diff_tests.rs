@@ -424,3 +424,63 @@ fn s_toggles_split_only_on_diff_tab() {
     handle_key(&mut app, key(KeyCode::Char('s')));
     assert!(!app.diff.split, "s outside Diff does nothing");
 }
+
+fn expand_app() -> App {
+    use crate::model::DiffFile;
+    let mut app = diff_loaded_app();
+    app.diff.expanded_files.clear();
+    let big: String = (0..320).map(|i| format!("+big{i}\n")).collect();
+    app.diff.files.insert(9, vec![
+        DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
+        DiffFile { filename: "src/big.rs".into(), status: "modified".into(), additions: 320, deletions: 0, patch: format!("@@ -0,0 +1,320 @@\n{big}") },
+        DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
+        DiffFile { filename: "src/c.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+see".into() },
+    ]);
+    app
+}
+
+fn open_files(app: &App) -> Vec<String> {
+    let mut v: Vec<String> = app.diff.expanded_files.iter().map(|(_, f)| f.clone()).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn expand_all_opens_small_files_then_folds_everything() {
+    let mut app = expand_app();
+    let _ = frame_text(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('a')));
+    let text = frame_text(&mut app);
+    assert_eq!(open_files(&app), ["src/a.rs", "src/c.rs"], "large and patchless stay folded");
+    assert_eq!(app.message, "expanded 2 files · 2 left folded");
+    assert!(text.contains("+new") && text.contains("+see"), "{text}");
+    assert!(text.contains("large diff · space"), "{text}");
+    assert!(!text.contains("+big0"), "{text}");
+    // Space still opens the large file by hand; expand-all stays "fold".
+    app.diff.expanded_files.remove(&(9, "src/c.rs".into()));
+    assert!(app.diff_will_expand());
+    app.diff.expanded_files.insert((9, "src/c.rs".into()));
+    assert!(!app.diff_will_expand());
+    app.diff.expanded_files.insert((9, "src/big.rs".into()));
+    handle_key(&mut app, key(KeyCode::Char('a')));
+    let _ = frame_text(&mut app);
+    assert!(open_files(&app).is_empty(), "second press folds all, large included");
+    assert_eq!(app.message, "folded all files");
+}
+
+#[test]
+fn expand_all_keeps_the_cursor_file_in_view() {
+    let mut app = expand_app();
+    let _ = frame_text(&mut app);
+    // Put the cursor on the last small file, then open everything above it.
+    app.diff.cursor = 3;
+    handle_key(&mut app, key(KeyCode::Char('J')));
+    handle_key(&mut app, key(KeyCode::Char('K')));
+    handle_key(&mut app, key(KeyCode::Char('J')));
+    let _ = frame_text(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('a')));
+    let _ = frame_text(&mut app);
+    let line = app.diff.line.and_then(|abs| app.hits.body_rows.get(abs - app.hits.body_base as usize));
+    assert_eq!(app.diff.cursor, app.diff_file_at_cursor().unwrap(), "line sits in the cursor file");
+    assert!(line.is_some_and(|l| l.contains("src/")), "line on the file header: {line:?}");
+}

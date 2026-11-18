@@ -410,7 +410,8 @@ fn tab_line(text: &str) -> String {
 
 fn toolbar_actions(app: &App) -> Vec<Action> {
     let toolbar = [
-        Action::DiffPrevFile, Action::DiffNextFile, Action::DiffSplit, Action::Comment, Action::CloseItem,
+        Action::DiffPrevFile, Action::DiffNextFile, Action::DiffSplit, Action::DiffExpandAll, Action::Comment,
+        Action::CloseItem,
     ];
     let mut found: Vec<_> = app.hits.controls.iter().filter(|(_, a, _)| toolbar.contains(a)).collect();
     found.sort_by_key(|(rect, _, _)| rect.x);
@@ -450,7 +451,10 @@ fn toolbar_split_shows_on_the_pr_diff_view_only() {
     assert!(line.contains("‹ ›") && line.contains("split") && line.contains("comment"), "{line}");
     assert_eq!(
         toolbar_actions(&app),
-        vec![Action::DiffPrevFile, Action::DiffNextFile, Action::DiffSplit, Action::Comment, Action::CloseItem]
+        vec![
+            Action::DiffPrevFile, Action::DiffNextFile, Action::DiffSplit, Action::DiffExpandAll,
+            Action::Comment, Action::CloseItem,
+        ]
     );
 }
 
@@ -538,4 +542,27 @@ fn main_menu_lists_close_or_reopen() {
     let body = app.hits.body_area;
     right(&mut app, body.x + 2, body.y + 1);
     assert!(menu_labels(&app).contains(&"Close or reopen"), "{:?}", menu_labels(&app));
+}
+
+#[test]
+fn toolbar_expand_button_shows_on_diff_only_and_click_runs_it() {
+    let (expand, fold) = (crate::theme::TOOL_EXPAND, crate::theme::TOOL_FOLD);
+    for (number, tab) in [(9, Tab::Details), (7, Tab::Visual)] {
+        let mut app = open_item(number, tab);
+        let line = tab_line(&draw(&mut app));
+        assert!(!line.contains("expand") && !line.contains(expand), "{line}");
+    }
+    let mut issue = open_item(7, Tab::Details);
+    assert!(!tab_line(&draw(&mut issue)).contains("expand"));
+    let mut app = open_item(9, Tab::Visual);
+    app.diff.files.insert(9, vec![crate::model::DiffFile {
+        filename: "a.rs".into(), additions: 1, patch: "@@ -1 +1 @@\n+new".into(), ..Default::default()
+    }]);
+    let line = tab_line(&frame_text_sized(&mut app, 140, H));
+    assert!(line.contains(&format!("a {expand} expand")), "{line}");
+    app.diff.line = None;
+    click_control(&mut app, Action::DiffExpandAll);
+    assert!(app.diff.expanded_files.contains(&(9, "a.rs".to_string())));
+    let line = tab_line(&frame_text_sized(&mut app, 140, H));
+    assert!(line.contains(&format!("a {fold} fold")), "{line}");
 }
