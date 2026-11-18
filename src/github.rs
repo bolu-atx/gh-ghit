@@ -5,7 +5,7 @@
 use crate::{api, cache, model};
 use crate::model::IssueData;
 
-pub use crate::api::{Row, REQUIRED_SCOPES, forget_token, is_auth_error, reauth_command, token};
+pub use crate::api::{Row, REQUIRED_SCOPES, forget_token, is_auth_error, rate_limited, reauth_command, token};
 
 /// `(issue, [(project title, status|None)])`.
 pub type IssueBundle = (IssueData, Vec<(String, Option<String>)>);
@@ -27,6 +27,8 @@ pub enum SectionEvent {
     /// The fetch stopped at the shared sidebar row cap. Sent before
     /// `Done`.
     Capped,
+    /// The change probe found nothing new: no fetch ran, rows stay put.
+    Unchanged,
     Done(Result<Vec<api::Row>, String>),
 }
 
@@ -223,6 +225,14 @@ pub fn load_pins(repo: &str) -> Vec<u64> {
 /// Pinned-issue passthroughs so UI layers never touch `cache` directly.
 pub fn save_pins(repo: &str, numbers: &[u64]) {
     cache::save_pins(repo, numbers);
+}
+
+/// Auto-refresh gate: false when the repo's issues and PRs are
+/// unchanged since the last probe (a free 304).
+pub async fn repo_changed(repo: &str) -> Result<bool, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::repo_changed(repo, &token).await
 }
 
 /// Server-side issue/PR search scoped to the repo.

@@ -10,8 +10,12 @@ use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
 use std::time::{Duration, Instant};
 
-const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const RECENT_REFRESH_MAX_INTERVAL: Duration = Duration::from_secs(60);
+/// Auto-refreshes inside this span since the last full fetch run the
+/// free change probe first; past it a full fetch runs anyway, so CI and
+/// project-status changes (which leave `updated_at` alone) still land.
+const FULL_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Blocking poll wait per frame: short enough that batched mouse/key
 /// input feels instant, long enough to avoid a busy loop.
@@ -26,7 +30,7 @@ pub(crate) const SPIN_FRAME_MS: u64 = 100;
 /// Auto-refresh cadence, overridable for deterministic runs: the e2e
 /// harness stretches it past any scenario lifetime so each scenario
 /// issues exactly one sections fetch per boot instead of hammering
-/// the API every 5s. Zero or garbage falls back to the default.
+/// the API every 30s. Zero or garbage falls back to the default.
 fn auto_refresh_interval_default() -> Duration {
     refresh_interval_from(std::env::var("GHIT_AUTO_REFRESH_SECS").ok().as_deref())
 }
@@ -266,13 +270,17 @@ pub(crate) struct SectionFeed {
     pub(crate) last_fetch: Instant,
     pub(crate) auto_refresh_interval: Duration,
     pub(crate) auto_refresh: bool,
+    /// The next spawned fetch runs the change probe first.
+    pub(crate) probe: bool,
+    /// When the last full section fetch landed.
+    pub(crate) last_full: Instant,
     /// Section page progress: rows fetched vs the row cap, while pages
     /// remain. Cleared when the terminal result lands.
     pub(crate) progress: Option<(usize, usize)>,
     /// The next section payload replaces (search) instead of appending.
     pub(crate) replace: bool,
     pub(crate) merged_window_hours: u64,
-    /// A cap notice already showed for this fetch setting, so the 5s
+    /// A cap notice already showed for this fetch setting, so the periodic
     /// auto-refresh never repeats it.
     pub(crate) cap_notified: bool,
 }
@@ -281,7 +289,8 @@ impl SectionFeed {
     pub(crate) fn new() -> Self {
         Self { rx: None, last_fetch: Instant::now(),
             auto_refresh_interval: auto_refresh_interval_default(),
-            auto_refresh: false, progress: None, replace: false, merged_window_hours: 24,
+            auto_refresh: false, probe: false, last_full: Instant::now(),
+            progress: None, replace: false, merged_window_hours: 24,
             cap_notified: false }
     }
 }
@@ -953,9 +962,11 @@ impl App {
         self.sections.auto_refresh = false;
         self.sections.replace = false;
         let hours = self.sections.merged_window_hours;
+        let probe = std::mem::take(&mut self.sections.probe);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         rt().spawn(async move {
+            if probe && !probe_says_changed(&repo, &tx).await { return; }
             let result = github::fetch_recent_sections(&repo, hours, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });
@@ -965,15 +976,18 @@ impl App {
         if now.duration_since(self.sections.last_fetch) < self.sections.auto_refresh_interval
             || self.sections.rx.is_some()
             || self.focus().layer != Layer::Base
+            || github::rate_limited()
         {
             return;
         }
+        self.sections.probe = now.duration_since(self.sections.last_full) < FULL_REFRESH_INTERVAL;
         if self.sidebar.query_active.trim().is_empty() {
             self.merge_recent_sections();
         } else {
             // Periodic refresh: no "searching" toast on every pass.
             self.search_fetch(self.sidebar.query_active.clone());
         }
+        self.sections.probe = false;
         if self.sections.rx.is_some() {
             self.sections.auto_refresh = true;
         }
@@ -1034,9 +1048,11 @@ impl App {
         self.sections.auto_refresh = false;
         self.sections.replace = true;
         let search = core::search_query(&query, self.sections.merged_window_hours, chrono::Utc::now());
+        let probe = std::mem::take(&mut self.sections.probe);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         rt().spawn(async move {
+            if probe && !probe_says_changed(&repo, &tx).await { return; }
             let result = github::search_repo(&repo, &search, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });
@@ -3957,6 +3973,17 @@ pub(crate) fn poll_repo_meta(app: &mut App) -> bool {
     true
 }
 
+/// Run the change probe inside a section task. False means the task is
+/// over: `Unchanged` (nothing new) or `Done(Err)` (probe failed, so the
+/// usual backoff applies) is already sent.
+async fn probe_says_changed(repo: &str, tx: &std::sync::mpsc::Sender<github::SectionEvent>) -> bool {
+    match github::repo_changed(repo).await {
+        Ok(true) => true,
+        Ok(false) => { let _ = tx.send(github::SectionEvent::Unchanged); false }
+        Err(e) => { let _ = tx.send(github::SectionEvent::Done(Err(e))); false }
+    }
+}
+
 pub(crate) fn poll_sections(app: &mut App) -> bool {
     let Some(event) = app.sections.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     match event {
@@ -3971,9 +3998,17 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                 app.notify(cap_notice());
             }
         }
+        github::SectionEvent::Unchanged => {
+            app.sections.rx = None;
+            app.sections.progress = None;
+            if std::mem::take(&mut app.sections.auto_refresh) {
+                app.sections.auto_refresh_interval = auto_refresh_interval_default();
+            }
+        }
         github::SectionEvent::Done(result) => {
             app.sections.rx = None;
             app.sections.progress = None;
+            app.sections.last_full = Instant::now();
             let auto = std::mem::take(&mut app.sections.auto_refresh);
             if auto {
                 app.sections.auto_refresh_interval = if result.is_ok() {
@@ -5049,7 +5084,7 @@ mod tests {
     #[test]
     fn auto_refresh_failure_backs_off_and_success_resets() {
         let mut app = sidebar_app(&[7]);
-        for expected in [10, 20, 40, 60, 60] {
+        for expected in [60, 60] {
             let (tx, rx) = std::sync::mpsc::channel();
             app.sections.rx = Some(rx);
             app.sections.auto_refresh = true;
@@ -5066,6 +5101,42 @@ mod tests {
         tx.send(github::SectionEvent::Done(Ok(vec![]))).unwrap();
         poll_sections(&mut app);
         assert_eq!(app.sections.auto_refresh_interval, RECENT_REFRESH_INTERVAL);
+    }
+
+    #[test]
+    fn auto_refresh_probes_first_until_a_full_fetch_is_due() {
+        let mut app = sidebar_app(&[7]);
+        app.repo_slug = Some("o/r".to_string());
+        let start = app.sections.last_fetch;
+        app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+        assert!(app.sections.rx.is_some());
+        assert!(!app.sections.probe, "probe flag is consumed by the spawn");
+        // Past the full-refresh span, the auto-refresh skips the probe.
+        app.sections.rx = None;
+        app.sections.last_full = start;
+        let late = start + FULL_REFRESH_INTERVAL;
+        app.sections.last_fetch = late - RECENT_REFRESH_INTERVAL;
+        app.auto_refresh_recent(late);
+        assert!(app.sections.rx.is_some());
+        app.sections.rx = None;
+    }
+
+    #[test]
+    fn unchanged_probe_keeps_rows_and_resets_backoff() {
+        let mut app = sidebar_app(&[7]);
+        let before = app.nav.recent.clone();
+        let full = app.sections.last_full;
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.sections.rx = Some(rx);
+        app.sections.auto_refresh = true;
+        app.sections.auto_refresh_interval = RECENT_REFRESH_MAX_INTERVAL;
+        tx.send(github::SectionEvent::Unchanged).unwrap();
+        poll_sections(&mut app);
+        assert!(app.sections.rx.is_none());
+        assert!(!app.sections.auto_refresh);
+        assert_eq!(app.sections.auto_refresh_interval, RECENT_REFRESH_INTERVAL);
+        assert_eq!(app.nav.recent, before, "no fetch ran, rows stay put");
+        assert_eq!(app.sections.last_full, full, "a probe is not a full fetch");
     }
 
     #[test]

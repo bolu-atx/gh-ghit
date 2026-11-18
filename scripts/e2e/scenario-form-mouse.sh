@@ -9,12 +9,12 @@ e2e_wait "unifie" 60 || fail "pr rows never landed"
 e2e_key f
 e2e_wait "Format" 20 || fail "format dialog never opened"
 e2e_wait "○ author" 10 || fail "sort options never rendered"
-# Drive mode hands the raw cell to the handler, so send 0-based cells.
+# Drive mouse cells are 1-based like SGR; the pane scan is 0-based.
 read -r row col < <(e2e_pane | python3 -c '
 import sys
 for i, line in enumerate(sys.stdin.read().splitlines()):
     if "○ author" in line:
-        print(i, line.index("○ author") + 2)
+        print(i + 1, line.index("○ author") + 3)
         break
 ')
 [ -n "${row:-}" ] || fail "author option not found"

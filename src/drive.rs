@@ -121,7 +121,7 @@ pub fn mouse_event(kind: &str, column: u16, row: u16) -> Option<MouseEvent> {
         "scroll-up" => MouseEventKind::ScrollUp,
         _ => return None,
     };
-    Some(MouseEvent { kind, column, row, modifiers: KeyModifiers::empty() })
+    Some(MouseEvent { kind, column: column.saturating_sub(1), row: row.saturating_sub(1), modifiers: KeyModifiers::empty() })
 }
 
 /// Route one client message through the same handlers the terminal
@@ -419,10 +419,14 @@ mod tests {
     }
 
     #[test]
-    fn mouse_event_maps_kinds_and_stays_1_based() {
+    fn mouse_event_maps_kinds_and_converts_1_based_cells() {
         let m = mouse_event("down-left", 4, 25).unwrap();
         assert_eq!(m.kind, MouseEventKind::Down(MouseButton::Left));
-        assert_eq!((m.column, m.row), (4, 25));
+        assert_eq!((m.column, m.row), (3, 24));
+        let origin = mouse_event("down-left", 1, 1).unwrap();
+        assert_eq!((origin.column, origin.row), (0, 0));
+        let zero = mouse_event("down-left", 0, 0).unwrap();
+        assert_eq!((zero.column, zero.row), (0, 0));
         assert!(matches!(mouse_event("scroll-up", 1, 1).unwrap().kind, MouseEventKind::ScrollUp));
         assert!(mouse_event("down-right", 1, 1).is_none());
     }
