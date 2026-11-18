@@ -751,17 +751,19 @@ impl App {
         self.undo = Some(PendingUndo { action, at: Instant::now(), message });
     }
 
-    /// An undo is armed and still inside the toast window.
+    /// An undo is armed, inside the toast window, and its toast is still
+    /// the visible message: a later toast hides the offer, so `u` stops.
     pub(crate) fn undo_live(&self) -> bool {
-        self.undo.as_ref().is_some_and(|u| u.at.elapsed() < UNDO_WINDOW)
+        self.undo.as_ref().is_some_and(|u| u.at.elapsed() < UNDO_WINDOW && self.message == u.message)
     }
 
     /// Restore what the last `x`/delete removed, if its window is open.
     pub(crate) fn undo_last(&mut self) {
-        let Some(undo) = self.undo.take() else { return };
-        if undo.at.elapsed() >= UNDO_WINDOW {
+        if !self.undo_live() {
+            self.undo = None;
             return;
         }
+        let Some(undo) = self.undo.take() else { return };
         match undo.action {
             UndoAction::Evict { number: n, visited_at, recent_at, data, statuses, row_expanded } => {
                 if let Some(i) = visited_at {
@@ -4565,6 +4567,10 @@ mod tests {
         assert!(!app.undo_live());
         app.undo_last();
         assert_eq!(app.nav.visited, vec![9], "expired undo restores nothing");
+        app.nav.current = Some(9);
+        app.evict_current();
+        app.notify("other news".to_string());
+        assert!(!app.undo_live(), "a later toast hides the undo offer");
     }
 
     #[test]
