@@ -161,6 +161,7 @@ pub(crate) enum Pane {
     PRs,
     Main,
     Refs,
+    Labels,
 }
 
 /// Where a composed comment lands.
@@ -523,6 +524,21 @@ impl RefsPane {
     }
 }
 
+/// One selectable row of the Labels pane: a milestone pill (`None` is
+/// "(no milestone)") or a label name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FilterItem {
+    Milestone(Option<String>),
+    Label(String),
+}
+
+/// Labels pane view state: the cursor row and the first drawn line.
+#[derive(Default)]
+pub(crate) struct LabelsPane {
+    pub(crate) cursor: usize,
+    pub(crate) offset: usize,
+}
+
 /// Auth state: the startup bootstrap channel, the re-auth probe channel,
 /// and the dismissal/re-probe bookkeeping. The pending re-auth
 /// question itself lives in the generic confirm modal.
@@ -590,6 +606,9 @@ pub(crate) struct HitAreas {
     pub(crate) side_issue_rows: Vec<model::SideRow>,
     pub(crate) side_pr_rows: Vec<model::SideRow>,
     pub(crate) refs_area: Rect,
+    pub(crate) labels_area: Rect,
+    /// Labels pane rows as drawn: rect plus the `filter_items` index.
+    pub(crate) labels_rows: Vec<(Rect, usize)>,
     pub(crate) history_rows: Vec<(Rect, usize)>,
     pub(crate) ref_rows: Vec<model::SideRow>,
     pub(crate) tabs_area: Rect,
@@ -619,6 +638,7 @@ pub(crate) struct App {
     pub(crate) graph: GraphView,
     pub(crate) subs: SubIssueLoads,
     pub(crate) refs: RefsPane,
+    pub(crate) labels: LabelsPane,
     pub(crate) auth: AuthState,
     pub(crate) compose: ComposeSlot,
     pub(crate) hits: HitAreas,
@@ -674,6 +694,7 @@ impl App {
             quit: false,
             hits: HitAreas::default(),
             refs: RefsPane::new(),
+            labels: LabelsPane::default(),
         }
     }
 
@@ -1368,18 +1389,9 @@ impl App {
             }
             n if n < 6 + labels => {
                 let name = self.sidebar.labels[n - 6].clone();
-                if !self.sidebar.label_filter.remove(&name) {
-                    self.sidebar.label_filter.insert(name);
-                }
-                self.persist_prefs();
+                self.toggle_label_filter(name);
             }
-            n if n < left => {
-                let pill = pills[n - 6 - labels].clone();
-                if !self.sidebar.milestone_filter.remove(&pill) {
-                    self.sidebar.milestone_filter.insert(pill);
-                }
-                self.persist_prefs();
-            }
+            n if n < left => self.toggle_milestone_filter(pills[n - 6 - labels].clone()),
             n if n == left => {
                 self.sidebar.group_by = self.sidebar.group_by.next();
                 self.persist_prefs();
@@ -1392,6 +1404,56 @@ impl App {
             n if n == left + 3 => self.toggle_sort_dir(),
             n => self.toggle_sidebar_row_field(n - left - 4),
         }
+    }
+
+    pub(crate) fn toggle_label_filter(&mut self, name: String) {
+        if !self.sidebar.label_filter.remove(&name) {
+            self.sidebar.label_filter.insert(name);
+        }
+        self.persist_prefs();
+    }
+
+    pub(crate) fn toggle_milestone_filter(&mut self, pill: Option<String>) {
+        if !self.sidebar.milestone_filter.remove(&pill) {
+            self.sidebar.milestone_filter.insert(pill);
+        }
+        self.persist_prefs();
+    }
+
+    /// Rows of the Labels pane: milestones first, then labels. Shares the
+    /// Format dialog's lists, so both views show the same filter state.
+    pub(crate) fn filter_items(&self) -> Vec<FilterItem> {
+        self.milestone_pills().into_iter().map(FilterItem::Milestone)
+            .chain(self.sidebar.labels.iter().cloned().map(FilterItem::Label))
+            .collect()
+    }
+
+    pub(crate) fn filter_item_on(&self, item: &FilterItem) -> bool {
+        match item {
+            FilterItem::Milestone(pill) => self.sidebar.milestone_filter.contains(pill),
+            FilterItem::Label(name) => self.sidebar.label_filter.contains(name),
+        }
+    }
+
+    pub(crate) fn toggle_filter_item(&mut self, index: usize) {
+        match self.filter_items().into_iter().nth(index) {
+            Some(FilterItem::Milestone(pill)) => self.toggle_milestone_filter(pill),
+            Some(FilterItem::Label(name)) => self.toggle_label_filter(name),
+            None => return,
+        }
+        self.labels.cursor = index;
+    }
+
+    /// Move the Labels cursor, clamped to the rows.
+    pub(crate) fn move_filter_cursor(&mut self, delta: isize) {
+        let last = self.filter_items().len().saturating_sub(1);
+        self.labels.cursor = self.labels.cursor.saturating_add_signed(delta).min(last);
+    }
+
+    pub(crate) fn clear_filter_items(&mut self) {
+        self.sidebar.label_filter.clear();
+        self.sidebar.milestone_filter.clear();
+        self.persist_prefs();
     }
 
     /// Fetch labels and milestones for the dialog once per repo. The
@@ -1648,7 +1710,7 @@ impl App {
             Pane::Issues => self.nav.current.filter(|n| self.issue_numbers().contains(n)),
             Pane::PRs => self.nav.current.filter(|n| self.pr_numbers().contains(n)),
             Pane::Refs => self.refs.highlight,
-            Pane::Main => None,
+            Pane::Main | Pane::Labels => None,
         };
         let Some(n) = selected else { return };
         if !self.diff.expanded_rows.remove(&n) {
@@ -1768,9 +1830,20 @@ impl App {
         self.refs.show && !(self.refs.numbers.is_empty() && self.refs.paired.is_empty())
     }
 
-    /// The right column shows when toggled on and it has Refs or History.
+    /// The Labels pane shows once the repo has labels or milestones, or
+    /// while the first fetch is still pending.
+    pub(crate) fn labels_visible(&self) -> bool {
+        self.refs.show
+            && (self.sidebar.meta_rx.is_some()
+                || !self.sidebar.labels.is_empty()
+                || !self.sidebar.milestones.is_empty())
+    }
+
+    /// The right column shows when toggled on and it has Refs, History or
+    /// the Labels pane.
     pub(crate) fn right_visible(&self) -> bool {
-        self.refs.show && (self.refs_visible() || !self.nav.history.is_empty())
+        self.refs.show
+            && (self.refs_visible() || !self.nav.history.is_empty() || self.labels_visible())
     }
 
     /// Display rows for the refs pane: mentioned numbers, then a `Paired`
@@ -1802,7 +1875,7 @@ impl App {
     /// Flip the right refs pane, keeping the current issue in place.
     pub(crate) fn toggle_refs(&mut self) {
         self.refs.show = !self.refs.show;
-        if !self.refs.show && self.nav.pane == Pane::Refs {
+        if !self.refs.show && matches!(self.nav.pane, Pane::Refs | Pane::Labels) {
             self.nav.pane = Pane::Main;
         }
         self.persist_prefs();
@@ -1823,14 +1896,18 @@ impl App {
         self.notify(if self.sidebar.show { "sidebar: shown" } else { "sidebar: hidden" }.to_string());
     }
 
-    /// Tab cycles Issues → PRs → Refs, skipping panes that are hidden.
-    /// With the sidebar hidden it moves between Main and Refs. The body
-    /// keeps its dedicated keys, so it takes Tab focus only as a fallback.
+    /// Tab cycles Issues → PRs → Refs → Labels, skipping panes that are
+    /// hidden. With the sidebar hidden it moves between Main and the right
+    /// panes. The body keeps its dedicated keys, so it takes Tab focus only
+    /// as a fallback.
     pub(crate) fn cycle_pane(&mut self) {
+        let right = self.labels_visible();
         self.nav.pane = match self.nav.pane {
             Pane::Issues if self.sidebar.show => Pane::PRs,
             Pane::PRs if self.refs_visible() => Pane::Refs,
+            Pane::PRs | Pane::Refs if right => Pane::Labels,
             Pane::Main if !self.sidebar.show && self.refs_visible() => Pane::Refs,
+            Pane::Main if !self.sidebar.show && right => Pane::Labels,
             _ if self.sidebar.show => Pane::Issues,
             _ => Pane::Main,
         };
@@ -2432,7 +2509,7 @@ impl App {
         self.sidebar.show = prefs.show_sidebar;
         self.refs.show = prefs.show_right;
         if (!self.sidebar.show && matches!(self.nav.pane, Pane::Issues | Pane::PRs))
-            || (!self.refs.show && self.nav.pane == Pane::Refs)
+            || (!self.refs.show && matches!(self.nav.pane, Pane::Refs | Pane::Labels))
         {
             self.nav.pane = Pane::Main;
         }
@@ -3589,6 +3666,7 @@ fn poll_bootstrap(app: &mut App) -> bool {
             let q = app.sidebar.query_active.clone();
             app.run_gh_search(q);
         }
+        app.ensure_repo_meta();
     } else {
         for n in numbers { app.load_issue(n, false); }
     }
@@ -5543,5 +5621,31 @@ mod tests {
         assert_eq!(app.message, raw, "network errors pass through unchanged");
         assert_eq!(app.nav.current, Some(590), "nothing moves on error");
         assert_eq!(app.nav.step_pending, None);
+    }
+
+    #[test]
+    fn labels_pane_joins_tab_cycle_and_toggle_shares_dialog_state() {
+        let mut app = sidebar_app(&[]);
+        app.sidebar.meta_loaded = true;
+        app.sidebar.labels = vec!["bug".to_string()];
+        app.nav.history = vec![1];
+        app.nav.pane = Pane::PRs;
+        app.cycle_pane();
+        assert_eq!(app.nav.pane, Pane::Labels, "history alone shows the right column");
+        app.cycle_pane();
+        assert_eq!(app.nav.pane, Pane::Issues);
+        // Rows: (no milestone), bug. Out-of-range toggles do nothing.
+        app.toggle_filter_item(1);
+        app.toggle_filter_item(9);
+        assert!(app.sidebar.label_filter.contains("bug"));
+        app.toggle_filter_item(0);
+        assert!(app.sidebar.milestone_filter.contains(&None));
+        app.toggle_filter_item(1);
+        assert!(app.sidebar.label_filter.is_empty());
+        app.move_filter_cursor(5);
+        assert_eq!(app.labels.cursor, 1, "cursor clamps to the last row");
+        app.nav.pane = Pane::Labels;
+        app.toggle_refs();
+        assert_eq!(app.nav.pane, Pane::Main, "hiding the column drops focus");
     }
 }
