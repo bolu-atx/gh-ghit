@@ -387,10 +387,10 @@ fn the_menu_frame_shows_actions_with_keys_and_one_focus() {
     app.nav.pane = Pane::Issues;
     let backend = TestBackend::new(W, H);
     let mut terminal = Terminal::new(backend).expect("test backend");
-    terminal.draw(|f| super::render(f, &mut app)).expect("draw");
+    terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
     let (x, y) = first_issue_row(&app);
     right(&mut app, x, y);
-    terminal.draw(|f| super::render(f, &mut app)).expect("draw");
+    terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
     let buf = terminal.backend().buffer();
     let popup = app.hits.ctl.popup;
     let row_text = |y: u16| -> String { (popup.x..popup.right()).map(|x| buf[(x, y)].symbol()).collect() };

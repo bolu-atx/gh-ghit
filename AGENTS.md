@@ -46,8 +46,10 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | ---- | ---- |
 | `src/main.rs` | Thin entry: parse `cli`, run `app` |
 | `src/cli.rs` | Clap `Args` + numeric startup parsing |
-| `src/app.rs` | `App` state, event loop, background fetch wiring |
+| `src/app.rs` | `App` state, event loop, background fetch wiring; `draw_frame` fits column widths, then renders |
 | `src/core.rs` | Pure business rules (`parse_bar`, selection, board cursor, pins, window) |
+| `src/core/focus.rs` | Focus model: layer stack, pane order, `Tab` stepping |
+| `src/core/layout.rs` | Layout math: side column widths (`columns`), `MIN_MAIN_WIDTH`, `MAX_DIFF_FILES` |
 | `src/model.rs` | `IssueData`/`BoardData` types, pure helpers (`slug`, `linkify`, `refs_in_line`, `board_columns`) |
 | `src/github.rs` | Data-access facade over `api`/`cache`; UI layers never import those directly |
 | `src/api.rs` + `src/api/{client,sections,graph,board}.rs` | Token-backed GraphQL/REST calls |
