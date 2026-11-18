@@ -4,7 +4,7 @@
 use crossterm::event::KeyCode;
 
 use super::{
-    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, main_pane, side_pane,
+    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, side_pane,
     sub_issue_tree, undo_live,
 };
 use crate::core::{Dialog, Pane, TextInput};
@@ -90,6 +90,14 @@ const GLOBAL: &[Binding] = &[
     key(ch('w'), Action::MergedWindow, "Cycle merged window", "View", MENU),
     // Esc pops one layer wherever nothing nearer claims it.
     key(KeyCode::Esc, Action::Back, "Back", "Session", DISMISS),
+];
+
+/// With the Main pane focused, search keys act on its content. The
+/// sidebar panes keep the row search from `GLOBAL`.
+const MAIN: &[Binding] = &[
+    key(ch('/'), Action::ContentFind, "Find in content", "Search", MENU),
+    key(ch('n'), Action::ContentNext, "Next match", "Search", TITLE).hint_if(13, content_search_live),
+    key(ch('N'), Action::ContentPrev, "Previous match", "Search", TITLE).hint_if(14, content_search_live),
 ];
 
 const SIDEBAR: &[Binding] = &[
@@ -335,7 +343,7 @@ pub(super) fn tables(context: Context) -> &'static [&'static [Binding]] {
         Context::Global => &[GLOBAL],
         Context::Pane(Pane::Issues) => &[TREE, SIDEBAR],
         Context::Pane(Pane::PRs) => &[SIDEBAR],
-        Context::Pane(Pane::Main) => &[],
+        Context::Pane(Pane::Main) => &[MAIN],
         Context::Pane(Pane::Refs) => &[REFS],
         Context::Pane(Pane::Labels) => &[LABELS],
         Context::Pane(Pane::History) => &[HISTORY],

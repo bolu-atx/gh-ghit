@@ -348,7 +348,7 @@ fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
     app.nav.tab = crate::app::Tab::Visual;
     let order: Vec<Context> = help_sections(&app).into_iter()
         .filter(|(_, current)| *current).map(|(context, _)| context).collect();
-    assert_eq!(order, vec![Context::Main(MainMode::Diff), Context::Global]);
+    assert_eq!(order, vec![Context::Pane(Pane::Main), Context::Main(MainMode::Diff), Context::Global]);
 }
 
 #[test]

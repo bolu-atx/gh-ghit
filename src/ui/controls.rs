@@ -119,13 +119,26 @@ fn fit_tools(tools: &[Tool], steps: bool, room: u16) -> Option<(bool, Vec<u16>)>
 pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
     let tools = tools(app);
     let steps = app.visual_diff();
+    let counter = app.search.active().then(|| app.search.counter());
+    // The match counter leads the toolbar: `‹ 3/12 ›` steps like `N`/`n`.
+    let lead = counter.as_ref().map_or(0, |c| c.chars().count() as u16 + STEP_WIDTH + 1);
     let titles = crate::app::tab_titles(if steps { "Diff View" } else { "Graph" });
     let used = titles.iter().map(|t| t.chars().count() as u16).sum::<u16>() + 6;
-    let Some((labeled, widths)) = fit_tools(&tools, steps, tabs.width.saturating_sub(used + 1)) else { return };
-    let total = widths.iter().sum::<u16>() + if steps { STEP_WIDTH } else { 0 } + (widths.len() as u16 + u16::from(steps)).saturating_sub(1) * TOOL_GAP;
+    let room = tabs.width.saturating_sub(used + 1);
+    let room_for_tools = room.saturating_sub(if lead > 0 { lead + TOOL_GAP } else { 0 });
+    let Some((labeled, widths)) = fit_tools(&tools, steps, room_for_tools) else { return };
+    let total = widths.iter().sum::<u16>() + if steps { STEP_WIDTH } else { 0 } + (widths.len() as u16 + u16::from(steps)).saturating_sub(1) * TOOL_GAP
+        + if lead > 0 { lead + TOOL_GAP } else { 0 };
     let mut x = tabs.right() - total - 1;
     let style = Style::new().bg(ink()).fg(muted());
     let mut rects = vec![];
+    if let Some(counter) = counter {
+        let w = counter.chars().count() as u16;
+        f.render_widget(Paragraph::new(format!("‹ {counter} ›")).style(style), Rect::new(x, tabs.y, lead, 1));
+        rects.push((Rect::new(x, tabs.y, 1, 1), Action::ContentPrev));
+        rects.push((Rect::new(x + 2, tabs.y, w + 2, 1), Action::ContentNext));
+        x += lead + TOOL_GAP;
+    }
     if steps {
         f.render_widget(Paragraph::new("‹ ›").style(style), Rect::new(x, tabs.y, STEP_WIDTH, 1));
         rects.push((Rect::new(x, tabs.y, 1, 1), Action::DiffPrevFile));

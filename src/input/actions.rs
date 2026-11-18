@@ -62,6 +62,9 @@ pub(super) fn perform(app: &mut App, action: Action) {
             app.sidebar.search.clear();
             app.nav.focus = Focus::Bar;
         }
+        Action::ContentFind => app.start_content_search(),
+        Action::ContentNext => app.step_content_match(1),
+        Action::ContentPrev => app.step_content_match(-1),
         Action::NextHit => jump_search_hit(app, 1),
         Action::PrevHit => jump_search_hit(app, -1),
         Action::OpenBrowser => match app.nav.current {
@@ -285,6 +288,10 @@ fn tree_step(app: &mut App, action: Action) {
 fn submit_input(app: &mut App) {
     match app.focus().layer {
         Layer::Input(TextInput::Bar) => {
+            if app.search.typing {
+                app.commit_content_search();
+                return;
+            }
             if app.sidebar.searching {
                 app.commit_search();
                 return;
@@ -317,6 +324,7 @@ fn submit_input(app: &mut App) {
 
 fn backspace_input(app: &mut App) {
     match app.focus().layer {
+        Layer::Input(TextInput::Bar) if app.search.typing => app.content_search_pop(),
         Layer::Input(TextInput::Bar) if app.sidebar.searching => {
             app.sidebar.search.pop();
         }
