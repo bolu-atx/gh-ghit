@@ -2,6 +2,8 @@
 
 ghit is a terminal viewer for GitHub issues and pull requests.
 It uses the GitHub API to load issues, PRs, and project boards.
+ghit has first-class mouse and keyboard support.
+Every control works both ways, and focus and selection look the same everywhere.
 
 ![ghit demo](demo.gif)
 
@@ -103,6 +105,17 @@ Press `?` for the in-app shortcuts modal.
 Outside dialogs, `h` / `l` step between neighboring issues and PRs from any pane.
 In a focused issue graph, they move between graph nodes instead.
 `R` reopens the re-authentication prompt when authentication is degraded.
+
+## Mouse and keyboard
+
+The goal is that every control works with the mouse and with the keyboard.
+Some actions are still keyboard-only; #185 tracks them.
+
+- Click a pane to focus it. Click a row to show it in the main pane.
+- Click the shown row again to keep it under requested.
+- Click a link or `#123` reference in the body to open it.
+- Scroll the wheel to scroll the pane under the cursor.
+- Press `?` to see all shortcuts.
 
 ## Neovim integration
 
