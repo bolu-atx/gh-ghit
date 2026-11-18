@@ -3285,8 +3285,7 @@ mod render_smoke {
     #[test]
     fn narrow_frames_keep_main_wide_and_drop_columns_in_order() {
         use crate::core::Pane;
-        // Pins the rule: main keeps 40 columns.
-        const MIN_MAIN_WIDTH: u16 = 40;
+        use crate::core::MIN_MAIN_WIDTH;
         // Main's border and padding take this many columns off the body.
         const MAIN_CHROME: u16 = 5;
         for (width, sidebar, right) in [(80u16, false, false), (100, true, false), (120, true, true)] {
@@ -4832,7 +4831,7 @@ mod render_smoke {
         terminal.draw(|f| render(f, app)).expect("draw");
         let buf = terminal.backend().buffer();
         (0..2)
-            .map(|y| (44..120).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .map(|y| (crate::core::SIDEBAR_WIDTH..120).map(|x| buf[(x, y)].symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
     }

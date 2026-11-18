@@ -10,10 +10,10 @@ mod layout;
 mod tree;
 
 pub(crate) use focus::{
-    Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, columns, layer_stack, step_pane,
+    Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, layer_stack, step_pane,
     visible_panes,
 };
-pub(crate) use layout::MAX_DIFF_FILES;
+pub(crate) use layout::{MAX_DIFF_FILES, MIN_MAIN_WIDTH, SIDEBAR_WIDTH, columns};
 pub(crate) use tree::{needs_lazy_children, tree_rows};
 
 use std::collections::{HashMap, HashSet};
