@@ -104,6 +104,30 @@ Outside dialogs, `h` / `l` step between neighboring issues and PRs from any pane
 In a focused issue graph, they move between graph nodes instead.
 `R` reopens the re-authentication prompt when authentication is degraded.
 
+## Neovim integration
+
+ghit runs in any Neovim terminal.
+On AstroNvim, bind it the same way AstroNvim binds lazygit to `<leader>gg`:
+
+```lua
+vim.keymap.set("n", "<Leader>gi", function()
+  require("astrocore").toggle_term_cmd { cmd = "ghit", direction = "float" }
+end, { desc = "ToggleTerm ghit" })
+```
+
+Put the mapping in a file that loads at startup, such as `lua/polish.lua`.
+The key toggles the float, so the same key closes it.
+
+With plain [toggleterm.nvim](https://github.com/akinsho/toggleterm.nvim), cache the terminal so each press does not start a new process:
+
+```lua
+local ghit = require("toggleterm.terminal").Terminal:new { cmd = "ghit", direction = "float", hidden = true }
+vim.keymap.set("n", "<Leader>gi", function() ghit:toggle() end, { desc = "ghit" })
+```
+
+Start it from the repository checkout.
+ghit resolves `OWNER/REPO` from the `origin` remote.
+
 ## Local state and environment
 
 State lives in `$XDG_DATA_HOME/ghit`, or `~/.local/share/ghit` when `XDG_DATA_HOME` is unset.
