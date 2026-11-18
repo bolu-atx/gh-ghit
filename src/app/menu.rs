@@ -38,7 +38,7 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
         MenuKind::History => vec![OpenHistoryRow, Pin, Yank, OpenBrowser],
         MenuKind::Labels => vec![ToggleLabel, ClearLabels],
         MenuKind::Body => {
-            let mut actions = vec![Comment, CloseItem, Yank, Pin, OpenBrowser, Refresh, StepPrev, StepNext];
+            let mut actions = vec![ContentFind, Comment, CloseItem, Yank, Pin, OpenBrowser, Refresh, StepPrev, StepNext];
             if app.nav.current.and_then(|n| app.issues.data.get(&n)).is_some_and(|d| d.is_pr) {
                 actions.push(SubmitReview);
             }

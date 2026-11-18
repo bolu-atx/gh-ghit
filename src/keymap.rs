@@ -43,6 +43,7 @@ actions! {
     HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
     OpenBoard, OpenFinder, Comment, CloseItem, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
+    ContentFind, ContentNext, ContentPrev,
     OpenBrowser, Refresh, Reauth, Pin, Yank, ToggleRefs, ToggleSidebar, SubmitReview,
     ToggleRow, MergedWindow, Back, NextPane, PrevPane,
     // Panes.
@@ -490,6 +491,11 @@ pub(crate) fn help_sections(app: &App) -> Vec<(Context, bool)> {
 
 fn main_pane(app: &App) -> bool {
     app.nav.pane == Pane::Main
+}
+
+/// A content search has a query, so `n`/`N` have somewhere to go.
+fn content_search_live(app: &App) -> bool {
+    app.search.active()
 }
 
 fn side_pane(app: &App) -> bool {

@@ -398,11 +398,13 @@ impl App {
                 self.sidebar.searching = false;
                 self.bar.clear();
                 self.sidebar.search.clear();
+                self.search.clear();
             }
             Layer::Base => {
                 self.bar.clear();
                 self.sidebar.searching = false;
                 self.sidebar.search.clear();
+                self.search.clear();
                 self.refs.highlight = None;
             }
         }

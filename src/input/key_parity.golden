@@ -110,7 +110,7 @@ prs | pagedown | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | ctrl-tab | message:  -> no newer issue
 prs | g g | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | g j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
-main-details | '/' | focus: false -> true ; search: ""/false -> ""/true
+main-details | '/' | focus: false -> true
 main-details | '2' | tab: Details -> Visual
 main-details | ':' | focus: false -> true
 main-details | '?' | shortcuts: false -> true
@@ -140,7 +140,7 @@ main-details | backtab | pane: Main -> PRs
 main-details | down | scroll: 0 -> 3
 main-details | ctrl-tab | message:  -> no newer issue
 main-details | g j | scroll: 0 -> 3
-main-diff | '/' | focus: false -> true ; search: ""/false -> ""/true
+main-diff | '/' | focus: false -> true
 main-diff | '1' | tab: Visual -> Details
 main-diff | ':' | focus: false -> true
 main-diff | '?' | shortcuts: false -> true
@@ -171,7 +171,7 @@ main-diff | down | diff: None/false/false/[] -> Some(1)/true/false/[]
 main-diff | ctrl-tab | message:  -> no newer issue
 main-diff | g g | diff: None/false/false/[] -> Some(0)/true/false/[]
 main-diff | g j | diff: None/false/false/[] -> Some(1)/true/false/[]
-main-graph | '/' | focus: false -> true ; search: ""/false -> ""/true
+main-graph | '/' | focus: false -> true
 main-graph | '1' | tab: Visual -> Details
 main-graph | ':' | focus: false -> true
 main-graph | '?' | shortcuts: false -> true

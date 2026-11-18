@@ -54,6 +54,7 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
     let KeyCode::Char(c) = key.code else { return };
     let chord = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
     match app.focus().layer {
+        Layer::Input(TextInput::Bar) if app.search.typing => app.content_search_push(c),
         Layer::Input(TextInput::Bar) if app.sidebar.searching => app.sidebar.search.push(c),
         Layer::Input(TextInput::Bar) => app.bar.push(c),
         Layer::Input(TextInput::Query | TextInput::BoardQuery) => app.sidebar.query_draft.push(c),

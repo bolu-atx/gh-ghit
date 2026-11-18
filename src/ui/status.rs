@@ -15,10 +15,13 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.bar_hints.clear();
     app.hits.repo = Rect::default();
     if app.nav.focus == crate::app::Focus::Bar {
-        let text = if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
-        let prompt = if app.sidebar.searching { "/ " } else { "❯ " };
+        let content = app.search.typing;
+        let text = if content { &app.search.query } else if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
+        let prompt = if content || app.sidebar.searching { "/ " } else { "❯ " };
         let shown = if text.is_empty() {
-            if app.sidebar.searching {
+            if content {
+                "search this pane · smart case …".to_string()
+            } else if app.sidebar.searching {
                 format!(
                     "instant filter loaded: title, #n, label, author · sort {} (s/S) …",
                     app.sort_label()
@@ -33,7 +36,17 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Span::styled(prompt, Style::new().fg(amber()).bold()),
             Span::styled(shown, Style::new().fg(if text.is_empty() { muted() } else { paper() })),
         ])).style(base()), area);
-        f.set_cursor_position((area.x + (2 + text.len() as u16).min(area.width.saturating_sub(1)), area.y));
+        if content && !text.is_empty() {
+            let counter = format!("{} ", app.search.counter());
+            let w = counter.chars().count() as u16;
+            if w + 4 < area.width {
+                f.render_widget(
+                    Paragraph::new(counter).style(Style::new().bg(ink()).fg(muted())),
+                    Rect::new(area.right() - w, area.y, w, 1),
+                );
+            }
+        }
+        f.set_cursor_position((area.x + (2 + text.chars().count() as u16).min(area.width.saturating_sub(1)), area.y));
         return;
     }
     // Minimal shortcut hints, responsive: the longest tier that fits

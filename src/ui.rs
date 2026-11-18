@@ -13,6 +13,7 @@ mod finder;
 mod help;
 mod hints;
 mod main_pane;
+mod search;
 mod sidebar;
 mod status;
 
@@ -32,6 +33,8 @@ mod help_tests;
 mod hint_tests;
 #[cfg(test)]
 mod main_pane_tests;
+#[cfg(test)]
+mod search_tests;
 #[cfg(test)]
 mod mouse_tests;
 #[cfg(test)]

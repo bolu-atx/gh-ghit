@@ -14,7 +14,8 @@ use super::{controls, hints};
 
 use super::{spinning, loading_body};
 use super::sidebar::check_span;
-use super::diff::diff_text;
+use super::diff::diff_text_aux;
+use super::search::SearchAux;
 
 /// Styled header for the body pane: the color-coded meta lines. The
 /// `#N title` line lives only in the masthead (`render_main`), so it is
@@ -357,6 +358,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(header).style(base()), hgutter[1]);
 
     let markdown;
+    let mut aux = SearchAux::default();
     let mut text = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
         Some(d) => match app.nav.tab {
             Tab::Details => {
@@ -366,7 +368,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 crate::theme::render_markdown(&markdown)
             }
             Tab::Visual => match model::visual_content(d.is_pr) {
-                model::VisualContent::Diff => diff_text(app, d, (rows[4].width as usize).saturating_sub(5)),
+                model::VisualContent::Diff => diff_text_aux(app, d, (rows[4].width as usize).saturating_sub(5), &mut aux),
                 model::VisualContent::Graph => graph_text(app, d, usize::from(rows[4].height)),
             },
         },
@@ -398,6 +400,8 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if let (Some(n), crate::app::Tab::Details) = (app.refs.highlight, app.nav.tab) {
         highlight_mentions(&mut text.lines, n, app.repo_key().as_deref());
     }
+    let wrap_width = usize::from(rows[4].width.saturating_sub(5)).max(1);
+    super::search::apply(app, &mut text, wrap_width, usize::from(rows[4].height), &aux);
     app.hits.body_total = text_rows(&text, usize::from(rows[4].width.saturating_sub(5)).max(1));
     let pane = Paragraph::new(text)
         .style(base())

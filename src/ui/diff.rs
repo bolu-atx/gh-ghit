@@ -10,6 +10,10 @@ use ratatui::widgets::{
 use crate::app::App;
 use crate::core::MAX_DIFF_FILES;
 use crate::model::{self, IssueData};
+use super::search::{HiddenSite, SearchAux};
+
+/// Chars of the unified line gutter: a 4-wide number and ` │ `.
+const GUTTER_CHARS: usize = 7;
 
 
 
@@ -18,6 +22,17 @@ use crate::model::{self, IssueData};
 /// `width` is the pane content width; narrow panes fall back to unified
 /// lines because two columns would fit nothing.
 pub(super) fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'static> {
+    diff_text_aux(app, d, width, &mut SearchAux::default())
+}
+
+/// `diff_text` plus what content search needs: the gutter widths to skip
+/// and the match counts of folded files.
+pub(super) fn diff_text_aux(
+    app: &App,
+    d: &IssueData,
+    width: usize,
+    aux: &mut SearchAux,
+) -> ratatui::text::Text<'static> {
     use crate::theme::{amber, green, ink, muted, paper, red};
     use model::DiffKind;
     if !d.is_pr {
@@ -112,6 +127,14 @@ pub(super) fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text
             append_review_thread(&mut lines, thread, false);
         }
         if !expanded {
+            if app.search.active() {
+                let count = model::diff_lines(&f.patch).iter()
+                    .map(|(_, text)| crate::core::find_ranges(text, &app.search.query).len())
+                    .sum();
+                if count > 0 {
+                    aux.hidden.push(HiddenSite { line: lines.len() - 1, file: fi, count });
+                }
+            }
             continue;
         }
         if model::diff_lines(&f.patch).is_empty() {
@@ -147,6 +170,7 @@ pub(super) fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text
                     DiffKind::Del => old,
                     _ => new,
                 };
+                aux.skips.insert(lines.len(), GUTTER_CHARS);
                 lines.push(Line::from(vec![
                     Span::styled(diff_gutter_num(num), Style::new().bg(ink()).fg(muted())),
                     Span::styled(" │ ", Style::new().bg(ink()).fg(muted())),

@@ -22,6 +22,8 @@ pub(crate) use menu::{MenuKind, MenuState};
 pub(crate) use finder::FinderRow;
 mod nav;
 mod poll;
+mod search;
+pub(crate) use search::{ContentMatch, ContentSearch};
 mod sidebar;
 
 #[cfg(test)]
@@ -253,6 +255,8 @@ pub(crate) struct App {
     pub(crate) auth: AuthState,
     pub(crate) compose: ComposeSlot,
     pub(crate) hits: HitAreas,
+    /// `/` search over the Main pane content.
+    pub(crate) search: ContentSearch,
     pub(crate) layout: Columns,
     /// Open dialogs and text rows, bottom to top. See `dialogs.rs`.
     pub(crate) dialogs: Vec<Entry>,
@@ -313,6 +317,7 @@ impl App {
             subs: SubIssueLoads::new(),
             quit: false,
             hits: HitAreas::default(),
+            search: ContentSearch::default(),
             layout: Columns::default(),
             dialogs: Vec::new(),
             refs: RefsPane::new(),

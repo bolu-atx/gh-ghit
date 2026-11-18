@@ -159,6 +159,23 @@ pub fn line_hl() -> Color {
         _ => Color::DarkGray,
     }
 }
+/// Background of a content-search match: amber mixed 40% into the
+/// background, so the matched text stays legible.
+pub fn search_match() -> Style {
+    let bg = match (pal().ink, pal().amber) {
+        (Color::Rgb(ir, ig, ib), Color::Rgb(ar, ag, ab)) => {
+            let mix = |i: u8, a: u8| (i as f32 + (a as f32 - i as f32) * 0.4) as u8;
+            Color::Rgb(mix(ir, ar), mix(ig, ag), mix(ib, ab))
+        }
+        _ => Color::DarkGray,
+    };
+    Style::new().bg(bg)
+}
+
+/// The current content-search match: solid amber with ink text.
+pub fn search_current() -> Style {
+    Style::new().bg(pal().amber).fg(pal().ink).bold()
+}
 pub fn teal() -> Color {
     pal().teal
 }
