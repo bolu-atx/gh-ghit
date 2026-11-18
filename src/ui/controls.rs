@@ -1,5 +1,5 @@
 //! Clickable controls drawn outside rows: sidebar title and footer
-//! controls, the Filters "clear all", the diff strip and the actions menu.
+//! controls, the Filters "clear all", the Main toolbar and the actions menu.
 //! Each records its rect in `app.hits` while it draws.
 
 use ratatui::layout::Rect;
@@ -54,21 +54,80 @@ pub(super) fn clear_all_control(app: &mut App, area: Rect, title: &mut Line<'sta
     }
 }
 
-/// Diff strip on the tab line, right-aligned: previous file, next file,
-/// split toggle. It draws only when the tabs leave room.
-pub(super) fn diff_strip(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
-    const TEXT: &str = "‹ › split";
-    let width = TEXT.chars().count() as u16;
-    let titles = crate::app::tab_titles("Diff View");
-    let used = titles.iter().map(|t| t.chars().count() as u16).sum::<u16>() + 6;
-    if tabs.width < used + width {
-        return;
+/// One toolbar button: its glyph, short label and action.
+struct Tool {
+    icon: &'static str,
+    label: &'static str,
+    action: Action,
+}
+
+/// Toolbar buttons of the open item, left to right. The split toggle
+/// shows on a PR's Diff view only; a merged PR cannot close or reopen.
+fn tools(app: &App) -> Vec<Tool> {
+    let Some(data) = app.nav.current.and_then(|n| app.issues.data.get(&n)) else { return vec![] };
+    let mut tools = vec![];
+    if app.visual_diff() {
+        tools.push(Tool { icon: theme::TOOL_SPLIT, label: "split", action: Action::DiffSplit });
     }
-    let x = tabs.right() - width - 1;
-    let strip = Rect::new(x, tabs.y, width, 1);
-    f.render_widget(Paragraph::new(TEXT).style(Style::new().bg(ink()).fg(muted())), strip);
-    for (dx, w, action) in [(0, 1, Action::DiffPrevFile), (2, 1, Action::DiffNextFile), (4, 5, Action::DiffSplit)] {
-        app.hits.controls.push((Rect::new(x + dx, tabs.y, w, 1), action, Pane::Main));
+    tools.push(Tool { icon: theme::TOOL_COMMENT, label: "comment", action: Action::Comment });
+    match data.state.as_str() {
+        "MERGED" => {}
+        "CLOSED" => tools.push(Tool { icon: theme::TOOL_REOPEN, label: "reopen", action: Action::CloseItem }),
+        _ => tools.push(Tool { icon: theme::TOOL_CLOSE, label: "close", action: Action::CloseItem }),
+    }
+    tools
+}
+
+/// Gap between toolbar buttons, and the file-step arrows' own width.
+const TOOL_GAP: u16 = 2;
+const STEP_WIDTH: u16 = 3;
+
+/// Cells each button takes, with labels or icon-only. The widest form
+/// that fits `room` wins; `None` means even icons do not fit.
+fn fit_tools(tools: &[Tool], steps: bool, room: u16) -> Option<(bool, Vec<u16>)> {
+    for labeled in [true, false] {
+        let widths: Vec<u16> = tools
+            .iter()
+            .map(|t| 1 + if labeled { 1 + t.label.chars().count() as u16 } else { 0 })
+            .collect();
+        let count = widths.len() as u16 + u16::from(steps);
+        let total = widths.iter().sum::<u16>() + if steps { STEP_WIDTH } else { 0 } + count.saturating_sub(1) * TOOL_GAP;
+        if total <= room {
+            return Some((labeled, widths));
+        }
+    }
+    None
+}
+
+/// Action toolbar on the tab line, right-aligned: file stepping on a PR's
+/// Diff view, then split, comment and close or reopen. Buttons are muted
+/// icons with a short label while the tabs leave room, icons alone when
+/// tight, and nothing when the tabs need the space.
+pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
+    let tools = tools(app);
+    let steps = app.visual_diff();
+    let titles = crate::app::tab_titles(if steps { "Diff View" } else { "Graph" });
+    let used = titles.iter().map(|t| t.chars().count() as u16).sum::<u16>() + 6;
+    let Some((labeled, widths)) = fit_tools(&tools, steps, tabs.width.saturating_sub(used + 1)) else { return };
+    let total = widths.iter().sum::<u16>() + if steps { STEP_WIDTH } else { 0 } + (widths.len() as u16 + u16::from(steps)).saturating_sub(1) * TOOL_GAP;
+    let mut x = tabs.right() - total - 1;
+    let style = Style::new().bg(ink()).fg(muted());
+    let mut rects = vec![];
+    if steps {
+        f.render_widget(Paragraph::new("‹ ›").style(style), Rect::new(x, tabs.y, STEP_WIDTH, 1));
+        rects.push((Rect::new(x, tabs.y, 1, 1), Action::DiffPrevFile));
+        rects.push((Rect::new(x + 2, tabs.y, 1, 1), Action::DiffNextFile));
+        x += STEP_WIDTH + TOOL_GAP;
+    }
+    for tool in &tools {
+        let text = if labeled { format!("{} {}", tool.icon, tool.label) } else { tool.icon.to_string() };
+        let rect = Rect::new(x, tabs.y, text.chars().count() as u16, 1);
+        f.render_widget(Paragraph::new(text).style(style), rect);
+        x += rect.width + TOOL_GAP;
+        rects.push((rect, tool.action));
+    }
+    for (rect, action) in rects {
+        app.hits.controls.push((rect, action, Pane::Main));
     }
 }
 

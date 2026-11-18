@@ -13,7 +13,7 @@ pub use sections::{merge_rows, sections, MAX_SECTION_ROWS};
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};
 use client::{
-    client, get, graphql_auth_failure, graphql_url, http_fail, post_json, rest_base,
+    client, get, graphql_auth_failure, graphql_url, http_fail, patch_json, post_json, rest_base,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -414,6 +414,14 @@ pub async fn add_comment(repo: &str, number: u64, body: &str, bearer: &str) -> R
     }
     let base = rest_base();
     post_json(&client(), &format!("{base}/repos/{repo}/issues/{number}/comments"), bearer, &json!({"body": body})).await?;
+    Ok(())
+}
+
+/// Close or reopen an issue or PR through REST `PATCH issues/{n}`.
+pub async fn set_state(repo: &str, number: u64, open: bool, bearer: &str) -> Result<(), String> {
+    let base = rest_base();
+    let state = if open { "open" } else { "closed" };
+    patch_json(&client(), &format!("{base}/repos/{repo}/issues/{number}"), bearer, &json!({"state": state})).await?;
     Ok(())
 }
 

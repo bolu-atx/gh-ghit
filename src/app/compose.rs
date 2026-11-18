@@ -59,6 +59,9 @@ pub(crate) struct ComposeSlot {
     pub(crate) review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
     pub(crate) review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
     pub(crate) submitting: HashSet<u64>,
+    /// Close and reopen results: number, the state asked for, outcome.
+    pub(crate) state_tx: std::sync::mpsc::Sender<(u64, bool, Result<(), String>)>,
+    pub(crate) state_rx: std::sync::mpsc::Receiver<(u64, bool, Result<(), String>)>,
 }
 
 impl ComposeSlot {
@@ -68,8 +71,9 @@ impl ComposeSlot {
         review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
         review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
     ) -> Self {
+        let (state_tx, state_rx) = std::sync::mpsc::channel();
         Self { editor_requested: false, tx, rx, review_tx, review_rx,
-            submitting: HashSet::new() }
+            submitting: HashSet::new(), state_tx, state_rx }
     }
 }
 

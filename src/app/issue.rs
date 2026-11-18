@@ -315,15 +315,19 @@ impl App {
         self.load_issue(n, true);
         self.load_diff(n, true);
         self.load_graph(n, true);
-        // A search listing refreshes from the server; a window listing
-        // re-appends (idempotent through the contains checks in polling).
+        self.refresh_listing();
+        self.notify(format!("refreshed #{n}"));
+    }
+
+    /// A search listing refreshes from the server; a window listing
+    /// re-appends (idempotent through the contains checks in polling).
+    pub(crate) fn refresh_listing(&mut self) {
         if self.sidebar.query_active.trim().is_empty() {
             self.merge_recent_sections();
         } else {
             let q = self.sidebar.query_active.clone();
             self.run_gh_search(q);
         }
-        self.notify(format!("refreshed #{n}"));
     }
 
     /// Full yank text for the current context, without side effects.

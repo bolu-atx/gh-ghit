@@ -395,3 +395,11 @@ fn help_opens_from_every_non_text_dialog() {
     assert_eq!(resolve(&app, key(KeyCode::Char('?'))), Some(Action::ShowHelp));
     assert_eq!(resolve(&app, key(KeyCode::Char('q'))), Some(Action::CloseFormat));
 }
+
+#[test]
+fn close_item_has_key_mouse_and_hint() {
+    let binding = describe(Action::CloseItem).expect("bound");
+    assert_eq!(binding.key, KeyCode::Char('C'));
+    assert_eq!(binding.mouse, Gesture::Title);
+    assert!(binding.hint.is_some());
+}

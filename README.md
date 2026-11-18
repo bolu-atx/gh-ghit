@@ -103,6 +103,7 @@ The essentials:
 | `:` / `/` | Command bar / find |
 | `f` / `b` / `F` | Format and filter / board / search GitHub |
 | `c` | Comment |
+| `C` | Close the open issue or PR, or reopen it (asks first) |
 | `u` | Undo the last evict or saved-query delete (within 4 s) |
 | `m` | Actions menu for the focused row (same as right-click) |
 | `Ctrl+O` / `Ctrl+I` | Back / forward in history |
@@ -123,6 +124,7 @@ The only keyboard-only keys are text editing, aliases of another key, and scroll
 - **Right-click** a row, reference, card or the Main body for a menu of its actions, with their keys. The repo name in the status bar opens a global menu: refresh, theme, board, help and quit.
 - **Wheel** scrolls the pane under the pointer. In the Format dialog and the board filter it moves between fields.
 - **Pane titles and footers** are controls: click the sort word to change the sort, its arrow to reverse it, or the list state to open Format.
+- **The Main tab line** carries a toolbar for the open item: comment, close or reopen, and on a PR's Diff view the split toggle and file stepping. Close and reopen ask first. Labels drop to icons when the pane is narrow.
 - **Dialog footers** are clickable. A click outside a dialog closes it.
 - Click a link or `#123` reference in the body to open it.
 - Press `?` to see all shortcuts.
