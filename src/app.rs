@@ -489,6 +489,10 @@ pub(crate) struct DiffView {
     pub(crate) expanded_rows: HashSet<u64>,
     /// Visible buffer rows of the diff file headers, in file order.
     pub(crate) headers: Vec<usize>,
+    /// A `J`/`K` jump awaiting the next render: target file index and
+    /// direction. Only render knows the body layout after the jump's own
+    /// fold change, so it resolves the scroll offset (`finish_diff_jump`).
+    pub(crate) pending_jump: Option<(usize, isize)>,
     pub(crate) pending: HashSet<u64>,
     pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
@@ -502,7 +506,7 @@ impl DiffView {
     ) -> Self {
         Self { files: HashMap::new(), cursor: 0, line: None, touched: false,
             row_files: vec![], expanded_files: HashSet::new(), expanded_rows: HashSet::new(),
-            headers: vec![], pending: HashSet::new(), tx, rx, split: false }
+            headers: vec![], pending_jump: None, pending: HashSet::new(), tx, rx, split: false }
     }
 }
 
@@ -647,6 +651,11 @@ pub(crate) struct HitAreas {
     pub(crate) side_pr_area: Rect,
     pub(crate) side_issue_rows: Vec<model::SideRow>,
     pub(crate) side_pr_rows: Vec<model::SideRow>,
+    /// Drawn height of each row in the matching `*_rows` list, recorded by
+    /// `render` (an expanded row includes its detail block).
+    pub(crate) side_issue_heights: Vec<usize>,
+    pub(crate) side_pr_heights: Vec<usize>,
+    pub(crate) ref_heights: Vec<usize>,
     pub(crate) refs_area: Rect,
     pub(crate) labels_area: Rect,
     /// Labels pane rows as drawn: rect plus the `filter_items` index.
@@ -1905,10 +1914,10 @@ impl App {
     }
 
     /// `J`/`K` jumps between diff file headers, landing the target header
-    /// at the top of the viewport. The offset is measured with the same
-    /// widget and width the body renders, so the landing matches exactly;
-    /// past the scan cap it falls back to the next visible header, then to
-    /// a page scroll. Clamped at the first and last file.
+    /// at the top of the viewport. The jump unfolds the target and records
+    /// it in `diff.pending_jump`; the next render measures the header with
+    /// the widget and width the body uses, so the landing matches exactly.
+    /// Clamped at the first and last file.
     pub(crate) fn jump_diff_file(&mut self, delta: isize) {
         if !self.visual_diff() {
             return;
@@ -1918,7 +1927,11 @@ impl App {
         if count == 0 {
             return;
         }
-        let cur = self.diff_file_at_cursor().unwrap_or(self.diff.cursor).min(count - 1);
+        let cur = match self.diff.pending_jump {
+            Some((fi, _)) => fi,
+            None => self.diff_file_at_cursor().unwrap_or(self.diff.cursor),
+        }
+        .min(count - 1);
         let next = (cur as isize + delta).clamp(0, count as isize - 1) as usize;
         if next == cur {
             return;
@@ -1932,15 +1945,21 @@ impl App {
                 self.diff.expanded_files.insert((n, f.filename.clone()));
             }
         }
-        if let Some(off) = crate::ui::diff_header_offset(self, next, delta) {
+        self.diff.pending_jump = Some((next, delta));
+    }
+
+    /// Land a pending `J`/`K` jump on the header offset `render` measured.
+    /// When render found none (cap hit, header cannot fit), fall back to
+    /// the next visible header in this direction (headers run in file
+    /// order, so it owns the adjacent file), else a page scroll toward it.
+    /// The next render re-resolves the file from the line.
+    pub(crate) fn finish_diff_jump(&mut self, delta: isize, offset: Option<u16>) {
+        if let Some(off) = offset {
             self.nav.scroll = off;
             self.diff.line = Some(usize::from(off));
             self.diff.touched = true;
             return;
         }
-        // Fallback: the next visible header in this direction (headers run
-        // in file order, so it owns the adjacent file), else a page scroll
-        // toward it. The next render re-resolves the file from the line.
         let base = usize::from(self.hits.body_base);
         let cur_vis = self.diff.line.map(|abs| abs.saturating_sub(base));
         let mut headers = self.diff.headers.clone();

@@ -186,48 +186,23 @@ fn toggle_board_focused(app: &mut App) {
     }
 }
 
-/// Visible height of one sidebar row: 3 lines per `Item` with 1-line
-/// labeled dividers. An expanded row adds the wrapped detail block its
-/// render draws, measured with the same inner width.
-fn sidebar_row_height(
-    row: &crate::model::SideRow,
-    data: &std::collections::HashMap<u64, crate::model::IssueData>,
-    expanded: &std::collections::HashSet<u64>,
-    inner_width: usize,
-) -> usize {
-    match row.number() {
-        Some(n) => {
-            let detail = match data.get(&n) {
-                Some(d) if expanded.contains(&n) => {
-                    crate::ui::expanded_row_height(d, inner_width)
-                }
-                _ => 0,
-            };
-            3 + detail
-        }
-        None => 1,
-    }
-}
-
 /// Sidebar rows are 3 lines each (`Item`) with 1-line labeled dividers,
 /// below a 1-line border plus a 1-line spacer. Dividers never hit.
-/// Takes the render-cached pane rows by borrow (no clone, no recompute):
-/// the caller holds what `render` recorded for this frame.
+/// Takes the render-cached pane rows and their drawn heights by borrow
+/// (no clone, no recompute): the caller holds what `render` recorded for
+/// this frame.
 fn sidebar_hit(
     area: Rect,
     rows: &[crate::model::SideRow],
-    data: &std::collections::HashMap<u64, crate::model::IssueData>,
-    expanded: &std::collections::HashSet<u64>,
+    heights: &[usize],
     x: u16,
     y: u16,
 ) -> Option<u64> {
     if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
-    let inner_width = (area.width as usize).saturating_sub(2);
     let mut rel = (y - area.y - 2) as usize;
-    for row in rows {
-        let h = sidebar_row_height(row, data, expanded, inner_width);
+    for (row, &h) in rows.iter().zip(heights) {
         if rel < h {
             return row.number();
         }
@@ -242,17 +217,15 @@ fn sidebar_hit(
 fn sidebar_row_rect(
     area: Rect,
     rows: &[crate::model::SideRow],
-    data: &std::collections::HashMap<u64, crate::model::IssueData>,
-    expanded: &std::collections::HashSet<u64>,
+    heights: &[usize],
     target: u64,
 ) -> Option<Rect> {
     if area.width == 0 {
         return None;
     }
-    let inner_width = (area.width as usize).saturating_sub(2);
     let mut rel: u16 = 0;
-    for row in rows {
-        let h = sidebar_row_height(row, data, expanded, inner_width) as u16;
+    for (row, &h) in rows.iter().zip(heights) {
+        let h = h as u16;
         if row.number() == Some(target) {
             return Some(Rect::new(area.x, area.y + 2 + rel, area.width, h));
         }
@@ -563,8 +536,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     let issue_hit = sidebar_hit(
         app.hits.side_issue_area,
         &app.hits.side_issue_rows,
-        &app.issues.data,
-        &app.diff.expanded_rows,
+        &app.hits.side_issue_heights,
         x,
         y,
     );
@@ -575,7 +547,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             {
                 let glyph_x = app.hits.side_issue_area.x + 3 + 2 * (depth as u16);
                 let rect = sidebar_row_rect(app.hits.side_issue_area, &app.hits.side_issue_rows,
-                    &app.issues.data, &app.diff.expanded_rows, n);
+                    &app.hits.side_issue_heights, n);
                 if x == glyph_x && rect.is_some_and(|rect| y == rect.y) {
                     if folded {
                         app.sidebar.folded_issues.remove(&n);
@@ -592,8 +564,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         let flash = sidebar_row_rect(
             app.hits.side_issue_area,
             &app.hits.side_issue_rows,
-            &app.issues.data,
-            &app.diff.expanded_rows,
+            &app.hits.side_issue_heights,
             n,
         );
         // A press on the already-visible row files it under requested
@@ -622,8 +593,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     let pr_hit = sidebar_hit(
         app.hits.side_pr_area,
         &app.hits.side_pr_rows,
-        &app.issues.data,
-        &app.diff.expanded_rows,
+        &app.hits.side_pr_heights,
         x,
         y,
     );
@@ -631,8 +601,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         let flash = sidebar_row_rect(
             app.hits.side_pr_area,
             &app.hits.side_pr_rows,
-            &app.issues.data,
-            &app.diff.expanded_rows,
+            &app.hits.side_pr_heights,
             n,
         );
         if !drag
@@ -660,8 +629,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     let ref_hit = sidebar_hit(
         app.hits.refs_area,
         &app.hits.ref_rows,
-        &app.issues.data,
-        &app.diff.expanded_rows,
+        &app.hits.ref_heights,
         x,
         y,
     );
@@ -669,8 +637,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         let flash = sidebar_row_rect(
             app.hits.refs_area,
             &app.hits.ref_rows,
-            &app.issues.data,
-            &app.diff.expanded_rows,
+            &app.hits.ref_heights,
             n,
         );
         app.nav.focus = Focus::Main;
@@ -810,24 +777,28 @@ mod tests {
         let rows = app.issue_rows();
         assert_eq!(rows, vec![SideRow::Item(7), SideRow::Item(9)]);
 
-        let area = Rect::new(0, 0, 40, 40);
-        let inner_width = (area.width as usize) - 2;
-        let detail = crate::ui::expanded_row_height(app.issues.data.get(&7).unwrap(), inner_width);
-        assert!(detail > 3, "detail block is tall enough to span a row: {detail}");
-
-        // Collapsed geometry still applies: row 7 hits its own summary.
-        assert_eq!(sidebar_hit(area, &rows, &app.issues.data, &app.diff.expanded_rows, 5, area.y + 2), Some(7));
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).unwrap();
+        let area = app.hits.side_issue_area;
+        assert_eq!(app.hits.side_issue_heights, vec![3, 3]);
+        assert_eq!(sidebar_hit(area, &app.hits.side_issue_rows, &app.hits.side_issue_heights, 5, area.y + 2), Some(7));
 
         app.diff.expanded_rows.insert(7);
+        terminal.draw(|f| crate::app::draw_frame(f, &mut app)).unwrap();
+        let heights = app.hits.side_issue_heights.clone();
+        let rows = app.hits.side_issue_rows.clone();
+        let detail = heights[0] - 3;
+        assert!(detail > 3, "detail block is tall enough to span a row: {detail}");
+        assert_eq!(heights[1], 3);
         // Every line of the detail block belongs to the expanded row.
         let detail_top = area.y + 4;
         for y in detail_top..detail_top + detail as u16 {
-            assert_eq!(sidebar_hit(area, &rows, &app.issues.data, &app.diff.expanded_rows, 5, y), Some(7), "detail line {y}");
+            assert_eq!(sidebar_hit(area, &rows, &heights, 5, y), Some(7), "detail line {y}");
         }
         // Row 9 starts only after the detail block plus the item's blank tail.
         let row9_top = area.y + 2 + 3 + detail as u16;
         for y in row9_top..row9_top + 3 {
-            assert_eq!(sidebar_hit(area, &rows, &app.issues.data, &app.diff.expanded_rows, 5, y), Some(9), "row 9 line {y}");
+            assert_eq!(sidebar_hit(area, &rows, &heights, 5, y), Some(9), "row 9 line {y}");
         }
     }
 
@@ -881,9 +852,11 @@ mod tests {
                 .map(|row| if row.number().is_some() { 3 } else { 1 }).sum::<u16>();
             if is_pr {
                 app.hits.side_pr_area = area;
+                app.hits.side_pr_heights = rows.iter().map(|row| if row.number().is_some() { 3 } else { 1 }).collect();
                 app.hits.side_pr_rows = rows.clone();
             } else {
                 app.hits.side_issue_area = area;
+                app.hits.side_issue_heights = rows.iter().map(|row| if row.number().is_some() { 3 } else { 1 }).collect();
                 app.hits.side_issue_rows = rows.clone();
             }
             let click = wheel(MouseEventKind::Down(MouseButton::Left), 5, y);
