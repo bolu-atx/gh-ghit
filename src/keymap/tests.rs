@@ -293,7 +293,7 @@ fn compose_chords_need_exact_modifiers() {
         body: String::new(),
         cursor: 0,
         sending: false,
-        kill: String::new(),
+        kill: String::new(), view: Default::default(),
     });
     assert_eq!(resolve(&app, ctrl('S')), Some(Action::ComposeSend), "chord letters fold case");
     assert_eq!(resolve(&app, key(KeyCode::Char('s'))), None, "plain s types");

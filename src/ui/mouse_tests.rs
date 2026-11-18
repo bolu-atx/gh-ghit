@@ -455,6 +455,25 @@ fn toolbar_split_shows_on_the_pr_diff_view_only() {
 }
 
 #[test]
+fn toolbar_buttons_show_their_keys_and_keep_them_when_labels_drop() {
+    let (comment, close, split) = (crate::theme::TOOL_COMMENT, crate::theme::TOOL_CLOSE, crate::theme::TOOL_SPLIT);
+    let mut wide = open_item(9, Tab::Visual);
+    let line = tab_line(&frame_text_sized(&mut wide, 140, H));
+    for want in [format!("s {split} split"), format!("c {comment} comment"), format!("C {close} close")] {
+        assert!(line.contains(&want), "{want}: {line}");
+    }
+    let narrow = (60..140).rev().find_map(|w| {
+        let mut app = open_item(9, Tab::Visual);
+        let line = tab_line(&frame_text_sized(&mut app, w, H));
+        (!line.contains("comment") && line.contains(comment)).then_some(line)
+    });
+    let line = narrow.expect("an icons-and-keys tier exists");
+    for want in [format!("s {split}"), format!("c {comment}"), format!("C {close}")] {
+        assert!(line.contains(&want), "{want}: {line}");
+    }
+}
+
+#[test]
 fn toolbar_drops_labels_then_hides_as_the_pane_narrows() {
     let widths = |w: u16| {
         let mut app = open_item(9, Tab::Visual);

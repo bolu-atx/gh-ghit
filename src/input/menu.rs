@@ -97,7 +97,16 @@ pub(super) fn legend_click(app: &mut App, m: &MouseEvent) -> bool {
 /// keep the panes behind them out of reach. Their footer hints click, the
 /// help screen scrolls with the wheel and closes on an outside click.
 pub(super) fn handle_modal_mouse(app: &mut App, m: MouseEvent, help: bool) {
-    if legend_click(app, &m) || !help {
+    if legend_click(app, &m) {
+        return;
+    }
+    if !help {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => app.compose_click(m.column, m.row),
+            MouseEventKind::ScrollDown => app.compose_scroll(3),
+            MouseEventKind::ScrollUp => app.compose_scroll(-3),
+            _ => {}
+        }
         return;
     }
     match m.kind {

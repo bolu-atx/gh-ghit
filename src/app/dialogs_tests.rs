@@ -14,7 +14,7 @@ fn top(app: &App) -> Layer {
 fn draft() -> ComposeState {
     ComposeState {
         number: 1, target: crate::app::ComposeTarget::Thread, body: String::new(),
-        cursor: 0, sending: false, kill: String::new(),
+        cursor: 0, sending: false, kill: String::new(), view: Default::default(),
     }
 }
 

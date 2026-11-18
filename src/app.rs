@@ -208,6 +208,8 @@ pub(crate) struct HitAreas {
     pub(crate) controls: Vec<(Rect, crate::keymap::Action, Pane)>,
     /// Dialog footer hints: rect plus the action a click runs.
     pub(crate) legend: Vec<(Rect, crate::keymap::Action)>,
+    /// Text cells of the compose modal as drawn; empty while closed.
+    pub(crate) compose_text: Rect,
     /// Rect of the top dialog; a click outside it dismisses the dialog.
     pub(crate) popup: Rect,
     /// Menu rows as drawn: rect plus entry index.

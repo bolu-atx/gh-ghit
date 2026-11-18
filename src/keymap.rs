@@ -53,7 +53,7 @@ actions! {
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen,
     // Shortcuts, confirm, compose.
     CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
-    ComposeSend, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
+    ComposeSend, ComposeTogglePreview, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
     ComposeUp, ComposeDown, ComposeBackspace, ComposeDelete, ComposeKillEnd, ComposeKillStart,
     ComposeDeleteWordBack, ComposeYank, ComposeTranspose, ComposeNewline, ComposeTab,
     ComposeWordBack, ComposeWordForward, ComposeDeleteWordForward,

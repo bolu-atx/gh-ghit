@@ -333,7 +333,7 @@ fn auto_refresh_guards_each_active_view() {
             0 => app.sections.rx = Some(rx),
             1 => { app.board.loading = true; app.open(crate::app::Entry::Board); }
             2 => { app.board.data = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }); app.open(crate::app::Entry::Board); }
-            3 => app.open_draft(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
+            3 => app.open_draft(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new(), view: Default::default() }),
             4 => app.open(crate::app::Entry::Format(crate::app::FormatEdit::None)),
             5 => app.open(crate::app::Entry::Shortcuts),
             6 => app.nav.focus = Focus::Bar,

@@ -5,6 +5,7 @@
 //! during `render`; `input` consumes them on the next event.
 
 mod board;
+mod compose;
 mod controls;
 mod dialogs;
 mod diff;
@@ -16,6 +17,8 @@ mod status;
 
 #[cfg(test)]
 mod board_tests;
+#[cfg(test)]
+mod compose_tests;
 #[cfg(test)]
 mod dialogs_tests;
 #[cfg(test)]
@@ -46,7 +49,8 @@ use crate::app::App;
 use crate::model::self;
 use crate::theme;
 use board::render_board;
-use dialogs::{render_confirm, render_filter, render_compose};
+use compose::render_compose;
+use dialogs::{render_confirm, render_filter};
 use diff::diff_header_offset;
 use main_pane::render_main;
 use sidebar::{render_sidebar, render_refs, render_labels, render_history};

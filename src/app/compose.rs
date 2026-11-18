@@ -23,11 +23,16 @@ pub(crate) enum ComposeTarget {
 }
 
 impl ComposeTarget {
-    pub(crate) fn title(&self, number: u64) -> String {
+    /// Title naming what the draft answers; a thread comment adds the
+    /// item's title when it is loaded.
+    pub(crate) fn title(&self, number: u64, item_title: Option<&str>) -> String {
         match self {
-            ComposeTarget::Thread => format!("Comment · thread #{number}"),
-            ComposeTarget::Line { path, line } => format!("Comment · {path}:{line}"),
-            ComposeTarget::Reply { .. } => format!("Reply · #{number}"),
+            ComposeTarget::Thread => match item_title {
+                Some(title) => format!("Comment on #{number}  {title}"),
+                None => format!("Comment on #{number}"),
+            },
+            ComposeTarget::Line { path, line } => format!("Line comment  {path}:{line}"),
+            ComposeTarget::Reply { .. } => format!("Reply on #{number}"),
         }
     }
 }
@@ -43,6 +48,18 @@ pub(crate) struct ComposeState {
     pub(crate) cursor: usize,
     pub(crate) sending: bool,
     pub(crate) kill: String,
+    pub(crate) view: ComposeView,
+}
+
+/// How the modal shows the draft: Write or Preview, the first visual row
+/// (or preview line) in view, and the cursor `scroll` last followed.
+/// Render follows the cursor only when it moved since then, so the wheel
+/// can scroll away from it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ComposeView {
+    pub(crate) preview: bool,
+    pub(crate) scroll: usize,
+    pub(crate) followed: Option<usize>,
 }
 
 /// Compose slot: the `$EDITOR` handoff flag, the
@@ -97,7 +114,7 @@ impl App {
             return;
         }
         let target = self.compose_target().unwrap_or(ComposeTarget::Thread);
-        self.open_draft(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new() });
+        self.open_draft(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new(), view: ComposeView::default() });
     }
 
     /// Comment target for the active diff line, or `None` for a plain
@@ -146,6 +163,7 @@ impl App {
         if s.sending {
             return;
         }
+        s.view.preview = false;
         let cursor = s.cursor.min(s.body.chars().count());
         let byte = Self::compose_byte(&s.body, cursor);
         s.body.insert(byte, c);
@@ -158,6 +176,7 @@ impl App {
         if s.sending || s.cursor == 0 {
             return;
         }
+        s.view.preview = false;
         let cursor = s.cursor.min(s.body.chars().count());
         let end = Self::compose_byte(&s.body, cursor);
         let start = Self::compose_byte(&s.body, cursor - 1);
@@ -172,19 +191,45 @@ impl App {
         s.cursor = s.cursor.saturating_add_signed(delta).min(len);
     }
 
-    /// Step the cursor one visual line up or down, keeping the column.
+    /// Step the cursor one visual row up or down, keeping the column.
+    /// Rows wrap at the width the modal last drew; before a first draw
+    /// they are the logical lines.
     pub(crate) fn compose_line(&mut self, delta: isize) {
+        let cells = match self.hits.compose_text.width {
+            0 => usize::MAX,
+            width => width as usize,
+        };
         let Some(s) = self.draft_mut() else { return };
-        let cursor = s.cursor.min(s.body.chars().count());
-        let chars: Vec<char> = s.body.chars().collect();
-        let head: String = chars[..cursor].iter().collect();
-        let row = head.matches('\n').count() as isize;
-        let col = head.rsplit('\n').next().map(|l| l.chars().count()).unwrap_or(0) as isize;
-        let lines: Vec<&str> = s.body.split('\n').collect();
-        let next_row = (row + delta).clamp(0, lines.len() as isize - 1) as usize;
-        let next_col = col.min(lines[next_row].chars().count() as isize).max(0) as usize;
-        let base: usize = lines[..next_row].iter().map(|l| l.chars().count() + 1).sum();
-        s.cursor = base + next_col;
+        let rows = crate::core::text_rows(&s.body, cells);
+        let (row, col) = crate::core::cursor_pos(&rows, s.cursor.min(s.body.chars().count()));
+        let next = row.saturating_add_signed(delta).min(rows.len() - 1);
+        s.cursor = crate::core::index_at(&rows, next, col);
+    }
+
+    /// Flip between Write and Preview (`Ctrl+R`).
+    pub(crate) fn compose_toggle_preview(&mut self) {
+        let Some(s) = self.draft_mut() else { return };
+        s.view = ComposeView { preview: !s.view.preview, scroll: 0, followed: None };
+    }
+
+    /// Scroll the draft or its preview by `delta` rows (wheel). Render
+    /// clamps the offset to the content.
+    pub(crate) fn compose_scroll(&mut self, delta: isize) {
+        let Some(s) = self.draft_mut() else { return };
+        s.view.scroll = s.view.scroll.saturating_add_signed(delta);
+    }
+
+    /// Put the cursor at the char under a click in the text area.
+    pub(crate) fn compose_click(&mut self, column: u16, row: u16) {
+        let (text, popup) = (self.hits.compose_text, self.hits.popup);
+        let Some(s) = self.draft_mut() else { return };
+        let inside = row >= text.y && row < text.bottom() && column >= popup.x && column < popup.right();
+        if s.sending || s.view.preview || !inside {
+            return;
+        }
+        let rows = crate::core::text_rows(&s.body, text.width as usize);
+        let visual = s.view.scroll + row.saturating_sub(text.y) as usize;
+        s.cursor = crate::core::index_at(&rows, visual, column.saturating_sub(text.x) as usize);
     }
 
     /// Line start of the cursor: the char after the previous `\n`, or 0.

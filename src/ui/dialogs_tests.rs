@@ -343,7 +343,7 @@ fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
 }
 
 #[test]
-fn compose_modal_shows_thread_target_and_preview() {
+fn compose_modal_shows_thread_target_and_draft() {
     let mut app = loaded_app();
     handle_key(&mut app, key(KeyCode::Char('c')));
     assert!(app.compose_open());
@@ -351,11 +351,9 @@ fn compose_modal_shows_thread_target_and_preview() {
         handle_key(&mut app, key(KeyCode::Char(ch)));
     }
     let text = frame_text(&mut app);
-    assert!(text.contains("Compose"), "{text}");
-    assert!(text.contains("thread #7"), "{text}");
-    assert!(text.contains("hi"), "draft plus preview: {text}");
-    assert!(text.contains("preview"), "{text}");
-    assert!(text.contains("ctrl-s send · esc discard"), "{text}");
+    assert!(text.contains("Comment on #7"), "{text}");
+    assert!(text.contains("# hi"), "draft: {text}");
+    assert!(text.contains("ctrl-s send · ctrl-r preview"), "{text}");
 }
 
 #[test]
@@ -430,7 +428,7 @@ fn compose_on_thread_block_targets_the_reply() {
         Some(crate::app::ComposeTarget::Reply { thread_id: "t1".into() }),
     );
     let text = frame_text(&mut app);
-    assert!(text.contains("Reply · #9"), "{text}");
+    assert!(text.contains("Reply on #9"), "{text}");
 }
 
 #[test]
@@ -442,7 +440,7 @@ fn compose_modal_shows_reply_target_and_discards() {
         body: "reply".into(),
         cursor: 5,
         sending: false,
-        kill: String::new(),
+        kill: String::new(), view: Default::default(),
     });
     let text = frame_text(&mut app);
     assert!(text.contains("Reply"), "{text}");
