@@ -34,6 +34,8 @@ issue to one line.
 
 - UI changes need a frame test in `render_smoke` (see `src/ui.rs`).
   Do not change existing frame snapshots unless the issue asks for it.
+- Every new control needs a key binding, a mouse gesture, and a hint
+  (status bar or help). If one is impossible, say why in the PR.
 - Fill in the PR template. Paste real command output under
   Verification. Do not claim checks you did not run.
 

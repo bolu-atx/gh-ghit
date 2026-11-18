@@ -25,6 +25,8 @@ Cross-layer changes (e.g. a new data field shown in the UI) go data-first:
 3. `cargo test` — full suite, zero failures.
 4. Live drive for anything interactive (below). Fix what you see, then
    re-run from step 1.
+   4b. Every new control has a key binding, a mouse gesture, and a hint.
+   If one is missing, the PR records why.
 
 ## Live drive procedure
 
