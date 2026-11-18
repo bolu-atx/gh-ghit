@@ -741,6 +741,24 @@ impl App {
         }
     }
 
+    /// Per-pane loading flags for the pane spinners and skeletons.
+    pub(crate) fn pane_loading(&self) -> core::PaneLoading {
+        let shown = self.nav.current.or(self.nav.requested);
+        let refs_pending = self
+            .refs
+            .numbers
+            .iter()
+            .chain(self.refs.paired.iter())
+            .any(|n| self.issues.pending.contains(n));
+        core::pane_loading(&core::PaneInputs {
+            sections_live: self.sections.rx.is_some(),
+            bootstrap_live: self.auth.bootstrap_rx.is_some(),
+            requested_pending: self.nav.requested.is_some_and(|n| self.issues.pending.contains(&n)),
+            shown_cached: shown.is_some_and(|n| self.issues.data.contains_key(&n)),
+            refs_pending,
+        })
+    }
+
     pub(crate) fn repo_key(&self) -> Option<String> {
         let r = self
             .repo_flag

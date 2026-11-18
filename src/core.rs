@@ -240,6 +240,37 @@ pub fn loading(s: &FetchState) -> Vec<LoadingItem> {
     out
 }
 
+/// Plain inputs for per-pane loading: what is in flight and whether the
+/// pane already has something to show.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PaneInputs {
+    pub sections_live: bool,
+    pub bootstrap_live: bool,
+    pub requested_pending: bool,
+    pub shown_cached: bool,
+    pub refs_pending: bool,
+}
+
+/// Which panes show their own spinner or skeleton right now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PaneLoading {
+    pub sidebar: bool,
+    pub main: bool,
+    pub main_spinner: bool,
+    pub refs: bool,
+}
+
+/// Pane-level loading. The main skeleton only shows while nothing is
+/// cached for the pane; a cached issue keeps its text during a refresh.
+pub fn pane_loading(i: &PaneInputs) -> PaneLoading {
+    PaneLoading {
+        sidebar: i.sections_live || i.bootstrap_live,
+        main: i.requested_pending && !i.shown_cached,
+        main_spinner: i.requested_pending,
+        refs: i.refs_pending,
+    }
+}
+
 /// Bar text for the in-flight list, without the spinner glyph: plain
 /// labels joined with ` · `, determinate `n/m` where known.
 pub fn loading_label(items: &[LoadingItem]) -> String {
@@ -786,6 +817,20 @@ mod tests {
     #[test]
     fn loading_idle_means_empty() {
         assert_eq!(loading(&FetchState::default()), vec![]);
+    }
+
+    #[test]
+    fn pane_loading_maps_fetches_to_panes() {
+        assert_eq!(pane_loading(&PaneInputs::default()), PaneLoading::default());
+        let sidebar = PaneInputs { bootstrap_live: true, ..PaneInputs::default() };
+        assert_eq!(pane_loading(&sidebar), PaneLoading { sidebar: true, ..PaneLoading::default() });
+        let fresh = PaneInputs { requested_pending: true, ..PaneInputs::default() };
+        assert!(pane_loading(&fresh).main && pane_loading(&fresh).main_spinner);
+        let cached = PaneInputs { requested_pending: true, shown_cached: true, ..PaneInputs::default() };
+        assert!(!pane_loading(&cached).main, "cached text stays during refresh");
+        assert!(pane_loading(&cached).main_spinner, "spinner still shows");
+        let refs = PaneInputs { refs_pending: true, ..PaneInputs::default() };
+        assert!(pane_loading(&refs).refs);
     }
 
     #[test]

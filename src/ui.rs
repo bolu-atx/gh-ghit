@@ -904,6 +904,7 @@ struct SectionFrame {
     footer: Line<'static>,
     fields: model::RowFields,
     checks: bool,
+    loading: bool,
 }
 
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
@@ -1048,6 +1049,9 @@ fn section_list(
         }
         lines.push(Line::from(""));
         items.push(ListItem::new(lines));
+    }
+    if rows.is_empty() && frame.loading {
+        items.extend(skeleton_lines(4).chunks(3).map(|c| ListItem::new(c.to_vec())));
     }
     let border = if focused { amber() } else { muted() };
     List::new(items)
@@ -1515,6 +1519,36 @@ fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line
     Line::from(vec![icon_span, name_span, detail_span])
 }
 
+/// Braille frame for the current tick; the bar and pane titles share it.
+fn spinner_frame(tick: u64) -> &'static str {
+    SPINNER[(tick as usize) % SPINNER.len()]
+}
+
+/// Append the spinner to a pane title while that pane's data is in flight.
+fn spinning(mut title: Line<'static>, loading: bool, tick: u64) -> Line<'static> {
+    if loading {
+        title.spans.push(Span::styled(
+            format!(" {}", spinner_frame(tick)),
+            Style::new().fg(theme::amber()),
+        ));
+    }
+    title
+}
+
+/// Ghost rows for a pane with nothing to show yet.
+fn skeleton_lines(rows: usize) -> Vec<Line<'static>> {
+    let ghost = Style::new().fg(theme::muted());
+    (0..rows)
+        .flat_map(|_| {
+            [
+                Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", ghost)),
+                Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", ghost)),
+                Line::from(""),
+            ]
+        })
+        .collect()
+}
+
 fn side_section_title(name: &str, detail: &str, icon: &str, active: bool,
     tag: Option<&str>) -> Line<'static> {
     let mut title = section_title(name, detail, icon, active);
@@ -1547,6 +1581,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
     let issue_rows = app.issue_rows();
     let pr_rows = app.pr_rows();
+    let pane = app.pane_loading();
     app.hits.side_issue_area = panes[0];
     app.hits.side_pr_area = panes[1];
     app.hits.side_issue_rows = issue_rows.clone();
@@ -1557,10 +1592,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let il = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
-            title: side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag()),
+            title: spinning(side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag()), pane.sidebar, app.tick),
             footer: footer_line(&app.side_footer(false)),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
+            loading: pane.sidebar,
         },
         &issue_rows,
         app,
@@ -1577,10 +1613,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let pl = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
-            title: side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag()),
+            title: spinning(side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag()), pane.sidebar, app.tick),
             footer: footer_line(&app.side_footer(true)),
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
+            loading: pane.sidebar,
         },
         &pr_rows,
         app,
@@ -1607,10 +1644,11 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let list = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-link.
-            title: section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
+            title: spinning(section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused), app.pane_loading().refs, app.tick),
             footer: footer_line(&app.refs_footer()),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_pr.checks,
+            loading: false,
         },
         &rows,
         app,
@@ -1881,6 +1919,14 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Span::styled(repo, Style::new().fg(muted())),
         ])],
     };
+    let mast = match mast.len() {
+        0 => mast,
+        n => {
+            let mut mast = mast;
+            mast[n - 1] = spinning(std::mem::take(&mut mast[n - 1]), app.pane_loading().main_spinner, app.tick);
+            mast
+        }
+    };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
     let main_focused = app.nav.pane == crate::app::Pane::Main;
@@ -1929,6 +1975,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 model::VisualContent::Graph => graph_text(app, d),
             },
         },
+        None if app.pane_loading().main => ratatui::text::Text::from(skeleton_lines(6)),
         None => crate::theme::render_markdown(
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
         ),
@@ -2032,7 +2079,7 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let room = (left_width as usize).saturating_sub(used + segments.len() * 3 + 2);
         if room > 0 {
             let shown = crate::core::toast_snippet(&label, room.max(1));
-            let frame = SPINNER[(app.tick as usize) % SPINNER.len()];
+            let frame = spinner_frame(app.tick);
             segments.push((format!("{frame} {shown}"), false));
         }
     }
@@ -2886,6 +2933,50 @@ mod render_smoke {
         app.auth.degraded = false;
         let text = frame_text(&mut app);
         assert!(!text.contains("auth degraded"), "a successful re-auth clears it: {text}");
+    }
+
+    #[test]
+    fn sidebar_shows_spinner_and_skeleton_while_sections_load() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.tick = 0;
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.sections.rx = Some(rx);
+        let text = sidebar_text(&mut app);
+        assert!(text.contains("Issues") && text.contains("⠋"), "title spinner: {text}");
+        assert!(text.contains("▓▓▓"), "skeleton rows: {text}");
+        app.sections.rx = None;
+        let text = sidebar_text(&mut app);
+        assert!(!text.contains("⠋") && !text.contains("▓▓▓"), "idle sidebar: {text}");
+    }
+
+    #[test]
+    fn main_shows_skeleton_while_first_issue_loads() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.nav.requested = Some(7);
+        app.issues.pending.insert(7);
+        let text = frame_text(&mut app);
+        assert!(text.contains("▓▓▓") && !text.contains("No issue loaded"), "main skeleton: {text}");
+        app.issues.pending.clear();
+        assert!(frame_text(&mut app).contains("No issue loaded"), "idle main");
+        // A cached issue keeps its text while another one is fetching.
+        let mut app = loaded_app();
+        app.tick = 0;
+        app.nav.requested = Some(12);
+        app.issues.pending.insert(12);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Fix the thing ⠋"), "main spinner: {text}");
+        assert!(!text.contains("▓▓▓"), "no skeleton over cached text: {text}");
+    }
+
+    #[test]
+    fn refs_title_spins_while_mentions_fetch() {
+        let mut app = loaded_app();
+        app.issues.data.get_mut(&7).unwrap().body = "see #9".to_string();
+        app.show_issue(7);
+        app.tick = 0;
+        app.issues.pending.insert(9);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Refs") && text.contains("mentioned ⠋"), "refs spinner: {text}");
     }
 
     #[test]
