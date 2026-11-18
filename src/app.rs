@@ -598,6 +598,11 @@ pub(crate) struct HitAreas {
     /// Board header link hit areas (top-right icons): rect plus the URL
     /// to open. Rebuilt every frame in `render_board`, like `board_cells`.
     pub(crate) board_links: Vec<(Rect, String)>,
+    /// Format dialog and board filter form: the popup rect (empty while
+    /// closed) and one cell per focusable widget or choice option, as
+    /// (rect, widget index, option index). Rebuilt every frame.
+    pub(crate) form_popup: Rect,
+    pub(crate) form_cells: Vec<(Rect, usize, Option<usize>)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
@@ -2292,6 +2297,44 @@ impl App {
         };
         if done {
             self.persist_prefs();
+        }
+    }
+
+    /// Pick one option of a Format dialog choice row, as a click does.
+    /// Rows mirror the render order; the number keys already set the
+    /// window directly, so a click does the same.
+    pub(crate) fn select_format_option(&mut self, option: usize) {
+        let left = self.format_left_widgets();
+        let saved = self.sidebar.saved_queries.len();
+        let focus = self.sidebar.format_focus;
+        if focus == saved + 1 {
+            if let Some(hours) = [1, 24, 168, 0].get(option).copied() {
+                self.set_window(hours);
+            }
+            return;
+        }
+        match focus.checked_sub(left) {
+            Some(0) => {
+                let next = [model::GroupBy::None, model::GroupBy::Milestone][option.min(1)];
+                if self.sidebar.group_by != next {
+                    self.sidebar.group_by = next;
+                    self.persist_prefs();
+                }
+            }
+            Some(1) => {
+                self.sidebar.sub_issue_tree = option == 1;
+                self.persist_prefs();
+            }
+            Some(2) => {
+                use core::SideSort as S;
+                if let Some(sort) = [S::Default, S::Updated, S::Author, S::State, S::Label].get(option).copied() {
+                    self.sidebar.sort = sort;
+                    self.sidebar.sort_desc = sort.natural_desc();
+                    self.persist_prefs();
+                }
+            }
+            Some(3) if self.sidebar.sort_desc != (option == 1) => self.toggle_sort_dir(),
+            _ => {}
         }
     }
 
