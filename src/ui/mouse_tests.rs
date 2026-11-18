@@ -403,3 +403,120 @@ fn the_menu_frame_shows_actions_with_keys_and_one_focus() {
     assert_eq!(doubles, 1, "only the menu wears the focus frame while it owns input");
     assert_eq!(buf[(popup.x, popup.y)].symbol(), "╔", "the menu is the focused layer");
 }
+
+fn tab_line(text: &str) -> String {
+    text.lines().find(|l| l.contains("1 Details")).expect("tab line").to_string()
+}
+
+fn toolbar_actions(app: &App) -> Vec<Action> {
+    let toolbar = [
+        Action::DiffPrevFile, Action::DiffNextFile, Action::DiffSplit, Action::Comment, Action::CloseItem,
+    ];
+    let mut found: Vec<_> = app.hits.controls.iter().filter(|(_, a, _)| toolbar.contains(a)).collect();
+    found.sort_by_key(|(rect, _, _)| rect.x);
+    found.into_iter().map(|(_, a, _)| *a).collect()
+}
+
+fn open_item(number: u64, tab: Tab) -> App {
+    let mut app = loaded_app();
+    app.show_issue(number);
+    app.set_tab(tab);
+    app
+}
+
+#[test]
+fn toolbar_on_an_issue_has_comment_and_close() {
+    let mut app = open_item(7, Tab::Details);
+    let line = tab_line(&draw(&mut app));
+    assert!(line.contains("comment") && line.contains("close") && !line.contains("split"), "{line}");
+    assert!(line.contains(crate::theme::TOOL_CLOSE));
+    assert_eq!(toolbar_actions(&app), vec![Action::Comment, Action::CloseItem]);
+}
+
+#[test]
+fn toolbar_on_a_closed_issue_reads_reopen() {
+    let mut app = open_item(7, Tab::Details);
+    app.issues.data.get_mut(&7).unwrap().state = "CLOSED".to_string();
+    let line = tab_line(&draw(&mut app));
+    assert!(line.contains("reopen") && !line.contains("close"), "{line}");
+}
+
+#[test]
+fn toolbar_split_shows_on_the_pr_diff_view_only() {
+    let mut app = open_item(9, Tab::Details);
+    assert!(!tab_line(&draw(&mut app)).contains("split"));
+    app.set_tab(Tab::Visual);
+    let line = tab_line(&draw(&mut app));
+    assert!(line.contains("‹ ›") && line.contains("split") && line.contains("comment"), "{line}");
+    assert_eq!(
+        toolbar_actions(&app),
+        vec![Action::DiffPrevFile, Action::DiffNextFile, Action::DiffSplit, Action::Comment, Action::CloseItem]
+    );
+}
+
+#[test]
+fn toolbar_drops_labels_then_hides_as_the_pane_narrows() {
+    let widths = |w: u16| {
+        let mut app = open_item(9, Tab::Visual);
+        let line = tab_line(&frame_text_sized(&mut app, w, H));
+        (line.contains("comment"), line.contains(crate::theme::TOOL_COMMENT), toolbar_actions(&app).len())
+    };
+    let (labels, icon, _) = widths(140);
+    assert!(labels && icon);
+    let mut seen_icons_only = false;
+    let mut seen_hidden = false;
+    for w in (60..140).rev() {
+        let (labels, icon, controls) = widths(w);
+        seen_icons_only |= !labels && icon;
+        seen_hidden |= !icon && controls == 0;
+    }
+    assert!(seen_icons_only, "icon-only tier never shows");
+    assert!(seen_hidden, "toolbar never hides");
+}
+
+#[test]
+fn toolbar_close_click_asks_before_writing() {
+    let mut app = open_item(7, Tab::Details);
+    draw(&mut app);
+    click_control(&mut app, Action::CloseItem);
+    let dialog = app.confirm().expect("confirm opens");
+    assert_eq!(dialog.title, "Close #7?");
+    app.confirm_cancel();
+    assert!(app.confirm().is_none());
+    assert_eq!(app.issues.data[&7].state, "OPEN", "cancel changes nothing");
+}
+
+#[test]
+fn toolbar_close_confirm_starts_the_write_and_reopen_asks_too() {
+    let mut app = open_item(7, Tab::Details);
+    app.request_set_state();
+    app.confirm_choose(0);
+    assert!(app.message.contains("closing #7"), "{}", app.message);
+    app.issues.data.get_mut(&7).unwrap().state = "CLOSED".to_string();
+    app.request_set_state();
+    assert_eq!(app.confirm().unwrap().title, "Reopen #7?");
+}
+
+#[test]
+fn toolbar_comment_click_opens_compose() {
+    let mut app = open_item(7, Tab::Details);
+    draw(&mut app);
+    click_control(&mut app, Action::Comment);
+    assert!(app.compose_open());
+}
+
+#[test]
+fn close_key_asks_first() {
+    let mut app = open_item(7, Tab::Details);
+    handle_key(&mut app, key(KeyCode::Char('C')));
+    assert_eq!(app.confirm().map(|d| d.title.as_str()), Some("Close #7?"));
+}
+
+#[test]
+fn main_menu_lists_close_or_reopen() {
+    let mut app = open_item(7, Tab::Details);
+    draw(&mut app);
+    let body = app.hits.body_area;
+    right(&mut app, body.x + 2, body.y + 1);
+    assert!(menu_labels(&app).contains(&"Close or reopen"), "{:?}", menu_labels(&app));
+}

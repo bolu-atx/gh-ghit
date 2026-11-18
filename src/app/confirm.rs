@@ -37,6 +37,9 @@ pub(crate) enum ConfirmKind {
     /// Quit with an unsent draft or unsubmitted review comments.
     /// Choice 0 (and `Esc`) stays, choice 1 quits.
     Quit,
+    /// Close or reopen an issue or PR: `open` is the state it will get.
+    /// Choice 0 does it, choice 1 (and `Esc`) cancels.
+    SetState { number: u64, open: bool },
 }
 
 /// What `u` restores while its toast is up. Each variant carries exactly
@@ -207,6 +210,42 @@ impl App {
         });
     }
 
+    /// Close or reopen the open item, after asking. A merged PR has
+    /// nothing to close or reopen.
+    pub(crate) fn request_set_state(&mut self) {
+        let Some(n) = self.nav.current else {
+            self.notify("view an issue first".to_string());
+            return;
+        };
+        let Some(state) = self.issues.data.get(&n).map(|d| d.state.as_str()) else { return };
+        if state == "MERGED" {
+            self.notify(format!("#{n} is merged: nothing to close"));
+            return;
+        }
+        let open = state == "CLOSED";
+        let verb = if open { "Reopen" } else { "Close" };
+        self.open_confirm(ConfirmDialog {
+            title: format!("{verb} #{n}?"),
+            body: vec![ConfirmLine::strong(format!("This changes #{n} on GitHub."))],
+            choices: vec![
+                ConfirmChoice { key: if open { 'r' } else { 'c' }, label: verb.to_lowercase() },
+                ConfirmChoice { key: 'n', label: "cancel".to_string() },
+            ],
+            kind: ConfirmKind::SetState { number: n, open },
+        });
+    }
+
+    /// Send the state change on a background thread.
+    fn start_set_state(&mut self, number: u64, open: bool) {
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let tx = self.compose.state_tx.clone();
+        spawn_bg(async move {
+            let result = github::set_state(&repo, number, open).await;
+            let _ = tx.send((number, open, result));
+        });
+        self.notify(format!("{} #{number}…", if open { "reopening" } else { "closing" }));
+    }
+
     /// A confirm modal is up, whatever it decides.
     pub(crate) fn confirm_open(&self) -> bool {
         self.confirm().is_some()
@@ -234,6 +273,11 @@ impl App {
             ConfirmKind::Quit => {
                 if index == 1 {
                     self.quit = true;
+                }
+            }
+            ConfirmKind::SetState { number, open } => {
+                if index == 0 {
+                    self.start_set_state(number, open);
                 }
             }
             ConfirmKind::Reauth => match index {
@@ -374,6 +418,31 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
         Err(e) => app.notify(e),
     }
     true
+}
+
+/// Land a close or reopen: success refreshes the item and its sidebar
+/// row; failure names the cause and runs the auth path.
+pub(crate) fn poll_set_state(app: &mut App) -> bool {
+    let ready: Vec<(u64, bool, Result<(), String>)> = app.compose.state_rx.try_iter().collect();
+    let landed = !ready.is_empty();
+    for (n, open, res) in ready {
+        match res {
+            Ok(()) => {
+                // The item is already open: a pending open would clear the toast.
+                if app.nav.requested == Some(n) {
+                    app.nav.requested = None;
+                }
+                app.queue_issue(n, true);
+                app.refresh_listing();
+                app.notify(format!("{} #{n}", if open { "reopened" } else { "closed" }));
+            }
+            Err(e) => {
+                auth_failure(app, &e);
+                app.notify(e);
+            }
+        }
+    }
+    landed
 }
 
 /// Route an auth-class fetch failure at the re-auth modal: the early

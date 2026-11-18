@@ -345,9 +345,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .style(Style::new().bg(ink())),
         );
     f.render_widget(tabs, rows[3]);
-    if app.visual_diff() {
-        controls::diff_strip(f, rows[3], app);
-    }
+    controls::toolbar(f, rows[3], app);
 
     // Meta/labels render above the tabs with the body's gutter, so the
     // header starts where the body text starts.

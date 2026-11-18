@@ -406,6 +406,14 @@ pub async fn post_thread_comment(repo: &str, number: u64, body: &str) -> Result<
     api::add_comment(repo, number, body, &token).await
 }
 
+/// Close (`open` false) or reopen an issue or PR. Same error contract
+/// as `post_thread_comment`.
+pub async fn set_state(repo: &str, number: u64, open: bool) -> Result<(), String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::set_state(repo, number, open, &token).await
+}
+
 /// Post a single-shot line comment on a PR file. Same error contract
 /// as `post_thread_comment`.
 pub async fn post_line_comment(repo: &str, number: u64, body: &str, path: &str, line: u64) -> Result<(), String> {

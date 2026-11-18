@@ -262,6 +262,12 @@ pub fn check_glyph(state: &crate::model::CheckState) -> &'static str {
     }
 }
 
+/// Main pane toolbar glyphs, Font Awesome codepoints like the rest.
+pub const TOOL_CLOSE: &str = "\u{f057}";
+pub const TOOL_REOPEN: &str = "\u{f01e}";
+pub const TOOL_COMMENT: &str = "\u{f075}";
+pub const TOOL_SPLIT: &str = "\u{f0db}";
+
 /// Swimlane header color, matched by keyword so custom board
 /// vocabularies ("In progress", "In Progress", …) still resolve.
 pub fn column_color(name: &str) -> Color {

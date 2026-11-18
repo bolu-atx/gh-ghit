@@ -229,8 +229,15 @@ pub(super) async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Re
 }
 
 pub(super) async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
-    let res = client
-        .post(url)
+    send_json(client.post(url), url, bearer, body).await
+}
+
+pub(super) async fn patch_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
+    send_json(client.patch(url), url, bearer, body).await
+}
+
+async fn send_json(request: reqwest::RequestBuilder, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
+    let res = request
         .bearer_auth(bearer)
         .json(body)
         .send()

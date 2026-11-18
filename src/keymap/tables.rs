@@ -54,6 +54,7 @@ const GLOBAL: &[Binding] = &[
     key(ch('t'), Action::CycleTheme, "Cycle theme", "View", MENU),
     key(ch('b'), Action::OpenBoard, "Open board", "Open", HINT).hint(10),
     key(ch('c'), Action::Comment, "Comment", "Open", HINT).hint(6),
+    key(ch('C'), Action::CloseItem, "Close or reopen", "Open", TITLE).hint_if(12, main_pane),
     key(ch('f'), Action::OpenFormat, "Format and filter", "Open", TITLE),
     key(ch('F'), Action::QuerySearch, "Search GitHub", "Open", MENU),
     key(ch('j'), Action::MoveDown, "Select next", "Move", Gesture::Wheel).hint_if(2, side_pane),

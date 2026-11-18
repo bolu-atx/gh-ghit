@@ -32,6 +32,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::CycleTheme => app.notify(format!("theme: {}", crate::theme::cycle())),
         Action::OpenBoard => app.open_board(),
         Action::Comment => app.open_compose(),
+        Action::CloseItem => app.request_set_state(),
         Action::OpenFormat => app.open_sidebar_format(),
         Action::QuerySearch => {
             app.open_sidebar_format();

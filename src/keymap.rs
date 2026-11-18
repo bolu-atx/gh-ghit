@@ -41,7 +41,7 @@ macro_rules! actions {
 actions! {
     // Global.
     HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
-    OpenBoard, Comment, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
+    OpenBoard, Comment, CloseItem, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     OpenBrowser, Refresh, Reauth, Pin, Yank, ToggleRefs, ToggleSidebar, SubmitReview,
     ToggleRow, MergedWindow, Back, NextPane, PrevPane,
@@ -113,7 +113,7 @@ pub(crate) enum Gesture {
     RightClick,
     /// The action is a row of a right-click or repo-segment menu.
     Menu,
-    /// A muted control in a pane title, footer or the diff strip.
+    /// A muted control in a pane title, footer or the Main toolbar.
     Title,
     /// A clickable status-bar or dialog-footer hint.
     Hint,

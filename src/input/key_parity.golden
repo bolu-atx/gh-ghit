@@ -3,6 +3,7 @@ issues | '/' | focus: false -> true ; search: ""/false -> ""/true
 issues | '2' | tab: Details -> Visual
 issues | ':' | focus: false -> true
 issues | '?' | shortcuts: false -> true
+issues | 'C' | confirm: None -> Some(("Close #8?", 2))
 issues | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 issues | 'F' | format: false/false/false -> true/true/false
 issues | 'N' | message:  -> no search: press /
@@ -36,6 +37,7 @@ issues-tree | '/' | focus: false -> true ; search: ""/false -> ""/true
 issues-tree | '2' | tab: Details -> Visual
 issues-tree | ':' | focus: false -> true
 issues-tree | '?' | shortcuts: false -> true
+issues-tree | 'C' | confirm: None -> Some(("Close #7?", 2))
 issues-tree | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 issues-tree | 'F' | format: false/false/false -> true/true/false
 issues-tree | 'G' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
@@ -71,6 +73,7 @@ prs | '/' | focus: false -> true ; search: ""/false -> ""/true
 prs | '2' | tab: Details -> Visual
 prs | ':' | focus: false -> true
 prs | '?' | shortcuts: false -> true
+prs | 'C' | confirm: None -> Some(("Close #8?", 2))
 prs | 'E' | pane: PRs -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 prs | 'F' | format: false/false/false -> true/true/false
 prs | 'G' | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
@@ -108,6 +111,7 @@ main-details | '/' | focus: false -> true ; search: ""/false -> ""/true
 main-details | '2' | tab: Details -> Visual
 main-details | ':' | focus: false -> true
 main-details | '?' | shortcuts: false -> true
+main-details | 'C' | confirm: None -> Some(("Close #8?", 2))
 main-details | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-details | 'F' | format: false/false/false -> true/true/false
 main-details | 'N' | message:  -> no search: press /
@@ -136,6 +140,7 @@ main-diff | '/' | focus: false -> true ; search: ""/false -> ""/true
 main-diff | '1' | tab: Visual -> Details
 main-diff | ':' | focus: false -> true
 main-diff | '?' | shortcuts: false -> true
+main-diff | 'C' | confirm: None -> Some(("Close #9?", 2))
 main-diff | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-diff | 'F' | format: false/false/false -> true/true/false
 main-diff | 'G' | diff: None/false/false/[] -> Some(9)/true/false/[]
@@ -165,6 +170,7 @@ main-graph | '/' | focus: false -> true ; search: ""/false -> ""/true
 main-graph | '1' | tab: Visual -> Details
 main-graph | ':' | focus: false -> true
 main-graph | '?' | shortcuts: false -> true
+main-graph | 'C' | confirm: None -> Some(("Close #7?", 2))
 main-graph | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-graph | 'F' | format: false/false/false -> true/true/false
 main-graph | 'G' | graph: 0 -> 2
@@ -195,6 +201,7 @@ refs | '/' | focus: false -> true ; search: ""/false -> ""/true
 refs | '2' | tab: Details -> Visual
 refs | ':' | focus: false -> true
 refs | '?' | shortcuts: false -> true
+refs | 'C' | confirm: None -> Some(("Close #8?", 2))
 refs | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 refs | 'F' | format: false/false/false -> true/true/false
 refs | 'G' | refs: true/None -> true/Some(9)
@@ -232,6 +239,7 @@ labels | '/' | focus: false -> true ; search: ""/false -> ""/true
 labels | '2' | tab: Details -> Visual
 labels | ':' | focus: false -> true
 labels | '?' | shortcuts: false -> true
+labels | 'C' | confirm: None -> Some(("Close #8?", 2))
 labels | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 labels | 'F' | format: false/false/false -> true/true/false
 labels | 'G' | labels-cursor: 0 -> 1
@@ -264,6 +272,7 @@ history | '/' | focus: false -> true ; search: ""/false -> ""/true
 history | '2' | tab: Details -> Visual
 history | ':' | focus: false -> true
 history | '?' | shortcuts: false -> true
+history | 'C' | confirm: None -> Some(("Close #9?", 2))
 history | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 history | 'F' | format: false/false/false -> true/true/false
 history | 'N' | message:  -> no search: press /

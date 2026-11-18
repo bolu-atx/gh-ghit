@@ -58,6 +58,30 @@ def main():
         def log_message(self, fmt, *values):
             pass
 
+        def handle_patch(self):
+            """Record an issue state change and flip the fixture. Never proxied."""
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            path = urlsplit(self.path).path
+            try:
+                state = json.loads(raw)["state"]
+            except (ValueError, KeyError, TypeError):
+                state = None
+            entry = entries.get(f"GET {path}")
+            if not re.fullmatch(r"/repos/[^/]+/[^/]+/issues/\d+", path) or entry is None or state not in ("open", "closed"):
+                status, payload = 422, {"message": "unmatched mock PATCH"}
+                print(f"unmatched mock request: PATCH {path} {raw.decode(errors='replace')}", file=sys.stderr, flush=True)
+            else:
+                with lock:
+                    entry["body"]["state"] = state
+                status, payload = 200, entry["body"]
+                print(f"mock PATCH {path} {json.dumps({'state': state})}", flush=True)
+            encoded = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def handle_request(self):
             raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             try:
@@ -100,6 +124,7 @@ def main():
 
         do_GET = handle_request
         do_POST = handle_request
+        do_PATCH = handle_patch
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port_file = Path(args.port_file)

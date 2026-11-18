@@ -73,7 +73,7 @@ use poll::poll_bootstrap;
 pub(crate) use diff::{poll_review_submit, poll_diffs, poll_graphs, poll_sub_issues};
 pub(crate) use board::{board_open, board_columns, board_move, board_selected_number, poll_board};
 pub(crate) use compose::{poll_compose, run_compose_editor};
-pub(crate) use confirm::{poll_auth, auth_failure, run_reauth};
+pub(crate) use confirm::{poll_auth, poll_set_state, auth_failure, run_reauth};
 pub(crate) use poll::{poll_details, bootstrap, poll_repo_meta, poll_sections, poll_issues};
 pub(crate) use confirm::{AuthState, ConfirmDialog, ConfirmKind, PendingUndo, UndoAction};
 pub(crate) use board::BoardView;
@@ -475,6 +475,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= poll_details(app);
     landed |= poll_compose(app);
     landed |= poll_review_submit(app);
+    landed |= poll_set_state(app);
     landed
 }
 
