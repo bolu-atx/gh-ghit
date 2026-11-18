@@ -1672,7 +1672,7 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let line = if app.sidebar.meta_rx.is_some() || !app.sidebar.meta_loaded {
             Line::styled("  loading …", Style::new().bg(ink()).fg(muted()))
         } else {
-            hints::tip("  No labels or milestones. Press ", Context::Global, Action::Refresh, " to refresh.")
+            Line::styled("  No labels or milestones in this repo", Style::new().bg(ink()).fg(muted()))
         };
         f.render_widget(Paragraph::new(line).style(theme::base()).wrap(Wrap { trim: false }), inner);
         return;
