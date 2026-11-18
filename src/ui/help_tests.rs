@@ -52,7 +52,8 @@ fn shortcuts_modal_shows_credit_footer() {
     let text = frame_text(&mut app);
     // GHIT ASCII banner (4 lines), author, and repo URL.
     assert!(text.contains("___ _   _ ___"), "banner renders: {text}");
-    assert!(text.contains("created by bolu-atx"), "author renders: {text}");
+    let credit = format!("ghit v{} · created by bolu-atx", env!("CARGO_PKG_VERSION"));
+    assert!(text.contains(&credit), "version and author render: {text}");
     assert!(
         text.contains("https://github.com/bolu-atx/gh-ghit"),
         "url renders: {text}"

@@ -447,7 +447,8 @@ fn masthead_wordmark_shows_git_icon() {
     let mut app = loaded_app();
     let text = frame_text(&mut app);
     assert!(text.contains('\u{f1d3}'), "{text}");
-    assert!(text.contains("ghit"));
+    let brand = format!("ghit v{}", env!("CARGO_PKG_VERSION"));
+    assert!(text.contains(&brand), "version follows the wordmark: {text}");
     assert!(text.contains("#7"));
 }
 
