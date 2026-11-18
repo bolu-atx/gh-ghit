@@ -313,12 +313,12 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     let (il, issue_heights) = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
-            title: spinning(issue_title, pane.sidebar, app.tick),
+            title: spinning(issue_title, pane.sidebar_spinner, app.tick),
             footer: footer_line(&app.side_footer(false)),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
             loading: pane.sidebar,
-            empty: hints::tip("  No issues. Press ", Context::Global, Action::OpenFormat, " to filter."),
+            empty: if pane.sidebar_spinner && !pane.sidebar { Line::from("") } else { hints::tip("  No issues. Press ", Context::Global, Action::OpenFormat, " to filter.") },
         },
         &issue_rows,
         app,
@@ -338,12 +338,12 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     let (pl, pr_heights) = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
-            title: spinning(pr_title, pane.sidebar, app.tick),
+            title: spinning(pr_title, pane.sidebar_spinner, app.tick),
             footer: footer_line(&app.side_footer(true)),
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
             loading: pane.sidebar,
-            empty: hints::tip("  No pull requests. Press ", Context::Global, Action::OpenFormat, " to filter."),
+            empty: if pane.sidebar_spinner && !pane.sidebar { Line::from("") } else { hints::tip("  No pull requests. Press ", Context::Global, Action::OpenFormat, " to filter.") },
         },
         &pr_rows,
         app,

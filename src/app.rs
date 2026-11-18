@@ -6,6 +6,8 @@
 //! tokio runtime and lands via channels polled once per frame, so the loop
 //! never blocks.
 
+mod fetch_queue;
+
 use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
 use std::time::{Duration, Instant};
@@ -748,6 +750,8 @@ pub(crate) struct App {
     /// Frame counter, bumped once per event-loop pass. Drives the status
     /// bar spinner; cheap because the loop already redraws every pass.
     pub(crate) tick: u64,
+    /// Queue and run-count for every background fetch; see `fetch_queue`.
+    fetches: fetch_queue::Fetches,
 }
 
 impl App {
@@ -778,6 +782,7 @@ impl App {
             undo: None,
             compose: ComposeSlot::new(compose_tx, compose_rx, review_submit_tx, review_submit_rx),
             tick: 0,
+            fetches: fetch_queue::Fetches::default(),
             board: BoardView::new(detail_tx, detail_rx),
             diff: DiffView::new(diff_tx, diff_rx),
             graph: GraphView::new(graph_tx, graph_rx),
@@ -796,6 +801,28 @@ impl App {
     pub(crate) fn notify(&mut self, msg: String) {
         self.message = msg;
         self.message_at = Some(std::time::Instant::now());
+    }
+
+    /// Queue a background fetch and start whatever fits. Tiers decide the
+    /// start order (`core::urgency`); `fetch_queue` caps what runs at once.
+    fn enqueue(
+        &mut self,
+        kind: core::Kind,
+        number: Option<u64>,
+        task: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        self.fetches.push(kind, number, Box::pin(task));
+        self.pump_fetches();
+    }
+
+    /// Start queued fetches while slots are free. While the API quota is
+    /// spent only the current issue's fetches start.
+    pub(crate) fn pump_fetches(&mut self) {
+        let view = fetch_queue::View {
+            current: self.nav.requested.or(self.nav.current),
+            tab_shown: self.nav.tab == Tab::Visual,
+        };
+        self.fetches.start(&view, github::rate_limited());
     }
 
     /// Arm one undo and show its toast. Replaces any earlier undo.
@@ -998,7 +1025,7 @@ impl App {
         let probe = std::mem::take(&mut self.sections.probe);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Sections, None, async move {
             if probe && !probe_says_changed(&repo, &tx).await { return; }
             let result = github::fetch_recent_sections(&repo, hours, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
@@ -1084,7 +1111,7 @@ impl App {
         let probe = std::mem::take(&mut self.sections.probe);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Sections, None, async move {
             if probe && !probe_says_changed(&repo, &tx).await { return; }
             let result = github::search_repo(&repo, &search, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
@@ -1198,10 +1225,16 @@ impl App {
             self.nav.focus = Focus::Main;
             return;
         }
+        self.queue_issue(number, force);
+    }
+
+    /// Queue the full fetch for `number` without opening it. No-op while
+    /// one is already in flight.
+    fn queue_issue(&mut self, number: u64, force: bool) {
         if !self.issues.pending.insert(number) { return; }
         let tx = self.issues.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Details, Some(number), async move {
             let result = github::fetch_number(&repo, number, force, Some(tx.clone())).await;
             let _ = tx.send((number, github::IssueEvent::Done(result.map(Box::new))));
         });
@@ -1619,7 +1652,7 @@ impl App {
         self.sidebar.meta_repo = Some(repo.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         self.sidebar.meta_rx = Some(rx);
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Other, None, async move {
             let _ = tx.send(github::fetch_repo_meta(&repo).await);
         });
     }
@@ -2252,18 +2285,10 @@ impl App {
             .collect();
         self.refs.numbers = nums;
         self.refs.paired = paired;
-        let tx = self.issues.tx.clone();
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         for m in self.ref_order() {
-            if self.issues.data.contains_key(&m) || !self.issues.pending.insert(m) {
-                continue;
+            if !self.issues.data.contains_key(&m) {
+                self.queue_issue(m, false);
             }
-            let tx = tx.clone();
-            let repo = repo.clone();
-            rt().spawn(async move {
-                let result = github::fetch_number(&repo, m, false, Some(tx.clone())).await;
-                let _ = tx.send((m, github::IssueEvent::Done(result.map(Box::new))));
-            });
         }
     }
 
@@ -2324,7 +2349,7 @@ impl App {
         }
         let tx = self.diff.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Diff, Some(number), async move {
             let _ = tx.send((number, github::fetch_diff(&repo, number, force).await));
         });
     }
@@ -2341,7 +2366,7 @@ impl App {
         }
         let tx = self.graph.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Graph, Some(number), async move {
             let _ = tx.send((number, github::fetch_graph(&repo, number, force).await));
         });
     }
@@ -2359,7 +2384,7 @@ impl App {
         self.subs.state.insert(number, model::LazyChildren::Loading);
         let tx = self.subs.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Other, None, async move {
             let _ = tx.send((number, github::fetch_sub_issues(&repo, number).await));
         });
     }
@@ -2582,7 +2607,7 @@ impl App {
         self.restore_board_filter(&owner);
         let (tx, rx) = std::sync::mpsc::channel();
         self.board.rx = Some(rx);
-        rt().spawn(async move {
+        self.enqueue(core::Kind::Other, None, async move {
             let _ = tx.send(github::fetch_board(&owner).await);
         });
     }
@@ -3648,7 +3673,7 @@ fn kick_off_details(app: &mut App) {
     }
     if cards.is_empty() { return; }
     let tx = app.board.detail_tx.clone();
-    rt().spawn(async move {
+    app.enqueue(core::Kind::Other, None, async move {
         match github::fetch_board_details(&cards).await {
             Ok(details) => {
                 let mut missing = Vec::new();
@@ -3905,6 +3930,7 @@ pub(crate) fn run_compose_editor(app: &mut App, terminal: &mut Terminal<Crosster
 /// lander changed visible state, so the loop knows a redraw is owed.
 pub(crate) fn poll_all(app: &mut App) -> bool {
     let mut landed = false;
+    app.pump_fetches();
     landed |= poll_bootstrap(app);
     landed |= poll_auth(app);
     landed |= poll_sections(app);
@@ -4028,10 +4054,18 @@ fn poll_bootstrap(app: &mut App) -> bool {
         pins.retain(|n| !numbers.contains(n));
         app.nav.pinned = pins.iter().copied().collect();
         app.nav.pin_order = pins.clone();
-        for n in pins { app.load_issue(n, false); }
+        // The requested issue goes first; pins wait behind it.
+        let opened = !numbers.is_empty();
         for n in numbers {
             app.ensure_visited(n);
             app.load_issue(n, false);
+        }
+        for n in pins {
+            if !opened {
+                app.load_issue(n, false);
+            } else if !app.issues.data.contains_key(&n) || app.issues.partial.contains(&n) {
+                app.queue_issue(n, false);
+            }
         }
         if app.sidebar.query_active.trim().is_empty() {
             app.hydrate_cached_sections();
@@ -4938,6 +4972,44 @@ mod tests {
         assert!(app.sections.rx.is_some(), "restored query fetches from the server");
         assert!(app.sections.replace, "search results replace the listing");
         restore_xdg(saved);
+    }
+
+    #[test]
+    fn startup_queues_the_requested_issue_before_pins_and_sections() {
+        let (_guard, _dir, saved) = temp_xdg();
+        github::save_pins("o/r", &[3]);
+        let mut app = App::new(Some("o/r".to_string()));
+        app.fetches.hold = true;
+        app.initial_numbers = vec![5];
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.auth.bootstrap_rx = Some(rx);
+        tx.send(Some("o/r".to_string())).unwrap();
+        assert!(poll_bootstrap(&mut app));
+        let view = fetch_queue::View { current: app.nav.requested, tab_shown: false };
+        let order = app.fetches.queue_mut().order(&view);
+        assert_eq!(
+            order,
+            vec![
+                (core::Kind::Details, Some(5)),
+                (core::Kind::Sections, None),
+                (core::Kind::Details, Some(3)),
+                (core::Kind::Other, None),
+            ],
+            "current issue, sections, then pins and repo meta"
+        );
+        assert_eq!(app.nav.requested, Some(5), "pins never take over the main pane");
+        restore_xdg(saved);
+    }
+
+    #[test]
+    fn switching_issue_moves_its_queued_fetch_up() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.fetches.hold = true;
+        app.load_issue(1, false);
+        app.load_issue(2, false);
+        let view = fetch_queue::View { current: app.nav.requested, tab_shown: false };
+        let order = app.fetches.queue_mut().order(&view);
+        assert_eq!(order[0], (core::Kind::Details, Some(2)));
     }
 
     #[test]

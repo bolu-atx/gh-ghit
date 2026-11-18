@@ -141,6 +141,22 @@ fn sidebar_shows_spinner_and_skeleton_while_sections_load() {
 }
 
 #[test]
+fn sidebar_loading_goes_quiet_while_the_current_issue_loads() {
+    let mut app = App::new(Some("o/r".to_string()));
+    app.tick = 0;
+    let (_tx, rx) = std::sync::mpsc::channel();
+    app.sections.rx = Some(rx);
+    app.nav.requested = Some(7);
+    app.issues.pending.insert(7);
+    let text = sidebar_text(&mut app);
+    assert!(text.contains("⠋"), "title spinner stays: {text}");
+    assert!(!text.contains("▓▓▓"), "no sidebar skeleton under the main skeleton: {text}");
+    assert!(!text.contains("No issues"), "no empty hint while loading: {text}");
+    app.issues.pending.clear();
+    assert!(sidebar_text(&mut app).contains("▓▓▓"), "skeleton returns once the main pane is done");
+}
+
+#[test]
 fn refs_title_spins_while_mentions_fetch() {
     let mut app = loaded_app();
     app.issues.data.get_mut(&7).unwrap().body = "see #9".to_string();
