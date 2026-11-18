@@ -59,7 +59,7 @@ gh ghit [NUMBER...] [-R OWNER/REPO]
 Without `-R` or `--repo`, ghit reads the checkout's `origin` remote with `git`.
 Startup numbers open issues or PRs; non-numeric arguments are ignored.
 Pins and cached sidebar rows load at startup when available.
-Recent rows refresh every five seconds when the UI is idle; failures back off.
+Recent rows refresh every 30 seconds when the UI is idle (override with GHIT_AUTO_REFRESH_SECS). A free change check runs first; a full fetch runs only when something changed, or every 5 minutes. Rate-limit errors pause refresh until the quota resets.
 `r` refreshes the current item and sidebar.
 A window refresh can remove vanished background rows that were not opened or pinned.
 
