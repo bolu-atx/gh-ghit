@@ -69,6 +69,11 @@ Use `Ctrl+S` to submit a pending review.
 The board opens the first Projects v2 project for the repository owner and loads its item pages through GraphQL.
 Its filter matches card title, number, or label and can select milestones.
 
+ghit fetches what you are looking at first: the open issue or PR, then the Issues list, then PRs, then everything else.
+Each pane shows its own loading indicator while its data is on the way.
+When the rate limit runs out, only the open item keeps loading.
+On a narrow terminal the side panes hide so the main pane keeps a readable width.
+
 The command bar accepts space-separated numbers, `o [NUMBER]` to open in a browser, and `q` to quit.
 Use `--help` for all options.
 On Unix, `--drive PATH` serves the UI over a socket without a terminal; `--size WxH` sets its geometry (default `200x50`).
@@ -99,6 +104,7 @@ The essentials:
 | `f` / `b` / `F` | Format and filter / board / search GitHub |
 | `c` | Comment |
 | `u` | Undo the last evict or saved-query delete (within 4 s) |
+| `m` | Actions menu for the focused row (same as right-click) |
 | `Ctrl+O` / `Ctrl+I` | Back / forward in history |
 | `Esc` | Back: closes one layer; at the base it clears find and highlight |
 | `q` | Close the top dialog; at the base, quit |
@@ -110,13 +116,15 @@ After `g`, the status bar shows `g…` until the next key.
 
 ## Mouse and keyboard
 
-The goal is that every control works with the mouse and with the keyboard.
-Some actions are still keyboard-only; #185 tracks them.
+Every action works with the keyboard, and every action has a mouse gesture too.
+The only keyboard-only keys are text editing, aliases of another key, and scroll keys the wheel already covers.
 
-- Click a pane to focus it. Click a row to show it in the main pane.
-- Click the shown row again to keep it under requested.
+- **Click** a pane to focus it, or a row to select it. Click the selected row again, or press `Enter`, to open it.
+- **Right-click** a row, reference, card or the Main body for a menu of its actions, with their keys. The repo name in the status bar opens a global menu: refresh, theme, board, help and quit.
+- **Wheel** scrolls the pane under the pointer. In the Format dialog and the board filter it moves between fields.
+- **Pane titles and footers** are controls: click the sort word to change the sort, its arrow to reverse it, or the list state to open Format.
+- **Dialog footers** are clickable. A click outside a dialog closes it.
 - Click a link or `#123` reference in the body to open it.
-- Scroll the wheel to scroll the pane under the cursor.
 - Press `?` to see all shortcuts.
 
 ## Neovim integration
