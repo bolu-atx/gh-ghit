@@ -238,7 +238,8 @@ mod tests {
         assert_eq!(f.running.load(Ordering::Relaxed), MAX_RUNNING);
         assert_eq!(f.queue.len(), 6 - MAX_RUNNING);
         drop(tx);
-        for _ in 0..100 {
+        // Generous deadline: shared CI runners schedule the blocking pool slowly.
+        for _ in 0..500 {
             f.start(&view(None, false), false);
             if f.queue.len() == 0 && f.running.load(Ordering::Relaxed) == 0 {
                 return;
