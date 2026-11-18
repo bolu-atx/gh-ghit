@@ -19,7 +19,7 @@ e2e_shot history-forward
 e2e_bar 19
 e2e_wait "/pull/19" 20 || fail "show #19"
 e2e_wait "History" 20 || fail "history panel missing"
-row=$(e2e_pane | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); start=next(i for i, line in enumerate(lines) if "History" in line[-36:]); print(next((i for i, line in enumerate(lines) if i > start and "#9 " in line[-36:]), 0))')
+row=$(e2e_pane | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); start=next(i for i, line in enumerate(lines) if "History" in line[-36:]); print(next((i + 1 for i, line in enumerate(lines) if i > start and "#9 " in line[-36:]), 0))')
 [ "$row" -gt 0 ] || fail "history #9 row missing"
 cols=${E2E_GEO%x*}
 e2e_key -l "$(printf '\033[<0;%s;%sM' "$((cols - 34))" "$row")"

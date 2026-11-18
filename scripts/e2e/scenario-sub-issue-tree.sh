@@ -20,7 +20,7 @@ read -r row col < <(e2e_pane | python3 -c '
 import sys
 for i, line in enumerate(sys.stdin.read().splitlines()):
     if "#1001" in line and "▸" in line:
-        print(i, line.index("▸"))
+        print(i + 1, line.index("▸") + 1)
         break
 ')
 [ -n "${row:-}" ] || fail "#1001 folded glyph never rendered"
