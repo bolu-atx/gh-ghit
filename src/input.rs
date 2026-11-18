@@ -343,6 +343,15 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         handle_board_mouse(app, m);
         return;
     }
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        let at = ratatui::layout::Position::new(m.column, m.row);
+        let hit = app.hits.bar_hints.iter().find(|(rect, _)| rect.contains(at)).map(|(rect, action)| (*rect, *action));
+        if let Some((rect, action)) = hit {
+            app.hits.last_click = Some((rect, std::time::Instant::now()));
+            actions::perform(app, action);
+            return;
+        }
+    }
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => handle_left(app, m.column, m.row, false),
         // Drag keeps hover/scroll continuity while the button is held:
