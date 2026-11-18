@@ -16,6 +16,9 @@
 
 mod tables;
 
+#[cfg(test)]
+pub(crate) use tables::ALLOWED_NO_MOUSE;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, Focus};
@@ -37,7 +40,7 @@ macro_rules! actions {
 
 actions! {
     // Global.
-    HistoryBack, HistoryForward, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
+    HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
     OpenBoard, Comment, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     OpenBrowser, Refresh, Reauth, Pin, Yank, ToggleRefs, ToggleSidebar, SubmitReview,
@@ -49,7 +52,7 @@ actions! {
     DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile,
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen,
     // Shortcuts, confirm, compose.
-    CloseHelp, HelpDown, HelpUp, ConfirmFirst,
+    CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
     ComposeSend, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
     ComposeUp, ComposeDown, ComposeBackspace, ComposeDelete, ComposeKillEnd, ComposeKillStart,
     ComposeDeleteWordBack, ComposeYank, ComposeTranspose, ComposeNewline, ComposeTab,
@@ -99,14 +102,24 @@ pub(crate) enum Mods {
     Any,
 }
 
-/// The mouse gesture that does the same thing, as it works today.
+/// The mouse gesture that does the same thing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gesture {
     Click,
     /// The first press selects, the second press commits.
     SecondClick,
     Wheel,
-    /// No gesture yet. The reason is the work item for mouse parity.
+    /// Right-click opens the actions menu.
+    RightClick,
+    /// The action is a row of a right-click or repo-segment menu.
+    Menu,
+    /// A muted control in a pane title, footer or the diff strip.
+    Title,
+    /// A clickable status-bar or dialog-footer hint.
+    Hint,
+    /// A click outside the layer dismisses it.
+    Outside,
+    /// No gesture fits. The reason is one of `ALLOWED_NO_MOUSE`.
     NoMouse(&'static str),
 }
 
@@ -266,6 +279,7 @@ impl Context {
             Context::Dialog(Dialog::Shortcuts) => "Shortcuts",
             Context::Dialog(Dialog::Confirm) => "Confirm dialog",
             Context::Dialog(Dialog::Compose) => "Comment editor",
+            Context::Dialog(Dialog::Menu) => "Actions menu",
             Context::Dialog(Dialog::Format) => "Format dialog",
             Context::Dialog(Dialog::Board) => "Board",
             Context::Dialog(Dialog::BoardFilter) => "Board filter",
@@ -278,7 +292,7 @@ impl Context {
 }
 
 /// Every context, in help order.
-pub(crate) const ALL_CONTEXTS: [Context; 20] = [
+pub(crate) const ALL_CONTEXTS: [Context; 21] = [
     Context::Global,
     Context::Pane(Pane::Issues),
     Context::Pane(Pane::PRs),
@@ -292,6 +306,7 @@ pub(crate) const ALL_CONTEXTS: [Context; 20] = [
     Context::Dialog(Dialog::Shortcuts),
     Context::Dialog(Dialog::Confirm),
     Context::Dialog(Dialog::Compose),
+    Context::Dialog(Dialog::Menu),
     Context::Dialog(Dialog::Format),
     Context::Dialog(Dialog::Board),
     Context::Dialog(Dialog::BoardFilter),
@@ -309,6 +324,16 @@ pub(crate) fn tables(context: Context) -> &'static [&'static [Binding]] {
 /// Every binding of a context, in match order.
 pub(crate) fn bindings(context: Context) -> impl Iterator<Item = &'static Binding> {
     tables(context).iter().flat_map(|table| table.iter())
+}
+
+/// The binding that names `action` in help and menus: the first plain
+/// key, else the first binding of any kind.
+pub(crate) fn describe(action: Action) -> Option<&'static Binding> {
+    let all = || ALL_CONTEXTS.into_iter()
+        .filter(|context| *context != Context::Dialog(Dialog::Menu))
+        .flat_map(bindings)
+        .filter(move |b| b.action == action);
+    all().find(|b| b.mods == Mods::Plain && b.prefix.is_none()).or_else(|| all().next())
 }
 
 /// Graph keys act only while the Graph tab has main focus.
@@ -400,6 +425,11 @@ impl Gesture {
             Gesture::Click => Some("click"),
             Gesture::SecondClick => Some("click twice"),
             Gesture::Wheel => Some("wheel"),
+            Gesture::RightClick => Some("right-click"),
+            Gesture::Menu => Some("right-click menu"),
+            Gesture::Title => Some("click title"),
+            Gesture::Hint => Some("click hint"),
+            Gesture::Outside => Some("click outside"),
             Gesture::NoMouse(_) => None,
         }
     }

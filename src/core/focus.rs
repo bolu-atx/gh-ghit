@@ -25,6 +25,8 @@ pub(crate) enum Dialog {
     Board,
     /// Format form drawn over the board.
     BoardFilter,
+    /// Right-click or repo-segment actions menu.
+    Menu,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,12 +58,14 @@ pub(crate) struct LayerFlags {
     pub(crate) query_edit: bool,
     pub(crate) name_edit: bool,
     pub(crate) compose: bool,
+    pub(crate) menu: bool,
     pub(crate) confirm: bool,
     pub(crate) shortcuts: bool,
 }
 
 /// Open layers, bottom (`Base`) to top. Order mirrors key priority: the
-/// bar sits lowest, any dialog beats it, and confirm/shortcuts beat all.
+/// bar sits lowest, any dialog beats it, the menu opens over the board
+/// and format dialogs, and confirm/shortcuts beat all.
 pub(crate) fn layer_stack(f: &LayerFlags) -> Vec<Layer> {
     let mut stack = vec![Layer::Base];
     if f.bar {
@@ -79,6 +83,9 @@ pub(crate) fn layer_stack(f: &LayerFlags) -> Vec<Layer> {
         } else if !f.board && f.query_edit {
             stack.push(Layer::Input(TextInput::Query));
         }
+    }
+    if f.menu {
+        stack.push(Layer::Dialog(Dialog::Menu));
     }
     if f.compose {
         stack.push(Layer::Dialog(Dialog::Compose));
@@ -161,6 +168,14 @@ mod tests {
         assert_eq!(layer_stack(&flags).last(), Some(&Layer::Dialog(Dialog::Compose)));
         let flags = LayerFlags { bar: true, ..Default::default() };
         assert_eq!(layer_stack(&flags).last(), Some(&Layer::Input(TextInput::Bar)));
+    }
+
+    #[test]
+    fn menu_opens_over_the_board_and_under_confirm() {
+        let flags = LayerFlags { board: true, menu: true, ..Default::default() };
+        assert_eq!(layer_stack(&flags).last(), Some(&Layer::Dialog(Dialog::Menu)));
+        let flags = LayerFlags { menu: true, confirm: true, ..Default::default() };
+        assert_eq!(layer_stack(&flags).last(), Some(&Layer::Dialog(Dialog::Confirm)));
     }
 
     #[test]

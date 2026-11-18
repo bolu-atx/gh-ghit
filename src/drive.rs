@@ -34,7 +34,7 @@ pub enum ClientMsg {
     Key { key: String, #[serde(default)] ctrl: bool, #[serde(default)] alt: bool, #[serde(default)] shift: bool },
     /// Mouse event at 1-based cell coordinates, like SGR mouse reports.
     /// `kind` is one of `down-left`, `up-left`, `drag-left`,
-    /// `scroll-down`, `scroll-up`.
+    /// `down-right`, `up-right`, `scroll-down`, `scroll-up`.
     Mouse { kind: String, column: u16, row: u16 },
     /// New cell geometry.
     Resize { width: u16, height: u16 },
@@ -116,6 +116,8 @@ pub fn mouse_event(kind: &str, column: u16, row: u16) -> Option<MouseEvent> {
     let kind = match kind {
         "down-left" => MouseEventKind::Down(MouseButton::Left),
         "up-left" => MouseEventKind::Up(MouseButton::Left),
+        "down-right" => MouseEventKind::Down(MouseButton::Right),
+        "up-right" => MouseEventKind::Up(MouseButton::Right),
         "drag-left" => MouseEventKind::Drag(MouseButton::Left),
         "scroll-down" => MouseEventKind::ScrollDown,
         "scroll-up" => MouseEventKind::ScrollUp,
@@ -428,7 +430,9 @@ mod tests {
         let zero = mouse_event("down-left", 0, 0).unwrap();
         assert_eq!((zero.column, zero.row), (0, 0));
         assert!(matches!(mouse_event("scroll-up", 1, 1).unwrap().kind, MouseEventKind::ScrollUp));
-        assert!(mouse_event("down-right", 1, 1).is_none());
+        assert_eq!(mouse_event("down-right", 2, 2).unwrap().kind, MouseEventKind::Down(MouseButton::Right));
+        assert_eq!(mouse_event("up-right", 2, 2).unwrap().kind, MouseEventKind::Up(MouseButton::Right));
+        assert!(mouse_event("down-middle", 1, 1).is_none());
     }
 
     fn driven_app() -> crate::app::App {

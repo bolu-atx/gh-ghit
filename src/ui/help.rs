@@ -63,6 +63,7 @@ pub(super) fn render_shortcuts(f: &mut ratatui::Frame, area: Rect, app: &mut App
     let width = area.width.saturating_sub(4).clamp(1, 84);
     let height = area.height.saturating_sub(2).clamp(1, 40);
     let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
+    app.hits.ctl.popup = popup;
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(muted()))
@@ -92,4 +93,6 @@ pub(super) fn render_shortcuts(f: &mut ratatui::Frame, area: Rect, app: &mut App
     let footer = Rect::new(inner.x, inner.y + body_height, inner.width, inner.height.min(1));
     let legend = hints::legend(Context::Dialog(Dialog::Shortcuts), app, footer.width, 1);
     f.render_widget(Paragraph::new(legend), footer);
+    let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Shortcuts), app, footer.width, 1, (footer.x, footer.y));
+    app.hits.ctl.legend.extend(legend_hits);
 }

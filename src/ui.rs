@@ -4,6 +4,7 @@
 //! Hit areas (`body_rows`, sidebar rects, board cells) are recorded here
 //! during `render`; `input` consumes them on the next event.
 
+mod controls;
 mod help;
 mod hints;
 
@@ -28,6 +29,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(f.area());
 
+    app.hits.ctl.controls.clear();
+    app.hits.ctl.legend.clear();
+    app.hits.ctl.popup = Rect::default();
+    app.hits.ctl.menu_rows.clear();
     app.hits.history_rows.clear();
     app.hits.history_area = Rect::default();
     app.hits.refs_area = Rect::default();
@@ -173,6 +178,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_filter(f, f.area(), app);
     }
+    controls::render_menu(f, f.area(), app);
     if app.shortcuts_open {
         dim_background(f, 0.35);
         help::render_shortcuts(f, f.area(), app);
@@ -196,6 +202,7 @@ fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
     let Some(d) = app.confirm.clone() else { return };
     let popup = centered(area, 64, 30);
+    app.hits.ctl.popup = popup;
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(amber()))
@@ -639,6 +646,8 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let footer = Rect { y: inner.y + inner.height.saturating_sub(footer_height),
         height: inner.height.min(footer_height), ..inner };
     f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
+    let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Format), app, legend_width, 3, (footer.x, footer.y));
+    app.hits.ctl.legend.extend(legend_hits);
     if app.sidebar.name_edit && content.height > 1 {
         let x = inner.x + left.gutter as u16 + 3
             + Line::raw(app.sidebar.name_draft.as_str()).width() as u16;
@@ -727,7 +736,9 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     lines.push(Line::from(""));
     let popup = sized_popup(area, 62, lines.len() + 1);
-    let legend = hints::legend(Context::Dialog(Dialog::BoardFilter), app, popup.width.saturating_sub(2), 1);
+    let legend_width = popup.width.saturating_sub(2);
+    let legend = hints::legend(Context::Dialog(Dialog::BoardFilter), app, legend_width, 1);
+    let legend_line = lines.len();
     lines.extend(legend);
     f.render_widget(Clear, popup);
     let block = Block::default()
@@ -742,6 +753,11 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(block, popup);
     let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
     app.hits.form_popup = popup;
+    if let Some(y) = legend_line.checked_sub(scroll as usize).filter(|y| *y < inner.height as usize) {
+        let at = (inner.x, inner.y + y as u16);
+        let legend_hits = hints::legend_hits(Context::Dialog(Dialog::BoardFilter), app, legend_width, 1, at);
+        app.hits.ctl.legend.extend(legend_hits);
+    }
     // Widget rows: the text row, then pills and card fields at the
     // lines `lines` laid out (2 header lines, blank and label gaps).
     let first_pill = 3 + usize::from(pills.is_empty());
@@ -1563,10 +1579,12 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
     let now = chrono::Utc::now();
     let issues_focused = app.pane_focused(crate::core::Pane::Issues);
+    let issue_title = side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag());
+    controls::side_controls(app, panes[0], &issue_title, false, crate::core::Pane::Issues);
     let il = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
-            title: spinning(side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag()), pane.sidebar, app.tick),
+            title: spinning(issue_title, pane.sidebar, app.tick),
             footer: footer_line(&app.side_footer(false)),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
@@ -1585,10 +1603,12 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(il, panes[0], &mut istate);
     app.sidebar.issue_state = istate;
     let prs_focused = app.pane_focused(crate::core::Pane::PRs);
+    let pr_title = side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag());
+    controls::side_controls(app, panes[1], &pr_title, true, crate::core::Pane::PRs);
     let pl = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
-            title: spinning(side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag()), pane.sidebar, app.tick),
+            title: spinning(pr_title, pane.sidebar, app.tick),
             footer: footer_line(&app.side_footer(true)),
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
@@ -1659,6 +1679,7 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if on_labels + on_milestones > 0 {
         title.spans[2] = Span::styled(format!("{} on", on_labels + on_milestones),
             Style::new().fg(amber()));
+        controls::clear_all_control(app, area, &mut title);
     }
     let footer = if items.is_empty() { String::new() } else {
         format!("milestones ({}/{milestones}) · labels ({on_labels}/{})",
@@ -2033,6 +2054,9 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .style(Style::new().bg(ink())),
         );
     f.render_widget(tabs, rows[3]);
+    if app.visual_diff() {
+        controls::diff_strip(f, rows[3], app);
+    }
 
     // Meta/labels render above the tabs with the body's gutter, so the
     // header starts where the body text starts.
@@ -2109,6 +2133,7 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
     app.hits.bar_hints.clear();
+    app.hits.ctl.repo = Rect::default();
     if app.nav.focus == crate::app::Focus::Bar {
         let text = if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
         let prompt = if app.sidebar.searching { "/ " } else { "❯ " };
@@ -2144,7 +2169,9 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if app.auth.degraded {
         segments.push(("⚠ auth degraded · R re-auth".to_string(), true));
     }
+    let mut repo_segment = None;
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
+        repo_segment = Some(segments.len());
         segments.push((format!("\u{f1d3} {repo}"), false));
     }
     if let Some(statuses) = app.nav.current.and_then(|n| app.issues.statuses.get(&n)) {
@@ -2174,6 +2201,14 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     if app.message_visible() && !app.message.is_empty() {
         segments.push((format!("\u{f071} {}", app.message), true));
+    }
+    if let Some(at) = repo_segment {
+        let before: usize = segments[..at].iter().map(|(s, _)| s.chars().count() + 3).sum();
+        let width = segments[at].0.chars().count() as u16;
+        let x = area.x + before as u16;
+        if x + width <= area.right() {
+            app.hits.ctl.repo = Rect::new(x, area.y, width, 1);
+        }
     }
     let left_used: usize =
         segments.iter().map(|(s, _)| s.chars().count()).sum::<usize>() + segments.len().saturating_sub(1) * 3;
@@ -2259,6 +2294,7 @@ fn column_layout(area: Rect, n_cols: usize) -> Vec<Rect> {
 fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, base};
     let popup = centered(area, 92, 92);
+    app.hits.ctl.popup = popup;
     f.render_widget(Clear, popup);
     // Nerd Font Font Awesome fa-columns; the board name keeps its label.
     // Column headers stay icon-free: their vocabularies are user-defined
@@ -2318,6 +2354,9 @@ fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     for line in hints::legend(Context::Dialog(Dialog::Board), app, room, 1) {
         hint.extend(line.spans);
     }
+    let legend_at = (hint_area.x + used as u16, hint_area.y);
+    let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Board), app, room, 1, legend_at);
+    app.hits.ctl.legend.extend(legend_hits);
     f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
     let Some(board) = &app.board.data else {
@@ -2603,7 +2642,7 @@ fn comment_word(n: usize) -> String {
 /// Sending and editing locks. The modal steals all keyboard and mouse
 /// focus, edits with bash/readline chords, and offers `$EDITOR` on
 /// `Ctrl+O`; resolving threads is out of scope and never offered here.
-fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
+fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, base, paper};
     let Some(c) = app.compose.draft.as_ref() else { return };
     let popup = centered(area, 80, 76);
@@ -2664,6 +2703,11 @@ fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &App) {
     } else {
         hints::legend(Context::Dialog(Dialog::Compose), app, chunks[2].width, 1).remove(0)
     };
+    if !c.sending {
+        let at = (chunks[2].x, chunks[2].y);
+        let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Compose), app, chunks[2].width, 1, at);
+        app.hits.ctl.legend.extend(legend_hits);
+    }
     f.render_widget(Paragraph::new(footer), chunks[2]);
 }
 
@@ -2745,6 +2789,8 @@ fn centered(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
 
 #[cfg(test)]
 mod hint_tests;
+#[cfg(test)]
+mod mouse_tests;
 
 #[cfg(test)]
 mod render_smoke {

@@ -152,9 +152,9 @@ pub(crate) fn line(hints: &[Hint], x: u16, row: u16) -> (Line<'static>, Vec<(Rec
     (Line::from(spans), rects)
 }
 
-/// Legend of a dialog: its own hints packed into at most `max_lines`
-/// lines of `width` cells. Lower ranks win when space is short.
-pub(crate) fn legend(context: Context, app: &App, width: u16, max_lines: usize) -> Vec<Line<'static>> {
+/// Hints of a dialog packed into at most `max_lines` lines of `width`
+/// cells. Lower ranks win when space is short.
+fn pack(context: Context, app: &App, width: u16, max_lines: usize) -> Vec<Vec<Hint>> {
     let hints = collect(&[context], app);
     let mut lines: Vec<Vec<Hint>> = vec![vec![]];
     for hint in hints {
@@ -169,7 +169,26 @@ pub(crate) fn legend(context: Context, app: &App, width: u16, max_lines: usize) 
             break;
         }
     }
-    lines.iter().map(|hints| line(hints, 0, 0).0).collect()
+    lines
+}
+
+/// Legend of a dialog: its own hints packed into at most `max_lines`
+/// lines of `width` cells.
+pub(crate) fn legend(context: Context, app: &App, width: u16, max_lines: usize) -> Vec<Line<'static>> {
+    pack(context, app, width, max_lines).iter().map(|hints| line(hints, 0, 0).0).collect()
+}
+
+/// Click rects of the legend when its first line is drawn at (`x`, `y`).
+pub(crate) fn legend_hits(
+    context: Context,
+    app: &App,
+    width: u16,
+    max_lines: usize,
+    (x, y): (u16, u16),
+) -> Vec<(Rect, Action)> {
+    pack(context, app, width, max_lines).iter().enumerate()
+        .flat_map(|(i, hints)| line(hints, x, y + i as u16).1)
+        .collect()
 }
 
 /// Name of the first key `context` binds to `action`. Empty-state text

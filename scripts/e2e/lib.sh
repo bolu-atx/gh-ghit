@@ -103,11 +103,12 @@ e2e_mouse_line() { # $1 raw sequence like $'\x1b[<0;4;25M'
   case "$btn" in
     64) kind="scroll-up" ;;
     65) kind="scroll-down" ;;
+    2) if [ "$press" = "m" ]; then kind="up-right"; else kind="down-right"; fi ;;
     3|*m) kind="up-left" ;;
     *) if [ "$press" = "m" ]; then kind="up-left"; else kind="down-left"; fi ;;
   esac
   # SGR release uses lowercase m regardless of button.
-  [ "$press" = "m" ] && kind="up-left"
+  [ "$press" = "m" ] && [ "$btn" != 2 ] && kind="up-left"
   printf '{"type":"mouse","kind":"%s","column":%s,"row":%s}\n' "$kind" "$column" "$row"
 }
 
