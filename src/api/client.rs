@@ -132,6 +132,48 @@ pub fn forget_token() {
     *TOKEN_CACHE.lock().unwrap() = None;
 }
 
+/// Unix second before which GitHub said not to call again (0 = clear).
+static RATE_LIMIT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// When the next call may go out, from one reply's headers: `retry-after`
+/// wins (secondary limits), else an exhausted quota waits for
+/// `x-ratelimit-reset`. Pure, so tests pin it without the network.
+pub(crate) fn rate_limit_until(
+    retry_after: Option<&str>,
+    remaining: Option<&str>,
+    reset: Option<&str>,
+    now: u64,
+) -> Option<u64> {
+    if let Some(secs) = retry_after.and_then(|s| s.trim().parse::<u64>().ok()) {
+        return Some(now + secs);
+    }
+    if remaining.map(str::trim) == Some("0") {
+        return reset.and_then(|s| s.trim().parse::<u64>().ok());
+    }
+    None
+}
+
+/// Record the rate-limit headers of every reply, so auto-refresh can
+/// stay quiet until the quota resets instead of retrying into a 403.
+pub(super) fn note_rate_limit(res: &reqwest::Response) {
+    let h = |name: &str| res.headers().get(name).and_then(|v| v.to_str().ok());
+    if let Some(until) = rate_limit_until(h("retry-after"), h("x-ratelimit-remaining"), h("x-ratelimit-reset"), unix_now()) {
+        RATE_LIMIT_UNTIL.fetch_max(until, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// True while GitHub's last word says the quota is spent.
+pub fn rate_limited() -> bool {
+    RATE_LIMIT_UNTIL.load(std::sync::atomic::Ordering::Relaxed) > unix_now()
+}
+
 /// Shared HTTP client: one connection pool for all background fetches.
 /// `Client::clone` is cheap; every task shares the same pool.
 pub(super) fn client() -> reqwest::Client {
@@ -173,6 +215,7 @@ pub(super) async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Re
         .send()
         .await
         .map_err(|e| format!("GitHub request failed: {e}"))?;
+    note_rate_limit(&res);
     if res.status().is_client_error() || res.status().is_server_error() {
         return Err(http_fail("GitHub request failed", url, res).await);
     }
@@ -189,6 +232,7 @@ pub(super) async fn post_json(client: &reqwest::Client, url: &str, bearer: &str,
         .send()
         .await
         .map_err(|e| format!("GitHub request failed: {e}"))?;
+    note_rate_limit(&res);
     if res.status().is_client_error() || res.status().is_server_error() {
         return Err(http_fail("GitHub request failed", url, res).await);
     }
@@ -252,6 +296,16 @@ mod tests {
         assert_eq!(api_endpoints("enterprise.example", None),
             ("https://enterprise.example/api/v3".into(),
              "https://enterprise.example/api/graphql".into()));
+    }
+
+    #[test]
+    fn rate_limit_headers_name_the_next_allowed_call() {
+        let now = 1_000;
+        assert_eq!(rate_limit_until(Some("60"), Some("10"), Some("5000"), now), Some(1_060), "retry-after wins");
+        assert_eq!(rate_limit_until(None, Some("0"), Some("4200"), now), Some(4_200), "spent quota waits for reset");
+        assert_eq!(rate_limit_until(None, Some("12"), Some("4200"), now), None, "quota left");
+        assert_eq!(rate_limit_until(None, None, None, now), None, "no headers");
+        assert_eq!(rate_limit_until(Some("soon"), Some("0"), Some("nope"), now), None, "garbage");
     }
 
     #[test]
