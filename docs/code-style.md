@@ -44,7 +44,7 @@ What good code looks like here:
   unrelated code and only grow.
 - Size budget (project rule). When a file passes about 800 lines without
   its tests, or about 1500 lines in total, split it before you add more.
-  These files are over budget today: `ui.rs`, `app.rs`, `model.rs` and
+  These files are over budget today: `model.rs` and
   `input.rs`. When you change one of them, do not add a new concern to it.
   Split it in a separate `refactor:` change instead.
 - How to split. Cut along a path seam: a group of functions that call each
