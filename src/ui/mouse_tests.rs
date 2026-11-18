@@ -400,5 +400,6 @@ fn the_menu_frame_shows_actions_with_keys_and_one_focus() {
     assert!(rows.iter().any(|r| r.contains("Pin") && r.contains(" p ")), "{joined}");
     assert!(rows.iter().any(|r| r.contains("Evict row") && r.contains(" x ")), "{joined}");
     let doubles = buf.content().iter().filter(|c| c.symbol() == "╔").count();
-    assert_eq!(doubles, 0, "no pane keeps the focus frame while the menu owns input");
+    assert_eq!(doubles, 1, "only the menu wears the focus frame while it owns input");
+    assert_eq!(buf[(popup.x, popup.y)].symbol(), "╔", "the menu is the focused layer");
 }

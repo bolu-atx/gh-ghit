@@ -5,7 +5,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::core::Pane;
@@ -84,8 +84,8 @@ pub(super) fn render_menu(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let x = menu.anchor.0.min(area.right().saturating_sub(width));
     let y = menu.anchor.1.min(area.bottom().saturating_sub(height));
     let popup = Rect::new(x, y, width, height);
-    let block = Block::default().borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted())).style(theme::base());
+    // The menu is the focused layer, so it wears the focused-pane frame.
+    let block = theme::pane_block(true);
     let inner = block.inner(popup);
     f.render_widget(Clear, popup);
     f.render_widget(block, popup);
