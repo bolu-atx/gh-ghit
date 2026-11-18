@@ -26,7 +26,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 
     // Compose modal captures everything: typing edits the draft,
-    // Ctrl+S sends, Esc discards.
+    // Ctrl+S sends, Esc discards (asking first when the draft has text).
     if app.compose_open() {
         handle_compose_key(app, key);
         return;
@@ -96,12 +96,12 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 let quit = matches!(app.bar.trim(), "q" | "quit" | "exit");
                 app.submit_bar();
                 if quit {
-                    app.quit = true;
+                    app.request_quit();
                 }
             }
             KeyCode::Char(c) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'c' || c == 'd') {
-                    app.quit = true;
+                    app.request_quit();
                     return;
                 }
                 if app.sidebar.searching {
@@ -130,8 +130,9 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_forward(),
         KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_forward(),
         KeyCode::Char('?') => app.shortcuts_open = true,
-        KeyCode::Char('q') => app.quit = true,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit = true,
+        KeyCode::Char('q') => app.request_quit(),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.request_quit(),
+        KeyCode::Char('u') if app.undo_live() => app.undo_last(),
         KeyCode::Char('1') => app.set_tab(Tab::Details),
         KeyCode::Char('2') => app.set_tab(Tab::Visual),
         KeyCode::Char('t') => {
@@ -342,7 +343,7 @@ pub(crate) fn handle_confirm_key(app: &mut App, key: crossterm::event::KeyEvent)
 /// prompt: `Ctrl+A/E` line ends, `Ctrl+B/F/P/N` steps, `Alt+B/F` word
 /// jumps, `Ctrl+K/U/W` kills plus `Alt+D`, `Ctrl+Y` yanks, `Ctrl+D/T`
 /// delete and transpose, `Home/End/Delete` included. `Ctrl+O` opens the
-/// draft in `$EDITOR`, `Ctrl+S` submits, `Esc` discards. The modal
+/// draft in `$EDITOR`, `Ctrl+S` submits, `Esc` discards after a confirm. The modal
 /// swallows every key — `Tab` (even as `Ctrl+I`) indents, `Ctrl+C`
 /// never quits — so nothing behind it fires while it is up. A lost
 /// draft would be worse than an ignored key, and control bytes must
@@ -403,7 +404,7 @@ pub(crate) fn handle_compose_key(app: &mut App, key: crossterm::event::KeyEvent)
         return;
     }
     match key.code {
-        KeyCode::Esc => app.discard_compose(),
+        KeyCode::Esc => app.request_discard_compose(),
         KeyCode::Enter => app.compose_insert('\n'),
         KeyCode::Backspace => app.compose_backspace(),
         KeyCode::Delete => app.compose_delete_forward(),
@@ -667,6 +668,7 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('e') => app.start_query_edit(),
         KeyCode::Char('s') => app.start_name_edit(),
         KeyCode::Char('x') => app.delete_named_query(),
+        KeyCode::Char('u') if app.undo_live() => app.undo_last(),
         KeyCode::Char('1') => app.set_window(1),
         KeyCode::Char('2') => app.set_window(24),
         KeyCode::Char('3') => app.set_window(168),
@@ -847,7 +849,26 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
-    if app.confirm_open() { return; }
+    if app.confirm_open() {
+        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+            let hit = app.hits.confirm_choices.iter()
+                .find(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row)))
+                .map(|(_, i)| *i);
+            if let Some(i) = hit {
+                app.confirm_choose(i);
+            }
+        }
+        return;
+    }
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && app.undo_live()
+        && !app.shortcuts_open
+        && !app.compose_open()
+        && app.hits.undo_toast.contains(ratatui::layout::Position::new(m.column, m.row))
+    {
+        app.undo_last();
+        return;
+    }
     if app.shortcuts_open { return; }
     // The compose modal steals all mouse focus: clicks and wheel never
     // reach the panes behind it, so the draft and selection survive.
@@ -1556,7 +1577,21 @@ mod tests {
         handle_key(&mut app, plain_key(KeyCode::Char('x')));
         assert_eq!(app.compose.draft.as_ref().unwrap().body, "x");
         handle_key(&mut app, plain_key(KeyCode::Esc));
-        assert!(!app.compose_open());
+        assert!(app.confirm_open(), "typed draft asks before discarding");
+        assert!(app.compose_open());
+        handle_key(&mut app, plain_key(KeyCode::Char('k')));
+        assert!(app.compose_open() && !app.confirm_open(), "k keeps editing");
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        handle_key(&mut app, plain_key(KeyCode::Char('d')));
+        assert!(!app.compose_open(), "d discards");
+    }
+
+    #[test]
+    fn esc_on_empty_draft_closes_silently() {
+        let mut app = compose_app();
+        handle_key(&mut app, plain_key(KeyCode::Char('c')));
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.compose_open() && !app.confirm_open());
     }
 
     #[test]
