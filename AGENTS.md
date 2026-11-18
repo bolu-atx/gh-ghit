@@ -47,7 +47,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/main.rs` | Thin entry: parse `cli`, run `app` |
 | `src/cli.rs` | Clap `Args` + numeric startup parsing |
 | `src/app.rs` | `App` state, event loop, background fetch wiring; `draw_frame` fits column widths, then renders |
-| `src/app/fetch_queue.rs` | Fetch scheduler: priority queue, at most 4 in flight, tier picked at start time, only tier 1 while rate limited |
+| `src/app/fetch_queue.rs` | Fetch scheduler: priority queue; current-issue fetches start at once, the rest at most 4 in flight; tier picked at start time; only tier 1 while rate limited |
 | `src/core.rs` | Pure business rules (`parse_bar`, selection, board cursor, pins, window) |
 | `src/core/focus.rs` | Focus model: layer stack, pane order, `Tab` stepping |
 | `src/core/urgency.rs` | Fetch tiers: `urgency(kind, is_current, tab_shown)` picks which request starts first |
