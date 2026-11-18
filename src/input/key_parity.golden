@@ -4,120 +4,83 @@ issues | '2' | tab: Details -> Visual
 issues | ':' | focus: false -> true
 issues | '?' | shortcuts: false -> true
 issues | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+issues | 'F' | format: false/false/false -> true/true/false
 issues | 'N' | message:  -> no search: press /
-issues | 'a' | sort: Default/false/None -> Updated/true/None
+issues | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+issues | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 issues | 'c' | compose: None/false -> Some(("", 0, ""))/false
 issues | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 issues | 'f' | format: false/false/false -> true/false/false
-issues | 'g' | format: false/false/false -> true/true/false
+issues | 'g' | pending: None -> Some('g')
 issues | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 issues | 'k' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
 issues | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 issues | 'n' | message:  -> no search: press /
 issues | 'o' | message:  -> opened #8 in browser
 issues | 'q' | quit: false -> true
+issues | 's' | sort: Default/false/None -> Updated/true/None
 issues | 'x' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
-issues | ctrl-a | sort: Default/false/None -> Updated/true/None
-issues | alt-a | sort: Default/false/None -> Updated/true/None
 issues | ctrl-c | quit: false -> true
-issues | alt-c | compose: None/false -> Some(("", 0, ""))/false
-issues | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-issues | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-issues | ctrl-f | format: false/false/false -> true/false/false
-issues | alt-f | format: false/false/false -> true/false/false
-issues | ctrl-g | format: false/false/false -> true/true/false
-issues | alt-g | format: false/false/false -> true/true/false
-issues | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
-issues | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 issues | ctrl-i | message:  -> no newer issue
-issues | ctrl-k | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
-issues | alt-k | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
-issues | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-issues | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-issues | ctrl-n | message:  -> no search: press /
-issues | alt-n | message:  -> no search: press /
 issues | ctrl-o | message:  -> no older issue
-issues | alt-o | message:  -> opened #8 in browser
-issues | ctrl-q | quit: false -> true
-issues | alt-q | quit: false -> true
-issues | ctrl-x | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
-issues | alt-x | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
-issues | ctrl-S | message:  -> no pending comments to submit
-issues | ctrl-alt-o | message:  -> no older issue
+issues | ctrl-s | message:  -> no pending comments to submit
+issues | ctrl-u | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
 issues | tab | pane: Issues -> PRs
 issues | backtab | pane: Issues -> Refs
-issues | down | scroll: 0 -> 3
-issues | pagedown | scroll: 0 -> 12
+issues | up | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
+issues | pageup | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
 issues | ctrl-tab | message:  -> no newer issue
-issues | alt-tab | pane: Issues -> PRs
+issues | g g | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
 issues-tree | ' ' | diff: None/false/false/[] -> None/false/false/[7]
 issues-tree | '/' | focus: false -> true ; search: ""/false -> ""/true
 issues-tree | '2' | tab: Details -> Visual
 issues-tree | ':' | focus: false -> true
 issues-tree | '?' | shortcuts: false -> true
 issues-tree | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+issues-tree | 'F' | format: false/false/false -> true/true/false
+issues-tree | 'G' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 issues-tree | 'N' | message:  -> no search: press /
 issues-tree | 'Z' | folded: [] -> [7]
-issues-tree | 'a' | sort: Default/false/None -> Updated/true/None
+issues-tree | '[' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | ']' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
 issues-tree | 'c' | compose: None/false -> Some(("", 0, ""))/false
 issues-tree | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 issues-tree | 'f' | format: false/false/false -> true/false/false
-issues-tree | 'g' | format: false/false/false -> true/true/false
-issues-tree | 'h' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | 'g' | pending: None -> Some('g')
+issues-tree | 'h' | folded: [] -> [7]
 issues-tree | 'j' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
-issues-tree | 'l' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
 issues-tree | 'n' | message:  -> no search: press /
 issues-tree | 'o' | message:  -> opened #7 in browser
 issues-tree | 'q' | quit: false -> true
+issues-tree | 's' | sort: Default/false/None -> Updated/true/None
 issues-tree | 'x' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
 issues-tree | 'z' | folded: [] -> [7]
-issues-tree | ctrl-a | sort: Default/false/None -> Updated/true/None
-issues-tree | alt-a | sort: Default/false/None -> Updated/true/None
 issues-tree | ctrl-c | quit: false -> true
-issues-tree | alt-c | compose: None/false -> Some(("", 0, ""))/false
-issues-tree | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-issues-tree | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-issues-tree | ctrl-f | format: false/false/false -> true/false/false
-issues-tree | alt-f | format: false/false/false -> true/false/false
-issues-tree | ctrl-g | format: false/false/false -> true/true/false
-issues-tree | alt-g | format: false/false/false -> true/true/false
-issues-tree | ctrl-h | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
-issues-tree | alt-h | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+issues-tree | ctrl-d | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 issues-tree | ctrl-i | message:  -> no newer issue
-issues-tree | ctrl-j | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
-issues-tree | alt-j | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
-issues-tree | ctrl-l | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
-issues-tree | alt-l | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
-issues-tree | ctrl-n | message:  -> no search: press /
-issues-tree | alt-n | message:  -> no search: press /
 issues-tree | ctrl-o | message:  -> no older issue
-issues-tree | alt-o | message:  -> opened #7 in browser
-issues-tree | ctrl-q | quit: false -> true
-issues-tree | alt-q | quit: false -> true
-issues-tree | ctrl-x | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
-issues-tree | alt-x | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
-issues-tree | ctrl-z | folded: [] -> [7]
-issues-tree | alt-z | folded: [] -> [7]
-issues-tree | ctrl-S | message:  -> no pending comments to submit
-issues-tree | ctrl-alt-o | message:  -> no older issue
+issues-tree | ctrl-s | message:  -> no pending comments to submit
 issues-tree | tab | pane: Issues -> PRs
 issues-tree | backtab | pane: Issues -> Refs
-issues-tree | down | scroll: 0 -> 3
+issues-tree | down | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 issues-tree | left | folded: [] -> [7]
-issues-tree | pagedown | scroll: 0 -> 12
+issues-tree | pagedown | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 issues-tree | ctrl-tab | message:  -> no newer issue
-issues-tree | alt-tab | pane: Issues -> PRs
+issues-tree | g j | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 prs | '/' | focus: false -> true ; search: ""/false -> ""/true
 prs | '2' | tab: Details -> Visual
 prs | ':' | focus: false -> true
 prs | '?' | shortcuts: false -> true
 prs | 'E' | pane: PRs -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+prs | 'F' | format: false/false/false -> true/true/false
+prs | 'G' | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
 prs | 'N' | message:  -> no search: press /
-prs | 'a' | sort: Default/false/None -> Updated/true/None
+prs | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+prs | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 prs | 'c' | compose: None/false -> Some(("", 0, ""))/false
 prs | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 prs | 'f' | format: false/false/false -> true/false/false
-prs | 'g' | format: false/false/false -> true/true/false
+prs | 'g' | pending: None -> Some('g')
 prs | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 prs | 'j' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | 'k' | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
@@ -125,49 +88,35 @@ prs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; histor
 prs | 'n' | message:  -> no search: press /
 prs | 'o' | message:  -> opened #8 in browser
 prs | 'q' | quit: false -> true
-prs | ctrl-a | sort: Default/false/None -> Updated/true/None
-prs | alt-a | sort: Default/false/None -> Updated/true/None
+prs | 's' | sort: Default/false/None -> Updated/true/None
 prs | ctrl-c | quit: false -> true
-prs | alt-c | compose: None/false -> Some(("", 0, ""))/false
-prs | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-prs | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-prs | ctrl-f | format: false/false/false -> true/false/false
-prs | alt-f | format: false/false/false -> true/false/false
-prs | ctrl-g | format: false/false/false -> true/true/false
-prs | alt-g | format: false/false/false -> true/true/false
-prs | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
-prs | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+prs | ctrl-d | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | ctrl-i | message:  -> no newer issue
-prs | ctrl-j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
-prs | alt-j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
-prs | ctrl-k | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
-prs | alt-k | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
-prs | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-prs | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-prs | ctrl-n | message:  -> no search: press /
-prs | alt-n | message:  -> no search: press /
 prs | ctrl-o | message:  -> no older issue
-prs | alt-o | message:  -> opened #8 in browser
-prs | ctrl-q | quit: false -> true
-prs | alt-q | quit: false -> true
-prs | ctrl-S | message:  -> no pending comments to submit
-prs | ctrl-alt-o | message:  -> no older issue
+prs | ctrl-s | message:  -> no pending comments to submit
+prs | ctrl-u | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
 prs | tab | pane: PRs -> Main
 prs | backtab | pane: PRs -> Issues
-prs | down | scroll: 0 -> 3
-prs | pagedown | scroll: 0 -> 12
+prs | up | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
+prs | down | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
+prs | pageup | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
+prs | pagedown | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | ctrl-tab | message:  -> no newer issue
-prs | alt-tab | pane: PRs -> Main
+prs | g g | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
+prs | g j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 main-details | '/' | focus: false -> true ; search: ""/false -> ""/true
 main-details | '2' | tab: Details -> Visual
 main-details | ':' | focus: false -> true
 main-details | '?' | shortcuts: false -> true
 main-details | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+main-details | 'F' | format: false/false/false -> true/true/false
 main-details | 'N' | message:  -> no search: press /
+main-details | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+main-details | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 main-details | 'c' | compose: None/false -> Some(("", 0, ""))/false
 main-details | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 main-details | 'f' | format: false/false/false -> true/false/false
-main-details | 'g' | format: false/false/false -> true/true/false
+main-details | 'g' | pending: None -> Some('g')
 main-details | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 main-details | 'j' | scroll: 0 -> 3
 main-details | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -175,135 +124,87 @@ main-details | 'n' | message:  -> no search: press /
 main-details | 'o' | message:  -> opened #8 in browser
 main-details | 'q' | quit: false -> true
 main-details | ctrl-c | quit: false -> true
-main-details | alt-c | compose: None/false -> Some(("", 0, ""))/false
-main-details | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-details | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-details | ctrl-f | format: false/false/false -> true/false/false
-main-details | alt-f | format: false/false/false -> true/false/false
-main-details | ctrl-g | format: false/false/false -> true/true/false
-main-details | alt-g | format: false/false/false -> true/true/false
-main-details | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
-main-details | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 main-details | ctrl-i | message:  -> no newer issue
-main-details | ctrl-j | scroll: 0 -> 3
-main-details | alt-j | scroll: 0 -> 3
-main-details | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-main-details | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-main-details | ctrl-n | message:  -> no search: press /
-main-details | alt-n | message:  -> no search: press /
 main-details | ctrl-o | message:  -> no older issue
-main-details | alt-o | message:  -> opened #8 in browser
-main-details | ctrl-q | quit: false -> true
-main-details | alt-q | quit: false -> true
-main-details | ctrl-S | message:  -> no pending comments to submit
-main-details | ctrl-alt-o | message:  -> no older issue
+main-details | ctrl-s | message:  -> no pending comments to submit
 main-details | tab | pane: Main -> Refs
 main-details | backtab | pane: Main -> PRs
 main-details | down | scroll: 0 -> 3
-main-details | pagedown | scroll: 0 -> 12
 main-details | ctrl-tab | message:  -> no newer issue
-main-details | alt-tab | pane: Main -> Refs
+main-details | g j | scroll: 0 -> 3
 main-diff | '/' | focus: false -> true ; search: ""/false -> ""/true
 main-diff | '1' | tab: Visual -> Details
 main-diff | ':' | focus: false -> true
 main-diff | '?' | shortcuts: false -> true
 main-diff | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+main-diff | 'F' | format: false/false/false -> true/true/false
+main-diff | 'G' | diff: None/false/false/[] -> Some(9)/true/false/[]
 main-diff | 'N' | message:  -> no search: press /
+main-diff | '[' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
+main-diff | ']' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
 main-diff | 'c' | compose: None/false -> Some(("", 0, ""))/false
 main-diff | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 main-diff | 'f' | format: false/false/false -> true/false/false
-main-diff | 'g' | format: false/false/false -> true/true/false
-main-diff | 'h' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
-main-diff | 'j' | scroll: 0 -> 3
-main-diff | 'l' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
+main-diff | 'g' | pending: None -> Some('g')
+main-diff | 'j' | diff: None/false/false/[] -> Some(1)/true/false/[]
 main-diff | 'n' | message:  -> no search: press /
 main-diff | 'o' | message:  -> opened #9 in browser
 main-diff | 'q' | quit: false -> true
 main-diff | 's' | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
 main-diff | ctrl-c | quit: false -> true
-main-diff | alt-c | compose: None/false -> Some(("", 0, ""))/false
-main-diff | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-diff | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-diff | ctrl-f | format: false/false/false -> true/false/false
-main-diff | alt-f | format: false/false/false -> true/false/false
-main-diff | ctrl-g | format: false/false/false -> true/true/false
-main-diff | alt-g | format: false/false/false -> true/true/false
-main-diff | ctrl-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
-main-diff | alt-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
 main-diff | ctrl-i | message:  -> no newer issue
-main-diff | ctrl-j | scroll: 0 -> 3
-main-diff | alt-j | scroll: 0 -> 3
-main-diff | ctrl-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
-main-diff | alt-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
-main-diff | ctrl-n | message:  -> no search: press /
-main-diff | alt-n | message:  -> no search: press /
 main-diff | ctrl-o | message:  -> no older issue
-main-diff | alt-o | message:  -> opened #9 in browser
-main-diff | ctrl-q | quit: false -> true
-main-diff | alt-q | quit: false -> true
-main-diff | ctrl-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
-main-diff | alt-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
-main-diff | ctrl-S | message:  -> no pending comments to submit
-main-diff | ctrl-alt-o | message:  -> no older issue
-main-diff | ctrl-alt-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
+main-diff | ctrl-s | message:  -> no pending comments to submit
 main-diff | tab | pane: Main -> Refs
 main-diff | backtab | pane: Main -> PRs
 main-diff | down | diff: None/false/false/[] -> Some(1)/true/false/[]
-main-diff | pagedown | scroll: 0 -> 12
 main-diff | ctrl-tab | message:  -> no newer issue
-main-diff | alt-tab | pane: Main -> Refs
+main-diff | g g | diff: None/false/false/[] -> Some(0)/true/false/[]
+main-diff | g j | diff: None/false/false/[] -> Some(1)/true/false/[]
 main-graph | '/' | focus: false -> true ; search: ""/false -> ""/true
 main-graph | '1' | tab: Visual -> Details
 main-graph | ':' | focus: false -> true
 main-graph | '?' | shortcuts: false -> true
 main-graph | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+main-graph | 'F' | format: false/false/false -> true/true/false
+main-graph | 'G' | graph: 0 -> 2
 main-graph | 'N' | message:  -> no search: press /
+main-graph | '[' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
+main-graph | ']' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
 main-graph | 'c' | compose: None/false -> Some(("", 0, ""))/false
 main-graph | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 main-graph | 'f' | format: false/false/false -> true/false/false
-main-graph | 'g' | format: false/false/false -> true/true/false
+main-graph | 'g' | pending: None -> Some('g')
 main-graph | 'j' | graph: 0 -> 1
 main-graph | 'l' | graph: 0 -> 1
 main-graph | 'n' | message:  -> no search: press /
 main-graph | 'o' | message:  -> opened #7 in browser
 main-graph | 'q' | quit: false -> true
 main-graph | ctrl-c | quit: false -> true
-main-graph | alt-c | compose: None/false -> Some(("", 0, ""))/false
-main-graph | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-graph | alt-e | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-graph | ctrl-f | format: false/false/false -> true/false/false
-main-graph | alt-f | format: false/false/false -> true/false/false
-main-graph | ctrl-g | format: false/false/false -> true/true/false
-main-graph | alt-g | format: false/false/false -> true/true/false
+main-graph | ctrl-d | graph: 0 -> 1
 main-graph | ctrl-i | message:  -> no newer issue
-main-graph | ctrl-j | graph: 0 -> 1
-main-graph | alt-j | graph: 0 -> 1
-main-graph | ctrl-l | graph: 0 -> 1
-main-graph | alt-l | graph: 0 -> 1
-main-graph | ctrl-n | message:  -> no search: press /
-main-graph | alt-n | message:  -> no search: press /
 main-graph | ctrl-o | message:  -> no older issue
-main-graph | alt-o | message:  -> opened #7 in browser
-main-graph | ctrl-q | quit: false -> true
-main-graph | alt-q | quit: false -> true
-main-graph | ctrl-S | message:  -> no pending comments to submit
-main-graph | ctrl-alt-o | message:  -> no older issue
+main-graph | ctrl-s | message:  -> no pending comments to submit
 main-graph | tab | pane: Main -> Refs
 main-graph | backtab | pane: Main -> PRs
 main-graph | down | graph: 0 -> 1
-main-graph | pagedown | scroll: 0 -> 12
+main-graph | pagedown | graph: 0 -> 1
 main-graph | ctrl-tab | message:  -> no newer issue
-main-graph | alt-tab | pane: Main -> Refs
+main-graph | g j | graph: 0 -> 1
 refs | '/' | focus: false -> true ; search: ""/false -> ""/true
 refs | '2' | tab: Details -> Visual
 refs | ':' | focus: false -> true
 refs | '?' | shortcuts: false -> true
 refs | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+refs | 'F' | format: false/false/false -> true/true/false
+refs | 'G' | refs: true/None -> true/Some(9)
 refs | 'N' | message:  -> no search: press /
+refs | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+refs | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 refs | 'c' | compose: None/false -> Some(("", 0, ""))/false
 refs | 'e' | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 refs | 'f' | format: false/false/false -> true/false/false
-refs | 'g' | format: false/false/false -> true/true/false
+refs | 'g' | pending: None -> Some('g')
 refs | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 refs | 'j' | refs: true/None -> true/Some(7)
 refs | 'k' | refs: true/None -> true/Some(9)
@@ -312,47 +213,35 @@ refs | 'n' | message:  -> no search: press /
 refs | 'o' | message:  -> opened #8 in browser
 refs | 'q' | quit: false -> true
 refs | ctrl-c | quit: false -> true
-refs | alt-c | compose: None/false -> Some(("", 0, ""))/false
-refs | ctrl-e | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
-refs | alt-e | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
-refs | ctrl-f | format: false/false/false -> true/false/false
-refs | alt-f | format: false/false/false -> true/false/false
-refs | ctrl-g | format: false/false/false -> true/true/false
-refs | alt-g | format: false/false/false -> true/true/false
-refs | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
-refs | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+refs | ctrl-d | refs: true/None -> true/Some(7)
 refs | ctrl-i | message:  -> no newer issue
-refs | ctrl-j | refs: true/None -> true/Some(7)
-refs | alt-j | refs: true/None -> true/Some(7)
-refs | ctrl-k | refs: true/None -> true/Some(9)
-refs | alt-k | refs: true/None -> true/Some(9)
-refs | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-refs | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-refs | ctrl-n | message:  -> no search: press /
-refs | alt-n | message:  -> no search: press /
 refs | ctrl-o | message:  -> no older issue
-refs | alt-o | message:  -> opened #8 in browser
-refs | ctrl-q | quit: false -> true
-refs | alt-q | quit: false -> true
-refs | ctrl-S | message:  -> no pending comments to submit
-refs | ctrl-alt-o | message:  -> no older issue
+refs | ctrl-s | message:  -> no pending comments to submit
+refs | ctrl-u | refs: true/None -> true/Some(9)
 refs | tab | pane: Refs -> Issues
 refs | backtab | pane: Refs -> Main
-refs | down | scroll: 0 -> 3
-refs | pagedown | scroll: 0 -> 12
+refs | up | refs: true/None -> true/Some(9)
+refs | down | refs: true/None -> true/Some(7)
+refs | pageup | refs: true/None -> true/Some(9)
+refs | pagedown | refs: true/None -> true/Some(7)
 refs | ctrl-tab | message:  -> no newer issue
-refs | alt-tab | pane: Refs -> Issues
+refs | g g | refs: true/None -> true/Some(7)
+refs | g j | refs: true/None -> true/Some(7)
 labels | ' ' | filters: []/0 -> ["bug"]/0
 labels | '/' | focus: false -> true ; search: ""/false -> ""/true
 labels | '2' | tab: Details -> Visual
 labels | ':' | focus: false -> true
 labels | '?' | shortcuts: false -> true
 labels | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+labels | 'F' | format: false/false/false -> true/true/false
+labels | 'G' | labels-cursor: 0 -> 1
 labels | 'N' | message:  -> no search: press /
+labels | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+labels | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 labels | 'c' | compose: None/false -> Some(("", 0, ""))/false
 labels | 'e' | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 labels | 'f' | format: false/false/false -> true/false/false
-labels | 'g' | format: false/false/false -> true/true/false
+labels | 'g' | pending: None -> Some('g')
 labels | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 labels | 'j' | labels-cursor: 0 -> 1
 labels | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -360,47 +249,30 @@ labels | 'n' | message:  -> no search: press /
 labels | 'o' | message:  -> opened #8 in browser
 labels | 'q' | quit: false -> true
 labels | ctrl-c | quit: false -> true
-labels | alt-c | compose: None/false -> Some(("", 0, ""))/false
-labels | ctrl-e | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
-labels | alt-e | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
-labels | ctrl-f | format: false/false/false -> true/false/false
-labels | alt-f | format: false/false/false -> true/false/false
-labels | ctrl-g | format: false/false/false -> true/true/false
-labels | alt-g | format: false/false/false -> true/true/false
-labels | ctrl-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
-labels | alt-h | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
+labels | ctrl-d | labels-cursor: 0 -> 1
 labels | ctrl-i | message:  -> no newer issue
-labels | ctrl-j | labels-cursor: 0 -> 1
-labels | alt-j | labels-cursor: 0 -> 1
-labels | ctrl-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-labels | alt-l | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
-labels | ctrl-n | message:  -> no search: press /
-labels | alt-n | message:  -> no search: press /
 labels | ctrl-o | message:  -> no older issue
-labels | alt-o | message:  -> opened #8 in browser
-labels | ctrl-q | quit: false -> true
-labels | alt-q | quit: false -> true
-labels | ctrl-S | message:  -> no pending comments to submit
-labels | ctrl-alt-o | message:  -> no older issue
+labels | ctrl-s | message:  -> no pending comments to submit
 labels | enter | filters: []/0 -> ["bug"]/0
 labels | tab | pane: Labels -> Issues
 labels | backtab | pane: Labels -> Refs
-labels | down | scroll: 0 -> 3
-labels | pagedown | scroll: 0 -> 12
+labels | down | labels-cursor: 0 -> 1
+labels | pagedown | labels-cursor: 0 -> 1
 labels | ctrl-tab | message:  -> no newer issue
-labels | alt-tab | pane: Labels -> Issues
-labels | ctrl-enter | filters: []/0 -> ["bug"]/0
-labels | alt-enter | filters: []/0 -> ["bug"]/0
+labels | g j | labels-cursor: 0 -> 1
 history | '/' | focus: false -> true ; search: ""/false -> ""/true
 history | '2' | tab: Details -> Visual
 history | ':' | focus: false -> true
 history | '?' | shortcuts: false -> true
 history | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
+history | 'F' | format: false/false/false -> true/true/false
 history | 'N' | message:  -> no search: press /
+history | '[' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
+history | ']' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
 history | 'c' | compose: None/false -> Some(("", 0, ""))/false
 history | 'e' | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 history | 'f' | format: false/false/false -> true/false/false
-history | 'g' | format: false/false/false -> true/true/false
+history | 'g' | pending: None -> Some('g')
 history | 'h' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
 history | 'k' | history: [8, 7]/[]/0 -> [8, 7]/[]/1
 history | 'l' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
@@ -408,38 +280,19 @@ history | 'n' | message:  -> no search: press /
 history | 'o' | message:  -> opened #9 in browser
 history | 'q' | quit: false -> true
 history | ctrl-c | quit: false -> true
-history | alt-c | compose: None/false -> Some(("", 0, ""))/false
-history | ctrl-e | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
-history | alt-e | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
-history | ctrl-f | format: false/false/false -> true/false/false
-history | alt-f | format: false/false/false -> true/false/false
-history | ctrl-g | format: false/false/false -> true/true/false
-history | alt-g | format: false/false/false -> true/true/false
-history | ctrl-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
-history | alt-h | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
 history | ctrl-i | message:  -> no newer issue
-history | ctrl-k | history: [8, 7]/[]/0 -> [8, 7]/[]/1
-history | alt-k | history: [8, 7]/[]/0 -> [8, 7]/[]/1
-history | ctrl-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
-history | alt-l | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
-history | ctrl-n | message:  -> no search: press /
-history | alt-n | message:  -> no search: press /
 history | ctrl-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ; history: [8, 7]/[]/0 -> [8]/[9]/0
-history | alt-o | message:  -> opened #9 in browser
-history | ctrl-q | quit: false -> true
-history | alt-q | quit: false -> true
-history | ctrl-S | message:  -> no pending comments to submit
-history | ctrl-alt-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ; history: [8, 7]/[]/0 -> [8]/[9]/0
+history | ctrl-s | message:  -> no pending comments to submit
+history | ctrl-u | history: [8, 7]/[]/0 -> [8, 7]/[]/1
 history | tab | pane: History -> Issues
 history | backtab | pane: History -> Refs
-history | down | scroll: 0 -> 3
-history | pagedown | scroll: 0 -> 12
+history | up | history: [8, 7]/[]/0 -> [8, 7]/[]/1
+history | pageup | history: [8, 7]/[]/0 -> [8, 7]/[]/2
 history | ctrl-tab | message:  -> no newer issue
-history | alt-tab | pane: History -> Issues
+history | g g | history: [8, 7]/[]/0 -> [8, 7]/[]/2
 shortcuts | '?' | shortcuts: true -> false
+shortcuts | 'g' | pending: None -> Some('g')
 shortcuts | 'q' | shortcuts: true -> false
-shortcuts | ctrl-q | shortcuts: true -> false
-shortcuts | alt-q | shortcuts: true -> false
 shortcuts | esc | shortcuts: true -> false
 compose | ' ' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl d\nx", 11, ""))/false
 compose | '!' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl!d\nx", 11, ""))/false
@@ -492,6 +345,7 @@ compose | 'O' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello 
 compose | 'P' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlPd\nx", 11, ""))/false
 compose | 'Q' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlQd\nx", 11, ""))/false
 compose | 'R' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlRd\nx", 11, ""))/false
+compose | 'S' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlSd\nx", 11, ""))/false
 compose | 'T' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlTd\nx", 11, ""))/false
 compose | 'U' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlUd\nx", 11, ""))/false
 compose | 'V' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlVd\nx", 11, ""))/false
@@ -563,6 +417,9 @@ compose | ctrl-tab | compose: Some(("hello world\nx", 10, ""))/false -> Some(("h
 compose | alt-tab | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\td\nx", 11, ""))/false
 compose | ctrl-enter | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worl\nd\nx", 11, ""))/false
 compose | alt-backspace | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello d\nx", 6, "worl"))/false
+compose | g g | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlggd\nx", 12, ""))/false
+compose | g j | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlgjd\nx", 12, ""))/false
+confirm | '?' | shortcuts: false -> true
 confirm | 'D' | compose: Some(("hello world\nx", 10, ""))/false -> None/false ; confirm: Some(("Discard draft", 2)) -> None
 confirm | 'K' | confirm: Some(("Discard draft", 2)) -> None
 confirm | 'd' | compose: Some(("hello world\nx", 10, ""))/false -> None/false ; confirm: Some(("Discard draft", 2)) -> None
@@ -573,14 +430,13 @@ confirm | ctrl-k | confirm: Some(("Discard draft", 2)) -> None
 confirm | alt-k | confirm: Some(("Discard draft", 2)) -> None
 confirm | enter | confirm: Some(("Discard draft", 2)) -> None
 confirm | esc | confirm: Some(("Discard draft", 2)) -> None
-confirm | ctrl-enter | confirm: Some(("Discard draft", 2)) -> None
-confirm | alt-enter | confirm: Some(("Discard draft", 2)) -> None
 format | ' ' | format: true/false/false -> true/true/false
 format | '0' | message:  -> recent: default query and window
 format | '1' | message:  -> merged window: open + merged ≤1h ; window: 24 -> 1
 format | '2' | message:  -> merged window: open + merged ≤24h
 format | '3' | message:  -> merged window: open + merged ≤7d ; window: 24 -> 168
 format | '4' | message:  -> merged window: open + merged all time ; window: 24 -> 0
+format | '?' | shortcuts: false -> true
 format | 'c' | show: truetruetruetruetrue -> truetruetruefalsetrue
 format | 'e' | format: true/false/false -> true/true/false
 format | 'f' | format: true/false/false -> false/false/false
@@ -592,36 +448,11 @@ format | 'm' | show: truetruetruetruetrue -> truefalsetruetruetrue
 format | 'o' | show: truetruetruetruetrue -> falsetruetruetruetrue
 format | 'q' | format: true/false/false -> false/false/false
 format | 's' | message:  -> no active query to save
-format | ctrl-c | show: truetruetruetruetrue -> truetruetruefalsetrue
-format | alt-c | show: truetruetruetruetrue -> truetruetruefalsetrue
-format | ctrl-e | format: true/false/false -> true/true/false
-format | alt-e | format: true/false/false -> true/true/false
-format | ctrl-f | format: true/false/false -> false/false/false
-format | alt-f | format: true/false/false -> false/false/false
-format | ctrl-g | sort: Default/false/None -> Default/false/Milestone
-format | alt-g | sort: Default/false/None -> Default/false/Milestone
-format | ctrl-i | show: truetruetruetruetrue -> truetruefalsetruetrue
-format | alt-i | show: truetruetruetruetrue -> truetruefalsetruetrue
-format | ctrl-j | format-focus: 0 -> 1
-format | alt-j | format-focus: 0 -> 1
-format | ctrl-k | format-focus: 0 -> 20
-format | alt-k | format-focus: 0 -> 20
-format | ctrl-m | show: truetruetruetruetrue -> truefalsetruetruetrue
-format | alt-m | show: truetruetruetruetrue -> truefalsetruetruetrue
-format | ctrl-o | show: truetruetruetruetrue -> falsetruetruetruetrue
-format | alt-o | show: truetruetruetruetrue -> falsetruetruetruetrue
-format | ctrl-q | format: true/false/false -> false/false/false
-format | alt-q | format: true/false/false -> false/false/false
-format | ctrl-s | message:  -> no active query to save
-format | alt-s | message:  -> no active query to save
-format | ctrl-alt-o | show: truetruetruetruetrue -> falsetruetruetruetrue
-format | ctrl-alt-s | message:  -> no active query to save
 format | enter | format: true/false/false -> true/true/false
 format | esc | format: true/false/false -> false/false/false
 format | up | format-focus: 0 -> 20
 format | down | format-focus: 0 -> 1
-format | ctrl-enter | format: true/false/false -> true/true/false
-format | alt-enter | format: true/false/false -> true/true/false
+format | g j | format-focus: 0 -> 1 ; sort: Default/false/None -> Default/false/Milestone
 format-query | ' ' | drafts: ""/"" -> " "/""
 format-query | '!' | drafts: ""/"" -> "!"/""
 format-query | '"' | drafts: ""/"" -> "\""/""
@@ -673,6 +504,7 @@ format-query | 'O' | drafts: ""/"" -> "O"/""
 format-query | 'P' | drafts: ""/"" -> "P"/""
 format-query | 'Q' | drafts: ""/"" -> "Q"/""
 format-query | 'R' | drafts: ""/"" -> "R"/""
+format-query | 'S' | drafts: ""/"" -> "S"/""
 format-query | 'T' | drafts: ""/"" -> "T"/""
 format-query | 'U' | drafts: ""/"" -> "U"/""
 format-query | 'V' | drafts: ""/"" -> "V"/""
@@ -761,6 +593,8 @@ format-query | enter | message:  -> back to recent ; format: true/true/false -> 
 format-query | esc | format: true/true/false -> true/false/false
 format-query | ctrl-enter | message:  -> back to recent ; format: true/true/false -> false/false/false
 format-query | alt-enter | message:  -> back to recent ; format: true/true/false -> false/false/false
+format-query | g g | drafts: ""/"" -> "gg"/""
+format-query | g j | drafts: ""/"" -> "gj"/""
 format-name | ' ' | drafts: ""/"" -> ""/" "
 format-name | '!' | drafts: ""/"" -> ""/"!"
 format-name | '"' | drafts: ""/"" -> ""/"\""
@@ -812,6 +646,7 @@ format-name | 'O' | drafts: ""/"" -> ""/"O"
 format-name | 'P' | drafts: ""/"" -> ""/"P"
 format-name | 'Q' | drafts: ""/"" -> ""/"Q"
 format-name | 'R' | drafts: ""/"" -> ""/"R"
+format-name | 'S' | drafts: ""/"" -> ""/"S"
 format-name | 'T' | drafts: ""/"" -> ""/"T"
 format-name | 'U' | drafts: ""/"" -> ""/"U"
 format-name | 'V' | drafts: ""/"" -> ""/"V"
@@ -900,26 +735,23 @@ format-name | enter | message:  -> query name is empty
 format-name | esc | format: true/false/true -> true/false/false
 format-name | ctrl-enter | message:  -> query name is empty
 format-name | alt-enter | message:  -> query name is empty
+format-name | g g | drafts: ""/"" -> ""/"gg"
+format-name | g j | drafts: ""/"" -> ""/"gj"
 board | ' ' | board: true/0/0/None/0 -> true/0/0/Some((0, 0))/0
+board | '?' | shortcuts: false -> true
+board | 'G' | board: true/0/0/None/0 -> true/0/1/None/0
 board | 'f' | format: false/false/false -> true/false/false
+board | 'g' | pending: None -> Some('g')
 board | 'j' | board: true/0/0/None/0 -> true/0/1/None/0
 board | 'l' | board: true/0/0/None/0 -> true/1/0/None/0
 board | 'q' | board: true/0/0/None/0 -> false/0/0/None/0
-board | ctrl-f | format: false/false/false -> true/false/false
-board | alt-f | format: false/false/false -> true/false/false
-board | ctrl-j | board: true/0/0/None/0 -> true/0/1/None/0
-board | alt-j | board: true/0/0/None/0 -> true/0/1/None/0
-board | ctrl-l | board: true/0/0/None/0 -> true/1/0/None/0
-board | alt-l | board: true/0/0/None/0 -> true/1/0/None/0
-board | ctrl-q | board: true/0/0/None/0 -> false/0/0/None/0
-board | alt-q | board: true/0/0/None/0 -> false/0/0/None/0
+board | ctrl-d | board: true/0/0/None/0 -> true/0/1/None/0
 board | enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
 board | esc | board: true/0/0/None/0 -> false/0/0/None/0
 board | down | board: true/0/0/None/0 -> true/0/1/None/0
 board | right | board: true/0/0/None/0 -> true/1/0/None/0
 board | pagedown | board: true/0/0/None/0 -> true/0/1/None/0
-board | ctrl-enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
-board | alt-enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
+board | g j | board: true/0/0/None/0 -> true/0/1/None/0
 board-filter | ' ' | format: true/false/false -> true/true/false ; drafts: ""/"" -> " "/""
 board-filter | '!' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "!"/""
 board-filter | '"' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "\""/""
@@ -971,6 +803,7 @@ board-filter | 'O' | format: true/false/false -> true/true/false ; drafts: ""/""
 board-filter | 'P' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "P"/""
 board-filter | 'Q' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "Q"/""
 board-filter | 'R' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "R"/""
+board-filter | 'S' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "S"/""
 board-filter | 'T' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "T"/""
 board-filter | 'U' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "U"/""
 board-filter | 'V' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "V"/""
@@ -1009,81 +842,28 @@ board-filter | '{' | format: true/false/false -> true/true/false ; drafts: ""/""
 board-filter | '|' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "|"/""
 board-filter | '}' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "}"/""
 board-filter | '~' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "~"/""
-board-filter | ctrl-a | format: true/false/false -> true/true/false ; drafts: ""/"" -> "a"/""
-board-filter | alt-a | format: true/false/false -> true/true/false ; drafts: ""/"" -> "a"/""
-board-filter | ctrl-b | format: true/false/false -> true/true/false ; drafts: ""/"" -> "b"/""
-board-filter | alt-b | format: true/false/false -> true/true/false ; drafts: ""/"" -> "b"/""
-board-filter | ctrl-c | format: true/false/false -> true/true/false ; drafts: ""/"" -> "c"/""
-board-filter | alt-c | format: true/false/false -> true/true/false ; drafts: ""/"" -> "c"/""
-board-filter | ctrl-d | format: true/false/false -> true/true/false ; drafts: ""/"" -> "d"/""
-board-filter | alt-d | format: true/false/false -> true/true/false ; drafts: ""/"" -> "d"/""
-board-filter | ctrl-e | format: true/false/false -> true/true/false ; drafts: ""/"" -> "e"/""
-board-filter | alt-e | format: true/false/false -> true/true/false ; drafts: ""/"" -> "e"/""
-board-filter | ctrl-f | format: true/false/false -> true/true/false ; drafts: ""/"" -> "f"/""
-board-filter | alt-f | format: true/false/false -> true/true/false ; drafts: ""/"" -> "f"/""
-board-filter | ctrl-g | format: true/false/false -> true/true/false ; drafts: ""/"" -> "g"/""
-board-filter | alt-g | format: true/false/false -> true/true/false ; drafts: ""/"" -> "g"/""
-board-filter | ctrl-h | board: true/0/0/None/0 -> true/0/0/None/9
-board-filter | alt-h | board: true/0/0/None/0 -> true/0/0/None/9
-board-filter | ctrl-i | format: true/false/false -> true/true/false ; drafts: ""/"" -> "i"/""
-board-filter | alt-i | format: true/false/false -> true/true/false ; drafts: ""/"" -> "i"/""
-board-filter | ctrl-j | board: true/0/0/None/0 -> true/0/0/None/1
-board-filter | alt-j | board: true/0/0/None/0 -> true/0/0/None/1
-board-filter | ctrl-k | board: true/0/0/None/0 -> true/0/0/None/9
-board-filter | alt-k | board: true/0/0/None/0 -> true/0/0/None/9
-board-filter | ctrl-l | board: true/0/0/None/0 -> true/0/0/None/1
-board-filter | alt-l | board: true/0/0/None/0 -> true/0/0/None/1
-board-filter | ctrl-m | format: true/false/false -> true/true/false ; drafts: ""/"" -> "m"/""
-board-filter | alt-m | format: true/false/false -> true/true/false ; drafts: ""/"" -> "m"/""
-board-filter | ctrl-n | format: true/false/false -> true/true/false ; drafts: ""/"" -> "n"/""
-board-filter | alt-n | format: true/false/false -> true/true/false ; drafts: ""/"" -> "n"/""
-board-filter | ctrl-o | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
-board-filter | alt-o | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
-board-filter | ctrl-q | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
-board-filter | alt-q | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
-board-filter | ctrl-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
-board-filter | alt-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
-board-filter | ctrl-u | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
-board-filter | alt-u | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
-board-filter | ctrl-v | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
-board-filter | alt-v | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
-board-filter | ctrl-x | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
-board-filter | alt-x | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
-board-filter | ctrl-z | format: true/false/false -> true/true/false ; drafts: ""/"" -> "z"/""
-board-filter | alt-z | format: true/false/false -> true/true/false ; drafts: ""/"" -> "z"/""
-board-filter | ctrl-S | format: true/false/false -> true/true/false ; drafts: ""/"" -> "S"/""
-board-filter | alt-F | format: true/false/false -> true/true/false ; drafts: ""/"" -> "F"/""
-board-filter | ctrl-alt-o | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
-board-filter | ctrl-alt-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
 board-filter | enter | format: true/false/false -> false/false/false
 board-filter | esc | format: true/false/false -> false/false/false
 board-filter | up | board: true/0/0/None/0 -> true/0/0/None/9
 board-filter | down | board: true/0/0/None/0 -> true/0/0/None/1
 board-filter | left | board: true/0/0/None/0 -> true/0/0/None/9
 board-filter | right | board: true/0/0/None/0 -> true/0/0/None/1
-board-filter | ctrl-enter | format: true/false/false -> false/false/false
-board-filter | alt-enter | format: true/false/false -> false/false/false
+board-filter | g g | format: true/false/false -> true/true/false ; drafts: ""/"" -> "gg"/""
+board-filter | g j | format: true/false/false -> true/true/false ; drafts: ""/"" -> "gj"/""
 board-filter-row | ' ' | board-filter: ""/[] -> ""/[None]
+board-filter-row | '?' | shortcuts: false -> true
 board-filter-row | 'h' | board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | 'j' | board: true/0/0/None/1 -> true/0/0/None/2
 board-filter-row | 'k' | board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | 'l' | board: true/0/0/None/1 -> true/0/0/None/2
-board-filter-row | ctrl-h | board: true/0/0/None/1 -> true/0/0/None/0
-board-filter-row | alt-h | board: true/0/0/None/1 -> true/0/0/None/0
-board-filter-row | ctrl-j | board: true/0/0/None/1 -> true/0/0/None/2
-board-filter-row | alt-j | board: true/0/0/None/1 -> true/0/0/None/2
-board-filter-row | ctrl-k | board: true/0/0/None/1 -> true/0/0/None/0
-board-filter-row | alt-k | board: true/0/0/None/1 -> true/0/0/None/0
-board-filter-row | ctrl-l | board: true/0/0/None/1 -> true/0/0/None/2
-board-filter-row | alt-l | board: true/0/0/None/1 -> true/0/0/None/2
+board-filter-row | 'q' | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | enter | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | esc | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | up | board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | down | board: true/0/0/None/1 -> true/0/0/None/2
 board-filter-row | left | board: true/0/0/None/1 -> true/0/0/None/0
 board-filter-row | right | board: true/0/0/None/1 -> true/0/0/None/2
-board-filter-row | ctrl-enter | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
-board-filter-row | alt-enter | format: true/false/false -> false/false/false ; board: true/0/0/None/1 -> true/0/0/None/0
+board-filter-row | g j | board: true/0/0/None/1 -> true/0/0/None/2
 board-query | ' ' | drafts: ""/"" -> " "/""
 board-query | '!' | drafts: ""/"" -> "!"/""
 board-query | '"' | drafts: ""/"" -> "\""/""
@@ -1135,6 +915,7 @@ board-query | 'O' | drafts: ""/"" -> "O"/""
 board-query | 'P' | drafts: ""/"" -> "P"/""
 board-query | 'Q' | drafts: ""/"" -> "Q"/""
 board-query | 'R' | drafts: ""/"" -> "R"/""
+board-query | 'S' | drafts: ""/"" -> "S"/""
 board-query | 'T' | drafts: ""/"" -> "T"/""
 board-query | 'U' | drafts: ""/"" -> "U"/""
 board-query | 'V' | drafts: ""/"" -> "V"/""
@@ -1225,6 +1006,8 @@ board-query | up | format: true/true/false -> true/false/false ; board: true/0/0
 board-query | down | format: true/true/false -> true/false/false ; board: true/0/0/None/0 -> true/0/0/None/1
 board-query | ctrl-enter | format: true/true/false -> false/false/false
 board-query | alt-enter | format: true/true/false -> false/false/false
+board-query | g g | drafts: ""/"" -> "gg"/""
+board-query | g j | drafts: ""/"" -> "gj"/""
 bar | ' ' | bar: "ab" -> "ab "
 bar | '!' | bar: "ab" -> "ab!"
 bar | '"' | bar: "ab" -> "ab\""
@@ -1276,6 +1059,7 @@ bar | 'O' | bar: "ab" -> "abO"
 bar | 'P' | bar: "ab" -> "abP"
 bar | 'Q' | bar: "ab" -> "abQ"
 bar | 'R' | bar: "ab" -> "abR"
+bar | 'S' | bar: "ab" -> "abS"
 bar | 'T' | bar: "ab" -> "abT"
 bar | 'U' | bar: "ab" -> "abU"
 bar | 'V' | bar: "ab" -> "abV"
@@ -1367,6 +1151,8 @@ bar | ctrl-enter | message:  -> type an issue number, o, or q
 bar | alt-enter | message:  -> type an issue number, o, or q
 bar | ctrl-backspace | bar: "ab" -> "a"
 bar | alt-backspace | bar: "ab" -> "a"
+bar | g g | bar: "ab" -> "abgg"
+bar | g j | bar: "ab" -> "abgj"
 search-bar | ' ' | search: "ab"/true -> "ab "/true
 search-bar | '!' | search: "ab"/true -> "ab!"/true
 search-bar | '"' | search: "ab"/true -> "ab\""/true
@@ -1418,6 +1204,7 @@ search-bar | 'O' | search: "ab"/true -> "abO"/true
 search-bar | 'P' | search: "ab"/true -> "abP"/true
 search-bar | 'Q' | search: "ab"/true -> "abQ"/true
 search-bar | 'R' | search: "ab"/true -> "abR"/true
+search-bar | 'S' | search: "ab"/true -> "abS"/true
 search-bar | 'T' | search: "ab"/true -> "abT"/true
 search-bar | 'U' | search: "ab"/true -> "abU"/true
 search-bar | 'V' | search: "ab"/true -> "abV"/true
@@ -1509,3 +1296,5 @@ search-bar | ctrl-enter | focus: true -> false ; search: "ab"/true -> "ab"/false
 search-bar | alt-enter | focus: true -> false ; search: "ab"/true -> "ab"/false
 search-bar | ctrl-backspace | search: "ab"/true -> "a"/true
 search-bar | alt-backspace | search: "ab"/true -> "a"/true
+search-bar | g g | search: "ab"/true -> "abgg"/true
+search-bar | g j | search: "ab"/true -> "abgj"/true

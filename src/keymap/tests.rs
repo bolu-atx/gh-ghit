@@ -25,7 +25,7 @@ fn no_duplicate_key_inside_a_context() {
     for context in ALL_CONTEXTS {
         let mut seen = HashSet::new();
         for binding in bindings(context) {
-            let id = format!("{:?}{:?}", binding.key, binding.mods);
+            let id = format!("{:?}{:?}{:?}", binding.prefix, binding.key, binding.mods);
             assert!(seen.insert(id), "{context:?} binds {} twice", binding.key_name());
         }
     }
@@ -37,30 +37,23 @@ fn a_plain_row_never_shadows_a_chord_row_below_it() {
         let rows: Vec<_> = bindings(context).collect();
         for (at, early) in rows.iter().enumerate() {
             for late in &rows[at + 1..] {
-                let shadowed = early.key == late.key
-                    && (early.mods == Mods::Any || (early.mods == Mods::Plain && late.mods == Mods::Ctrl));
+                let shadowed = early.key == late.key && early.prefix == late.prefix && early.mods == Mods::Any;
                 assert!(!shadowed, "{context:?}: {} hides {}", early.key_name(), late.key_name());
             }
         }
     }
 }
 
-/// Esc and `?` close or open something in every modal context. The
-/// exceptions are deliberate today and #183 owns changing them.
+/// Esc and `?` close or open something in every modal context. Text
+/// layers type `?`, so they have no help key.
 #[test]
 fn modal_contexts_have_esc_and_help_except_where_documented() {
-    const NO_HELP_KEY: [Context; 9] = [
-        // Typed text.
+    const NO_HELP_KEY: [Context; 5] = [
         Context::Dialog(Dialog::Compose),
         Context::Input(TextInput::Bar),
         Context::Input(TextInput::Query),
         Context::Input(TextInput::Name),
         Context::Input(TextInput::BoardQuery),
-        // Swallowed today: a dialog keeps `?` from stacking help on it.
-        Context::Dialog(Dialog::Confirm),
-        Context::Dialog(Dialog::Format),
-        Context::Dialog(Dialog::Board),
-        Context::Dialog(Dialog::BoardFilter),
     ];
     let has = |context: Context, code: KeyCode| bindings(context).any(|b| b.key == code);
     let modal = ALL_CONTEXTS.into_iter()
@@ -81,7 +74,9 @@ fn text_contexts_leave_printable_keys_to_typing() {
             .collect();
         let allowed: &[&str] = match context {
             // Choice letters are dynamic; board nav keys win over typing.
-            Context::Dialog(Dialog::BoardFilter) => &["j", "l", "k", "h"],
+            Context::Dialog(Dialog::BoardFilter) => &["j", "l", "k", "h", "q", "?"],
+            // `?` opens help; the typed-through choice letters are dynamic.
+            Context::Dialog(Dialog::Confirm) => &["?"],
             _ => &[],
         };
         assert!(
@@ -148,7 +143,16 @@ fn global_keys_resolve_to_their_actions() {
         (key(KeyCode::Char('r')), Action::Refresh),
         (key(KeyCode::Char('w')), Action::MergedWindow),
         (key(KeyCode::Char('o')), Action::OpenBrowser),
-        (key(KeyCode::Char('S')), Action::SubmitReview),
+        (ctrl('s'), Action::SubmitReview),
+        (key(KeyCode::Char('F')), Action::QuerySearch),
+        (key(KeyCode::Char('G')), Action::JumpBottom),
+        (ctrl('d'), Action::HalfPageDown),
+        (ctrl('u'), Action::HalfPageUp),
+        (key(KeyCode::PageDown), Action::PageDown),
+        (key(KeyCode::Char('[')), Action::StepPrev),
+        (key(KeyCode::Char(']')), Action::StepNext),
+        (key(KeyCode::Char('h')), Action::StepPrev),
+        (key(KeyCode::Down), Action::MoveDown),
         (key(KeyCode::Char('q')), Action::Quit),
         (ctrl('c'), Action::Quit),
         (ctrl('o'), Action::HistoryBack),
@@ -166,9 +170,11 @@ fn global_keys_resolve_to_their_actions() {
 fn pane_keys_resolve_only_in_their_pane() {
     for (pane, code, want) in [
         (Pane::Issues, 'x', Some(Action::Evict)),
-        (Pane::PRs, 'a', Some(Action::CycleSort)),
+        (Pane::PRs, 's', Some(Action::CycleSort)),
+        (Pane::PRs, 'S', Some(Action::ReverseSort)),
+        (Pane::PRs, 'a', None),
         (Pane::Main, 'x', None),
-        (Pane::Refs, 'a', None),
+        (Pane::Refs, 's', None),
         (Pane::Labels, 'X', Some(Action::ClearLabels)),
         (Pane::Issues, 'X', None),
     ] {
@@ -177,7 +183,9 @@ fn pane_keys_resolve_only_in_their_pane() {
     assert_eq!(resolve(&app_in(Pane::Labels), key(KeyCode::Enter)), Some(Action::ToggleLabel));
     assert_eq!(resolve(&app_in(Pane::Refs), key(KeyCode::Enter)), Some(Action::OpenRef));
     assert_eq!(resolve(&app_in(Pane::History), key(KeyCode::Enter)), Some(Action::OpenHistoryRow));
-    assert_eq!(resolve(&app_in(Pane::Issues), key(KeyCode::Enter)), None);
+    assert_eq!(resolve(&app_in(Pane::Issues), key(KeyCode::Enter)), Some(Action::OpenRow));
+    assert_eq!(resolve(&app_in(Pane::PRs), key(KeyCode::Enter)), Some(Action::OpenRow));
+    assert_eq!(resolve(&app_in(Pane::Main), key(KeyCode::Enter)), None);
 }
 
 #[test]
@@ -271,4 +279,50 @@ fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
     let order: Vec<Context> = help_sections(&app).into_iter()
         .filter(|(_, current)| *current).map(|(context, _)| context).collect();
     assert_eq!(order, vec![Context::Main(MainMode::Diff), Context::Global]);
+}
+
+#[test]
+fn plain_bindings_do_not_fire_with_ctrl_or_alt() {
+    let app = app_in(Pane::Issues);
+    assert_eq!(resolve(&app, ctrl('b')), None, "ctrl-b is not the board key");
+    assert_eq!(resolve(&app, ctrl('x')), None);
+    let alt = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+    assert_eq!(resolve(&app, alt), None);
+    assert_eq!(resolve(&app, key(KeyCode::Char('b'))), Some(Action::OpenBoard));
+    let shift = KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT);
+    assert_eq!(resolve(&app, shift), Some(Action::ReverseSort), "shift still counts as the capital");
+    let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(resolve(&app, ctrl_enter), None);
+}
+
+#[test]
+fn a_prefix_waits_for_its_second_key() {
+    let app = app_in(Pane::Issues);
+    let chain = active_contexts(&app);
+    let g = key(KeyCode::Char('g'));
+    assert!(lookup(&chain, g, &app).is_none(), "g alone binds nothing outside dialogs");
+    assert_eq!(sequence_start(&chain, g, &app), Some('g'));
+    assert_eq!(lookup_after(&chain, 'g', g, &app).map(|b| b.action), Some(Action::JumpTop));
+    assert!(lookup_after(&chain, 'g', key(KeyCode::Char('j')), &app).is_none(), "any other key cancels");
+    assert_eq!(sequence_start(&chain, key(KeyCode::Char('j')), &app), None);
+    assert_eq!(sequence_start(&chain, ctrl('g'), &app), None, "a chord never starts a sequence");
+    assert!(lookup_after(&chain, 'x', g, &app).is_none(), "the prefix must match");
+}
+
+#[test]
+fn dialog_keys_beat_the_jump_prefix() {
+    let mut app = app_in(Pane::Issues);
+    app.sidebar.filter_open = true;
+    let chain = active_contexts(&app);
+    let g = key(KeyCode::Char('g'));
+    assert_eq!(lookup(&chain, g, &app).map(|b| b.action), Some(Action::CycleGroup));
+    assert_eq!(sequence_start(&chain, g, &app), None);
+}
+
+#[test]
+fn help_opens_from_every_non_text_dialog() {
+    let mut app = app_in(Pane::Issues);
+    app.sidebar.filter_open = true;
+    assert_eq!(resolve(&app, key(KeyCode::Char('?'))), Some(Action::ShowHelp));
+    assert_eq!(resolve(&app, key(KeyCode::Char('q'))), Some(Action::CloseFormat));
 }

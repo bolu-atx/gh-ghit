@@ -36,15 +36,21 @@ const GLOBAL: &[Binding] = &[
     key(ch('b'), Action::OpenBoard, "Open board", "Open", NONE).hint(10),
     key(ch('c'), Action::Comment, "Comment", "Open", NONE).hint(6),
     key(ch('f'), Action::OpenFormat, "Format and filter", "Open", NONE),
-    key(ch('g'), Action::QuerySearch, "Search GitHub", "Open", NONE),
+    key(ch('F'), Action::QuerySearch, "Search GitHub", "Open", NONE),
     key(ch('j'), Action::MoveDown, "Select next", "Move", Gesture::Wheel).hint_if(2, side_pane),
     key(ch('k'), Action::MoveUp, "Select previous", "Move", Gesture::Wheel).hint_if(3, side_pane),
-    key(ch('h'), Action::StepPrev, "Previous issue number", "Move", NONE),
-    key(ch('l'), Action::StepNext, "Next issue number", "Move", NONE),
-    key(KeyCode::Down, Action::ScrollDown, "Scroll down", "Move", Gesture::Wheel).hint_if(4, main_pane),
-    key(KeyCode::Up, Action::ScrollUp, "Scroll up", "Move", Gesture::Wheel),
-    key(KeyCode::PageDown, Action::PageDown, "Scroll a page down", "Move", NONE),
-    key(KeyCode::PageUp, Action::PageUp, "Scroll a page up", "Move", NONE),
+    key(KeyCode::Down, Action::MoveDown, "Select next", "Move", ALIAS),
+    key(KeyCode::Up, Action::MoveUp, "Select previous", "Move", ALIAS),
+    key(ch('['), Action::StepPrev, "Previous issue number", "Move", NONE),
+    key(ch(']'), Action::StepNext, "Next issue number", "Move", NONE),
+    key(ch('h'), Action::StepPrev, "Previous issue number", "Move", ALIAS),
+    key(ch('l'), Action::StepNext, "Next issue number", "Move", ALIAS),
+    key(ch('g'), Action::JumpTop, "Jump to top", "Move", NONE).after('g'),
+    key(ch('G'), Action::JumpBottom, "Jump to bottom", "Move", NONE),
+    key(ch('d'), Action::HalfPageDown, "Half page down", "Move", NONE).ctrl(),
+    key(ch('u'), Action::HalfPageUp, "Half page up", "Move", NONE).ctrl(),
+    key(KeyCode::PageDown, Action::PageDown, "Page down", "Move", NONE),
+    key(KeyCode::PageUp, Action::PageUp, "Page up", "Move", NONE),
     key(KeyCode::Tab, Action::NextPane, "Next pane", "Move", Gesture::Click).hint(9),
     key(KeyCode::BackTab, Action::PrevPane, "Previous pane", "Move", ALIAS),
     key(ch(':'), Action::CommandBar, "Command", "Search", Gesture::Click).hint(11),
@@ -56,7 +62,7 @@ const GLOBAL: &[Binding] = &[
     key(ch('R'), Action::Reauth, "Sign in again", "Item", NONE),
     key(ch('p'), Action::Pin, "Pin", "Item", NONE).hint_if(5, side_pane),
     key(ch('y'), Action::Yank, "Copy", "Item", NONE),
-    key(ch('S'), Action::SubmitReview, "Submit pending review", "Item", NONE),
+    key(ch('s'), Action::SubmitReview, "Submit pending review", "Item", NONE).ctrl(),
     key(ch('e'), Action::ToggleRefs, "Toggle references pane", "View", NONE),
     key(ch('E'), Action::ToggleSidebar, "Toggle sidebar", "View", NONE),
     key(ch(' '), Action::ToggleRow, "Expand row", "View", NONE),
@@ -66,14 +72,17 @@ const GLOBAL: &[Binding] = &[
 ];
 
 const SIDEBAR: &[Binding] = &[
-    key(ch('a'), Action::CycleSort, "Cycle sort", "Rows", NONE).hint(2),
-    key(ch('A'), Action::ReverseSort, "Reverse sort", "Rows", NONE),
-    key(ch('x'), Action::Evict, "Evict row", "Rows", NONE).hint(1),
+    key(ch('s'), Action::CycleSort, "Cycle sort", "Rows", NONE).hint(3),
+    key(ch('S'), Action::ReverseSort, "Reverse sort", "Rows", NONE),
+    key(ch('x'), Action::Evict, "Evict row", "Rows", NONE).hint(2),
+    key(KeyCode::Enter, Action::OpenRow, "Open row", "Rows", Gesture::SecondClick).hint(1),
 ];
 
 const TREE: &[Binding] = &[
     key(KeyCode::Right, Action::TreeExpand, "Expand children", "Tree", Gesture::Click).when(sub_issue_tree),
     key(KeyCode::Left, Action::TreeCollapse, "Collapse or go to parent", "Tree", NONE).when(sub_issue_tree),
+    key(ch('l'), Action::TreeExpand, "Expand children", "Tree", ALIAS).when(sub_issue_tree),
+    key(ch('h'), Action::TreeCollapse, "Collapse or go to parent", "Tree", ALIAS).when(sub_issue_tree),
     key(ch('z'), Action::TreeToggle, "Fold or unfold", "Tree", Gesture::Click).when(sub_issue_tree),
     key(ch('Z'), Action::TreeFoldAll, "Fold or unfold all", "Tree", NONE).when(sub_issue_tree),
 ];
@@ -95,8 +104,12 @@ const HISTORY: &[Binding] = &[
 const DIFF: &[Binding] = &[
     key(ch('J'), Action::DiffNextFile, "Next file", "Diff", NONE).hint(1),
     key(ch('K'), Action::DiffPrevFile, "Previous file", "Diff", NONE).hint(2),
-    key(KeyCode::Down, Action::DiffLineDown, "Next line", "Diff", Gesture::Click),
+    key(ch('j'), Action::DiffLineDown, "Next line", "Diff", Gesture::Click),
+    key(KeyCode::Down, Action::DiffLineDown, "Next line", "Diff", ALIAS),
+    key(ch('k'), Action::DiffLineUp, "Previous line", "Diff", ALIAS),
     key(KeyCode::Up, Action::DiffLineUp, "Previous line", "Diff", ALIAS),
+    key(ch('h'), Action::DiffFold, "Fold file", "Diff", Gesture::Click),
+    key(ch('l'), Action::DiffUnfold, "Unfold file", "Diff", Gesture::Click),
     key(ch('s'), Action::DiffSplit, "Split view", "Diff", NONE).hint(4),
     key(ch(' '), Action::DiffToggleFile, "Expand or fold file", "Diff", Gesture::Click).hint(3),
 ];
@@ -119,13 +132,18 @@ const SHORTCUTS: &[Binding] = &[
     key(KeyCode::Down, Action::HelpDown, "Scroll down", "Help", ALIAS),
     key(ch('k'), Action::HelpUp, "Scroll up", "Help", Gesture::Wheel).hint(3),
     key(KeyCode::Up, Action::HelpUp, "Scroll up", "Help", ALIAS),
-    key(KeyCode::PageDown, Action::HelpPageDown, "Scroll a page down", "Help", NONE),
-    key(KeyCode::PageUp, Action::HelpPageUp, "Scroll a page up", "Help", NONE),
+    key(ch('g'), Action::JumpTop, "Jump to top", "Help", NONE).after('g'),
+    key(ch('G'), Action::JumpBottom, "Jump to bottom", "Help", NONE),
+    key(ch('d'), Action::HalfPageDown, "Half page down", "Help", NONE).ctrl(),
+    key(ch('u'), Action::HalfPageUp, "Half page up", "Help", NONE).ctrl(),
+    key(KeyCode::PageDown, Action::PageDown, "Page down", "Help", NONE),
+    key(KeyCode::PageUp, Action::PageUp, "Page up", "Help", NONE),
 ];
 
 /// Choice letters are dynamic and typed through, so they are not rows.
 const CONFIRM: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Cancel", "Choose", NONE).hint(1),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Choose", NONE),
     key(KeyCode::Enter, Action::ConfirmFirst, "Pick the first choice", "Choose", Gesture::Click).hint(2),
 ];
 
@@ -168,6 +186,7 @@ const COMPOSE: &[Binding] = &[
 
 const FORMAT: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Close", "Dialog", CLOSE).hint(1),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Dialog", NONE),
     key(ch('f'), Action::CloseFormat, "Close", "Dialog", ALIAS),
     key(ch('q'), Action::CloseFormat, "Close", "Dialog", ALIAS),
     key(ch('e'), Action::FormatEditQuery, "Edit query", "Query", NONE).hint(6),
@@ -199,14 +218,20 @@ const FORMAT: &[Binding] = &[
 
 const BOARD: &[Binding] = &[
     key(ch('q'), Action::CloseBoard, "Close board", "Board", NONE),
-    key(KeyCode::Esc, Action::Back, "Clear filter, then close", "Board", NONE).hint(6),
+    key(KeyCode::Esc, Action::Back, "Close board", "Board", ALIAS).hint(6),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Board", NONE),
     key(ch('f'), Action::BoardFilter, "Filter", "Board", NONE).hint(5),
+    key(ch('X'), Action::BoardClearFilter, "Clear filter", "Board", NONE),
     key(ch('j'), Action::BoardDown, "Next card", "Move", Gesture::Wheel),
     key(KeyCode::Down, Action::BoardDown, "Next card", "Move", ALIAS),
     key(ch('k'), Action::BoardUp, "Previous card", "Move", Gesture::Wheel),
     key(KeyCode::Up, Action::BoardUp, "Previous card", "Move", ALIAS),
-    key(KeyCode::PageDown, Action::BoardPageDown, "Five cards down", "Move", NONE),
-    key(KeyCode::PageUp, Action::BoardPageUp, "Five cards up", "Move", NONE),
+    key(ch('g'), Action::JumpTop, "First card", "Move", NONE).after('g'),
+    key(ch('G'), Action::JumpBottom, "Last card", "Move", NONE),
+    key(ch('d'), Action::HalfPageDown, "Half page down", "Move", NONE).ctrl(),
+    key(ch('u'), Action::HalfPageUp, "Half page up", "Move", NONE).ctrl(),
+    key(KeyCode::PageDown, Action::PageDown, "Page down", "Move", NONE),
+    key(KeyCode::PageUp, Action::PageUp, "Page up", "Move", NONE),
     key(ch('h'), Action::BoardLeft, "Previous column", "Move", Gesture::Click).hint(1),
     key(KeyCode::Left, Action::BoardLeft, "Previous column", "Move", ALIAS),
     key(ch('l'), Action::BoardRight, "Next column", "Move", Gesture::Click).hint(2),
@@ -217,7 +242,9 @@ const BOARD: &[Binding] = &[
 ];
 
 const BOARD_FILTER: &[Binding] = &[
-    key(KeyCode::Esc, Action::Back, "Clear filter and close", "Filter", CLOSE).hint(4),
+    key(KeyCode::Esc, Action::Back, "Close", "Filter", CLOSE).hint(4),
+    key(ch('q'), Action::Back, "Close", "Filter", ALIAS).when(board_row_focused),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Filter", NONE).when(board_row_focused),
     key(KeyCode::Enter, Action::BoardApply, "Apply", "Filter", NONE).hint(3),
     key(ch(' '), Action::BoardToggle, "Toggle pill or field", "Filter", Gesture::Click).when(board_row_focused).hint(2),
     key(ch('j'), Action::BoardFilterNext, "Next widget", "Move", Gesture::Click).hint(1),
@@ -228,35 +255,35 @@ const BOARD_FILTER: &[Binding] = &[
     key(KeyCode::Up, Action::BoardFilterPrev, "Previous widget", "Move", ALIAS),
     key(ch('h'), Action::BoardFilterPrev, "Previous widget", "Move", ALIAS),
     key(KeyCode::Left, Action::BoardFilterPrev, "Previous widget", "Move", ALIAS),
-    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Filter", NONE).when(board_text_focused),
+    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Filter", NONE).any().when(board_text_focused),
 ];
 
 const BAR: &[Binding] = &[
     key(ch('c'), Action::Quit, "Quit", "Bar", NONE).ctrl(),
     key(ch('d'), Action::Quit, "Quit", "Bar", ALIAS).ctrl(),
     key(KeyCode::Esc, Action::Back, "Cancel", "Bar", NONE),
-    key(KeyCode::Enter, Action::InputSubmit, "Run", "Bar", NONE),
-    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Bar", NONE),
+    key(KeyCode::Enter, Action::InputSubmit, "Run", "Bar", NONE).any(),
+    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Bar", NONE).any(),
 ];
 
 const QUERY: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Revert", "Field", NONE),
-    key(KeyCode::Enter, Action::InputSubmit, "Apply", "Field", NONE),
-    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Field", NONE),
+    key(KeyCode::Enter, Action::InputSubmit, "Apply", "Field", NONE).any(),
+    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Field", NONE).any(),
 ];
 
 const NAME: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Cancel", "Field", NONE),
-    key(KeyCode::Enter, Action::InputSubmit, "Save", "Field", NONE),
-    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Field", NONE),
+    key(KeyCode::Enter, Action::InputSubmit, "Save", "Field", NONE).any(),
+    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Field", NONE).any(),
 ];
 
 const BOARD_QUERY: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Revert", "Field", NONE),
-    key(KeyCode::Enter, Action::InputSubmit, "Apply", "Field", NONE),
+    key(KeyCode::Enter, Action::InputSubmit, "Apply", "Field", NONE).any(),
     key(KeyCode::Up, Action::InputUp, "Previous widget", "Field", NONE),
     key(KeyCode::Down, Action::InputDown, "Next widget", "Field", NONE),
-    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Field", NONE),
+    key(KeyCode::Backspace, Action::InputBackspace, "Delete character", "Field", NONE).any(),
 ];
 
 pub(super) fn tables(context: Context) -> &'static [&'static [Binding]] {

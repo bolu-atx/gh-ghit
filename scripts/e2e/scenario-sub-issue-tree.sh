@@ -10,7 +10,7 @@ printf '{"sub_issue_tree": true, "merged_window_hours": 0}\n' > "$E2E_XDG/ghit/p
 e2e_start
 e2e_wait "Precompiled" 60 || fail "startup listing never landed"
 # g opens the Format dialog in query edit mode; Enter runs the search.
-e2e_key g
+e2e_key F
 e2e_type "label:bug"
 e2e_key Enter
 e2e_wait "search hit 1001" 30 || fail "search results never landed"

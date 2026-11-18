@@ -19,7 +19,7 @@ const GOLDEN: &str = include_str!("key_parity.golden");
 /// Keys that touch the network, the clipboard or disk. The keymap
 /// tests check their routing instead. `t` cycles the process-wide
 /// theme, which would race the frame tests.
-const SKIP: [char; 6] = ['y', 'p', 'r', 'w', 'S', 't'];
+const SKIP: [char; 5] = ['y', 'p', 'r', 'w', 't'];
 
 fn issue(number: u64, is_pr: bool) -> IssueData {
     IssueData {
@@ -329,18 +329,32 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("board-filter", format!("{:?}/{}", app.board.filter, sorted(&app.board.milestone_draft.iter().cloned().collect()))),
         ("diff", format!("{:?}/{}/{}/{}", app.diff.line, app.diff.touched, app.diff.split, sorted(&app.diff.expanded_rows))),
         ("graph", app.graph.cursor.to_string()),
+        ("pending", format!("{:?}", app.pending_prefix)),
         ("undo", app.undo.is_some().to_string()),
         ("reauth", app.auth.reauth_requested.to_string()),
     ]
 }
 
+/// Two-key sequences, sent one after the other.
+fn sequences() -> Vec<(String, Vec<KeyEvent>)> {
+    let plain = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+    vec![
+        ("g g".to_string(), vec![plain('g'), plain('g')]),
+        ("g j".to_string(), vec![plain('g'), plain('j')]),
+    ]
+}
+
 fn render() -> String {
     let mut out = String::new();
+    let singles = keys().into_iter().map(|(name, key)| (name, vec![key]));
+    let all: Vec<(String, Vec<KeyEvent>)> = singles.chain(sequences()).collect();
     for (context, setup) in contexts() {
-        for (name, key) in keys() {
+        for (name, presses) in &all {
             let mut app = setup();
             let before = signature(&app);
-            handle_key(&mut app, key);
+            for key in presses {
+                handle_key(&mut app, *key);
+            }
             let after = signature(&app);
             let changes: Vec<String> = before
                 .iter()

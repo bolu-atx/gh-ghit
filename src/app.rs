@@ -610,7 +610,7 @@ pub(crate) struct ComposeSlot {
     pub(crate) editor_requested: bool,
     pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
     pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
-    // Pending review submit (`S`): PRs with pending line comments, plus
+    // Pending review submit (`ctrl-s`): PRs with pending line comments, plus
     // its background channel. One in-flight submit per PR.
     pub(crate) review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
     pub(crate) review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
@@ -641,6 +641,8 @@ pub(crate) struct HitAreas {
     pub(crate) header_rows: Vec<String>,
     /// Scroll offset `body_rows` was captured at; selections add to this.
     pub(crate) body_base: u16,
+    /// Rows of the whole body, wrapped to the pane width. `G` scrolls to it.
+    pub(crate) body_total: usize,
     pub(crate) side_issue_area: Rect,
     pub(crate) side_pr_area: Rect,
     pub(crate) side_issue_rows: Vec<model::SideRow>,
@@ -703,6 +705,8 @@ pub(crate) struct App {
     /// First visible line of the help screen. Render clamps it.
     pub(crate) help_scroll: u16,
     pub(crate) message: String,
+    /// First key of a two-key sequence such as `gg`, while it waits.
+    pub(crate) pending_prefix: Option<char>,
     pub(crate) message_at: Option<std::time::Instant>,
     pub(crate) quit: bool,
     /// Generic confirm modal plus its deferred decision. While set, all
@@ -737,6 +741,7 @@ impl App {
             shortcuts_open: false,
             help_scroll: 0,
             message: String::new(),
+            pending_prefix: None,
             message_at: None,
             confirm: None,
             undo: None,
@@ -1839,6 +1844,12 @@ impl App {
     /// (the header row itself never moves); expanding leaves the cursor
     /// where it is because new rows only appear below the header.
     pub(crate) fn toggle_diff_file(&mut self) {
+        self.set_diff_file(None);
+    }
+
+    /// Fold (`Some(false)`) or unfold (`Some(true)`) the file under the
+    /// line cursor; `None` flips it. A file already in that state stays.
+    pub(crate) fn set_diff_file(&mut self, open: Option<bool>) {
         let Some(n) = self.nav.current else { return };
         self.nav.pane = Pane::Main;
         let Some(files) = self.diff.files.get(&n) else { return };
@@ -1850,10 +1861,15 @@ impl App {
         self.diff.cursor = fi;
         self.diff.touched = false;
         let key = (n, files[fi].filename.clone());
-        if !self.diff.expanded_files.remove(&key) {
-            self.diff.expanded_files.insert(key);
-        } else {
+        let is_open = self.diff.expanded_files.contains(&key);
+        if open == Some(is_open) {
+            return;
+        }
+        if is_open {
+            self.diff.expanded_files.remove(&key);
             self.anchor_cursor_to_header(fi);
+        } else {
+            self.diff.expanded_files.insert(key);
         }
     }
 
@@ -2097,15 +2113,10 @@ impl App {
             Layer::Dialog(Dialog::BoardFilter) => {
                 self.sidebar.filter_open = false;
                 self.board.filter_focus = 0;
-                self.clear_board_filter();
             }
             Layer::Dialog(Dialog::Board) => {
-                if self.board_filtered() {
-                    self.clear_board_filter();
-                } else {
-                    self.board.data = None;
-                    self.board.loading = false;
-                }
+                self.board.data = None;
+                self.board.loading = false;
             }
             Layer::Input(TextInput::Query) => {
                 self.sidebar.query_draft = self.sidebar.query_active.clone();
@@ -3610,7 +3621,7 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
                 let pending = matches!(app.compose.draft.as_ref().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
                 app.compose.draft = None;
                 if pending {
-                    app.notify(format!("line comment pending on #{n} — press S to submit"));
+                    app.notify(format!("line comment pending on #{n} — press ctrl-s to submit"));
                 } else {
                     app.notify(format!("comment posted to #{n}"));
                 }
