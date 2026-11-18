@@ -48,7 +48,8 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
-use crate::{core, github, model};
+use crate::core::{self, Layer, LayerFlags, Pane};
+use crate::{github, model};
 use crate::model::{BoardData, IssueData};
 
 /// The one executor for all background fetches. Tasks are cheap, so callers
@@ -151,17 +152,12 @@ pub(crate) struct ConfirmDialog {
     pub(crate) kind: ConfirmKind,
 }
 
-/// Which pane `j`/`k` act on. Tab cycles Issues → PRs → Refs, skipping
-/// Refs while it is hidden. Text input (`Focus::Bar`), the board, and the
-/// format dialog keep their own keys. The body keeps its dedicated keys
-/// (arrows move the diff line, 1/2/3 switch tabs) so it never takes Tab focus.
+/// Who owns input right now: the top open layer, plus the active pane
+/// beneath it. `App::focus` is the single derivation input and render read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Pane {
-    Issues,
-    PRs,
-    Main,
-    Refs,
-    Labels,
+pub(crate) struct Focused {
+    pub(crate) layer: Layer,
+    pub(crate) pane: Pane,
 }
 
 /// Where a composed comment lands.
@@ -367,6 +363,9 @@ pub(crate) struct Nav {
     /// through `sync_selection`. While it moves, `current`, body scroll,
     /// and the other panes stay untouched.
     pub(crate) hover: Option<u64>,
+    /// History pane cursor: steps back from the current issue. Zero is
+    /// the current row; `history_steps` clamps it to the rows drawn.
+    pub(crate) history_cursor: usize,
 }
 
 impl Nav {
@@ -374,7 +373,7 @@ impl Nav {
         Self { current: None, requested: None, step_pending: None, visited: vec![],
             recent: vec![], history: vec![], future: vec![], pinned: HashSet::new(),
             pin_order: vec![], tab: Tab::Details, focus: Focus::Main, pane: Pane::Issues,
-            scroll: 0, hover: None }
+            scroll: 0, hover: None, history_cursor: 0 }
     }
 }
 
@@ -610,6 +609,7 @@ pub(crate) struct HitAreas {
     /// Labels pane rows as drawn: rect plus the `filter_items` index.
     pub(crate) labels_rows: Vec<(Rect, usize)>,
     pub(crate) history_rows: Vec<(Rect, usize)>,
+    pub(crate) history_area: Rect,
     pub(crate) ref_rows: Vec<model::SideRow>,
     pub(crate) tabs_area: Rect,
     pub(crate) bar_area: Rect,
@@ -865,12 +865,7 @@ impl App {
     fn auto_refresh_recent(&mut self, now: Instant) {
         if now.duration_since(self.sections.last_fetch) < self.sections.auto_refresh_interval
             || self.sections.rx.is_some()
-            || board_open(self)
-            || self.compose.draft.is_some()
-            || self.confirm.is_some()
-            || self.sidebar.filter_open
-            || self.shortcuts_open
-            || self.nav.focus == Focus::Bar
+            || self.focus().layer != Layer::Base
         {
             return;
         }
@@ -1710,7 +1705,7 @@ impl App {
             Pane::Issues => self.nav.current.filter(|n| self.issue_numbers().contains(n)),
             Pane::PRs => self.nav.current.filter(|n| self.pr_numbers().contains(n)),
             Pane::Refs => self.refs.highlight,
-            Pane::Main | Pane::Labels => None,
+            Pane::Main | Pane::Labels | Pane::History => None,
         };
         let Some(n) = selected else { return };
         if !self.diff.expanded_rows.remove(&n) {
@@ -1875,7 +1870,7 @@ impl App {
     /// Flip the right refs pane, keeping the current issue in place.
     pub(crate) fn toggle_refs(&mut self) {
         self.refs.show = !self.refs.show;
-        if !self.refs.show && matches!(self.nav.pane, Pane::Refs | Pane::Labels) {
+        if !self.refs.show && matches!(self.nav.pane, Pane::Refs | Pane::Labels | Pane::History) {
             self.nav.pane = Pane::Main;
         }
         self.persist_prefs();
@@ -1896,21 +1891,124 @@ impl App {
         self.notify(if self.sidebar.show { "sidebar: shown" } else { "sidebar: hidden" }.to_string());
     }
 
-    /// Tab cycles Issues → PRs → Refs → Labels, skipping panes that are
-    /// hidden. With the sidebar hidden it moves between Main and the right
-    /// panes. The body keeps its dedicated keys, so it takes Tab focus only
-    /// as a fallback.
-    pub(crate) fn cycle_pane(&mut self) {
-        let right = self.labels_visible();
-        self.nav.pane = match self.nav.pane {
-            Pane::Issues if self.sidebar.show => Pane::PRs,
-            Pane::PRs if self.refs_visible() => Pane::Refs,
-            Pane::PRs | Pane::Refs if right => Pane::Labels,
-            Pane::Main if !self.sidebar.show && self.refs_visible() => Pane::Refs,
-            Pane::Main if !self.sidebar.show && right => Pane::Labels,
-            _ if self.sidebar.show => Pane::Issues,
-            _ => Pane::Main,
-        };
+    /// The History pane shows under Refs while there is a back stack.
+    pub(crate) fn history_visible(&self) -> bool {
+        self.right_visible() && self.nav.current.is_some() && !self.nav.history.is_empty()
+    }
+
+    /// Rows the History pane draws above the current issue.
+    pub(crate) fn history_rows_back(&self) -> usize {
+        self.nav.history.len().min(4)
+    }
+
+    /// History cursor in steps back, clamped to the drawn rows.
+    pub(crate) fn history_steps(&self) -> usize {
+        self.nav.history_cursor.min(self.history_rows_back())
+    }
+
+    /// `j`/`k` in History: `j` moves toward the current issue.
+    pub(crate) fn history_step(&mut self, delta: isize) {
+        self.nav.history_cursor = self.history_steps()
+            .saturating_add_signed(-delta)
+            .min(self.history_rows_back());
+    }
+
+    /// Enter or click on a History row: go back to it, like `Ctrl+O`
+    /// repeated. The current row is a no-op.
+    pub(crate) fn open_history_row(&mut self) {
+        let steps = self.history_steps();
+        self.go_back_n(steps);
+        self.nav.history_cursor = 0;
+    }
+
+    /// Open layers, bottom to top. The one derivation of "who owns input".
+    pub(crate) fn layer_stack(&self) -> Vec<Layer> {
+        core::layer_stack(&LayerFlags {
+            bar: self.nav.focus == Focus::Bar,
+            board: board_open(self),
+            format: self.sidebar.filter_open,
+            query_edit: self.sidebar.query_edit,
+            name_edit: self.sidebar.name_edit,
+            compose: self.compose_open(),
+            confirm: self.confirm_open(),
+            shortcuts: self.shortcuts_open,
+        })
+    }
+
+    /// Top layer plus the active pane beneath it.
+    pub(crate) fn focus(&self) -> Focused {
+        let layer = self.layer_stack().last().copied().unwrap_or(Layer::Base);
+        Focused { layer, pane: self.nav.pane }
+    }
+
+    /// Whether `pane` draws as focused: it is active and no dialog or
+    /// text input sits above the panes, so one focus shows per frame.
+    pub(crate) fn pane_focused(&self, pane: Pane) -> bool {
+        let focus = self.focus();
+        focus.layer == Layer::Base && focus.pane == pane
+    }
+
+    /// Visible panes in screen order.
+    pub(crate) fn visible_panes(&self) -> Vec<Pane> {
+        core::visible_panes(&core::PaneVisibility {
+            sidebar: self.sidebar.show,
+            refs: self.refs_visible(),
+            labels: self.labels_visible(),
+            history: self.history_visible(),
+        })
+    }
+
+    /// Tab (`delta` 1) and Shift-Tab (-1) step through the visible panes in
+    /// screen order: Issues, PRs, Main, Refs, Filters, History.
+    pub(crate) fn cycle_pane(&mut self, delta: isize) {
+        self.nav.pane = core::step_pane(&self.visible_panes(), self.nav.pane, delta);
+    }
+
+    /// `Esc`: pop the top layer. Each layer's own exit lives here so the
+    /// key handlers and mouse paths share one definition. At the base it
+    /// clears the bar and the refs highlight.
+    pub(crate) fn pop_layer(&mut self) {
+        use crate::core::{Dialog, TextInput};
+        match self.focus().layer {
+            Layer::Dialog(Dialog::Shortcuts) => self.shortcuts_open = false,
+            Layer::Dialog(Dialog::Confirm) => self.confirm_cancel(),
+            Layer::Dialog(Dialog::Compose) => self.discard_compose(),
+            Layer::Dialog(Dialog::Format) => self.sidebar.filter_open = false,
+            Layer::Dialog(Dialog::BoardFilter) => {
+                self.sidebar.filter_open = false;
+                self.board.filter_focus = 0;
+                self.clear_board_filter();
+            }
+            Layer::Dialog(Dialog::Board) => {
+                if self.board_filtered() {
+                    self.clear_board_filter();
+                } else {
+                    self.board.data = None;
+                    self.board.loading = false;
+                }
+            }
+            Layer::Input(TextInput::Query) => {
+                self.sidebar.query_draft = self.sidebar.query_active.clone();
+                self.sidebar.query_edit = false;
+            }
+            Layer::Input(TextInput::BoardQuery) => {
+                self.sidebar.query_draft = self.board.filter.clone();
+                self.sidebar.query_edit = false;
+            }
+            Layer::Input(TextInput::Name) => self.sidebar.name_edit = false,
+            Layer::Input(TextInput::Bar) => {
+                self.nav.focus = Focus::Main;
+                self.sidebar.searching = false;
+                self.bar.clear();
+                self.sidebar.search.clear();
+            }
+            Layer::Base => {
+                self.bar.clear();
+                self.sidebar.searching = false;
+                self.sidebar.search.clear();
+                self.refs.highlight = None;
+            }
+        }
     }
 
     /// Recompute refs from the current body and pairs, then queue
@@ -2509,7 +2607,7 @@ impl App {
         self.sidebar.show = prefs.show_sidebar;
         self.refs.show = prefs.show_right;
         if (!self.sidebar.show && matches!(self.nav.pane, Pane::Issues | Pane::PRs))
-            || (!self.refs.show && matches!(self.nav.pane, Pane::Refs | Pane::Labels))
+            || (!self.refs.show && matches!(self.nav.pane, Pane::Refs | Pane::Labels | Pane::History))
         {
             self.nav.pane = Pane::Main;
         }
@@ -5630,9 +5728,11 @@ mod tests {
         app.sidebar.labels = vec!["bug".to_string()];
         app.nav.history = vec![1];
         app.nav.pane = Pane::PRs;
-        app.cycle_pane();
+        app.cycle_pane(1);
+        assert_eq!(app.nav.pane, Pane::Main, "Main joins the Tab cycle");
+        app.cycle_pane(1);
         assert_eq!(app.nav.pane, Pane::Labels, "history alone shows the right column");
-        app.cycle_pane();
+        app.cycle_pane(1);
         assert_eq!(app.nav.pane, Pane::Issues);
         // Rows: (no milestone), bug. Out-of-range toggles do nothing.
         app.toggle_filter_item(1);

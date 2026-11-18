@@ -6,13 +6,15 @@
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{App, Focus, Pane, Tab, board_move, board_open, board_selected_number};
-use crate::core;
+use crate::app::{App, Focus, Tab, board_move, board_open, board_selected_number};
+use crate::core::{self, Dialog, Layer, Pane};
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     if app.shortcuts_open {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
-            app.shortcuts_open = false;
+        match key.code {
+            KeyCode::Esc => app.pop_layer(),
+            KeyCode::Char('?') | KeyCode::Char('q') => app.shortcuts_open = false,
+            _ => {}
         }
         return;
     }
@@ -46,15 +48,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.board.data = None;
                 app.board.loading = false;
             }
-            KeyCode::Esc => {
-                // Esc first clears an active filter, then closes the board.
-                if app.board_filtered() {
-                    app.clear_board_filter();
-                } else {
-                    app.board.data = None;
-                    app.board.loading = false;
-                }
-            }
+            // Esc first clears an active filter, then closes the board.
+            KeyCode::Esc => app.pop_layer(),
             KeyCode::Char('f') => app.open_board_filter(),
             KeyCode::Char('j') | KeyCode::Down => board_move(app, 0, 1),
             KeyCode::Char('k') | KeyCode::Up => board_move(app, 0, -1),
@@ -82,12 +77,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
 
     if app.nav.focus == Focus::Bar {
         match key.code {
-            KeyCode::Esc => {
-                app.nav.focus = Focus::Main;
-                app.sidebar.searching = false;
-                app.bar.clear();
-                app.sidebar.search.clear();
-            }
+            KeyCode::Esc => app.pop_layer(),
             KeyCode::Enter => {
                 if app.sidebar.searching {
                     app.commit_search();
@@ -162,8 +152,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             if graph_focused(app) {
                 app.graph_move(-1);
             } else {
-                // The Main pane is mouse-gated (Tab never lands on it),
-                // so neighbor-step works from every pane: nothing else
+                // Neighbor-step works from every pane: nothing else
                 // claims h/l outside Graph, and bar/board/filter return
                 // before this match.
                 app.step_issue(-1);
@@ -233,6 +222,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.open_selected_ref();
             } else if app.nav.pane == Pane::Labels {
                 app.toggle_filter_item(app.labels.cursor);
+            } else if app.nav.pane == Pane::History {
+                app.open_history_row();
             }
         }
         KeyCode::Char('J') if app.visual_diff() => app.jump_diff_file(1),
@@ -305,15 +296,9 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
-        KeyCode::Esc => {
-            app.bar.clear();
-            app.sidebar.searching = false;
-            app.sidebar.search.clear();
-            app.refs.highlight = None;
-        }
-        KeyCode::Tab => {
-            app.cycle_pane();
-        }
+        KeyCode::Esc => app.pop_layer(),
+        KeyCode::Tab => app.cycle_pane(1),
+        KeyCode::BackTab => app.cycle_pane(-1),
         _ => {}
     }
 }
@@ -323,7 +308,7 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
 /// so no navigation or quit escapes the dialog.
 pub(crate) fn handle_confirm_key(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
-        KeyCode::Esc => app.confirm_cancel(),
+        KeyCode::Esc => app.pop_layer(),
         KeyCode::Enter => app.confirm_choose(0),
         KeyCode::Char(c) => {
             let lower = c.to_ascii_lowercase();
@@ -403,7 +388,7 @@ pub(crate) fn handle_compose_key(app: &mut App, key: crossterm::event::KeyEvent)
         return;
     }
     match key.code {
-        KeyCode::Esc => app.discard_compose(),
+        KeyCode::Esc => app.pop_layer(),
         KeyCode::Enter => app.compose_insert('\n'),
         KeyCode::Backspace => app.compose_backspace(),
         KeyCode::Delete => app.compose_delete_forward(),
@@ -450,6 +435,7 @@ fn pane_down(app: &mut App, delta: isize) {
             }
         }
         Pane::Labels => app.move_filter_cursor(delta),
+        Pane::History => app.history_step(delta),
         Pane::Main => {
             app.nav.scroll = app.nav.scroll.saturating_add_signed(delta as i16 * 3);
         }
@@ -534,11 +520,8 @@ fn jump_search_hit(app: &mut App, delta: isize) {
 fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     if app.sidebar.query_edit {
         match key.code {
-            KeyCode::Esc => {
-                // Revert the draft; the dialog stays open.
-                app.sidebar.query_draft = app.board.filter.clone();
-                app.sidebar.query_edit = false;
-            }
+            // Revert the draft; the dialog stays open.
+            KeyCode::Esc => app.pop_layer(),
             KeyCode::Enter => {
                 app.sidebar.query_edit = false;
                 app.sidebar.filter_open = false;
@@ -562,11 +545,7 @@ fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Esc => {
-            app.sidebar.filter_open = false;
-            app.board.filter_focus = 0;
-            app.clear_board_filter();
-        }
+        KeyCode::Esc => app.pop_layer(),
         KeyCode::Enter => {
             app.sidebar.filter_open = false;
             app.board.filter_focus = 0;
@@ -627,7 +606,7 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
     if app.sidebar.name_edit {
         match key.code {
-            KeyCode::Esc => app.sidebar.name_edit = false,
+            KeyCode::Esc => app.pop_layer(),
             KeyCode::Enter => app.save_named_query(),
             KeyCode::Char(c) => app.sidebar.name_draft.push(c),
             KeyCode::Backspace => { app.sidebar.name_draft.pop(); }
@@ -637,11 +616,8 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
     if app.sidebar.query_edit {
         match key.code {
-            KeyCode::Esc => {
-                // Revert the draft; the dialog stays open.
-                app.sidebar.query_draft = app.sidebar.query_active.clone();
-                app.sidebar.query_edit = false;
-            }
+            // Revert the draft; the dialog stays open.
+            KeyCode::Esc => app.pop_layer(),
             KeyCode::Enter => {
                 match app.commit_query_draft() {
                     QueryAction::Run(q) => app.run_gh_search(q),
@@ -661,9 +637,8 @@ fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Char('f') | KeyCode::Esc | KeyCode::Char('q') => {
-            app.sidebar.filter_open = false;
-        }
+        KeyCode::Esc => app.pop_layer(),
+        KeyCode::Char('f') | KeyCode::Char('q') => app.sidebar.filter_open = false,
         KeyCode::Char('e') => app.start_query_edit(),
         KeyCode::Char('s') => app.start_name_edit(),
         KeyCode::Char('x') => app.delete_named_query(),
@@ -847,16 +822,19 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
-    if app.confirm_open() { return; }
-    if app.shortcuts_open { return; }
-    // The compose modal steals all mouse focus: clicks and wheel never
-    // reach the panes behind it, so the draft and selection survive.
-    if app.compose_open() { return; }
-    if app.sidebar.filter_open {
+    // Confirm, shortcuts and compose steal all mouse focus: clicks and
+    // wheel never reach the panes behind them, so the draft and
+    // selection survive.
+    let stack = app.layer_stack();
+    let open = |dialog: Dialog| stack.contains(&Layer::Dialog(dialog));
+    if open(Dialog::Confirm) || open(Dialog::Shortcuts) || open(Dialog::Compose) {
+        return;
+    }
+    if open(Dialog::Format) || open(Dialog::BoardFilter) {
         handle_form_mouse(app, m);
         return;
     }
-    if board_open(app) {
+    if open(Dialog::Board) {
         handle_board_mouse(app, m);
         return;
     }
@@ -1007,13 +985,15 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         }
         return;
     }
-    if !drag {
-        if let Some((_, steps)) = app.hits.history_rows.iter()
-            .find(|(rect, _)| in_rect(*rect, x, y)).copied()
-        {
-            app.go_back_n(steps);
-            return;
+    if !drag && in_rect(app.hits.history_area, x, y) {
+        app.nav.focus = Focus::Main;
+        app.nav.pane = Pane::History;
+        let row = app.hits.history_rows.iter().find(|(rect, _)| in_rect(*rect, x, y)).copied();
+        if let Some((_, steps)) = row {
+            app.nav.history_cursor = steps;
+            app.open_history_row();
         }
+        return;
     }
     if !drag && in_rect(app.hits.labels_area, x, y) {
         app.nav.focus = Focus::Main;
@@ -1321,7 +1301,7 @@ mod tests {
         app.show_issue(7);
         // `show_issue` recomputes refs from the body, so seed the pane after.
         app.refs.numbers = vec![21, 22];
-        app.nav.pane = crate::app::Pane::Main;
+        app.nav.pane = crate::core::Pane::Main;
         app.nav.scroll = 0;
         app
     }
@@ -1394,7 +1374,7 @@ mod tests {
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
         assert_eq!(app.nav.hover, Some(8));
         assert_eq!(app.nav.current, Some(7), "wheel never visits");
-        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.pane, crate::core::Pane::Main);
         assert_eq!(app.nav.scroll, 0, "body scroll untouched");
         // Wheeling back onto the current row dissolves the hover.
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 5));
@@ -1411,7 +1391,7 @@ mod tests {
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 25));
         assert_eq!(app.nav.hover, Some(11));
         assert_eq!(app.nav.current, Some(7));
-        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.pane, crate::core::Pane::Main);
         assert_eq!(app.nav.scroll, 0);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 5, 25));
         assert_eq!(app.nav.hover, Some(9));
@@ -1433,7 +1413,7 @@ mod tests {
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 95, 5));
         assert_eq!(app.refs.highlight, Some(22));
         assert_eq!(app.nav.scroll, 9, "mention jump is click-only");
-        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.pane, crate::core::Pane::Main);
         assert_eq!(app.nav.current, Some(7));
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 95, 5));
         assert_eq!(app.refs.highlight, Some(21));
@@ -1445,7 +1425,7 @@ mod tests {
         let mut app = wheel_app();
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown, 5, 5));
         assert_eq!(app.nav.hover, Some(8));
-        app.nav.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::core::Pane::Issues;
         handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()));
         assert_eq!(app.nav.current, Some(7), "k walks back from the hover");
         assert_eq!(app.nav.hover, None, "visiting clears the hover");
@@ -1459,7 +1439,7 @@ mod tests {
         assert_eq!(app.nav.scroll, 3);
         assert_eq!(app.nav.current, Some(7));
         assert_eq!(app.nav.hover, Some(8), "body wheel leaves the hover alone");
-        assert_eq!(app.nav.pane, crate::app::Pane::Main);
+        assert_eq!(app.nav.pane, crate::core::Pane::Main);
         handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp, 40, 5));
         assert_eq!(app.nav.scroll, 0);
     }
@@ -1511,12 +1491,12 @@ mod tests {
         assert_eq!(app.nav.current, Some(9));
 
         // Plain Tab (no Ctrl) still cycles panes instead of redoing.
-        app.nav.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::core::Pane::Issues;
         handle_key(
             &mut app,
             crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
         );
-        assert_eq!(app.nav.pane, crate::app::Pane::PRs);
+        assert_eq!(app.nav.pane, crate::core::Pane::PRs);
         assert_eq!(app.nav.current, Some(9));
     }
 
@@ -1814,6 +1794,106 @@ mod tests {
         app
     }
 
+    /// Which handler owns keys, per open layer. Written against the flag
+    /// storage and `handle_key` only, so it pins behavior across the
+    /// focus-model migration.
+    #[test]
+    fn top_layer_owns_keys_and_esc_pops_exactly_one() {
+        use crate::core::{Dialog, Layer, TextInput};
+        let mut app = step_app();
+        app.nav.pane = Pane::Issues;
+        assert_eq!(app.focus().layer, Layer::Base);
+
+        // Shortcuts swallow navigation; Esc closes.
+        app.shortcuts_open = true;
+        handle_key(&mut app, plain_key(KeyCode::Char('l')));
+        assert_eq!(app.nav.current, Some(7), "shortcuts swallow l");
+        assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Shortcuts));
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.shortcuts_open);
+
+        // Confirm swallows everything, quit included; Esc cancels.
+        app.open_pending_nav(crate::app::NavIntent::Back(1));
+        handle_key(&mut app, plain_key(KeyCode::Char('q')));
+        assert!(!app.quit, "quit never escapes the confirm");
+        assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Confirm));
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.confirm_open());
+
+        // Compose takes typing; Esc discards the whole modal.
+        app.open_compose();
+        assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Compose));
+        handle_key(&mut app, plain_key(KeyCode::Char('l')));
+        assert_eq!(app.nav.current, Some(7), "compose types, never steps");
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.compose_open());
+
+        // Format dialog: Esc closes from the dialog, but a text row pops
+        // only itself and leaves the dialog open.
+        app.open_sidebar_format();
+        assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Format));
+        app.start_query_edit();
+        assert_eq!(app.focus().layer, Layer::Input(TextInput::Query));
+        handle_key(&mut app, plain_key(KeyCode::Char('x')));
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(app.sidebar.filter_open && !app.sidebar.query_edit, "Esc pops the text row");
+        assert_eq!(app.sidebar.query_draft, app.sidebar.query_active, "draft reverts");
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.sidebar.filter_open);
+
+        // Bar: Esc leaves it and clears the text.
+        handle_key(&mut app, plain_key(KeyCode::Char(':')));
+        assert_eq!(app.focus().layer, Layer::Input(TextInput::Bar));
+        handle_key(&mut app, plain_key(KeyCode::Char('1')));
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert_eq!(app.focus().layer, Layer::Base);
+        assert!(app.bar.is_empty());
+    }
+
+    #[test]
+    fn board_esc_clears_filter_then_closes_and_filter_form_esc_clears_and_closes() {
+        use crate::core::{Dialog, Layer};
+        let mut app = step_app();
+        app.board.loading = true;
+        assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Board));
+        app.board.filter = "bug".to_string();
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(board_open(&app), "first Esc only clears the filter");
+        assert!(app.board.filter.is_empty());
+        app.open_board_filter();
+        assert_eq!(app.focus().layer, Layer::Dialog(Dialog::BoardFilter));
+        app.board.filter = "bug".to_string();
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.sidebar.filter_open, "form Esc closes the form");
+        assert!(app.board.filter.is_empty(), "and clears the filter (differs from Format)");
+        assert!(board_open(&app), "the board stays up");
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!board_open(&app));
+    }
+
+    #[test]
+    fn history_pane_keys_walk_and_go_back() {
+        let mut app = step_app();
+        app.nav.history = vec![5, 6, 8];
+        app.refs.show = true;
+        assert!(app.history_visible());
+        app.nav.pane = Pane::History;
+        // k moves up toward older rows, j back down; both clamp.
+        handle_key(&mut app, plain_key(KeyCode::Char('j')));
+        assert_eq!(app.history_steps(), 0);
+        handle_key(&mut app, plain_key(KeyCode::Char('k')));
+        handle_key(&mut app, plain_key(KeyCode::Char('k')));
+        assert_eq!(app.history_steps(), 2);
+        for _ in 0..9 {
+            handle_key(&mut app, plain_key(KeyCode::Char('k')));
+        }
+        assert_eq!(app.history_steps(), 3, "clamped to the rows drawn");
+        // Enter goes back that many steps, like clicking the row.
+        handle_key(&mut app, plain_key(KeyCode::Enter));
+        assert_eq!(app.nav.history, Vec::<u64>::new());
+        assert_eq!(app.nav.history_cursor, 0);
+    }
+
     #[test]
     fn hl_steps_between_neighbors_on_main() {
         let mut app = step_app();
@@ -1828,9 +1908,8 @@ mod tests {
 
     #[test]
     fn hl_steps_from_every_pane() {
-        // The Main pane is mouse-gated (Tab never lands on it), so the
-        // neighbor step works from every pane: nothing else claims h/l
-        // outside Graph.
+        // The neighbor step works from every pane: nothing else claims
+        // h/l outside Graph.
         let mut app = step_app();
         for pane in [Pane::Main, Pane::Issues, Pane::PRs, Pane::Refs] {
             app.nav.pane = pane;

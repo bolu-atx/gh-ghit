@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fixture: only issue #9 carries the `bug` label, and PR #24 closes #9, so
-# the right column shows Refs plus the Labels pane. Tab x3 reaches Labels,
+# the right column shows Refs plus the Labels pane. Tab x4 reaches Labels,
 # space on `bug` must drop the unlabelled recent PR #25 from the sidebar
 # (requested #19 and #24 stay), X must restore it.
 # fixtures: labels
@@ -9,7 +9,7 @@ e2e_start
 e2e_wait "move title" 60 || fail "pr data never landed"
 e2e_bar 24
 e2e_wait "/pull/24" 20 || fail "show #24"
-e2e_key Tab Tab Tab
+e2e_key Tab Tab Tab Tab
 e2e_wait "Filters" 10 || fail "labels pane missing"
 e2e_wait "█ +.? \(no milestone\)" 20 || fail "meta never loaded"
 e2e_shot labels-focus
