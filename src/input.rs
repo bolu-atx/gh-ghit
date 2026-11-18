@@ -710,19 +710,13 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     app.nav.focus = Focus::Main;
 }
 
-/// Open a URL in the browser. Stubbed in tests so suites never launch one.
-#[cfg(not(test))]
+/// Open a URL in the browser and say so in the bar.
 fn open_url(url: &str, app: &mut App) {
-    if open::that(url).is_ok() {
+    if crate::app::open_in_browser(url).is_ok() {
         app.notify(format!("opened {url}"));
     } else {
         app.notify(format!("couldn't open {url}"));
     }
-}
-
-#[cfg(test)]
-fn open_url(url: &str, app: &mut App) {
-    app.notify(format!("opened {url}"));
 }
 
 #[cfg(test)]

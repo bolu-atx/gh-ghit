@@ -2320,14 +2320,14 @@ impl App {
     }
 
     pub(crate) fn open_number(&mut self, n: u64) {
-        if let Some(d) = self.issues.data.get(&n) {
-            open::that(&d.url).ok();
+        let url = if let Some(d) = self.issues.data.get(&n) {
+            d.url.clone()
         } else if let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) {
-            let url = format!("https://github.com/{repo}/issues/{n}");
-            open::that(&url).ok();
+            format!("https://github.com/{repo}/issues/{n}")
         } else {
-            open::that(format!("https://github.com/issues/{n}")).ok();
-        }
+            format!("https://github.com/issues/{n}")
+        };
+        open_in_browser(&url).ok();
         self.notify(format!("opened #{n} in browser"));
     }
 
@@ -4165,6 +4165,22 @@ pub(crate) fn poll_sub_issues(app: &mut App) -> bool {
         }
     }
     landed
+}
+
+
+/// The one place ghit launches the system browser. Tests get a stub so a
+/// suite never opens a real tab.
+#[cfg(not(test))]
+pub(crate) fn open_in_browser(url: &str) -> std::io::Result<()> {
+    open::that(url)
+}
+
+#[cfg(test)]
+use open as _;
+
+#[cfg(test)]
+pub(crate) fn open_in_browser(_url: &str) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
