@@ -100,11 +100,20 @@ pub(super) struct Fetches {
     queue: FetchQueue<Task>,
     running: Arc<AtomicUsize>,
     pub limit: usize,
+    /// Tests freeze the queue to inspect its order.
+    #[cfg(test)]
+    pub hold: bool,
 }
 
 impl Default for Fetches {
     fn default() -> Self {
-        Self { queue: FetchQueue::default(), running: Arc::new(AtomicUsize::new(0)), limit: MAX_RUNNING }
+        Self {
+            queue: FetchQueue::default(),
+            running: Arc::new(AtomicUsize::new(0)),
+            limit: MAX_RUNNING,
+            #[cfg(test)]
+            hold: false,
+        }
     }
 }
 
@@ -113,17 +122,30 @@ impl Fetches {
         self.queue.push(kind, number, task);
     }
 
-    /// Start queued requests while slots are free.
+    /// Start queued requests. Current-tier requests always start, so slow
+    /// background fetches never delay what the main pane shows; the rest
+    /// start while slots are free.
     pub fn start(&mut self, view: &View, limited: bool) {
+        #[cfg(test)]
+        if self.hold {
+            return;
+        }
+        while let Some(task) = self.queue.next(view, true) {
+            self.spawn(task);
+        }
         while self.running.load(Ordering::Relaxed) < self.limit {
             let Some(task) = self.queue.next(view, limited) else { return };
-            self.running.fetch_add(1, Ordering::Relaxed);
-            let slot = Slot(self.running.clone());
-            super::rt().spawn(async move {
-                let _slot = slot;
-                task.await;
-            });
+            self.spawn(task);
         }
+    }
+
+    fn spawn(&mut self, task: Task) {
+        self.running.fetch_add(1, Ordering::Relaxed);
+        let slot = Slot(self.running.clone());
+        super::rt().spawn(async move {
+            let _slot = slot;
+            task.await;
+        });
     }
 
     #[cfg(test)]
@@ -224,5 +246,27 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         panic!("queue never drained");
+    }
+
+    #[test]
+    fn current_issue_starts_even_when_background_fills_every_slot() {
+        let mut f = Fetches::default();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let rx = Arc::new(std::sync::Mutex::new(rx));
+        let blocked = |rx: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>| -> Task {
+            Box::pin(async move {
+                let _ = tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await;
+            })
+        };
+        for n in 0..MAX_RUNNING as u64 {
+            f.push(Kind::Other, Some(n), blocked(rx.clone()));
+        }
+        f.start(&view(Some(42), false), false);
+        assert_eq!(f.running.load(Ordering::Relaxed), MAX_RUNNING);
+        f.push(Kind::Details, Some(42), blocked(rx.clone()));
+        f.start(&view(Some(42), false), false);
+        assert_eq!(f.queue.len(), 0, "the current issue never waits for a slot");
+        assert_eq!(f.running.load(Ordering::Relaxed), MAX_RUNNING + 1);
+        drop(tx);
     }
 }

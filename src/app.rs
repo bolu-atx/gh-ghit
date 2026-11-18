@@ -4979,7 +4979,7 @@ mod tests {
         let (_guard, _dir, saved) = temp_xdg();
         github::save_pins("o/r", &[3]);
         let mut app = App::new(Some("o/r".to_string()));
-        app.fetches.limit = 0;
+        app.fetches.hold = true;
         app.initial_numbers = vec![5];
         let (tx, rx) = std::sync::mpsc::channel();
         app.auth.bootstrap_rx = Some(rx);
@@ -5004,7 +5004,7 @@ mod tests {
     #[test]
     fn switching_issue_moves_its_queued_fetch_up() {
         let mut app = App::new(Some("o/r".to_string()));
-        app.fetches.limit = 0;
+        app.fetches.hold = true;
         app.load_issue(1, false);
         app.load_issue(2, false);
         let view = fetch_queue::View { current: app.nav.requested, tab_shown: false };
