@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use crate::app::{App, Focus, rt};
+use crate::app::{App, Focus, rt, spawn_bg};
 use crate::core::self;
 use crate::{github, model};
 use crate::app::auth_failure;
@@ -79,7 +79,7 @@ pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
     // sidebar. Scopes need a repo and follow in `poll_bootstrap`.
     let (atx, arx) = std::sync::mpsc::channel();
     app.auth.rx = Some(arx);
-    rt().spawn(async move {
+    spawn_bg(async move {
         let _ = atx.send(github::check_auth().await);
     });
 }
@@ -95,7 +95,7 @@ pub(super) fn poll_bootstrap(app: &mut App) -> bool {
         if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
             let (tx, rx) = std::sync::mpsc::channel();
             app.auth.rx = Some(rx);
-            rt().spawn(async move {
+            spawn_bg(async move {
                 let _ = tx.send(github::check_repo_access(&repo).await);
             });
         }

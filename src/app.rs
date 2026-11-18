@@ -94,6 +94,16 @@ fn rt() -> &'static tokio::runtime::Runtime {
     })
 }
 
+/// Spawn a background task on the shared runtime. Unit tests never run
+/// it: the task is dropped, so no test can reach the network.
+fn spawn_bg<F: std::future::Future<Output = ()> + Send + 'static>(task: F) {
+    if cfg!(test) {
+        drop(task);
+        return;
+    }
+    rt().spawn(task);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
     Details,

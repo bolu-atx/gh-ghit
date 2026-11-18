@@ -114,6 +114,8 @@ pub fn token() -> Option<String> {
             }
         }
     }
+    #[cfg(test)]
+    no_network_in_tests("gh auth token");
     let mut cached = TOKEN_CACHE.lock().unwrap();
     if let Some(t) = cached.clone() {
         return Some(t);
@@ -177,6 +179,8 @@ pub fn rate_limited() -> bool {
 /// Shared HTTP client: one connection pool for all background fetches.
 /// `Client::clone` is cheap; every task shares the same pool.
 pub(super) fn client() -> reqwest::Client {
+    #[cfg(test)]
+    no_network_in_tests("the HTTP client");
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
@@ -371,5 +375,21 @@ mod tests {
             "errors": [{"message": "something odd on one field"}],
         });
         assert!(graphql_auth_failure(&benign).is_none());
+    }
+}
+
+/// Test-only guard at the network boundary: a unit test that reaches
+/// token lookup or HTTP is a bug. Tests that need a fetch run a mock.
+#[cfg(test)]
+fn no_network_in_tests(what: &str) {
+    panic!("unit test reached {what}: unit tests must not touch the network");
+}
+
+#[cfg(test)]
+mod no_network_tests {
+    #[test]
+    #[should_panic(expected = "must not touch the network")]
+    fn http_client_is_off_limits_in_unit_tests() {
+        super::client();
     }
 }

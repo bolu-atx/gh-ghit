@@ -157,7 +157,7 @@ impl Fetches {
             handle.spawn(run);
             return;
         }
-        super::rt().spawn(run);
+        super::spawn_bg(run);
     }
 
     #[cfg(test)]
@@ -282,5 +282,17 @@ mod tests {
         assert_eq!(f.queue.len(), 0, "the current issue never waits for a slot");
         assert_eq!(f.running.load(Ordering::Relaxed), MAX_RUNNING + 1);
         drop(tx);
+    }
+
+    #[test]
+    fn tests_drop_fetches_instead_of_spawning_them() {
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = ran.clone();
+        let mut f = Fetches::default();
+        f.push(Kind::Other, None, Box::pin(async move { flag.store(true, Ordering::Relaxed) }));
+        f.start(&view(None, false), false);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!ran.load(Ordering::Relaxed), "a unit test started a real fetch");
+        assert_eq!(f.running.load(Ordering::Relaxed), 0);
     }
 }

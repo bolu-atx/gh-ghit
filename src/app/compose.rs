@@ -6,7 +6,7 @@ use std::io::Stdout;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{App, rt};
+use crate::app::{App, spawn_bg};
 use crate::{github, model};
 use crate::app::auth_failure;
 
@@ -488,7 +488,7 @@ impl App {
             _ => None,
         };
         let tx = self.compose.tx.clone();
-        rt().spawn(async move {
+        spawn_bg(async move {
             let result = match &target {
                 ComposeTarget::Thread => github::post_thread_comment(&repo, number, &body).await,
                 ComposeTarget::Line { path, line } => github::post_line_comment(&repo, number, &body, path, *line).await,
