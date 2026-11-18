@@ -52,6 +52,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/core/focus.rs` | Focus model: layer and pane types, pane order, `Tab` stepping |
 | `src/core/urgency.rs` | Fetch tiers: `urgency(kind, is_current, tab_shown)` picks which request starts first |
 | `src/core/layout.rs` | Layout math: side column widths (`columns`), `MIN_MAIN_WIDTH`, `MAX_DIFF_FILES` |
+| `src/core/wrap.rs` | Soft wrap of a draft into visual rows; cursor to (row, col) and click to char index |
 | `src/model.rs` + `src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` |
 | `src/github.rs` | Data-access facade over `api`/`cache`; UI layers never import those directly |
 | `src/api.rs` + `src/api/{client,sections,graph,board}.rs` | Token-backed GraphQL/REST calls |

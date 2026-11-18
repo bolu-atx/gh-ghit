@@ -61,6 +61,19 @@ struct Tool {
     action: Action,
 }
 
+impl Tool {
+    /// The key bound to the action, read from the keymap.
+    fn key(&self) -> String {
+        crate::keymap::describe(self.action).map(|b| b.key_name()).unwrap_or_default()
+    }
+
+    /// Cells the button takes: key, icon, and the label when `labeled`.
+    fn width(&self, labeled: bool) -> u16 {
+        let label = if labeled { 1 + self.label.chars().count() } else { 0 };
+        (self.key().chars().count() + 1 + 1 + label) as u16
+    }
+}
+
 /// Toolbar buttons of the open item, left to right. The split toggle
 /// shows on a PR's Diff view only; a merged PR cannot close or reopen.
 fn tools(app: &App) -> Vec<Tool> {
@@ -86,10 +99,7 @@ const STEP_WIDTH: u16 = 3;
 /// that fits `room` wins; `None` means even icons do not fit.
 fn fit_tools(tools: &[Tool], steps: bool, room: u16) -> Option<(bool, Vec<u16>)> {
     for labeled in [true, false] {
-        let widths: Vec<u16> = tools
-            .iter()
-            .map(|t| 1 + if labeled { 1 + t.label.chars().count() as u16 } else { 0 })
-            .collect();
+        let widths: Vec<u16> = tools.iter().map(|t| t.width(labeled)).collect();
         let count = widths.len() as u16 + u16::from(steps);
         let total = widths.iter().sum::<u16>() + if steps { STEP_WIDTH } else { 0 } + count.saturating_sub(1) * TOOL_GAP;
         if total <= room {
@@ -100,9 +110,9 @@ fn fit_tools(tools: &[Tool], steps: bool, room: u16) -> Option<(bool, Vec<u16>)>
 }
 
 /// Action toolbar on the tab line, right-aligned: file stepping on a PR's
-/// Diff view, then split, comment and close or reopen. Buttons are muted
-/// icons with a short label while the tabs leave room, icons alone when
-/// tight, and nothing when the tabs need the space.
+/// Diff view, then split, comment and close or reopen. Buttons are an amber
+/// key, a muted icon and a short label while the tabs leave room; the label
+/// goes first when tight, and the whole bar when the tabs need the space.
 pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
     let tools = tools(app);
     let steps = app.visual_diff();
@@ -120,9 +130,10 @@ pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
         x += STEP_WIDTH + TOOL_GAP;
     }
     for tool in &tools {
-        let text = if labeled { format!("{} {}", tool.icon, tool.label) } else { tool.icon.to_string() };
-        let rect = Rect::new(x, tabs.y, text.chars().count() as u16, 1);
-        f.render_widget(Paragraph::new(text).style(style), rect);
+        let rect = Rect::new(x, tabs.y, tool.width(labeled), 1);
+        let text = if labeled { format!(" {} {}", tool.icon, tool.label) } else { format!(" {}", tool.icon) };
+        let line = Line::from(vec![Span::styled(tool.key(), Style::new().bg(ink()).fg(amber())), Span::styled(text, style)]);
+        f.render_widget(Paragraph::new(line), rect);
         x += rect.width + TOOL_GAP;
         rects.push((rect, tool.action));
     }

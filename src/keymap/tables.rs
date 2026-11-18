@@ -180,6 +180,7 @@ const CONFIRM: &[Binding] = &[
 const COMPOSE: &[Binding] = &[
     key(KeyCode::Tab, Action::ComposeTab, "Insert tab", "Edit", EDIT).any(),
     key(ch('s'), Action::ComposeSend, "Send", "Send", HINT).ctrl().hint(1),
+    key(ch('r'), Action::ComposeTogglePreview, "Preview", "Send", HINT).ctrl().hint(2),
     key(ch('o'), Action::ComposeEditor, "Edit in $EDITOR", "Send", HINT).ctrl().hint(3),
     key(ch('a'), Action::ComposeLineStart, "Line start", "Move", EDIT).ctrl(),
     key(ch('e'), Action::ComposeLineEnd, "Line end", "Move", EDIT).ctrl(),
@@ -202,7 +203,7 @@ const COMPOSE: &[Binding] = &[
     key(ch('f'), Action::ComposeWordForward, "Word forward", "Move", EDIT).alt(),
     key(ch('d'), Action::ComposeDeleteWordForward, "Delete word forward", "Edit", EDIT).alt(),
     key(KeyCode::Backspace, Action::ComposeDeleteWordBack, "Delete word back", "Edit", EDIT).alt(),
-    key(KeyCode::Esc, Action::Back, "Discard", "Send", HINT).hint(2),
+    key(KeyCode::Esc, Action::Back, "Discard", "Send", HINT).hint(4),
     key(KeyCode::Enter, Action::ComposeNewline, "New line", "Edit", EDIT),
     key(KeyCode::Backspace, Action::ComposeBackspace, "Delete back", "Edit", EDIT),
     key(KeyCode::Delete, Action::ComposeDelete, "Delete forward", "Edit", EDIT),

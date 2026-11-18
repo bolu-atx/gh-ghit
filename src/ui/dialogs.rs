@@ -1,6 +1,6 @@
 //! Modal dialogs: confirm, Format, compose.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -455,79 +455,4 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         // The search row sits under the Query header and its blank line.
         f.set_cursor_position((x.min(inner.right().saturating_sub(1)), inner.y + 2));
     }
-}
-
-/// Comment compose modal (`c`): textarea over a rendered markdown
-/// preview through the shared `GhitSheet` stylesheet. The draft shows a
-/// `▌` cursor marker; while the background submit runs, the title reads
-/// Sending and editing locks. The modal steals all keyboard and mouse
-/// focus, edits with bash/readline chords, and offers `$EDITOR` on
-/// `Ctrl+O`; resolving threads is out of scope and never offered here.
-pub(super) fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    use crate::theme::{amber, ink, muted, base, paper};
-    let Some(c) = app.draft() else { return };
-    let popup = centered(area, 80, 76);
-    f.render_widget(Clear, popup);
-    let head = if c.sending { " Sending… " } else { " Compose " };
-    let title = Line::from(vec![
-        Span::styled(head, Style::new().bg(ink()).fg(amber()).bold()),
-        Span::styled(format!("{} ", c.target.title(c.number)), Style::new().bg(ink()).fg(paper())),
-    ]);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base())
-        .title(title);
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(45), Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-    // Draft with a visible cursor marker at the char index.
-    let cursor = c.cursor.min(c.body.chars().count());
-    let mut draft = String::with_capacity(c.body.len() + 3);
-    for (i, ch) in c.body.chars().enumerate() {
-        if i == cursor {
-            draft.push('▌');
-        }
-        draft.push(ch);
-    }
-    if cursor == c.body.chars().count() {
-        draft.push('▌');
-    }
-    let draft_text = if c.body.trim().is_empty() {
-        Paragraph::new(Span::styled("write a comment…", Style::new().bg(ink()).fg(muted()).italic()))
-    } else {
-        Paragraph::new(draft).style(Style::new().bg(ink()).fg(paper()))
-    };
-    f.render_widget(
-        draft_text.block(Block::default().borders(Borders::BOTTOM).border_style(Style::new().bg(ink()).fg(muted())).title(Span::styled(" draft ", Style::new().bg(ink()).fg(muted())))),
-        chunks[0],
-    );
-    let preview = if c.body.trim().is_empty() {
-        ratatui::text::Text::from(Line::from(Span::styled("(nothing to preview)", Style::new().bg(ink()).fg(muted()).italic())))
-    } else {
-        crate::theme::render_markdown(&c.body)
-            .lines
-            .into_iter()
-            .map(|line| Line::from(line.spans.into_iter().map(|s| Span::styled(s.content.into_owned(), s.style)).collect::<Vec<_>>()))
-            .collect::<Vec<_>>()
-            .into()
-    };
-    f.render_widget(
-        Paragraph::new(preview).style(base()).block(Block::default().title(Span::styled(" preview ", Style::new().bg(ink()).fg(muted())))),
-        chunks[1],
-    );
-    let footer = if c.sending {
-        Line::styled("sending… esc closes, the send still lands", Style::new().bg(ink()).fg(muted()))
-    } else {
-        hints::legend(Context::Dialog(Dialog::Compose), app, chunks[2].width, 1).remove(0)
-    };
-    if !c.sending {
-        let at = (chunks[2].x, chunks[2].y);
-        let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Compose), app, chunks[2].width, 1, at);
-        app.hits.legend.extend(legend_hits);
-    }
-    f.render_widget(Paragraph::new(footer), chunks[2]);
 }

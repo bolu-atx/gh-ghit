@@ -9,6 +9,7 @@ mod focus;
 mod layout;
 mod tree;
 mod urgency;
+mod wrap;
 
 pub(crate) use focus::{
     Dialog, Layer, Pane, PaneVisibility, TextInput, step_pane,
@@ -19,6 +20,7 @@ pub(crate) use layout::{MAX_DIFF_FILES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
 pub(crate) use layout::MIN_MAIN_WIDTH;
 pub(crate) use tree::{needs_lazy_children, tree_rows};
 pub(crate) use urgency::{Kind, Tier, urgency};
+pub(crate) use wrap::{cursor_pos, index_at, starts_line, text_rows};
 
 use std::collections::{HashMap, HashSet};
 

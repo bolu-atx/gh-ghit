@@ -110,6 +110,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ConfirmFirst => app.confirm_choose(0),
 
         Action::ComposeSend => app.submit_compose(),
+        Action::ComposeTogglePreview => app.compose_toggle_preview(),
         Action::ComposeEditor => app.request_compose_editor(),
         Action::ComposeLineStart => app.compose_home(),
         Action::ComposeLineEnd => app.compose_end(),

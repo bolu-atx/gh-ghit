@@ -11,7 +11,7 @@ fn draft_app(body: &str) -> App {
         body: body.to_string(),
         cursor: body.chars().count(),
         sending: false,
-        kill: String::new(),
+        kill: String::new(), view: Default::default(),
     });
     app
 }
