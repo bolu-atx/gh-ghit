@@ -8,6 +8,7 @@
 mod focus;
 mod layout;
 mod tree;
+mod urgency;
 
 pub(crate) use focus::{
     Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, layer_stack, step_pane,
@@ -17,6 +18,7 @@ pub(crate) use layout::{MAX_DIFF_FILES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
 #[cfg(test)]
 pub(crate) use layout::MIN_MAIN_WIDTH;
 pub(crate) use tree::{needs_lazy_children, tree_rows};
+pub(crate) use urgency::{Kind, Tier, urgency};
 
 use std::collections::{HashMap, HashSet};
 
@@ -263,6 +265,9 @@ pub struct PaneInputs {
 /// Which panes show their own spinner or skeleton right now.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PaneLoading {
+    /// Sidebar title spinner.
+    pub sidebar_spinner: bool,
+    /// Sidebar skeleton rows.
     pub sidebar: bool,
     pub main: bool,
     pub main_spinner: bool,
@@ -271,9 +276,12 @@ pub struct PaneLoading {
 
 /// Pane-level loading. The main skeleton only shows while nothing is
 /// cached for the pane; a cached issue keeps its text during a refresh.
+/// Only the most urgent loading tier shows its full cue: while the
+/// current issue loads, the sidebar and refs show a title spinner only.
 pub fn pane_loading(i: &PaneInputs) -> PaneLoading {
     PaneLoading {
-        sidebar: i.sections_live || i.bootstrap_live,
+        sidebar_spinner: i.sections_live || i.bootstrap_live,
+        sidebar: (i.sections_live || i.bootstrap_live) && !i.requested_pending,
         main: i.requested_pending && !i.shown_cached,
         main_spinner: i.requested_pending,
         refs: i.refs_pending,
@@ -832,7 +840,14 @@ mod tests {
     fn pane_loading_maps_fetches_to_panes() {
         assert_eq!(pane_loading(&PaneInputs::default()), PaneLoading::default());
         let sidebar = PaneInputs { bootstrap_live: true, ..PaneInputs::default() };
-        assert_eq!(pane_loading(&sidebar), PaneLoading { sidebar: true, ..PaneLoading::default() });
+        assert_eq!(
+            pane_loading(&sidebar),
+            PaneLoading { sidebar: true, sidebar_spinner: true, ..PaneLoading::default() }
+        );
+        let both = PaneInputs { bootstrap_live: true, requested_pending: true, ..PaneInputs::default() };
+        let quiet = pane_loading(&both);
+        assert!(quiet.sidebar_spinner && !quiet.sidebar, "lower tier: spinner only");
+        assert!(quiet.main && quiet.main_spinner, "current tier keeps its skeleton");
         let fresh = PaneInputs { requested_pending: true, ..PaneInputs::default() };
         assert!(pane_loading(&fresh).main && pane_loading(&fresh).main_spinner);
         let cached = PaneInputs { requested_pending: true, shown_cached: true, ..PaneInputs::default() };
