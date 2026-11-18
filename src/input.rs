@@ -4,12 +4,13 @@
 //! cursor math delegates to `core` so the rules stay testable without a TUI.
 
 mod actions;
+mod menu;
 mod reach;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{App, Focus, Tab, board_move, board_open, board_selected_number};
+use crate::app::{App, Focus, Tab, board_open, board_selected_number};
 use crate::core::{self, Dialog, Layer, Pane, TextInput};
 use crate::keymap;
 
@@ -270,6 +271,7 @@ pub(crate) enum WheelTarget {
     PRs,
     Refs,
     Labels,
+    History,
     Main,
 }
 
@@ -282,6 +284,8 @@ pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
         WheelTarget::Refs
     } else if in_rect(app.hits.labels_area, x, y) {
         WheelTarget::Labels
+    } else if in_rect(app.hits.history_area, x, y) {
+        WheelTarget::History
     } else {
         WheelTarget::Main
     }
@@ -313,6 +317,7 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
             }
         }
         WheelTarget::Labels => app.move_filter_cursor(delta),
+        WheelTarget::History => app.history_step(delta),
         WheelTarget::Main => {
             app.nav.scroll = app.nav.scroll.saturating_add_signed(delta as i16 * 3);
         }
@@ -332,6 +337,8 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
                 .map(|(_, i)| *i);
             if let Some(i) = hit {
                 app.confirm_choose(i);
+            } else if !app.hits.ctl.popup.contains(ratatui::layout::Position::new(m.column, m.row)) {
+                app.confirm_cancel();
             }
         }
         return;
@@ -348,6 +355,11 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
     // Shortcuts and compose steal all mouse focus: clicks and wheel never
     // reach the panes behind them, so the draft and selection survive.
     if open(Dialog::Shortcuts) || open(Dialog::Compose) {
+        menu::handle_modal_mouse(app, m, open(Dialog::Shortcuts));
+        return;
+    }
+    if open(Dialog::Menu) {
+        menu::handle_menu_mouse(app, m);
         return;
     }
     if open(Dialog::Format) || open(Dialog::BoardFilter) {
@@ -366,9 +378,13 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             actions::perform(app, action);
             return;
         }
+        if menu::repo_click(app, m.column, m.row) || menu::control_click(app, m.column, m.row) {
+            return;
+        }
     }
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => handle_left(app, m.column, m.row, false),
+        MouseEventKind::Down(MouseButton::Right) => menu::right_click(app, m.column, m.row),
         // Drag keeps hover/scroll continuity while the button is held:
         // side panes preview the row under the cursor, Main keeps its
         // scroll, and nothing commits until a real press lands.
@@ -392,6 +408,14 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
 /// sidebar dialog (as Esc does) and is ignored over the board, where Esc
 /// would clear the filter. Wheel and drag never reach the panes behind.
 fn handle_form_mouse(app: &mut App, m: MouseEvent) {
+    if menu::legend_click(app, &m) {
+        return;
+    }
+    match m.kind {
+        MouseEventKind::ScrollDown => menu::form_wheel(app, 1),
+        MouseEventKind::ScrollUp => menu::form_wheel(app, -1),
+        _ => {}
+    }
     if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         return;
     }
@@ -403,6 +427,8 @@ fn handle_form_mouse(app: &mut App, m: MouseEvent) {
             && !app.sidebar.query_edit && !app.sidebar.name_edit
         {
             app.sidebar.filter_open = false;
+        } else if on_board && !in_rect(app.hits.form_popup, m.column, m.row) && !app.sidebar.query_edit {
+            menu::apply_board_filter(app);
         }
         return;
     };
@@ -431,6 +457,22 @@ fn handle_form_mouse(app: &mut App, m: MouseEvent) {
 /// cursor cell like a hover, scroll walks cards. Release never opens:
 /// the press already committed, so release is a no-op.
 fn handle_board_mouse(app: &mut App, m: MouseEvent) {
+    if menu::legend_click(app, &m) {
+        return;
+    }
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Right) => {
+            menu::board_right_click(app, m.column, m.row);
+            return;
+        }
+        MouseEventKind::Down(MouseButton::Left)
+            if !in_rect(app.hits.ctl.popup, m.column, m.row) =>
+        {
+            app.pop_layer();
+            return;
+        }
+        _ => {}
+    }
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // Header icons first: they sit outside every card cell.
@@ -491,8 +533,8 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                 app.note_click(rect);
             }
         }
-        MouseEventKind::ScrollDown => board_move(app, 0, 1),
-        MouseEventKind::ScrollUp => board_move(app, 0, -1),
+        MouseEventKind::ScrollDown => menu::board_wheel(app, m.column, 1),
+        MouseEventKind::ScrollUp => menu::board_wheel(app, m.column, -1),
         // Release never opens: the press already committed.
         MouseEventKind::Up(_) => {}
         _ => {}
@@ -513,6 +555,14 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             app.note_click(Rect::new(x, y, 1, 1));
         }
         return;
+    }
+    if !drag {
+        if let Some(pane) = menu::title_row_pane(app, x, y) {
+            app.nav.focus = Focus::Main;
+            app.nav.pane = pane;
+            app.note_click(Rect::new(x, y, 1, 1));
+            return;
+        }
     }
     if !drag && in_rect(app.hits.history_area, x, y) {
         app.nav.focus = Focus::Main;

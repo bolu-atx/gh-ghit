@@ -48,8 +48,9 @@ fn a_plain_row_never_shadows_a_chord_row_below_it() {
 /// layers type `?`, so they have no help key.
 #[test]
 fn modal_contexts_have_esc_and_help_except_where_documented() {
-    const NO_HELP_KEY: [Context; 5] = [
+    const NO_HELP_KEY: [Context; 6] = [
         Context::Dialog(Dialog::Compose),
+        Context::Dialog(Dialog::Menu),
         Context::Input(TextInput::Bar),
         Context::Input(TextInput::Query),
         Context::Input(TextInput::Name),
@@ -129,8 +130,76 @@ fn mouse_gap_list_is_exposed_for_mouse_parity() {
     for (action, reason) in &gaps {
         println!("  {action:?}: {reason}");
     }
-    assert!(gaps.iter().any(|(action, _)| *action == Action::Pin));
+    assert!(!gaps.iter().any(|(action, _)| *action == Action::Pin), "Pin has the right-click menu");
     assert!(!gaps.iter().any(|(action, _)| *action == Action::TabVisual));
+}
+
+/// The NoMouse list holds only four kinds of key: editing keys, aliases of
+/// a key that has a gesture, scroll keys the wheel covers, and dismiss or
+/// pick keys another click covers. A new gap must add a reason on purpose.
+#[test]
+fn no_mouse_reasons_stay_in_the_allowed_categories() {
+    for context in ALL_CONTEXTS {
+        for binding in bindings(context) {
+            if let Gesture::NoMouse(reason) = binding.mouse {
+                assert!(
+                    ALLOWED_NO_MOUSE.contains(&reason),
+                    "{context:?} {}: `{reason}` is not an allowed NoMouse reason",
+                    binding.key_name(),
+                );
+            }
+        }
+    }
+    for (action, reason) in mouse_gaps() {
+        assert!(ALLOWED_NO_MOUSE.contains(&reason), "{action:?}: `{reason}`");
+    }
+}
+
+/// Text editing keys are the only ones allowed to have no pointer control
+/// inside the comment editor and the text inputs.
+#[test]
+fn editor_and_text_input_keys_are_the_only_gaps_in_their_contexts() {
+    let editors = ALL_CONTEXTS.into_iter()
+        .filter(|context| matches!(context, Context::Input(_) | Context::Dialog(Dialog::Compose)));
+    for context in editors {
+        for binding in bindings(context) {
+            if let Gesture::NoMouse(reason) = binding.mouse {
+                assert!(
+                    ALLOWED_NO_MOUSE[..2].contains(&reason),
+                    "{context:?} {}: {reason}", binding.key_name(),
+                );
+            }
+        }
+    }
+}
+
+/// A binding that promises "click hint" must carry a hint rank, or the
+/// click target would never draw.
+#[test]
+fn hint_gestures_rest_on_a_hint_rank() {
+    for context in ALL_CONTEXTS {
+        for binding in bindings(context) {
+            if binding.mouse == Gesture::Hint {
+                assert!(binding.hint.is_some(), "{context:?} {} has no hint", binding.key_name());
+            }
+        }
+    }
+}
+
+#[test]
+fn every_menu_entry_has_a_mouse_gesture() {
+    let gaps: Vec<Action> = mouse_gaps().into_iter().map(|(action, _)| action).collect();
+    let app = App::new(Some("o/r".to_string()));
+    for kind in [
+        crate::controls::MenuKind::Issue, crate::controls::MenuKind::Ref, crate::controls::MenuKind::History,
+        crate::controls::MenuKind::Labels, crate::controls::MenuKind::Body, crate::controls::MenuKind::Board,
+        crate::controls::MenuKind::Global,
+    ] {
+        let menu = crate::controls::MenuState::new(kind, &app, (0, 0));
+        for entry in menu.entries {
+            assert!(!gaps.contains(&entry.action), "{kind:?}: {:?}", entry.action);
+        }
+    }
 }
 
 #[test]

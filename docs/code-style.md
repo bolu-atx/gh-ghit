@@ -169,6 +169,13 @@ What good code looks like here:
 - Every new control has a key binding, a mouse gesture, and a hint in the
   status bar or the help modal. The PR records why if one is impossible.
 - Focus and selection look the same for mouse and keyboard.
+- One gesture vocabulary. Click focuses and selects; a second click opens.
+  The wheel scrolls the pane under the pointer. Muted title and footer
+  controls (`Gesture::Title`) run pane-level actions. Right-click opens an
+  actions menu (`Gesture::Menu`); the repo segment of the status bar opens the
+  global one. A click outside a dialog dismisses it. Set each binding's
+  `mouse` field to the gesture you built; `NoMouse` needs one of the reasons
+  in `ALLOWED_NO_MOUSE`.
 
 ## State and IO
 

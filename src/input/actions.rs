@@ -8,6 +8,7 @@ use crate::app::{App, Focus, QueryAction, Tab, board_move, board_selected_number
 use crate::core::{self, Dialog, Layer, TextInput};
 use crate::keymap::Action;
 
+use super::menu;
 use super::reach::{Reach, reach};
 use super::{jump_search_hit, move_diff_cursor, pane_down};
 
@@ -15,6 +16,11 @@ pub(super) fn perform(app: &mut App, action: Action) {
     match action {
         Action::HistoryBack => app.go_back(),
         Action::HistoryForward => app.go_forward(),
+        Action::OpenMenu => menu::open_for_focus(app),
+        Action::CloseMenu => app.menu = None,
+        Action::MenuDown => menu::step(app, 1),
+        Action::MenuUp => menu::step(app, -1),
+        Action::MenuRun => menu::run(app),
         Action::ShowHelp => {
             app.shortcuts_open = true;
             app.help_scroll = 0;

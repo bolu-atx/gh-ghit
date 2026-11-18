@@ -677,6 +677,8 @@ pub(crate) struct HitAreas {
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
     pub(crate) last_click: Option<(Rect, Instant)>,
+    /// Title controls, dialog-footer hints, popup and menu rows.
+    pub(crate) ctl: crate::controls::ControlHits,
 }
 
 pub(crate) struct App {
@@ -693,6 +695,8 @@ pub(crate) struct App {
     pub(crate) auth: AuthState,
     pub(crate) compose: ComposeSlot,
     pub(crate) hits: HitAreas,
+    /// Open actions menu (right-click or `m`).
+    pub(crate) menu: Option<crate::controls::MenuState>,
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
     pub(crate) initial_numbers: Vec<u64>,
@@ -753,6 +757,7 @@ impl App {
             subs: SubIssueLoads::new(),
             quit: false,
             hits: HitAreas::default(),
+            menu: None,
             refs: RefsPane::new(),
             labels: LabelsPane::default(),
         }
@@ -1627,11 +1632,18 @@ impl App {
 
     /// Title subtitle for Issues/PRs: row count, recent mode, filters, and sort.
     pub(crate) fn side_subtitle(&self, want_pr: bool) -> String {
+        let (state, sort) = self.side_subtitle_parts(want_pr);
+        format!("{state} · {sort}")
+    }
+
+    /// The subtitle in its two clickable parts: list state (opens Format)
+    /// and sort label (click cycles, the arrow reverses).
+    pub(crate) fn side_subtitle_parts(&self, want_pr: bool) -> (String, String) {
         let (p, v, r) = self.side_counts(want_pr);
         let query = self.sidebar.query_active.trim();
         let context = if query.is_empty() { " · recent" } else { "" };
         let filtered = if self.filters_active() { " · filtered" } else { "" };
-        format!("{}{context}{filtered} · {}", p + v + r, self.sort_label())
+        (format!("{}{context}{filtered}", p + v + r), self.sort_label())
     }
 
     /// Footer for Issues/PRs: per-group counts.
@@ -2065,6 +2077,7 @@ impl App {
             format: self.sidebar.filter_open,
             query_edit: self.sidebar.query_edit,
             name_edit: self.sidebar.name_edit,
+            menu: self.menu.is_some(),
             compose: self.compose_open(),
             confirm: self.confirm_open(),
             shortcuts: self.shortcuts_open,
@@ -2109,6 +2122,7 @@ impl App {
             Layer::Dialog(Dialog::Shortcuts) => self.shortcuts_open = false,
             Layer::Dialog(Dialog::Confirm) => self.confirm_cancel(),
             Layer::Dialog(Dialog::Compose) => self.request_discard_compose(),
+            Layer::Dialog(Dialog::Menu) => self.menu = None,
             Layer::Dialog(Dialog::Format) => self.sidebar.filter_open = false,
             Layer::Dialog(Dialog::BoardFilter) => {
                 self.sidebar.filter_open = false;

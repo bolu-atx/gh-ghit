@@ -13,6 +13,7 @@ mod app;
 mod cache;
 mod cli;
 mod clipboard;
+mod controls;
 mod core;
 #[cfg(unix)]
 mod drive;
