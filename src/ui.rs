@@ -4,6 +4,8 @@
 //! Hit areas (`body_rows`, sidebar rects, board cells) are recorded here
 //! during `render`; `input` consumes them on the next event.
 
+mod help;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -170,7 +172,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     }
     if app.shortcuts_open {
         dim_background(f, 0.35);
-        render_shortcuts(f, f.area());
+        help::render_shortcuts(f, f.area(), app);
     }
     if app.compose_open() {
         dim_background(f, 0.35);
@@ -262,54 +264,6 @@ fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
             buf[(x, y)].set_style(Style::new().reversed());
         }
     }
-}
-
-fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
-    use crate::theme::{amber, base, ink, muted, paper, teal};
-    let width = area.width.min(76);
-    let height = area.height.min(28);
-    let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
-    f.render_widget(Clear, popup);
-    let block = Block::default().borders(Borders::ALL)
-        .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base()).title(" Shortcuts ");
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
-    let body = [
-        "Navigation", "  tab/shift-tab panes · j/k select · ↑/↓ scroll · page up/down",
-        "  1/2 details/visual · e right pane · E sidebar · n/N search matches",
-        "  ctrl-o back · ctrl-i forward", "",
-        "Actions", "  : command · / find · g search · f format · b board · w window",
-        "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
-        "  a sort · A reverse · x evict · u undo evict/delete",
-        "  Labels pane: j/k move · space toggle · X clear all",
-        "  History pane: j/k move · enter go back", "",
-        "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
-        "Diff", "  ↑/↓ lines · J/K files · space expand · s split · S submit pending",
-        "Comment  c open · emacs keys · ctrl-o $EDITOR · ctrl-s send",
-        "Esc / ? / q close",
-    ];
-    // Credit footer (display-only: the modal swallows all mouse input,
-    // so the URL below is never clickable). Banner lines stay within
-    // the popup inner width (76 - 2 borders).
-    let banner = [
-        "  ___ _   _ ___ _____",
-        " / __| | | |_ _|_   _|",
-        "| (_ | |_| || |  | |",
-        " \\___|____|___|  |_|",
-    ];
-    let body_style = Style::new().bg(ink()).fg(paper());
-    let mut lines: Vec<Line> = body.into_iter().map(|s| Line::styled(s, body_style)).collect();
-    lines.push(Line::from(""));
-    for b in banner {
-        lines.push(Line::styled(b, Style::new().bg(ink()).fg(amber())));
-    }
-    lines.push(Line::styled("created by bolu-atx", Style::new().bg(ink()).fg(muted())));
-    lines.push(Line::styled(
-        "https://github.com/bolu-atx/gh-ghit",
-        Style::new().bg(ink()).fg(teal()).underlined(),
-    ));
-    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// One column of the sidebar Format dialog. Every focusable row records
@@ -5742,12 +5696,12 @@ mod render_smoke {
         for close in [KeyCode::Esc, KeyCode::Char('?'), KeyCode::Char('q')] {
             let mut app = loaded_app();
             handle_key(&mut app, key(KeyCode::Char('?')));
-            assert!(frame_text(&mut app).contains("Navigation"));
-            assert!(frame_text(&mut app).contains("ctrl-o back"));
+            assert!(frame_text(&mut app).contains("Shortcuts"));
+            assert!(frame_text(&mut app).contains("Back in history"));
             handle_key(&mut app, key(close));
             assert!(!app.shortcuts_open);
             assert!(!app.quit);
-            assert!(!frame_text(&mut app).contains("Navigation"));
+            assert!(!frame_text(&mut app).contains("Back in history"));
         }
     }
 
@@ -5757,9 +5711,13 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('?')));
         assert!(app.shortcuts_open);
         let text = frame_text(&mut app);
-        // Existing sections still render above the footer.
-        assert!(text.contains("Navigation"), "sections survive: {text}");
+        assert!(text.contains("Everywhere"), "sections render first: {text}");
         assert!(text.contains("Esc / ? / q close"), "closer survives: {text}");
+        // The credit block ends the scrolling list.
+        for _ in 0..40 {
+            handle_key(&mut app, key(KeyCode::PageDown));
+        }
+        let text = frame_text(&mut app);
         // GHIT ASCII banner (4 lines), author, and repo URL.
         assert!(text.contains("___ _   _ ___"), "banner renders: {text}");
         assert!(text.contains("created by bolu-atx"), "author renders: {text}");
@@ -5767,6 +5725,89 @@ mod render_smoke {
             text.contains("https://github.com/bolu-atx/gh-ghit"),
             "url renders: {text}"
         );
+    }
+
+    /// Help section titles in drawn order, one per section line.
+    fn help_titles(app: &mut App) -> Vec<String> {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        let mut titles = vec![];
+        for y in 0..buffer.area.height {
+            let line: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+            if let Some(at) = line.find("▸ ") {
+                titles.push(line[at..].split('│').next().unwrap_or_default().trim_end().to_string());
+            }
+        }
+        titles
+    }
+
+    #[test]
+    fn generated_help_leads_with_the_issues_pane_context() {
+        use crate::core::Pane;
+        let mut app = loaded_app();
+        app.nav.pane = Pane::Issues;
+        handle_key(&mut app, key(KeyCode::Char('?')));
+        let text = frame_text(&mut app);
+        assert!(text.contains("▸ Issues pane · here"), "{text}");
+        assert!(text.contains("Evict row"), "pane keys come first: {text}");
+        assert!(text.find("Evict row") < text.find("Everywhere"), "{text}");
+        assert_eq!(help_titles(&mut app).first().map(String::as_str), Some("▸ Issues pane · here"));
+        // The key column is amber, the label muted.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(|f| render(f, &mut app)).expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        let (row, label_x) = (0..buffer.area.height)
+            .find_map(|y| {
+                let line: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+                line.find("Evict row").map(|at| (y, line[..at].chars().count() as u16))
+            })
+            .expect("evict row drawn");
+        let key_x = (0..label_x).rev().find(|x| buffer[(*x, row)].symbol() == "x").expect("x key cell");
+        assert_eq!(buffer[(key_x, row)].fg, crate::theme::amber());
+        assert_eq!(buffer[(label_x, row)].fg, crate::theme::muted());
+    }
+
+    #[test]
+    fn generated_help_leads_with_the_labels_pane_context() {
+        use crate::core::Pane;
+        let mut app = loaded_app();
+        app.nav.pane = Pane::Labels;
+        handle_key(&mut app, key(KeyCode::Char('?')));
+        let text = frame_text(&mut app);
+        assert!(text.contains("▸ Filters pane · here"), "{text}");
+        assert!(text.contains("Clear all filters"), "{text}");
+        assert!(!text.contains("Evict row"), "other panes stay off the first page: {text}");
+        let titles = help_titles(&mut app);
+        assert_eq!(titles.first().map(String::as_str), Some("▸ Filters pane · here"));
+        assert_eq!(titles.get(1).map(String::as_str), Some("▸ Everywhere · here"));
+    }
+
+    #[test]
+    fn help_scrolls_and_clamps_at_both_ends() {
+        let mut app = loaded_app();
+        handle_key(&mut app, key(KeyCode::Char('?')));
+        let top = frame_text(&mut app);
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.help_scroll, 0);
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.help_scroll, 1);
+        for _ in 0..40 {
+            handle_key(&mut app, key(KeyCode::PageDown));
+        }
+        let bottom = frame_text(&mut app);
+        assert_ne!(top, bottom);
+        let clamped = app.help_scroll;
+        handle_key(&mut app, key(KeyCode::Down));
+        let _ = frame_text(&mut app);
+        assert_eq!(app.help_scroll, clamped);
+        assert!(bottom.contains("created by bolu-atx"), "{bottom}");
+        // Reopening starts at the top.
+        handle_key(&mut app, key(KeyCode::Esc));
+        handle_key(&mut app, key(KeyCode::Char('?')));
+        assert_eq!(app.help_scroll, 0);
     }
 
     #[test]

@@ -75,35 +75,26 @@ On Unix, `--drive PATH` serves the UI over a socket without a terminal; `--size 
 
 ## Shortcuts
 
-Press `?` for the in-app shortcuts modal.
+Press `?` for the full, current list.
+It starts with the keys of the pane you are in, then lists every other context.
+`j` / `k` and the arrow keys scroll it.
+The help screen is generated from the same table that handles keys, so it never drifts.
 
-| Context | Keys | Action |
-| --- | --- | --- |
-| Navigation | `Tab` / `Shift-Tab` | Cycle panes in screen order (Issues, PRs, Main, Refs, Filters, History) |
-| Navigation | `j` / `k` | Select |
-| History | `j` / `k`, `Enter` | Move the cursor; go back to that issue |
-| Navigation | `↑` / `↓`, Page Up / Page Down | Scroll |
-| Navigation | `1` / `2` | Details / Visual tab |
-| Navigation | `e` | Toggle refs |
-| Navigation | `n` / `N` | Next / previous search match |
-| Navigation | `Ctrl+O` / `Ctrl+I` | Back / forward in history |
-| Actions | `:` / `/` | Command bar / find |
-| Actions | `f` / `b` / `w` | Filter / board / merged-PR window |
-| Actions | `o` / `r` / `p` / `y` | Open in browser / refresh / pin / yank |
-| Actions | `t` / `q` / `c` | Cycle theme / quit / comment |
-| Actions | `a` / `A` / `x` | Sort sidebar / reverse sort / evict row |
-| Actions | `u` | Undo the last evict or saved-query delete (within 4 s) |
-| Labels pane | `j` / `k`, `Space` / `Enter`, `X` | Move / toggle label or milestone filter / clear all |
-| Board | `h` / `l`, `j` / `k` | Move between columns / cards |
-| Board | `Space` / `Enter` / `f` | Expand card / open card / filter board |
-| Diff | `↑` / `↓`, `J` / `K` | Move by line / file |
-| Diff | `Space` / `s` / `S` | Expand file / split view / submit pending review |
-| Comment | `c` | Open compose |
-| Comment | Emacs keys | Edit the draft |
-| Comment | `Ctrl+O` / `Ctrl+S` | Edit in `$EDITOR` / send |
-| Shortcuts modal | `Esc` / `?` / `q` | Close |
+The essentials:
 
-`Esc` discards a comment draft.
+| Keys | Action |
+| --- | --- |
+| `Tab` / `Shift-Tab` | Cycle panes in screen order (Issues, PRs, Main, Refs, Filters, History) |
+| `j` / `k` | Select the next or previous row |
+| `↑` / `↓`, Page Up / Page Down | Scroll the main pane |
+| `1` / `2` | Details / Visual tab |
+| `:` / `/` | Command bar / find |
+| `f` / `b` | Format and filter / board |
+| `c` | Comment |
+| `u` | Undo the last evict or saved-query delete (within 4 s) |
+| `Ctrl+O` / `Ctrl+I` | Back / forward in history |
+| `?` / `q` | Shortcuts / quit |
+
 Outside dialogs, `h` / `l` step between neighboring issues and PRs from any pane.
 In a focused issue graph, they move between graph nodes instead.
 `R` reopens the re-authentication prompt when authentication is degraded.
