@@ -4,11 +4,14 @@
 //! cursor math delegates to `core` so the rules stay testable without a TUI.
 
 mod actions;
+mod hit;
 mod menu;
 mod reach;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
+
+use hit::{hit, in_rect};
 
 use crate::app::{App, Focus, Tab, board_open, board_selected_number};
 use crate::core::{self, Dialog, Layer, Pane, TextInput};
@@ -183,10 +186,6 @@ fn toggle_board_focused(app: &mut App) {
     }
 }
 
-fn in_rect(area: Rect, x: u16, y: u16) -> bool {
-    area.contains(ratatui::layout::Position::new(x, y))
-}
-
 /// Visible height of one sidebar row: 3 lines per `Item` with 1-line
 /// labeled dividers. An expanded row adds the wrapped detail block its
 /// render draws, measured with the same inner width.
@@ -332,12 +331,9 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
     let open = |dialog: Dialog| stack.contains(&Layer::Dialog(dialog));
     if open(Dialog::Confirm) {
         if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-            let hit = app.hits.confirm_choices.iter()
-                .find(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row)))
-                .map(|(_, i)| *i);
-            if let Some(i) = hit {
+            if let Some((_, i)) = hit(&app.hits.confirm_choices, m.column, m.row) {
                 app.confirm_choose(i);
-            } else if !app.hits.ctl.popup.contains(ratatui::layout::Position::new(m.column, m.row)) {
+            } else if !in_rect(app.hits.ctl.popup, m.column, m.row) {
                 app.confirm_cancel();
             }
         }
@@ -347,7 +343,7 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         && app.undo_live()
         && !open(Dialog::Shortcuts)
         && !open(Dialog::Compose)
-        && app.hits.undo_toast.contains(ratatui::layout::Position::new(m.column, m.row))
+        && in_rect(app.hits.undo_toast, m.column, m.row)
     {
         app.undo_last();
         return;
@@ -371,11 +367,8 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-        let at = ratatui::layout::Position::new(m.column, m.row);
-        let hit = app.hits.bar_hints.iter().find(|(rect, _)| rect.contains(at)).map(|(rect, action)| (*rect, *action));
-        if let Some((rect, action)) = hit {
-            app.hits.last_click = Some((rect, std::time::Instant::now()));
-            actions::perform(app, action);
+        let hint = hit(&app.hits.bar_hints, m.column, m.row);
+        if menu::press(app, hint) {
             return;
         }
         if menu::repo_click(app, m.column, m.row) || menu::control_click(app, m.column, m.row) {
@@ -420,9 +413,7 @@ fn handle_form_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
     let on_board = board_open(app);
-    let hit = app.hits.form_cells.iter()
-        .find(|(rect, _, _)| in_rect(*rect, m.column, m.row)).copied();
-    let Some((rect, index, option)) = hit else {
+    let Some((rect, index, option)) = hit(&app.hits.form_cells, m.column, m.row) else {
         if !on_board && !in_rect(app.hits.form_popup, m.column, m.row)
             && !app.sidebar.query_edit && !app.sidebar.name_edit
         {
@@ -476,22 +467,12 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // Header icons first: they sit outside every card cell.
-            if let Some((rect, url)) = app.hits
-                .board_links
-                .iter()
-                .find(|(rect, _)| in_rect(*rect, m.column, m.row))
-                .map(|(rect, url)| (*rect, url.clone()))
-            {
+            if let Some((rect, url)) = hit(&app.hits.board_links, m.column, m.row) {
                 app.note_click(rect);
                 open_url(&url, app);
                 return;
             }
-            let hit = app.hits
-                .board_cells
-                .iter()
-                .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
-                .map(|(rect, c, r)| (*rect, *c, *r));
-            if let Some((rect, c, r)) = hit {
+            if let Some((rect, c, r)) = hit(&app.hits.board_cells, m.column, m.row) {
                 app.note_click(rect);
                 // Clicking the URL line of an expanded card opens it.
                 if app.board.expanded == Some((c, r)) && m.row - rect.y == 3 {
@@ -522,12 +503,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            let hit = app.hits
-                .board_cells
-                .iter()
-                .find(|(rect, _, _)| in_rect(*rect, m.column, m.row))
-                .map(|(rect, c, r)| (*rect, *c, *r));
-            if let Some((rect, c, r)) = hit {
+            if let Some((rect, c, r)) = hit(&app.hits.board_cells, m.column, m.row) {
                 app.board.col = c;
                 app.board.row = r;
                 app.note_click(rect);
@@ -567,8 +543,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     if !drag && in_rect(app.hits.history_area, x, y) {
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::History;
-        let row = app.hits.history_rows.iter().find(|(rect, _)| in_rect(*rect, x, y)).copied();
-        if let Some((_, steps)) = row {
+        if let Some((_, steps)) = hit(&app.hits.history_rows, x, y) {
             app.nav.history_cursor = steps;
             app.open_history_row();
         }
@@ -577,8 +552,7 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     if !drag && in_rect(app.hits.labels_area, x, y) {
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::Labels;
-        let row = app.hits.labels_rows.iter().find(|(rect, _)| in_rect(*rect, x, y)).copied();
-        if let Some((rect, index)) = row {
+        if let Some((rect, index)) = hit(&app.hits.labels_rows, x, y) {
             app.toggle_filter_item(index);
             app.note_click(rect);
         }
