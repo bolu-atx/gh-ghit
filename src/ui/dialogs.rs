@@ -23,7 +23,7 @@ use super::board::render_board_filter;
 /// and labels, so new specializations reuse it untouched.
 pub(super) fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
-    let Some(d) = app.confirm.clone() else { return };
+    let Some(d) = app.confirm().cloned() else { return };
     let popup = centered(area, 64, 30);
     app.hits.popup = popup;
     f.render_widget(Clear, popup);
@@ -286,26 +286,26 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let mut right = FormatColumn::new(column_width, focus);
     right.gutter(&["key", "order", "issues", "PRs"]);
     left.section(1, "Query");
-    let query = if app.sidebar.query_edit {
+    let query = if app.query_edit() {
         &app.sidebar.query_draft
     } else {
         &app.sidebar.query_active
     };
     let mut search = Vec::new();
-    if query.is_empty() && !app.sidebar.query_edit {
+    if query.is_empty() && !app.query_edit() {
         search.push(Span::styled("recent activity (e to search)".to_string(),
             Style::new().bg(theme::ink()).fg(theme::muted())));
     } else {
         search.push(Span::styled(query.to_string(), Style::new().bg(theme::ink()).fg(
             if focus == 0 { theme::amber() } else { theme::paper() })));
-        if app.sidebar.query_edit {
+        if app.query_edit() {
             search.push(Span::styled("▌", Style::new().bg(theme::ink()).fg(theme::amber())
                 .bold()));
         }
     }
     left.field(0, Some("search"), search);
     let saved_count = app.sidebar.saved_queries.len();
-    if app.sidebar.name_edit {
+    if app.name_edit() {
         left.field(1, Some("name"), vec![Span::styled(
             format!("{}▌", app.sidebar.name_draft), Style::new().fg(theme::amber()))]);
     } else if saved_count == 0 {
@@ -382,7 +382,7 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     // The name prompt replaces the saved row (index 1) while it edits.
     let name_line = left.rows.iter().find(|&&(index, _)| index == 1).map_or(3, |&(_, row)| row);
-    let focus_line = if app.sidebar.name_edit { name_line } else {
+    let focus_line = if app.name_edit() { name_line } else {
         left.focus_line.or_else(|| right.focus_line.map(|row| {
             if two_columns { row } else { row + left.lines.len() }
         })).unwrap_or(0)
@@ -409,7 +409,7 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(block, popup);
     let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
     let content = Rect { height: inner.height.saturating_sub(1 + footer_height), ..inner };
-    let scroll = scroll_to(content, focus_line, app.sidebar.query_edit || app.sidebar.name_edit);
+    let scroll = scroll_to(content, focus_line, app.query_edit() || app.name_edit());
     app.hits.form_popup = popup;
     let right_x = if two_columns { content.x + column_width as u16 + 3 } else { content.x };
     let right_skip = if two_columns { 0 } else { left.lines.len() };
@@ -444,12 +444,12 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
     let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Format), app, legend_width, 3, (footer.x, footer.y));
     app.hits.legend.extend(legend_hits);
-    if app.sidebar.name_edit && content.height > 1 {
+    if app.name_edit() && content.height > 1 {
         let x = inner.x + left.gutter as u16 + 3
             + Line::raw(app.sidebar.name_draft.as_str()).width() as u16;
         let y = inner.y + (name_line as u16).saturating_sub(scroll);
         f.set_cursor_position((x.min(inner.right().saturating_sub(1)), y));
-    } else if app.sidebar.query_edit && content.height > 1 {
+    } else if app.query_edit() && content.height > 1 {
         let x = inner.x + left.gutter as u16 + 3
             + Line::raw(app.sidebar.query_draft.as_str()).width() as u16;
         // The search row sits under the Query header and its blank line.
@@ -465,7 +465,7 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// `Ctrl+O`; resolving threads is out of scope and never offered here.
 pub(super) fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, base, paper};
-    let Some(c) = app.compose.draft.as_ref() else { return };
+    let Some(c) = app.draft() else { return };
     let popup = centered(area, 80, 76);
     f.render_widget(Clear, popup);
     let head = if c.sending { " Sending… " } else { " Compose " };

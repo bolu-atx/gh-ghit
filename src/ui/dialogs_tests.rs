@@ -8,7 +8,7 @@ use super::test_support::{board_app, press_cell, frame_text_sized, sample, loade
 #[test]
 fn format_dialog_clicks_pick_options_and_toggle_chips() {
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     let _ = frame_text(&mut app);
     let left = app.format_left_widgets();
     // A choice option selects that option and focuses its row.
@@ -26,27 +26,27 @@ fn format_dialog_clicks_pick_options_and_toggle_chips() {
     // The search row starts the query edit.
     let _ = frame_text(&mut app);
     press_cell(&mut app, 0, None);
-    assert!(app.sidebar.query_edit);
+    assert!(app.query_edit());
     // Clicks never reach the panes behind the dialog.
     let current = app.nav.current;
     let side = app.hits.side_issue_area;
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), side.x + 1, side.y + 2));
     assert_eq!(app.nav.current, current);
-    assert!(app.sidebar.filter_open, "edit swallows outside clicks");
+    assert!(app.format_open(), "edit swallows outside clicks");
 }
 
 #[test]
 fn format_dialog_outside_click_closes_and_wheel_is_inert() {
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     let _ = frame_text(&mut app);
     let scroll = app.nav.scroll;
     let p = app.hits.form_popup;
     handle_mouse(&mut app, click(MouseEventKind::ScrollDown, p.x + 2, p.y + 2));
     assert_eq!(app.nav.scroll, scroll);
-    assert!(app.sidebar.filter_open);
+    assert!(app.format_open());
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
-    assert!(!app.sidebar.filter_open, "outside press closes like Esc");
+    assert!(!app.format_open(), "outside press closes like Esc");
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn filter_dialog_toggles_hide_recent_rows() {
     use crate::model::SideRow::{Divider, Item};
     assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent".to_string()), Item(20)]);
     handle_key(&mut app, key(KeyCode::Char('f')));
-    assert!(app.sidebar.filter_open);
+    assert!(app.format_open());
     let text = frame_text(&mut app);
     assert!(text.contains("Format"));
     assert!(text.contains("1 Query"));
@@ -73,28 +73,28 @@ fn filter_dialog_toggles_hide_recent_rows() {
     assert_eq!(app.pr_rows(), vec![Item(9)]);
     // Requested rows ignore the toggle.
     handle_key(&mut app, key(KeyCode::Char('f')));
-    assert!(!app.sidebar.filter_open);
+    assert!(!app.format_open());
 }
 
 #[test]
 fn filter_query_draft_commits_and_clears() {
     use crate::app::QueryAction;
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     app.start_query_edit();
     assert_eq!(app.sidebar.query_draft, "");
     app.sidebar.query_draft = "label:bug".to_string();
     assert_eq!(app.commit_query_draft(), QueryAction::Run("label:bug".to_string()));
     assert_eq!(app.sidebar.query_active, "label:bug");
-    assert!(!app.sidebar.filter_open);
-    app.sidebar.filter_open = true;
+    assert!(!app.format_open());
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     app.start_query_edit();
     assert_eq!(app.sidebar.query_draft, "label:bug");
     // Esc in edit mode reverts the draft but keeps the dialog.
     app.sidebar.query_draft = "other".to_string();
     handle_key(&mut app, key(KeyCode::Esc));
-    assert!(app.sidebar.filter_open);
-    assert!(!app.sidebar.query_edit);
+    assert!(app.format_open());
+    assert!(!app.query_edit());
     assert_eq!(app.sidebar.query_draft, "label:bug");
     assert_eq!(app.sidebar.query_active, "label:bug");
     // Empty commit clears back to the window listing.
@@ -109,8 +109,8 @@ fn capital_f_opens_the_format_dialog_in_query_edit_mode() {
     let _prefs = TempPrefs::new();
     let mut app = loaded_app();
     handle_key(&mut app, key(KeyCode::Char('F')));
-    assert!(app.sidebar.filter_open, "F opens the sidebar dialog");
-    assert!(app.sidebar.query_edit, "the query field starts editing");
+    assert!(app.format_open(), "F opens the sidebar dialog");
+    assert!(app.query_edit(), "the query field starts editing");
     let text = frame_text(&mut app);
     assert!(text.contains("1 Query"), "{text}");
     handle_key(&mut app, key(KeyCode::Char('b')));
@@ -118,20 +118,20 @@ fn capital_f_opens_the_format_dialog_in_query_edit_mode() {
     handle_key(&mut app, key(KeyCode::Char('g')));
     assert_eq!(app.sidebar.query_draft, "bug");
     handle_key(&mut app, key(KeyCode::Esc));
-    assert!(app.sidebar.filter_open, "esc keeps the dialog up");
-    assert!(!app.sidebar.query_edit);
+    assert!(app.format_open(), "esc keeps the dialog up");
+    assert!(!app.query_edit());
     assert!(app.sidebar.query_draft.is_empty(), "esc reverts the draft");
     // `ctrl-s` submits the pending review; it never opens the dialog.
-    app.sidebar.filter_open = false;
+    app.close(crate::app::Slot::Format);
     handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    assert!(!app.sidebar.filter_open);
+    assert!(!app.format_open());
     assert!(app.message.contains("no pending comments"), "{}", app.message);
 }
 
 #[test]
 fn sidebar_format_uses_columns_and_wraps_chips() {
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     app.sidebar.labels = ["bug", "ui", "perf", "docs", "chore"]
         .iter().map(|s| s.to_string()).collect();
     let text = frame_text_sized(&mut app, 120, 40);
@@ -151,7 +151,7 @@ fn sidebar_format_uses_columns_and_wraps_chips() {
 #[test]
 fn sidebar_format_narrow_scrolls_to_focus() {
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     app.sidebar.labels = (0..40).map(|n| format!("label{n}")).collect();
     app.sidebar.format_focus = app.format_widgets() - 1;
     let text = frame_text_sized(&mut app, 80, 24);
@@ -165,10 +165,10 @@ fn saved_queries_save_overwrite_apply_delete_and_render() {
     let _prefs = TempPrefs::new();
     let mut app = loaded_app();
     app.prefs_loaded = true;
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     assert!(frame_text(&mut app).contains("none (s saves the query)"));
     handle_key(&mut app, key(KeyCode::Char('s')));
-    assert!(!app.sidebar.name_edit);
+    assert!(!app.name_edit());
     assert_eq!(app.query_tag(), None);
     app.sidebar.query_active = "label:bug".into();
     assert_eq!(app.query_tag(), Some("query"));
@@ -211,7 +211,7 @@ fn sidebar_format_navigation_and_sort_match_shortcuts() {
     older.updated_at = "2020-01-01T00:00:00Z".into();
     app.issues.data.insert(11, older);
     app.nav.visited.push(11);
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     frame_text(&mut app);
     let left = app.format_left_widgets();
     handle_key(&mut app, key(KeyCode::Char('l')));
@@ -249,7 +249,7 @@ fn format_dialog_lists_pills_and_space_toggles_them() {
         title: "v1".to_string(),
         due_on: None,
     }];
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     app.sidebar.format_focus = 6;
     let text = frame_text(&mut app);
     assert!(text.contains("bug") && text.contains("docs"), "label pills: {text}");
@@ -281,7 +281,7 @@ fn row_fields_dialog_toggles_with_jk_and_space() {
     let mut app = loaded_app();
     app.prefs_loaded = true;
     handle_key(&mut app, key(KeyCode::Char('f')));
-    assert!(app.sidebar.filter_open);
+    assert!(app.format_open());
     let text = frame_text(&mut app);
     assert!(text.contains("Format"));
     assert!(text.contains("Display") && text.contains("issues"));
@@ -307,7 +307,7 @@ fn board_format_dialog_toggles_card_fields_with_space() {
     let mut app = board_app(1);
     app.prefs_loaded = true;
     handle_key(&mut app, key(KeyCode::Char('f')));
-    assert!(app.sidebar.filter_open);
+    assert!(app.format_open());
     // One pill sits between the text row and the card fields.
     handle_key(&mut app, key(KeyCode::Down));
     handle_key(&mut app, key(KeyCode::Down));
@@ -320,7 +320,7 @@ fn board_format_dialog_toggles_card_fields_with_space() {
 #[test]
 fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     // Deepest focused widget in the sidebar dialog.
     app.sidebar.format_focus = app.format_widgets().saturating_sub(1);
     let text = frame_text_sized(&mut app, 100, 24);
@@ -333,7 +333,7 @@ fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
     for (i, item) in board.board.data.as_mut().unwrap().items.iter_mut().enumerate() {
         item.milestone = Some(format!("m{i}"));
     }
-    board.sidebar.filter_open = true;
+    board.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     let widgets = board.board_pills().len() + crate::model::CardFields::ORDER.len();
     board.board.filter_focus = widgets;
     let text = frame_text_sized(&mut board, 100, 24);
@@ -396,7 +396,7 @@ fn compose_on_diff_line_targets_file_and_line() {
     }
     handle_key(&mut app, key(KeyCode::Char('c')));
     assert_eq!(
-        app.compose.draft.as_ref().map(|c| c.target.clone()),
+        app.draft().map(|c| c.target.clone()),
         Some(crate::app::ComposeTarget::Line { path: "a.rs".to_string(), line: 1 }),
     );
     let text = frame_text(&mut app);
@@ -426,7 +426,7 @@ fn compose_on_thread_block_targets_the_reply() {
     }
     handle_key(&mut app, key(KeyCode::Char('c')));
     assert_eq!(
-        app.compose.draft.as_ref().map(|c| c.target.clone()),
+        app.draft().map(|c| c.target.clone()),
         Some(crate::app::ComposeTarget::Reply { thread_id: "t1".into() }),
     );
     let text = frame_text(&mut app);
@@ -436,7 +436,7 @@ fn compose_on_thread_block_targets_the_reply() {
 #[test]
 fn compose_modal_shows_reply_target_and_discards() {
     let mut app = loaded_app();
-    app.compose.draft = Some(crate::app::ComposeState {
+    app.open_draft(crate::app::ComposeState {
         number: 7,
         target: crate::app::ComposeTarget::Reply { thread_id: "t".into() },
         body: "reply".into(),
@@ -536,7 +536,7 @@ fn pending_nav_dialog_renders_all_three_actions() {
 #[test]
 fn filter_dialog_shows_nerd_icons() {
     let mut app = loaded_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     let text = frame_text(&mut app);
     // Font Awesome: fa-filter title, fa-clock-o window row. All four
     // toggles default on, so the checked box renders.

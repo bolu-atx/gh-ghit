@@ -15,7 +15,7 @@ use crate::keymap::Action;
 fn open(app: &mut App, kind: MenuKind, anchor: (u16, u16)) {
     let menu = MenuState::new(kind, app, anchor);
     if !menu.entries.is_empty() {
-        app.menu = Some(menu);
+        app.open(crate::app::Entry::Menu(menu));
     }
 }
 
@@ -39,14 +39,14 @@ pub(super) fn open_for_focus(app: &mut App) {
 
 /// Enter or a click on the cursor row: close the menu, run its action.
 pub(super) fn run(app: &mut App) {
-    let Some(menu) = app.menu.take() else { return };
+    let Some(menu) = app.take_menu() else { return };
     if let Some(entry) = menu.entries.get(menu.cursor) {
         actions::perform(app, entry.action);
     }
 }
 
 pub(super) fn step(app: &mut App, delta: isize) {
-    if let Some(menu) = &mut app.menu {
+    if let Some(menu) = app.menu_mut() {
         let last = menu.entries.len().saturating_sub(1) as isize;
         menu.cursor = (menu.cursor as isize + delta).clamp(0, last) as usize;
     }
@@ -59,17 +59,17 @@ pub(super) fn handle_menu_mouse(app: &mut App, m: MouseEvent) {
         MouseEventKind::Down(MouseButton::Left) => {
             match hit(&app.hits.menu_rows, m.column, m.row) {
                 Some((rect, index)) => {
-                    if let Some(menu) = &mut app.menu {
+                    if let Some(menu) = app.menu_mut() {
                         menu.cursor = index;
                     }
                     app.note_click(rect);
                     run(app);
                 }
-                None if !in_rect(app.hits.popup, m.column, m.row) => app.menu = None,
+                None if !in_rect(app.hits.popup, m.column, m.row) => { app.close(crate::app::Slot::Menu); }
                 None => {}
             }
         }
-        MouseEventKind::Down(_) if !in_rect(app.hits.popup, m.column, m.row) => app.menu = None,
+        MouseEventKind::Down(_) if !in_rect(app.hits.popup, m.column, m.row) => { app.close(crate::app::Slot::Menu); }
         MouseEventKind::ScrollDown => step(app, 1),
         MouseEventKind::ScrollUp => step(app, -1),
         _ => {}
@@ -102,7 +102,7 @@ pub(super) fn handle_modal_mouse(app: &mut App, m: MouseEvent, help: bool) {
     }
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) if !in_rect(app.hits.popup, m.column, m.row) => {
-            app.shortcuts_open = false;
+            app.close(crate::app::Slot::Shortcuts);
         }
         MouseEventKind::ScrollDown => app.help_scroll = app.help_scroll.saturating_add(3),
         MouseEventKind::ScrollUp => app.help_scroll = app.help_scroll.saturating_sub(3),
@@ -128,7 +128,7 @@ pub(super) fn repo_click(app: &mut App, x: u16, y: u16) -> bool {
     let rect = app.hits.repo;
     app.note_click(rect);
     open(app, MenuKind::Global, (rect.x, rect.y));
-    if let Some(menu) = &mut app.menu {
+    if let Some(menu) = app.menu_mut() {
         menu.anchor.1 = rect.y.saturating_sub(menu.entries.len() as u16 + 2);
     }
     true
@@ -223,7 +223,7 @@ pub(super) fn board_wheel(app: &mut App, x: u16, dy: isize) {
 
 /// Wheel over the Format dialog or the board filter form steps its focus.
 pub(super) fn form_wheel(app: &mut App, delta: isize) {
-    if app.sidebar.query_edit || app.sidebar.name_edit {
+    if app.query_edit() || app.name_edit() {
         return;
     }
     if crate::app::board_open(app) {

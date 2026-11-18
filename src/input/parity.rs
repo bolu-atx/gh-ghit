@@ -130,7 +130,7 @@ fn history() -> App {
 
 fn shortcuts() -> App {
     let mut app = base();
-    app.shortcuts_open = true;
+    app.open(crate::app::Entry::Shortcuts);
     app
 }
 
@@ -168,7 +168,7 @@ fn query() -> App {
 fn name() -> App {
     let mut app = base();
     app.open_sidebar_format();
-    app.sidebar.name_edit = true;
+    app.set_format_edit(crate::app::FormatEdit::Name);
     app
 }
 
@@ -186,6 +186,7 @@ fn board() -> App {
     }))
     .expect("board json");
     app.board.data = Some(data);
+    app.open(crate::app::Entry::Board);
     app.board.states = vec![Default::default(), Default::default()];
     app
 }
@@ -204,7 +205,7 @@ fn board_filter_row() -> App {
 
 fn board_query() -> App {
     let mut app = board_filter();
-    app.sidebar.query_edit = true;
+    app.set_format_edit(crate::app::FormatEdit::Query);
     app
 }
 
@@ -296,8 +297,8 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         format!("{items:?}")
     }
     let message = if app.message.starts_with("theme: ") { "theme: *".to_string() } else { app.message.clone() };
-    let draft = app.compose.draft.as_ref().map(|d| (d.body.clone(), d.cursor, d.kill.clone()));
-    let confirm = app.confirm.as_ref().map(|d| (d.title.clone(), d.choices.len()));
+    let draft = app.draft().map(|d| (d.body.clone(), d.cursor, d.kill.clone()));
+    let confirm = app.confirm().map(|d| (d.title.clone(), d.choices.len()));
     vec![
         ("pane", format!("{:?}", app.nav.pane)),
         ("tab", format!("{:?}", app.nav.tab)),
@@ -306,12 +307,12 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("requested", format!("{:?}", app.nav.requested)),
         ("scroll", app.nav.scroll.to_string()),
         ("history", format!("{:?}/{:?}/{}", app.nav.history, app.nav.future, app.nav.history_cursor)),
-        ("shortcuts", app.shortcuts_open.to_string()),
+        ("shortcuts", app.shortcuts_open().to_string()),
         ("quit", app.quit.to_string()),
         ("message", message),
         ("bar", format!("{:?}", app.bar)),
         ("search", format!("{:?}/{}", app.sidebar.search, app.sidebar.searching)),
-        ("format", format!("{}/{}/{}", app.sidebar.filter_open, app.sidebar.query_edit, app.sidebar.name_edit)),
+        ("format", format!("{}/{}/{}", app.format_open(), app.query_edit(), app.name_edit())),
         ("drafts", format!("{:?}/{:?}", app.sidebar.query_draft, app.sidebar.name_draft)),
         ("format-focus", app.sidebar.format_focus.to_string()),
         ("show", format!("{}{}{}{}{}", app.sidebar.show_open_prs, app.sidebar.show_merged_prs,

@@ -46,10 +46,10 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | ---- | ---- |
 | `src/main.rs` | Thin entry: parse `cli`, run `app` |
 | `src/cli.rs` | Clap `Args` + numeric startup parsing |
-| `src/app.rs` + `src/app/{nav,sidebar,format,issue,diff,board,compose,confirm,poll,menu}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/graph/review threads, `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu state (entries from the keymap), `poll` per-frame landing. Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
+| `src/app.rs` + `src/app/{nav,sidebar,format,issue,diff,board,compose,confirm,poll,menu,dialogs}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/graph/review threads, `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu state (entries from the keymap), `dialogs` the one stored dialog stack (which dialogs and text rows are open, in order) plus the `layer_stack` derivation, `poll` per-frame landing. Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
 | `src/app/fetch_queue.rs` | Fetch scheduler: priority queue; current-issue fetches start at once, the rest at most 4 in flight; tier picked at start time; only tier 1 while rate limited |
 | `src/core.rs` | Pure business rules (`parse_bar`, selection, board cursor, pins, window) |
-| `src/core/focus.rs` | Focus model: layer stack, pane order, `Tab` stepping |
+| `src/core/focus.rs` | Focus model: layer and pane types, pane order, `Tab` stepping |
 | `src/core/urgency.rs` | Fetch tiers: `urgency(kind, is_current, tab_shown)` picks which request starts first |
 | `src/core/layout.rs` | Layout math: side column widths (`columns`), `MIN_MAIN_WIDTH`, `MAX_DIFF_FILES` |
 | `src/model.rs` + `src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` |

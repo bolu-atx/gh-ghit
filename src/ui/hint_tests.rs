@@ -147,7 +147,7 @@ fn clicking_a_bar_hint_runs_its_action() {
     let _ = frame_text_sized(&mut app, 200, HEIGHT);
     let rect = app.hits.bar_hints.iter().find(|(_, a)| *a == Action::ShowHelp).expect("help hint").0;
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y));
-    assert!(app.shortcuts_open, "click on ? opens the help");
+    assert!(app.shortcuts_open(), "click on ? opens the help");
     let _ = frame_text_sized(&mut app, 200, HEIGHT);
     assert!(app.hits.bar_hints.is_empty(), "dialogs leave no bar hints to click");
 }

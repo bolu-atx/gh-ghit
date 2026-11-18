@@ -40,7 +40,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
             Style::new().bg(ink()).fg(if empty { muted() } else { paper() }),
         ),
     ];
-    if app.sidebar.query_edit {
+    if app.query_edit() {
         text_row.push(Span::styled("▌", Style::new().bg(ink()).fg(amber()).bold()));
     } else {
         text_row.push(Span::styled(" (e)".to_string(), Style::new().bg(ink()).fg(muted())));
@@ -58,7 +58,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
         )));
     }
     for (i, pill) in pills.iter().enumerate() {
-        if !app.sidebar.query_edit && app.board.filter_focus == i + 1 {
+        if !app.query_edit() && app.board.filter_focus == i + 1 {
             focus_line = lines.len();
         }
         let on = app.board.milestone_draft.contains(pill);
@@ -75,7 +75,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("card fields", Style::new().bg(ink()).fg(muted()))));
     for (i, name) in model::CardFields::ORDER.iter().enumerate() {
-        if !app.sidebar.query_edit && app.board.filter_focus == pills.len() + 1 + i {
+        if !app.query_edit() && app.board.filter_focus == pills.len() + 1 + i {
             focus_line = lines.len();
         }
         let on = app.board.fields.shown(i).unwrap_or(false);
@@ -105,7 +105,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
         ]));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
-    let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
+    let scroll = scroll_to(inner, focus_line, app.query_edit());
     app.hits.form_popup = popup;
     if let Some(y) = legend_line.checked_sub(scroll as usize).filter(|y| *y < inner.height as usize) {
         let at = (inner.x, inner.y + y as u16);
@@ -125,7 +125,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
         app.hits.form_cells.push((Rect::new(inner.x, inner.y + y as u16, inner.width, 1), index, None));
     }
     f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
-    if app.sidebar.query_edit {
+    if app.query_edit() {
         let x = inner.x + 9 + app.sidebar.query_draft.chars().count() as u16;
         f.set_cursor_position((x, inner.y));
     }

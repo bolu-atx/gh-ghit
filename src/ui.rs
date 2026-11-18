@@ -210,12 +210,12 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_board(f, f.area(), app);
     }
-    if app.sidebar.filter_open {
+    if app.format_open() {
         dim_background(f, 0.35);
         render_filter(f, f.area(), app);
     }
     controls::render_menu(f, f.area(), app);
-    if app.shortcuts_open {
+    if app.shortcuts_open() {
         dim_background(f, 0.35);
         help::render_shortcuts(f, f.area(), app);
     }
@@ -223,7 +223,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_compose(f, f.area(), app);
     }
-    if app.confirm.is_some() {
+    if app.confirm_open() {
         dim_background(f, 0.35);
         render_confirm(f, f.area(), app);
     }

@@ -42,11 +42,11 @@ fn click_control(app: &mut App, action: Action) {
 }
 
 fn menu_labels(app: &App) -> Vec<&'static str> {
-    app.menu.as_ref().map(|m| m.entries.iter().map(|e| e.label).collect()).unwrap_or_default()
+    app.menu().map(|m| m.entries.iter().map(|e| e.label).collect()).unwrap_or_default()
 }
 
 fn click_menu_row(app: &mut App, action: Action) {
-    let menu = app.menu.as_ref().expect("menu open");
+    let menu = app.menu().expect("menu open");
     let index = menu.entries.iter().position(|e| e.action == action).expect("entry listed");
     let rect = app.hits.menu_rows.iter().find(|(_, i)| *i == index).map(|(r, _)| *r).expect("row drawn");
     left(app, rect.x + 2, rect.y);
@@ -78,7 +78,7 @@ fn list_state_and_footer_open_format() {
         let rects: Vec<_> = app.hits.controls.iter().filter(|(_, a, _)| *a == Action::OpenFormat).collect();
         let (rect, _, _) = *rects[index];
         left(&mut app, rect.x, rect.y);
-        assert!(app.sidebar.filter_open, "control {index}");
+        assert!(app.format_open(), "control {index}");
     }
 }
 
@@ -150,7 +150,7 @@ fn menu_row_click_runs_the_action_and_closes_the_menu() {
     right(&mut app, x, y);
     draw(&mut app);
     click_menu_row(&mut app, Action::ToggleRow);
-    assert!(app.menu.is_none());
+    assert!(app.menu().is_none());
     assert!(app.diff.expanded_rows.contains(&7));
     assert_eq!(app.focus().layer, Layer::Base);
 }
@@ -162,21 +162,21 @@ fn menu_keys_move_run_and_close() {
     let (x, y) = first_issue_row(&app);
     right(&mut app, x, y);
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.menu.as_ref().map(|m| m.cursor), Some(1));
+    assert_eq!(app.menu().map(|m| m.cursor), Some(1));
     handle_key(&mut app, key(KeyCode::Char('k')));
-    assert_eq!(app.menu.as_ref().map(|m| m.cursor), Some(0));
+    assert_eq!(app.menu().map(|m| m.cursor), Some(0));
     handle_key(&mut app, key(KeyCode::Esc));
-    assert!(app.menu.is_none());
+    assert!(app.menu().is_none());
     right(&mut app, x, y);
     handle_key(&mut app, key(KeyCode::Char('q')));
-    assert!(app.menu.is_none());
+    assert!(app.menu().is_none());
     right(&mut app, x, y);
     for _ in 0..5 {
         handle_key(&mut app, key(KeyCode::Char('j')));
     }
     assert_eq!(menu_labels(&app)[5], "Expand row");
     handle_key(&mut app, key(KeyCode::Enter));
-    assert!(app.menu.is_none());
+    assert!(app.menu().is_none());
     assert!(app.diff.expanded_rows.contains(&7));
 }
 
@@ -203,7 +203,7 @@ fn click_outside_closes_the_menu_without_touching_the_selection() {
     let current = app.nav.current;
     let body = app.hits.body_area;
     left(&mut app, body.x + 4, body.y + 4);
-    assert!(app.menu.is_none());
+    assert!(app.menu().is_none());
     assert_eq!(app.nav.current, current);
     assert_eq!(app.focus().layer, Layer::Base);
 }
@@ -270,7 +270,7 @@ fn global_menu_runs_help_and_toggles_the_sidebar() {
     left(&mut app, repo.x, repo.y);
     draw(&mut app);
     click_menu_row(&mut app, Action::ShowHelp);
-    assert!(app.shortcuts_open);
+    assert!(app.shortcuts_open());
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn help_wheel_scrolls_and_outside_click_closes() {
     handle_mouse(&mut app, click(MouseEventKind::ScrollUp, 70, 20));
     assert_eq!(app.help_scroll, 0);
     left(&mut app, 0, 0);
-    assert!(!app.shortcuts_open);
+    assert!(!app.shortcuts_open());
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn dialog_footer_hints_click_like_their_keys() {
     draw(&mut app);
     let (rect, _) = *app.hits.legend.iter().find(|(_, a)| *a == Action::FormatEditQuery).expect("e hint");
     left(&mut app, rect.x, rect.y);
-    assert!(app.sidebar.query_edit);
+    assert!(app.query_edit());
 
     let mut app = board_app(2);
     draw(&mut app);
@@ -377,7 +377,7 @@ fn board_filter_outside_click_applies_and_closes_the_form() {
     handle_key(&mut app, key(KeyCode::Char('f')));
     draw(&mut app);
     left(&mut app, 0, 0);
-    assert!(!app.sidebar.filter_open);
+    assert!(!app.format_open());
     assert!(app.board.data.is_some());
 }
 

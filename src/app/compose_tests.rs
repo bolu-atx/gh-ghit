@@ -47,12 +47,12 @@ fn compose_needs_a_loaded_issue() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.open_compose();
-    assert!(app.compose.draft.is_none());
+    assert!(app.draft().is_none());
     assert_eq!(app.message, "view an issue first");
 
     let mut app = sidebar_app(&[7]);
     app.open_compose();
-    let c = app.compose.draft.as_ref().expect("compose");
+    let c = app.draft().expect("compose");
     assert_eq!((c.number, c.body.as_str(), c.cursor), (7, "", 0));
     assert_eq!(c.target, ComposeTarget::Thread);
 }
@@ -61,7 +61,7 @@ fn compose_needs_a_loaded_issue() {
 fn compose_on_a_thread_row_targets_the_reply() {
     let mut app = thread_pr_app(4);
     app.open_compose();
-    let c = app.compose.draft.as_ref().expect("compose");
+    let c = app.draft().expect("compose");
     assert_eq!(c.target, ComposeTarget::Reply { thread_id: "t1".into() });
 }
 
@@ -69,7 +69,7 @@ fn compose_on_a_thread_row_targets_the_reply() {
 fn compose_on_a_code_row_still_targets_the_line() {
     let mut app = thread_pr_app(3);
     app.open_compose();
-    let c = app.compose.draft.as_ref().expect("compose");
+    let c = app.draft().expect("compose");
     assert_eq!(c.target, ComposeTarget::Line { path: "a.rs".into(), line: 2 });
 }
 
@@ -80,16 +80,16 @@ fn compose_edits_at_the_cursor() {
     for ch in "hi\nok".chars() {
         app.compose_insert(ch);
     }
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi\nok");
+    assert_eq!(app.draft().unwrap().body, "hi\nok");
     app.compose_step(-3);
     app.compose_insert('!');
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi!\nok");
+    assert_eq!(app.draft().unwrap().body, "hi!\nok");
     app.compose_backspace();
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi\nok");
+    assert_eq!(app.draft().unwrap().body, "hi\nok");
     // Down keeps the column across lines.
     app.compose_line(1);
     app.compose_insert('?');
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hi\nok?");
+    assert_eq!(app.draft().unwrap().body, "hi\nok?");
 }
 
 #[test]
@@ -100,16 +100,16 @@ fn compose_kills_stop_at_newlines() {
         app.compose_insert(ch);
     }
     app.compose_step(-3);
-    assert_eq!(app.compose.draft.as_ref().unwrap().cursor, 4);
+    assert_eq!(app.draft().unwrap().cursor, 4);
     app.compose_kill_to_end();
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "one\n");
+    assert_eq!(app.draft().unwrap().body, "one\n");
     // On the newline itself the kill eats it, joining the lines.
     app.compose_step(-1);
     app.compose_kill_to_end();
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "one");
-    assert_eq!(app.compose.draft.as_ref().unwrap().kill, "\n");
+    assert_eq!(app.draft().unwrap().body, "one");
+    assert_eq!(app.draft().unwrap().kill, "\n");
     app.compose_yank();
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "one\n");
+    assert_eq!(app.draft().unwrap().body, "one\n");
 }
 
 #[test]
@@ -121,8 +121,8 @@ fn compose_kill_to_start_keeps_the_tail() {
     }
     app.compose_step(-1);
     app.compose_kill_to_start();
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "ab\nd");
-    assert_eq!(app.compose.draft.as_ref().unwrap().kill, "c");
+    assert_eq!(app.draft().unwrap().body, "ab\nd");
+    assert_eq!(app.draft().unwrap().kill, "c");
 }
 
 #[test]
@@ -147,19 +147,19 @@ fn compose_editor_run_roundtrips_through_a_real_subprocess() {
     let mut terminal = ratatui::Terminal::with_options(backend, options).expect("headless terminal");
     run_compose_editor(&mut app, &mut terminal);
     assert!(!app.compose.editor_requested, "the run disarms itself");
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
+    assert_eq!(app.draft().unwrap().body, "draft ✓");
     assert!(app.message.contains("edited in true"), "toast: {}", app.message);
     // A failing editor keeps the draft.
     std::env::set_var("EDITOR", "false");
     app.compose.editor_requested = true;
     run_compose_editor(&mut app, &mut terminal);
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
+    assert_eq!(app.draft().unwrap().body, "draft ✓");
     assert!(app.message.contains("draft kept"), "toast: {}", app.message);
     // A missing binary names the failure and keeps the draft.
     std::env::set_var("EDITOR", "/nonexistent-ghit-editor-xyz");
     app.compose.editor_requested = true;
     run_compose_editor(&mut app, &mut terminal);
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "draft ✓");
+    assert_eq!(app.draft().unwrap().body, "draft ✓");
     assert!(app.message.contains("failed to start"), "toast: {}", app.message);
     match prior {
         Some(v) => std::env::set_var("EDITOR", v),
@@ -172,7 +172,7 @@ fn compose_lands_editor_text_at_the_end() {
     let mut app = sidebar_app(&[7]);
     app.open_compose();
     app.land_editor_text("edited\ntext".to_string(), "true");
-    let c = app.compose.draft.as_ref().unwrap();
+    let c = app.draft().unwrap();
     assert_eq!((c.body.as_str(), c.cursor), ("edited\ntext", 11));
     assert!(app.message.contains("true"), "toast names the editor");
 }
@@ -182,7 +182,7 @@ fn compose_empty_submit_stays_open() {
     let mut app = sidebar_app(&[7]);
     app.open_compose();
     app.submit_compose();
-    let c = app.compose.draft.as_ref().expect("draft kept");
+    let c = app.draft().expect("draft kept");
     assert!(!c.sending);
     assert!(app.message.contains("empty"), "status names the problem");
 }
@@ -191,11 +191,11 @@ fn compose_empty_submit_stays_open() {
 fn compose_poll_success_closes_and_refreshes() {
     let mut app = sidebar_app(&[7]);
     app.open_compose();
-    app.compose.draft.as_mut().unwrap().body = "looks good".to_string();
-    app.compose.draft.as_mut().unwrap().sending = true;
+    app.draft_mut().unwrap().body = "looks good".to_string();
+    app.draft_mut().unwrap().sending = true;
     app.compose.tx.send((7, Ok(()))).unwrap();
     poll_compose(&mut app);
-    assert!(app.compose.draft.is_none());
+    assert!(app.draft().is_none());
     assert_eq!(app.message, "comment posted to #7");
     assert!(app.issues.pending.contains(&7), "refetch shows the new comment");
 }
@@ -204,11 +204,11 @@ fn compose_poll_success_closes_and_refreshes() {
 fn compose_poll_failure_keeps_the_draft() {
     let mut app = sidebar_app(&[7]);
     app.open_compose();
-    app.compose.draft.as_mut().unwrap().body = "looks good".to_string();
-    app.compose.draft.as_mut().unwrap().sending = true;
+    app.draft_mut().unwrap().body = "looks good".to_string();
+    app.draft_mut().unwrap().sending = true;
     app.compose.tx.send((7, Err("token scopes deny comments".to_string()))).unwrap();
     poll_compose(&mut app);
-    let c = app.compose.draft.as_ref().expect("draft kept");
+    let c = app.draft().expect("draft kept");
     assert!(!c.sending);
     assert_eq!(c.body, "looks good");
     assert_eq!(app.message, "token scopes deny comments");

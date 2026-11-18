@@ -45,11 +45,10 @@ pub(crate) struct ComposeState {
     pub(crate) kill: String,
 }
 
-/// Compose slot: the open comment draft, the `$EDITOR` handoff flag, the
+/// Compose slot: the `$EDITOR` handoff flag, the
 /// submit channel, and the per-PR review-submit channel plus its
 /// in-flight set.
 pub(crate) struct ComposeSlot {
-    pub(crate) draft: Option<ComposeState>,
     /// Set by input; the event loop suspends the TUI and runs `$EDITOR`
     /// on the draft outside it, then lands the edited text.
     pub(crate) editor_requested: bool,
@@ -69,7 +68,7 @@ impl ComposeSlot {
         review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
         review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
     ) -> Self {
-        Self { draft: None, editor_requested: false, tx, rx, review_tx, review_rx,
+        Self { editor_requested: false, tx, rx, review_tx, review_rx,
             submitting: HashSet::new() }
     }
 }
@@ -77,7 +76,7 @@ impl ComposeSlot {
 impl App {
     /// The compose modal is up, whether drafting or sending.
     pub(crate) fn compose_open(&self) -> bool {
-        self.compose.draft.is_some()
+        self.draft().is_some()
     }
 
     /// Open the compose modal, deriving the target from context: on the
@@ -94,7 +93,7 @@ impl App {
             return;
         }
         let target = self.compose_target().unwrap_or(ComposeTarget::Thread);
-        self.compose.draft = Some(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new() });
+        self.open_draft(ComposeState { number: n, target, body: String::new(), cursor: 0, sending: false, kill: String::new() });
     }
 
     /// Comment target for the active diff line, or `None` for a plain
@@ -128,7 +127,7 @@ impl App {
 
     /// Discard the draft, whatever it holds. Quiet: Esc means gone.
     pub(crate) fn discard_compose(&mut self) {
-        self.compose.draft = None;
+        self.close(crate::app::Slot::Compose);
     }
 
     /// Byte offset of a char index, clamped to the end.
@@ -139,7 +138,7 @@ impl App {
     /// Type a char at the cursor. Locked while sending so the in-flight
     /// body never changes under the request.
     pub(crate) fn compose_insert(&mut self, c: char) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending {
             return;
         }
@@ -151,7 +150,7 @@ impl App {
 
     /// Delete the char before the cursor.
     pub(crate) fn compose_backspace(&mut self) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending || s.cursor == 0 {
             return;
         }
@@ -164,14 +163,14 @@ impl App {
 
     /// Step the cursor one char left or right.
     pub(crate) fn compose_step(&mut self, delta: isize) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         let len = s.body.chars().count();
         s.cursor = s.cursor.saturating_add_signed(delta).min(len);
     }
 
     /// Step the cursor one visual line up or down, keeping the column.
     pub(crate) fn compose_line(&mut self, delta: isize) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         let cursor = s.cursor.min(s.body.chars().count());
         let chars: Vec<char> = s.body.chars().collect();
         let head: String = chars[..cursor].iter().collect();
@@ -244,7 +243,7 @@ impl App {
     /// Drain `[start, end)` (char indices), stashing the cut text in the
     /// kill ring. Locked while sending so the in-flight body never changes.
     fn compose_cut(&mut self, start: usize, end: usize) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending {
             return;
         }
@@ -263,7 +262,7 @@ impl App {
 
     /// Jump to the line start (`Ctrl+A`, `Home`).
     pub(crate) fn compose_home(&mut self) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending {
             return;
         }
@@ -272,7 +271,7 @@ impl App {
 
     /// Jump to the line end (`Ctrl+E`, `End`).
     pub(crate) fn compose_end(&mut self) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending {
             return;
         }
@@ -281,7 +280,7 @@ impl App {
 
     /// Jump one word back (`Alt+B`).
     pub(crate) fn compose_word_back(&mut self) {
-        let (body, cursor, sending) = match self.compose.draft.as_ref() {
+        let (body, cursor, sending) = match self.draft() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -289,14 +288,14 @@ impl App {
             return;
         }
         let at = Self::compose_word_back_from(&body, cursor);
-        if let Some(s) = self.compose.draft.as_mut() {
+        if let Some(s) = self.draft_mut() {
             s.cursor = at;
         }
     }
 
     /// Jump one word forward (`Alt+F`).
     pub(crate) fn compose_word_forward(&mut self) {
-        let (body, cursor, sending) = match self.compose.draft.as_ref() {
+        let (body, cursor, sending) = match self.draft() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -304,7 +303,7 @@ impl App {
             return;
         }
         let at = Self::compose_word_forward_from(&body, cursor);
-        if let Some(s) = self.compose.draft.as_mut() {
+        if let Some(s) = self.draft_mut() {
             s.cursor = at;
         }
     }
@@ -312,7 +311,7 @@ impl App {
     /// Kill to the line end (`Ctrl+K`); at the end of a line the newline
     /// itself is the kill, joining the lines like bash does.
     pub(crate) fn compose_kill_to_end(&mut self) {
-        let (body, cursor, sending) = match self.compose.draft.as_ref() {
+        let (body, cursor, sending) = match self.draft() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -330,7 +329,7 @@ impl App {
 
     /// Kill back to the line start (`Ctrl+U`).
     pub(crate) fn compose_kill_to_start(&mut self) {
-        let (body, cursor, sending) = match self.compose.draft.as_ref() {
+        let (body, cursor, sending) = match self.draft() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -345,7 +344,7 @@ impl App {
     /// a kill: the kill ring keeps its text for yank. Never discards: an
     /// empty draft has nothing to delete.
     pub(crate) fn compose_delete_forward(&mut self) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending {
             return;
         }
@@ -362,7 +361,7 @@ impl App {
 
     /// Delete the word behind (`Ctrl+W`).
     pub(crate) fn compose_delete_word_back(&mut self) {
-        let (body, cursor, sending) = match self.compose.draft.as_ref() {
+        let (body, cursor, sending) = match self.draft() {
             Some(s) => (s.body.clone(), s.cursor, s.sending),
             None => return,
         };
@@ -375,7 +374,7 @@ impl App {
 
     /// Delete the word ahead (`Alt+D`); the cursor stays put.
     pub(crate) fn compose_delete_word_forward(&mut self) {
-        let (body, cursor, len, sending) = match self.compose.draft.as_ref() {
+        let (body, cursor, len, sending) = match self.draft() {
             Some(s) => (s.body.clone(), s.cursor, s.body.chars().count(), s.sending),
             None => return,
         };
@@ -387,7 +386,7 @@ impl App {
         if end == cursor {
             return;
         }
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         let killed: String = s.body.chars().skip(cursor).take(end - cursor).collect();
         let byte_start = Self::compose_byte(&s.body, cursor);
         let byte_end = Self::compose_byte(&s.body, end);
@@ -398,7 +397,7 @@ impl App {
 
     /// Paste the kill ring back (`Ctrl+Y`).
     pub(crate) fn compose_yank(&mut self) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending || s.kill.is_empty() {
             return;
         }
@@ -412,7 +411,7 @@ impl App {
     /// Swap the char before the cursor with the one under it (`Ctrl+T`);
     /// at the draft end that swaps the last two chars.
     pub(crate) fn compose_transpose(&mut self) {
-        let Some(s) = self.compose.draft.as_mut() else { return };
+        let Some(s) = self.draft_mut() else { return };
         if s.sending {
             return;
         }
@@ -442,7 +441,7 @@ impl App {
     /// `$EDITOR` there is nothing to run, so the draft stays and the
     /// toast names the fix.
     pub(crate) fn request_compose_editor(&mut self) {
-        let sending = self.compose.draft.as_ref().map(|c| c.sending).unwrap_or(true);
+        let sending = self.draft().map(|c| c.sending).unwrap_or(true);
         if sending {
             return;
         }
@@ -456,7 +455,7 @@ impl App {
     /// Land the external editor run: the file text replaces the draft
     /// verbatim and the cursor parks at the end.
     pub(crate) fn land_editor_text(&mut self, text: String, editor: &str) {
-        let Some(c) = self.compose.draft.as_mut() else { return };
+        let Some(c) = self.draft_mut() else { return };
         c.body = text;
         c.cursor = c.body.chars().count();
         self.notify(format!("edited in {editor}"));
@@ -465,7 +464,7 @@ impl App {
     /// Submit the draft on a background thread; the loop never blocks.
     /// Empty drafts stay open with a status-line error, never a send.
     pub(crate) fn submit_compose(&mut self) {
-        let Some(c) = self.compose.draft.as_mut() else { return };
+        let Some(c) = self.draft_mut() else { return };
         if c.sending {
             return;
         }
@@ -512,8 +511,8 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
     for (n, res) in ready {
         match res {
             Ok(()) => {
-                let pending = matches!(app.compose.draft.as_ref().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
-                app.compose.draft = None;
+                let pending = matches!(app.draft().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
+                app.close(crate::app::Slot::Compose);
                 if pending {
                     app.notify(format!("line comment pending on #{n} — press ctrl-s to submit"));
                 } else {
@@ -522,7 +521,7 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
                 app.load_issue(n, true);
             }
             Err(e) => {
-                if let Some(c) = app.compose.draft.as_mut() {
+                if let Some(c) = app.draft_mut() {
                     c.sending = false;
                 }
                 auth_failure(app, &e);
@@ -545,7 +544,7 @@ pub(crate) fn run_compose_editor(app: &mut App, terminal: &mut Terminal<Crosster
         app.notify("no $EDITOR set: export EDITOR to edit comments outside ghit".to_string());
         return;
     };
-    let drafting = app.compose.draft.as_ref().map(|c| !c.sending).unwrap_or(false);
+    let drafting = app.draft().map(|c| !c.sending).unwrap_or(false);
     if !drafting {
         return;
     }
@@ -556,7 +555,7 @@ pub(crate) fn run_compose_editor(app: &mut App, terminal: &mut Terminal<Crosster
         .unwrap_or(0);
     let mut path = std::env::temp_dir();
     path.push(format!("ghit-comment-{}-{stamp}.md", std::process::id()));
-    if std::fs::write(&path, &app.compose.draft.as_ref().expect("draft").body).is_err() {
+    if std::fs::write(&path, &app.draft().expect("draft").body).is_err() {
         app.notify("editor needs a writable temp dir".to_string());
         return;
     }

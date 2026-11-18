@@ -76,7 +76,7 @@ pub(super) fn diff_strip(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
 /// same amber marker as a focused list, the key at the right edge.
 pub(super) fn render_menu(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.menu_rows.clear();
-    let Some(menu) = &app.menu else { return };
+    let Some(menu) = app.menu() else { return };
     let label_w = menu.entries.iter().map(|e| e.label.chars().count()).max().unwrap_or(0);
     let key_w = menu.entries.iter().map(|e| e.key.chars().count()).max().unwrap_or(0);
     let width = ((2 + label_w + 2 + key_w + 1 + 2) as u16).min(area.width);

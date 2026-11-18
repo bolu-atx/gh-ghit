@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use ratatui::widgets::ListState;
 
-use crate::app::App;
+use crate::app::{App, Entry, FormatEdit, Slot};
 use crate::core::self;
 use crate::{github, model};
 use crate::model::BoardData;
@@ -68,6 +68,7 @@ impl App {
             self.notify("board needs a repo: use -R or run inside one".to_string());
             return;
         };
+        self.open(Entry::Board);
         self.board.loading = true;
         self.board.col = 0;
         self.board.row = 0;
@@ -111,6 +112,14 @@ impl App {
         self.persist_prefs();
     }
 
+    /// Close the board and drop its cards. A fetch still in flight is
+    /// ignored when it lands. The filter stays.
+    pub(crate) fn close_board(&mut self) {
+        self.close(Slot::Board);
+        self.board.data = None;
+        self.board.loading = false;
+    }
+
     /// Open the format dialog against the board cards. It opens in
     /// navigate mode with the active text and pills prefilled; the board
     /// stays up behind it.
@@ -118,8 +127,7 @@ impl App {
         self.sidebar.query_draft = self.board.filter.clone();
         self.board.milestone_draft = self.board.milestones.clone();
         self.board.filter_focus = 0;
-        self.sidebar.query_edit = false;
-        self.sidebar.filter_open = true;
+        self.open(Entry::Format(FormatEdit::None));
     }
 
     /// Apply the dialog drafts and keep the cursor inside the narrowed
@@ -181,7 +189,7 @@ impl App {
 }
 
 pub(crate) fn board_open(app: &App) -> bool {
-    app.board.data.is_some() || app.board.loading
+    app.is_open(Slot::Board)
 }
 
 /// Board columns narrowed by the active filter: milestone pills select

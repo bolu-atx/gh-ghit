@@ -66,11 +66,9 @@ pub(crate) struct Sidebar {
     pub(crate) show_merged_prs: bool,
     pub(crate) show_open_issues: bool,
     pub(crate) show_closed_issues: bool,
-    pub(crate) query_edit: bool,
     pub(crate) query_draft: String,
     pub(crate) query_active: String,
     pub(crate) saved_queries: Vec<github::SavedQuery>,
-    pub(crate) name_edit: bool,
     pub(crate) name_draft: String,
     pub(crate) group_by: model::GroupBy,
     pub(crate) sub_issue_tree: bool,
@@ -92,8 +90,6 @@ pub(crate) struct Sidebar {
     pub(crate) meta_repo: Option<String>,
     /// True once a picker fetch landed, so an empty list is trusted.
     pub(crate) meta_loaded: bool,
-    /// Format dialog (`f`) state.
-    pub(crate) filter_open: bool,
     /// Row fields per pane, toggled in the dialog Row fields section.
     pub(crate) row_issue: model::RowFields,
     pub(crate) row_pr: model::RowFields,
@@ -109,15 +105,14 @@ impl Sidebar {
     pub(crate) fn new() -> Self {
         Self { show: true, search: String::new(), searching: false, sort: core::SideSort::Default,
             sort_desc: false, show_open_prs: true, show_merged_prs: true,
-            show_open_issues: true, show_closed_issues: true, query_edit: false,
+            show_open_issues: true, show_closed_issues: true,
             query_draft: String::new(), query_active: String::new(),
-            saved_queries: Vec::new(), name_edit: false, name_draft: String::new(),
+            saved_queries: Vec::new(), name_draft: String::new(),
             group_by: model::GroupBy::None, sub_issue_tree: false,
             folded_issues: HashSet::new(), label_filter: HashSet::new(),
             milestone_filter: HashSet::new(),
             labels: vec![], milestones: vec![],
             meta_rx: None, meta_repo: None, meta_loaded: false,
-            filter_open: false,
             row_issue: model::RowFields::default(), row_pr: model::RowFields::default(),
             format_focus: 0, format_columns: false, format_rows: vec![],
             issue_state: ListState::default(), pr_state: ListState::default() }
@@ -262,7 +257,7 @@ impl App {
     pub(crate) fn reset_recent_default(&mut self) {
         self.sidebar.query_active.clear();
         self.sidebar.query_draft.clear();
-        self.sidebar.query_edit = false;
+        self.set_format_edit(crate::app::FormatEdit::None);
         self.sections.merged_window_hours = core::DEFAULT_WINDOW_HOURS;
         self.refetch_recent();
         self.persist_prefs();
@@ -514,15 +509,14 @@ impl App {
     /// Start editing the GitHub query in the format dialog.
     pub(crate) fn start_query_edit(&mut self) {
         self.sidebar.query_draft = self.sidebar.query_active.clone();
-        self.sidebar.query_edit = true;
+        self.set_format_edit(crate::app::FormatEdit::Query);
     }
 
     /// What committing the query draft means. Pure for tests: the caller
     /// performs the fetch. Non-empty runs a search, empty clears back to
     /// the window listing.
     pub(crate) fn commit_query_draft(&mut self) -> QueryAction {
-        self.sidebar.query_edit = false;
-        self.sidebar.filter_open = false;
+        self.close(crate::app::Slot::Format);
         self.nav.focus = Focus::Main;
         let q = self.sidebar.query_draft.trim().to_string();
         self.sidebar.query_active = q.clone();
@@ -544,7 +538,7 @@ impl App {
         self.sidebar.name_draft = self.sidebar.saved_queries.iter()
             .find(|saved| saved.query == self.sidebar.query_active.trim())
             .map_or_else(String::new, |saved| saved.name.clone());
-        self.sidebar.name_edit = true;
+        self.set_format_edit(crate::app::FormatEdit::Name);
     }
 
     pub(crate) fn save_named_query(&mut self) {
@@ -559,7 +553,7 @@ impl App {
         } else {
             self.sidebar.saved_queries.push(github::SavedQuery { name, query });
         }
-        self.sidebar.name_edit = false;
+        self.set_format_edit(crate::app::FormatEdit::None);
         self.persist_prefs();
     }
 

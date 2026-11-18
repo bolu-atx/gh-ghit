@@ -10,6 +10,8 @@
 mod board;
 mod compose;
 mod confirm;
+mod dialogs;
+pub(crate) use dialogs::{Entry, FormatEdit, Slot};
 mod diff;
 mod fetch_queue;
 mod format;
@@ -22,6 +24,8 @@ mod sidebar;
 
 #[cfg(test)]
 mod sidebar_tests;
+#[cfg(test)]
+mod dialogs_tests;
 #[cfg(test)]
 mod nav_tests;
 #[cfg(test)]
@@ -244,8 +248,8 @@ pub(crate) struct App {
     pub(crate) compose: ComposeSlot,
     pub(crate) hits: HitAreas,
     pub(crate) layout: Columns,
-    /// Open actions menu (right-click or `m`).
-    pub(crate) menu: Option<MenuState>,
+    /// Open dialogs and text rows, bottom to top. See `dialogs.rs`.
+    pub(crate) dialogs: Vec<Entry>,
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
     pub(crate) initial_numbers: Vec<u64>,
@@ -254,7 +258,6 @@ pub(crate) struct App {
     /// defaults over saved state.
     pub(crate) prefs_loaded: bool,
     pub(crate) bar: String,
-    pub(crate) shortcuts_open: bool,
     /// First visible line of the help screen. Render clamps it.
     pub(crate) help_scroll: u16,
     pub(crate) message: String,
@@ -262,9 +265,6 @@ pub(crate) struct App {
     pub(crate) pending_prefix: Option<char>,
     pub(crate) message_at: Option<std::time::Instant>,
     pub(crate) quit: bool,
-    /// Generic confirm modal plus its deferred decision. While set, all
-    /// keys and clicks route to the dialog until it resolves.
-    pub(crate) confirm: Option<ConfirmDialog>,
     /// Armed by `x` evict and saved-query delete; `u` consumes it.
     pub(crate) undo: Option<PendingUndo>,
     /// Frame counter, bumped once per event-loop pass. Drives the status
@@ -293,12 +293,10 @@ impl App {
             nav: Nav::new(),
             bar: String::new(),
             sidebar: Sidebar::new(),
-            shortcuts_open: false,
             help_scroll: 0,
             message: String::new(),
             pending_prefix: None,
             message_at: None,
-            confirm: None,
             undo: None,
             compose: ComposeSlot::new(compose_tx, compose_rx, review_submit_tx, review_submit_rx),
             tick: 0,
@@ -310,7 +308,7 @@ impl App {
             quit: false,
             hits: HitAreas::default(),
             layout: Columns::default(),
-            menu: None,
+            dialogs: Vec::new(),
             refs: RefsPane::new(),
             labels: LabelsPane::default(),
         }

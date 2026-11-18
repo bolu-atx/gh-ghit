@@ -5,7 +5,7 @@ use super::test_support::{pending_nav_app, sidebar_app};
 
 fn draft_app(body: &str) -> App {
     let mut app = sidebar_app(&[7]);
-    app.compose.draft = Some(ComposeState {
+    app.open_draft(ComposeState {
         number: 7,
         target: ComposeTarget::Thread,
         body: body.to_string(),
@@ -34,7 +34,7 @@ fn pending_review_app() -> App {
 fn esc_on_typed_draft_asks_and_keep_leaves_it() {
     let mut app = draft_app("hello");
     app.request_discard_compose();
-    assert!(matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::DiscardDraft)));
+    assert!(matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::DiscardDraft)));
     app.confirm_choose(0);
     assert!(app.compose_open(), "keep editing leaves the draft");
     app.request_discard_compose();
@@ -42,7 +42,7 @@ fn esc_on_typed_draft_asks_and_keep_leaves_it() {
     assert!(!app.compose_open(), "discard drops it");
     let mut empty = draft_app("");
     empty.request_discard_compose();
-    assert!(!empty.compose_open() && empty.confirm.is_none());
+    assert!(!empty.compose_open() && !empty.confirm_open());
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn quit_with_draft_asks_first() {
     assert!(app.quit);
     let mut plain = sidebar_app(&[7]);
     plain.request_quit();
-    assert!(plain.quit && plain.confirm.is_none(), "nothing at risk quits at once");
+    assert!(plain.quit && !plain.confirm_open(), "nothing at risk quits at once");
 }
 
 #[test]
@@ -124,13 +124,13 @@ fn undo_expires_with_its_window() {
 fn pending_nav_guard_trips_and_cancel_stays() {
     let mut app = pending_nav_app();
     app.request_issue(7);
-    let dialog = app.confirm.as_ref().expect("guard trips");
+    let dialog = app.confirm().expect("guard trips");
     assert_eq!(dialog.title, "Unsubmitted comments");
     assert!(dialog.body.iter().any(|l| l.text.contains("#9")), "names the issue: {:?}", dialog.body);
     assert_eq!(dialog.choices.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Submit them", "Discard", "Cancel"]);
     assert_eq!(app.nav.current, Some(9), "no navigation while the dialog is up");
     app.confirm_cancel();
-    assert!(app.confirm.is_none());
+    assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(9), "cancel stays put");
 }
 
@@ -139,7 +139,7 @@ fn pending_nav_discard_navigates_without_submitting() {
     let mut app = pending_nav_app();
     app.request_issue(7);
     app.confirm_choose(1);
-    assert!(app.confirm.is_none());
+    assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(7));
     assert!(app.compose.submitting.is_empty(), "discard never submits");
 }
@@ -149,7 +149,7 @@ fn pending_nav_submit_navigates_and_submits() {
     let mut app = pending_nav_app();
     app.request_issue(7);
     app.confirm_choose(0);
-    assert!(app.confirm.is_none());
+    assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(7), "submit still navigates");
     assert!(app.compose.submitting.contains(&9), "submit starts the review submit");
 }
@@ -158,19 +158,19 @@ fn pending_nav_submit_navigates_and_submits() {
 fn pending_nav_tab_switch_guards_and_same_target_passes() {
     let mut app = pending_nav_app();
     app.request_tab(crate::app::Tab::Visual);
-    assert!(app.confirm.is_some(), "tab switch trips the guard");
+    assert!(app.confirm_open(), "tab switch trips the guard");
     app.confirm_choose(1);
     assert_eq!(app.nav.tab, crate::app::Tab::Visual);
     // Same-target requests never open the dialog.
     let mut plain = sidebar_app(&[7, 9]);
     plain.show_issue(9);
     plain.request_issue(9);
-    assert!(plain.confirm.is_none());
+    assert!(!plain.confirm_open());
     plain.request_tab(plain.nav.tab);
-    assert!(plain.confirm.is_none());
+    assert!(!plain.confirm_open());
     // Without pending threads everything navigates directly.
     plain.request_issue(7);
-    assert!(plain.confirm.is_none());
+    assert!(!plain.confirm_open());
     assert_eq!(plain.nav.current, Some(7));
 }
 
@@ -189,8 +189,8 @@ fn auth_probe_landing_drives_the_prompt() {
         tx.send(result).unwrap();
         poll_auth(&mut app);
         assert!(app.auth.rx.is_none(), "probe lands once");
-        assert_eq!(app.confirm.is_some(), expect_prompt);
-        app.confirm = None;
+        assert_eq!(app.confirm_open(), expect_prompt);
+        app.take_confirm();
     }
 }
 
@@ -198,15 +198,15 @@ fn auth_probe_landing_drives_the_prompt() {
 fn auth_failure_prompts_once_then_stays_quiet() {
     let mut app = App::new(Some("o/r".to_string()));
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
-    let dialog = app.confirm.as_ref().expect("first auth failure prompts");
+    let dialog = app.confirm().expect("first auth failure prompts");
     assert!(dialog.body.iter().any(|l| l.text.contains("scopes could not be read")), "fetch failures cannot name the gap");
-    app.confirm = None;
+    app.take_confirm();
     app.auth.dismissed = true;
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
-    assert!(app.confirm.is_none(), "dismissed stays dismissed");
+    assert!(!app.confirm_open(), "dismissed stays dismissed");
     app.auth.dismissed = false;
     auth_failure(&mut app, "bad search payload");
-    assert!(app.confirm.is_none(), "non-auth never prompts");
+    assert!(!app.confirm_open(), "non-auth never prompts");
 }
 
 #[test]
@@ -215,13 +215,13 @@ fn auth_degraded_holds_until_a_reauth_succeeds() {
     assert!(!app.auth.degraded, "healthy boot has no badge");
     let denied = "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials";
     auth_failure(&mut app, denied);
-    assert!(app.confirm.is_some(), "first failure prompts");
+    assert!(app.confirm_open(), "first failure prompts");
     assert!(app.auth.degraded, "the problem is recorded with the prompt");
-    app.confirm = None;
+    app.take_confirm();
     app.auth.dismissed = true;
     assert!(app.auth.degraded, "dismissing keeps the badge");
     auth_failure(&mut app, denied);
-    assert!(app.confirm.is_none(), "dismissed never re-modals");
+    assert!(!app.confirm_open(), "dismissed never re-modals");
     auth_failure(&mut app, "bad search payload");
     assert!(app.auth.degraded, "non-auth leaves the badge alone");
     let (tx, rx) = std::sync::mpsc::channel();
@@ -237,7 +237,7 @@ fn auth_question_blocked_by_another_dialog_still_degrades() {
     app.request_issue(7);
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials");
     assert!(
-        matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
+        matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
         "the open question stays",
     );
     assert!(app.auth.degraded, "the badge records the blocked auth question");
@@ -247,12 +247,12 @@ fn auth_question_blocked_by_another_dialog_still_degrades() {
 fn reopen_reauth_only_reopens_while_degraded() {
     let mut app = App::new(Some("o/r".to_string()));
     app.reopen_reauth();
-    assert!(app.confirm.is_none(), "healthy key is a no-op");
+    assert!(!app.confirm_open(), "healthy key is a no-op");
     app.auth.dismissed = true;
     app.auth.degraded = true;
     app.reopen_reauth();
     assert!(
-        matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
+        matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
         "degraded key reopens the dialog",
     );
     assert!(app.auth.degraded, "reopening keeps the badge until a re-auth succeeds");
@@ -261,7 +261,7 @@ fn reopen_reauth_only_reopens_while_degraded() {
     guarded.auth.degraded = true;
     guarded.reopen_reauth();
     assert!(
-        matches!(guarded.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
+        matches!(guarded.confirm().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
         "never stacks over another question",
     );
 }
@@ -270,16 +270,16 @@ fn reopen_reauth_only_reopens_while_degraded() {
 fn auth_failure_waits_for_an_open_dialog() {
     let mut app = pending_nav_app();
     app.request_issue(7);
-    assert!(app.confirm.is_some(), "nav guard holds the dialog");
+    assert!(app.confirm_open(), "nav guard holds the dialog");
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
     assert!(
-        matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
+        matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
         "auth never replaces another question",
     );
     app.confirm_cancel();
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
     assert!(
-        matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
+        matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
         "next failure re-raises it",
     );
 }
@@ -293,6 +293,6 @@ fn auth_probe_non_auth_failure_notifies_without_modal() {
     app.auth.rx = Some(rx);
     tx.send(Err("GitHub auth check failed: 403 Forbidden for https://api.github.com/user: rate limit".to_string())).unwrap();
     poll_auth(&mut app);
-    assert!(app.confirm.is_none(), "no modal for quota errors");
+    assert!(!app.confirm_open(), "no modal for quota errors");
     assert!(app.message.contains("403"), "still surfaces: {}", app.message);
 }

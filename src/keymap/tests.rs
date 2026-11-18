@@ -272,11 +272,11 @@ fn predicates_gate_their_bindings() {
 #[test]
 fn layers_resolve_top_down_and_dialogs_are_modal() {
     let mut app = app_in(Pane::Issues);
-    app.shortcuts_open = true;
+    app.open(crate::app::Entry::Shortcuts);
     assert_eq!(resolve(&app, key(KeyCode::Char('j'))), Some(Action::HelpDown));
     assert_eq!(resolve(&app, key(KeyCode::Char('x'))), None, "pane keys do not reach through");
     assert_eq!(resolve(&app, key(KeyCode::Char('?'))), Some(Action::CloseHelp));
-    app.shortcuts_open = false;
+    app.close(crate::app::Slot::Shortcuts);
     app.nav.focus = Focus::Bar;
     assert_eq!(resolve(&app, key(KeyCode::Enter)), Some(Action::InputSubmit));
     assert_eq!(resolve(&app, ctrl('c')), Some(Action::Quit));
@@ -286,8 +286,8 @@ fn layers_resolve_top_down_and_dialogs_are_modal() {
 #[test]
 fn compose_chords_need_exact_modifiers() {
     let mut app = app_in(Pane::Main);
-    app.sidebar.filter_open = false;
-    app.compose.draft = Some(crate::app::ComposeState {
+    app.close(crate::app::Slot::Format);
+    app.open_draft(crate::app::ComposeState {
         number: 7,
         target: crate::app::ComposeTarget::Thread,
         body: String::new(),
@@ -381,7 +381,7 @@ fn a_prefix_waits_for_its_second_key() {
 #[test]
 fn dialog_keys_beat_the_jump_prefix() {
     let mut app = app_in(Pane::Issues);
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     let chain = active_contexts(&app);
     let g = key(KeyCode::Char('g'));
     assert_eq!(lookup(&chain, g, &app).map(|b| b.action), Some(Action::CycleGroup));
@@ -391,7 +391,7 @@ fn dialog_keys_beat_the_jump_prefix() {
 #[test]
 fn help_opens_from_every_non_text_dialog() {
     let mut app = app_in(Pane::Issues);
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     assert_eq!(resolve(&app, key(KeyCode::Char('?'))), Some(Action::ShowHelp));
     assert_eq!(resolve(&app, key(KeyCode::Char('q'))), Some(Action::CloseFormat));
 }
