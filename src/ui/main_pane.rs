@@ -300,17 +300,11 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 title.push(check);
             }
             vec![
-                Line::from(vec![
-                    Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
-                    Span::styled(repo, Style::new().fg(muted())),
-                ]),
+                brand(repo),
                 Line::from(title),
             ]
         }
-        None => vec![Line::from(vec![
-            Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
-            Span::styled(repo, Style::new().fg(muted())),
-        ])],
+        None => vec![brand(repo)],
     };
     let mast = match mast.len() {
         0 => mast,
@@ -420,4 +414,14 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// Rows `text` takes at `width` cells, counting each line's wraps.
 fn text_rows(text: &ratatui::text::Text, width: usize) -> usize {
     text.lines.iter().map(|line| line.width().max(1).div_ceil(width)).sum()
+}
+
+/// The masthead brand: `ghit`, its version in gray, then the repo.
+fn brand(repo: String) -> Line<'static> {
+    use crate::theme::{amber, muted};
+    Line::from(vec![
+        Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
+        Span::styled(concat!("v", env!("CARGO_PKG_VERSION"), "  "), Style::new().fg(muted())),
+        Span::styled(repo, Style::new().fg(muted())),
+    ])
 }
