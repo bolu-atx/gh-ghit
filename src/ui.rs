@@ -29,6 +29,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(f.area());
 
+    if let Some((fi, delta)) = app.diff.pending_jump.take() {
+        let offset = diff_header_offset(app, fi, delta);
+        app.finish_diff_jump(delta, offset);
+    }
     app.hits.ctl.controls.clear();
     app.hits.ctl.legend.clear();
     app.hits.ctl.popup = Rect::default();
@@ -870,12 +874,6 @@ fn expanded_row_lines(d: &IssueData, inner_width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Rows the detail block of an expanded row occupies at `inner_width`.
-/// Shares `expanded_row_lines` so hit-testing and rendering agree.
-pub(crate) fn expanded_row_height(d: &IssueData, inner_width: usize) -> usize {
-    expanded_row_lines(d, inner_width).len()
-}
-
 /// Compact CI glyph for a PR row or header: the head-commit rollup in
 /// its theme color, or `None` when the PR runs no checks (or the state
 /// is unknown). Issues never carry a rollup, so they render nothing.
@@ -910,7 +908,8 @@ struct SectionFrame {
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
 /// thin divider row between non-empty groups. Everything is owned, so the
 /// returned list outlives the `&App` borrow and the caller can persist its
-/// `ListState` back into `App` for scroll continuity.
+/// `ListState` back into `App` for scroll continuity. Also returns the
+/// drawn height of each row, which `render` publishes for hit-testing.
 fn section_list(
     frame: SectionFrame,
     rows: &[crate::model::SideRow],
@@ -919,7 +918,7 @@ fn section_list(
     mark: Option<u64>,
     focused: bool,
     now: chrono::DateTime<chrono::Utc>,
-) -> List<'static> {
+) -> (List<'static>, Vec<usize>) {
     use crate::theme::{amber, ink, muted, paper, state_color, RowState};
     use crate::model::SideRow;
     let query = app.sidebar.search.clone();
@@ -1052,14 +1051,16 @@ fn section_list(
         lines.push(Line::from(""));
         items.push(ListItem::new(lines));
     }
+    let heights: Vec<usize> = items[1..].iter().map(ListItem::height).collect();
     if rows.is_empty() && frame.loading {
         items.extend(skeleton_lines(4).chunks(3).map(|c| ListItem::new(c.to_vec())));
     } else if rows.is_empty() && !frame.empty.spans.is_empty() {
         items.push(ListItem::new(frame.empty.clone()));
     }
-    List::new(items)
+    let list = List::new(items)
         .block(theme::pane_block(focused).title(frame.title).title_bottom(frame.footer))
-        .highlight_style(theme::row_highlight(focused))
+        .highlight_style(theme::row_highlight(focused));
+    (list, heights)
 }
 
 /// Styled header for the body pane: the color-coded meta lines. The
@@ -1282,7 +1283,7 @@ const JUMP_SCAN_ROWS: u32 = 20000;
 /// never rendered, the file is out of range, its header cannot fit on one
 /// row (neither this probe nor the live render could match it), or the cap
 /// hits.
-pub(crate) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u16> {
+fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u16> {
     if delta == 0 {
         return None;
     }
@@ -1578,7 +1579,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let issues_focused = app.pane_focused(crate::core::Pane::Issues);
     let issue_title = side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag());
     controls::side_controls(app, panes[0], &issue_title, false, crate::core::Pane::Issues);
-    let il = section_list(
+    let (il, issue_heights) = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
             title: spinning(issue_title, pane.sidebar, app.tick),
@@ -1595,6 +1596,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         issues_focused,
         now,
     );
+    app.hits.side_issue_heights = issue_heights;
     let mut istate = std::mem::take(&mut app.sidebar.issue_state);
     istate.select(selected_index(&issue_rows, app.effective(&issue_rows)));
     f.render_stateful_widget(il, panes[0], &mut istate);
@@ -1602,7 +1604,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let prs_focused = app.pane_focused(crate::core::Pane::PRs);
     let pr_title = side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag());
     controls::side_controls(app, panes[1], &pr_title, true, crate::core::Pane::PRs);
-    let pl = section_list(
+    let (pl, pr_heights) = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
             title: spinning(pr_title, pane.sidebar, app.tick),
@@ -1619,6 +1621,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         prs_focused,
         now,
     );
+    app.hits.side_pr_heights = pr_heights;
     let mut pstate = std::mem::take(&mut app.sidebar.pr_state);
     pstate.select(selected_index(&pr_rows, app.effective(&pr_rows)));
     f.render_stateful_widget(pl, panes[1], &mut pstate);
@@ -1634,7 +1637,7 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
     let refs_focused = app.pane_focused(crate::core::Pane::Refs);
-    let list = section_list(
+    let (list, heights) = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-link.
             title: spinning(section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused), app.pane_loading().refs, app.tick),
@@ -1651,6 +1654,7 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         refs_focused,
         chrono::Utc::now(),
     );
+    app.hits.ref_heights = heights;
     let mut state = std::mem::take(&mut app.refs.state);
     let sel = app.refs
         .highlight
@@ -5453,8 +5457,8 @@ mod render_smoke {
         // J lands the second header at the top and opens it.
         handle_key(&mut app, key(KeyCode::Char('J')));
         assert_eq!(app.diff.cursor, 1, "J moves the file cursor before render");
-        assert!(app.nav.scroll > top, "off-screen header scrolls into view");
         let _ = frame_text(&mut app);
+        assert!(app.nav.scroll > top, "off-screen header scrolls into view");
         assert_eq!(app.diff.cursor, 1, "render keeps the jumped file");
         assert!(app.diff.expanded_files.contains(&(9, "src/b.rs".to_string())), "jumped-on file opens");
         assert!(

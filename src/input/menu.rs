@@ -155,8 +155,8 @@ pub(super) fn right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     let h = &app.hits;
-    let kind = if sidebar_hit(h.side_issue_area, &h.side_issue_rows, &app.issues.data, &app.diff.expanded_rows, x, y).is_some()
-        || sidebar_hit(h.side_pr_area, &h.side_pr_rows, &app.issues.data, &app.diff.expanded_rows, x, y).is_some()
+    let kind = if sidebar_hit(h.side_issue_area, &h.side_issue_rows, &h.side_issue_heights, x, y).is_some()
+        || sidebar_hit(h.side_pr_area, &h.side_pr_rows, &h.side_pr_heights, x, y).is_some()
     {
         handle_left(app, x, y, false);
         MenuKind::Issue
@@ -165,7 +165,7 @@ pub(super) fn right_click(app: &mut App, x: u16, y: u16) {
         app.nav.pane = if in_rect(h.side_pr_area, x, y) { Pane::PRs } else { Pane::Issues };
         MenuKind::Issue
     } else if in_rect(h.refs_area, x, y) {
-        let row = sidebar_hit(h.refs_area, &h.ref_rows, &app.issues.data, &app.diff.expanded_rows, x, y);
+        let row = sidebar_hit(h.refs_area, &h.ref_rows, &h.ref_heights, x, y);
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::Refs;
         if row.is_some() {
