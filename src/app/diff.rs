@@ -251,7 +251,7 @@ impl App {
 
     /// Queue a graph fetch for `number`. No-op for cached rows and rows
     /// already in flight. One cache entry per issue, so switching issues
-    /// refetches per issue and the tab shows a skeleton meanwhile.
+    /// refetches per issue and the tab shows a loading spinner meanwhile.
     pub(crate) fn load_graph(&mut self, number: u64, force: bool) {
         if !force && self.graph.data.contains_key(&number) {
             return;

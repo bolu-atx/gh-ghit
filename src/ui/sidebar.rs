@@ -11,7 +11,7 @@ use crate::model::{self, IssueData};
 use crate::theme;
 use super::{controls, hints};
 
-use super::{section_title, spinning, skeleton_lines, footer_line};
+use super::{section_title, spinning, loading_body, footer_line};
 use super::main_pane::wrap_lines;
 
 /// Split `text` into plain spans plus highlighted spans for each query
@@ -114,6 +114,9 @@ struct SectionFrame {
     fields: model::RowFields,
     checks: bool,
     loading: bool,
+    /// Label and body height for the loading body.
+    loading_label: &'static str,
+    body_height: usize,
     /// Shown when the pane has no rows and nothing is loading.
     empty: Line<'static>,
 }
@@ -266,7 +269,7 @@ fn section_list(
     }
     let heights: Vec<usize> = items[1..].iter().map(ListItem::height).collect();
     if rows.is_empty() && frame.loading {
-        items.extend(skeleton_lines(4).chunks(3).map(|c| ListItem::new(c.to_vec())));
+        items.extend(loading_body(frame.loading_label, app.tick, frame.body_height).into_iter().map(ListItem::new));
     } else if rows.is_empty() && !frame.empty.spans.is_empty() {
         items.push(ListItem::new(frame.empty.clone()));
     }
@@ -318,6 +321,8 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
             loading: pane.sidebar,
+            loading_label: "Loading issues…",
+            body_height: usize::from(panes[0].height.saturating_sub(3)),
             empty: if pane.sidebar_spinner && !pane.sidebar { Line::from("") } else { hints::tip("  No issues. Press ", Context::Global, Action::OpenFormat, " to filter.") },
         },
         &issue_rows,
@@ -343,6 +348,8 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
             loading: pane.sidebar,
+            loading_label: "Loading pull requests…",
+            body_height: usize::from(panes[1].height.saturating_sub(3)),
             empty: if pane.sidebar_spinner && !pane.sidebar { Line::from("") } else { hints::tip("  No pull requests. Press ", Context::Global, Action::OpenFormat, " to filter.") },
         },
         &pr_rows,
@@ -376,6 +383,8 @@ pub(super) fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_pr.checks,
             loading: false,
+            loading_label: "",
+            body_height: 0,
             empty: Line::default(),
         },
         &rows,

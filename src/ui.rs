@@ -307,18 +307,26 @@ fn spinning(mut title: Line<'static>, loading: bool, tick: u64) -> Line<'static>
     title
 }
 
-/// Ghost rows for a pane with nothing to show yet.
-fn skeleton_lines(rows: usize) -> Vec<Line<'static>> {
-    let ghost = Style::new().fg(theme::muted());
-    (0..rows)
-        .flat_map(|_| {
-            [
-                Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", ghost)),
-                Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", ghost)),
-                Line::from(""),
-            ]
-        })
-        .collect()
+/// Body spinner frames: a heavier braille ring than the title spinner.
+const BODY_SPINNER: [&str; 8] = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
+
+/// Body spinner glyph for the current tick (same tick as the title).
+fn body_spinner_frame(tick: u64) -> &'static str {
+    BODY_SPINNER[(tick as usize) % BODY_SPINNER.len()]
+}
+
+/// Loading placeholder for a pane body: one centered `<spinner> <label>`
+/// line about a third of the way down `height` rows.
+fn loading_body(label: &str, tick: u64, height: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(""); height.saturating_sub(1) / 3];
+    lines.push(
+        Line::from(vec![
+            Span::styled(body_spinner_frame(tick), Style::new().fg(theme::amber())),
+            Span::styled(format!(" {label}"), Style::new().fg(theme::muted())),
+        ])
+        .centered(),
+    );
+    lines
 }
 
 /// Bottom border label for a list pane: per-group counts in the same

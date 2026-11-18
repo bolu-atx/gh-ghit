@@ -262,19 +262,19 @@ pub struct PaneInputs {
     pub refs_pending: bool,
 }
 
-/// Which panes show their own spinner or skeleton right now.
+/// Which panes show their own spinner or loading body right now.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PaneLoading {
     /// Sidebar title spinner.
     pub sidebar_spinner: bool,
-    /// Sidebar skeleton rows.
+    /// Sidebar loading body.
     pub sidebar: bool,
     pub main: bool,
     pub main_spinner: bool,
     pub refs: bool,
 }
 
-/// Pane-level loading. The main skeleton only shows while nothing is
+/// Pane-level loading. The main loading body only shows while nothing is
 /// cached for the pane; a cached issue keeps its text during a refresh.
 /// Only the most urgent loading tier shows its full cue: while the
 /// current issue loads, the sidebar and refs show a title spinner only.
@@ -847,7 +847,7 @@ mod tests {
         let both = PaneInputs { bootstrap_live: true, requested_pending: true, ..PaneInputs::default() };
         let quiet = pane_loading(&both);
         assert!(quiet.sidebar_spinner && !quiet.sidebar, "lower tier: spinner only");
-        assert!(quiet.main && quiet.main_spinner, "current tier keeps its skeleton");
+        assert!(quiet.main && quiet.main_spinner, "current tier keeps its loading body");
         let fresh = PaneInputs { requested_pending: true, ..PaneInputs::default() };
         assert!(pane_loading(&fresh).main && pane_loading(&fresh).main_spinner);
         let cached = PaneInputs { requested_pending: true, shown_cached: true, ..PaneInputs::default() };

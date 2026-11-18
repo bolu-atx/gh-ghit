@@ -12,7 +12,7 @@ use crate::keymap::{Action, Context};
 use crate::model::{self, IssueData};
 use super::{controls, hints};
 
-use super::{spinning, skeleton_lines};
+use super::{spinning, loading_body};
 use super::sidebar::check_span;
 use super::diff::diff_text;
 
@@ -67,16 +67,14 @@ pub(super) fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)])
 /// Graph tab body: the dependency star around the current issue, center
 /// first then one section per relation. The cursor row carries the amber
 /// marker; nodes that block nothing render gray/dim.
-pub(super) fn graph_text(app: &App, d: &IssueData) -> ratatui::text::Text<'static> {
+pub(super) fn graph_text(app: &App, d: &IssueData, height: usize) -> ratatui::text::Text<'static> {
     use crate::theme::{ink, muted};
     let dim = || Style::new().bg(ink()).fg(muted());
     let Some(data) = app.graph.data.get(&d.number) else {
-        let note = if app.graph.pending.contains(&d.number) {
-            "Fetching graph …"
-        } else {
-            "No graph loaded yet."
-        };
-        return ratatui::text::Text::from(Line::from(Span::styled(note, dim())));
+        if app.graph.pending.contains(&d.number) {
+            return ratatui::text::Text::from(loading_body("Fetching graph…", app.tick, height));
+        }
+        return ratatui::text::Text::from(Line::from(Span::styled("No graph loaded yet.", dim())));
     };
     let order = model::graph_order(data);
     let mut lines = vec![Line::from(Span::styled(format!("{} related", order.len().saturating_sub(1)), dim()))];
@@ -371,10 +369,13 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             }
             Tab::Visual => match model::visual_content(d.is_pr) {
                 model::VisualContent::Diff => diff_text(app, d, (rows[4].width as usize).saturating_sub(5)),
-                model::VisualContent::Graph => graph_text(app, d),
+                model::VisualContent::Graph => graph_text(app, d, usize::from(rows[4].height)),
             },
         },
-        None if app.pane_loading().main => ratatui::text::Text::from(skeleton_lines(6)),
+        None if app.pane_loading().main => {
+            let label = app.nav.requested.map_or("Loading…".to_string(), |n| format!("Loading #{n}…"));
+            ratatui::text::Text::from(loading_body(&label, app.tick, usize::from(rows[4].height)))
+        }
         None => {
             markdown = format!(
                 "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`{}`), or instantly filter loaded rows (title, label, author) with `{}`.",

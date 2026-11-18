@@ -35,12 +35,12 @@ fn board_filter_form_clicks_toggle_fields_and_focus_text() {
 }
 
 #[test]
-fn board_skeleton_shows_while_loading() {
+fn board_loading_shows_while_loading() {
     let mut app = App::new(Some("o/r".to_string()));
     app.board.loading = true;
     app.open(crate::app::Entry::Board);
     let text = frame_text(&mut app);
-    assert!(text.contains("Fetching"), "skeleton title");
+    assert!(text.contains("Fetching") && text.contains("Loading board…"), "loading body");
 }
 
 #[test]
