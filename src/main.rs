@@ -18,6 +18,7 @@ mod core;
 mod drive;
 mod github;
 mod input;
+mod keymap;
 mod model;
 mod theme;
 mod ui;

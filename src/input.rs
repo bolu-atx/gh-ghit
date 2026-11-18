@@ -3,315 +3,36 @@
 //! Reads hit areas recorded by `ui::render`; never draws. Selection and
 //! cursor math delegates to `core` so the rules stay testable without a TUI.
 
+mod actions;
+
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::app::{App, Focus, Tab, board_move, board_open, board_selected_number};
-use crate::core::{self, Dialog, Layer, Pane};
+use crate::core::{self, Dialog, Layer, Pane, TextInput};
+use crate::keymap;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    if app.shortcuts_open {
-        match key.code {
-            KeyCode::Esc => app.pop_layer(),
-            KeyCode::Char('?') | KeyCode::Char('q') => app.shortcuts_open = false,
-            _ => {}
-        }
-        return;
-    }
-
-    // Generic confirm modal captures everything: a listed choice key
-    // picks it, Enter picks the first choice, Esc cancels. No other key
-    // (including quit) escapes the dialog.
-    if app.confirm_open() {
-        handle_confirm_key(app, key);
-        return;
-    }
-
-    // Compose modal captures everything: typing edits the draft,
-    // Ctrl+S sends, Esc discards (asking first when the draft has text).
-    if app.compose_open() {
-        handle_compose_key(app, key);
-        return;
-    }
-
-    // Format dialog captures everything: over the board it filters cards,
-    // over the main view it keeps its window/query/toggle keys.
-    if app.sidebar.filter_open {
-        handle_filter_key(app, key);
-        return;
-    }
-
-    // Board modal captures everything.
-    if board_open(app) {
-        match key.code {
-            KeyCode::Char('q') => {
-                app.board.data = None;
-                app.board.loading = false;
-            }
-            // Esc first clears an active filter, then closes the board.
-            KeyCode::Esc => app.pop_layer(),
-            KeyCode::Char('f') => app.open_board_filter(),
-            KeyCode::Char('j') | KeyCode::Down => board_move(app, 0, 1),
-            KeyCode::Char('k') | KeyCode::Up => board_move(app, 0, -1),
-            KeyCode::PageDown => board_move(app, 0, 5),
-            KeyCode::PageUp => board_move(app, 0, -5),
-            KeyCode::Char('h') | KeyCode::Left => board_move(app, -1, 0),
-            KeyCode::Char('l') | KeyCode::Right => board_move(app, 1, 0),
-            KeyCode::Char('t') => {
-                app.notify(format!("theme: {}", crate::theme::cycle()));
-            }
-            KeyCode::Char(' ') => {
-                let pos = (app.board.col, app.board.row);
-                app.board.expanded = if app.board.expanded == Some(pos) { None } else { Some(pos) };
-            }
-            KeyCode::Enter => {
-                if let Some(n) = board_selected_number(app) {
-                    app.board.data = None;
-                    app.open_issue(n);
-                }
-            }
-            _ => {}
-        }
-        return;
-    }
-
-    if app.nav.focus == Focus::Bar {
-        match key.code {
-            KeyCode::Esc => app.pop_layer(),
-            KeyCode::Enter => {
-                if app.sidebar.searching {
-                    app.commit_search();
-                    return;
-                }
-                let quit = matches!(app.bar.trim(), "q" | "quit" | "exit");
-                app.submit_bar();
-                if quit {
-                    app.request_quit();
-                }
-            }
-            KeyCode::Char(c) => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'c' || c == 'd') {
-                    app.request_quit();
-                    return;
-                }
-                if app.sidebar.searching {
-                    app.sidebar.search.push(c);
-                } else {
-                    app.bar.push(c);
-                }
-            }
-            KeyCode::Backspace => {
-                if app.sidebar.searching {
-                    app.sidebar.search.pop();
-                } else {
-                    app.bar.pop();
-                }
-            }
-            _ => {}
-        }
-        return;
-    }
-
-    match key.code {
-        // History walks. Ctrl+I arrives as Tab on terminals without the
-        // kitty protocol, so both Ctrl forms redo; plain Tab (no Ctrl)
-        // keeps cycling panes below.
-        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_back(),
-        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_forward(),
-        KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => app.go_forward(),
-        KeyCode::Char('?') => app.shortcuts_open = true,
-        KeyCode::Char('q') => app.request_quit(),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.request_quit(),
-        KeyCode::Char('u') if app.undo_live() => app.undo_last(),
-        KeyCode::Char('1') => app.set_tab(Tab::Details),
-        KeyCode::Char('2') => app.set_tab(Tab::Visual),
-        KeyCode::Char('t') => {
-            app.notify(format!("theme: {}", crate::theme::cycle()));
-        }
-        KeyCode::Char('b') => app.open_board(),
-        KeyCode::Char('c') => app.open_compose(),
-        KeyCode::Char('f') => app.open_sidebar_format(),
-        KeyCode::Char('g') => {
-            app.open_sidebar_format();
-            app.start_query_edit();
-        }
-        KeyCode::Char('j') => {
-            if graph_focused(app) {
-                app.graph_move(1);
-            } else {
-                pane_down(app, 1);
-            }
-        }
-        KeyCode::Char('k') => {
-            if graph_focused(app) {
-                app.graph_move(-1);
-            } else {
-                pane_down(app, -1);
-            }
-        }
-        KeyCode::Char('h') => {
-            if graph_focused(app) {
-                app.graph_move(-1);
-            } else {
-                // Neighbor-step works from every pane: nothing else
-                // claims h/l outside Graph, and bar/board/filter return
-                // before this match.
-                app.step_issue(-1);
-            }
-        }
-        KeyCode::Char('l') => {
-            if graph_focused(app) {
-                app.graph_move(1);
-            } else {
-                app.step_issue(1);
-            }
-        }
-        KeyCode::Right | KeyCode::Left | KeyCode::Char('z') | KeyCode::Char('Z')
-            if app.nav.pane == Pane::Issues && app.sidebar.sub_issue_tree => {
-            let rows = app.issue_rows();
-            let selected = app.effective(&rows);
-            if key.code == KeyCode::Char('Z') {
-                let (_, _, recent) = app.pane_groups(false, true);
-                let all = core::tree_rows(
-                    &recent, &app.issues.data, &Default::default(), &app.subs.state);
-                let parents: Vec<u64> = all.iter().filter_map(|row| match row {
-                    crate::model::SideRow::Tree { number, has_children: true, .. } => Some(*number),
-                    _ => None,
-                }).collect();
-                if parents.iter().any(|n| app.sidebar.folded_issues.contains(n)) {
-                    app.sidebar.folded_issues.clear();
-                } else {
-                    app.sidebar.folded_issues.extend(parents);
-                }
-            } else if let Some(n) = selected {
-                if let Some(crate::model::SideRow::Tree { has_children, folded, depth, .. }) =
-                    rows.iter().find(|row| row.number() == Some(n))
-                {
-                    let (has_children, folded, depth) = (*has_children, *folded, *depth);
-                    match key.code {
-                        KeyCode::Right if has_children => {
-                            app.sidebar.folded_issues.remove(&n);
-                            app.load_sub_issues(n);
-                        }
-                        // Act on the fold the row shows: an unloaded parent
-                        // reads folded without being in `folded_issues`.
-                        KeyCode::Char('z') if has_children => {
-                            if folded {
-                                app.sidebar.folded_issues.remove(&n);
-                                app.load_sub_issues(n);
-                            } else {
-                                app.sidebar.folded_issues.insert(n);
-                            }
-                        }
-                        KeyCode::Left if has_children && !folded => {
-                            app.sidebar.folded_issues.insert(n);
-                        }
-                        KeyCode::Left if depth > 0 => {
-                            if let Some(parent) = app.issues.data.get(&n).and_then(|d| d.parent) {
-                                app.request_issue(parent);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        KeyCode::Enter => {
-            if graph_focused(app) {
-                app.open_graph_selection();
-            } else if app.nav.pane == Pane::Refs {
-                app.open_selected_ref();
-            } else if app.nav.pane == Pane::Labels {
-                app.toggle_filter_item(app.labels.cursor);
-            } else if app.nav.pane == Pane::History {
-                app.open_history_row();
-            }
-        }
-        KeyCode::Char('J') if app.visual_diff() => app.jump_diff_file(1),
-        KeyCode::Char('K') if app.visual_diff() => app.jump_diff_file(-1),
-        KeyCode::Down => {
-            if graph_focused(app) {
-                app.graph_move(1);
-            } else if app.visual_diff() {
-                move_diff_cursor(app, 1);
-            } else {
-                app.nav.scroll = app.nav.scroll.saturating_add(3);
-            }
-        }
-        KeyCode::Up => {
-            if graph_focused(app) {
-                app.graph_move(-1);
-            } else if app.visual_diff() {
-                move_diff_cursor(app, -1);
-            } else {
-                app.nav.scroll = app.nav.scroll.saturating_sub(3);
-            }
-        }
-        KeyCode::PageDown => {
-            app.nav.scroll = app.nav.scroll.saturating_add(12);
-        }
-        KeyCode::PageUp => {
-            app.nav.scroll = app.nav.scroll.saturating_sub(12);
-        }
-        KeyCode::Char(':') => {
-            app.sidebar.searching = false;
-            app.nav.focus = Focus::Bar;
-        }
-        KeyCode::Char('/') => {
-            app.sidebar.searching = true;
-            app.sidebar.search.clear();
-            app.nav.focus = Focus::Bar;
-        }
-        KeyCode::Char('n') => jump_search_hit(app, 1),
-        KeyCode::Char('N') => jump_search_hit(app, -1),
-        KeyCode::Char('o') => {
-            if let Some(n) = app.nav.current {
-                app.open_number(n);
-            } else {
-                app.notify("view an issue first".to_string());
-            }
-        }
-        KeyCode::Char('r') => app.refresh_current(),
-        KeyCode::Char('R') => app.reopen_reauth(),
-        KeyCode::Char('p') => app.toggle_pin(),
-        KeyCode::Char('y') => app.yank(),
-        KeyCode::Char('e') => app.toggle_refs(),
-        KeyCode::Char('E') => app.toggle_sidebar(),
-        // Sidebar-only: a cycles the row sort, A flips its direction, and
-        // x evicts the highlighted row. Diff keeps s for split.
-        KeyCode::Char('a') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.cycle_sort(),
-        KeyCode::Char('A') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.toggle_sort_dir(),
-        KeyCode::Char('x') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
-        KeyCode::Char('s') if app.visual_diff() => app.toggle_diff_split(),
-        KeyCode::Char('S') => app.submit_pending_review(),
-        KeyCode::Char(' ') if app.nav.pane == Pane::Labels => {
-            app.toggle_filter_item(app.labels.cursor);
-        }
-        KeyCode::Char('X') if app.nav.pane == Pane::Labels => app.clear_filter_items(),
-        KeyCode::Char(' ') if app.visual_diff() => app.toggle_diff_file(),
-
-        KeyCode::Char(' ') => app.toggle_row_expansion(),
-        KeyCode::Char('w') => {
-            app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
-            app.refetch_recent();
-            app.persist_prefs();
-            app.notify(format!("merged window: {}", app.window_label()));
-        }
-        KeyCode::Esc => app.pop_layer(),
-        KeyCode::Tab => app.cycle_pane(1),
-        KeyCode::BackTab => app.cycle_pane(-1),
-        _ => {}
+    let chain = keymap::active_contexts(app);
+    match keymap::lookup(&chain, key, app) {
+        Some(binding) => actions::perform(app, binding.action),
+        None => type_text(app, key),
     }
 }
 
-/// Generic confirm dialog keys: a listed choice key picks it, Enter
-/// picks the first choice, Esc cancels. Everything else is swallowed
-/// so no navigation or quit escapes the dialog.
-pub(crate) fn handle_confirm_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => app.pop_layer(),
-        KeyCode::Enter => app.confirm_choose(0),
-        KeyCode::Char(c) => {
+/// Printable keys no binding claimed. Text layers type them; every other
+/// layer swallows them, so nothing behind a dialog fires.
+fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
+    let KeyCode::Char(c) = key.code else { return };
+    let chord = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    match app.focus().layer {
+        Layer::Input(TextInput::Bar) if app.sidebar.searching => app.sidebar.search.push(c),
+        Layer::Input(TextInput::Bar) => app.bar.push(c),
+        Layer::Input(TextInput::Query | TextInput::BoardQuery) => app.sidebar.query_draft.push(c),
+        Layer::Input(TextInput::Name) => app.sidebar.name_draft.push(c),
+        // The editor never types a control chord into the draft.
+        Layer::Dialog(Dialog::Compose) if !chord => app.compose_insert(c),
+        Layer::Dialog(Dialog::Confirm) => {
             let lower = c.to_ascii_lowercase();
             if let Some(index) = app.confirm.as_ref()
                 .and_then(|d| d.choices.iter().position(|ch| ch.key == lower))
@@ -319,97 +40,13 @@ pub(crate) fn handle_confirm_key(app: &mut App, key: crossterm::event::KeyEvent)
                 app.confirm_choose(index);
             }
         }
+        // Typing on the text row starts editing, like the old dialog.
+        Layer::Dialog(Dialog::BoardFilter) if app.board.filter_focus == 0 => {
+            app.sidebar.query_edit = true;
+            app.sidebar.query_draft.push(c);
+        }
         _ => {}
     }
-}
-
-/// Compose modal keys: printable chars edit the draft, arrows move the
-/// cursor, and every common bash/readline chord works like a terminal
-/// prompt: `Ctrl+A/E` line ends, `Ctrl+B/F/P/N` steps, `Alt+B/F` word
-/// jumps, `Ctrl+K/U/W` kills plus `Alt+D`, `Ctrl+Y` yanks, `Ctrl+D/T`
-/// delete and transpose, `Home/End/Delete` included. `Ctrl+O` opens the
-/// draft in `$EDITOR`, `Ctrl+S` submits, `Esc` discards after a confirm. The modal
-/// swallows every key — `Tab` (even as `Ctrl+I`) indents, `Ctrl+C`
-/// never quits — so nothing behind it fires while it is up. A lost
-/// draft would be worse than an ignored key, and control bytes must
-/// never leak into the markdown.
-pub(crate) fn handle_compose_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
-    // Tab is Tab whatever the modifiers say: some terminals report it
-    // as Ctrl+I, and the modal must indent, never walk history.
-    if matches!(key.code, KeyCode::Tab) {
-        app.compose_insert('\t');
-        return;
-    }
-    if ctrl && !alt {
-        match key.code {
-            KeyCode::Char('s') | KeyCode::Char('S') => app.submit_compose(),
-            KeyCode::Char('o') | KeyCode::Char('O') => app.request_compose_editor(),
-            KeyCode::Char('a') | KeyCode::Char('A') => app.compose_home(),
-            KeyCode::Char('e') | KeyCode::Char('E') => app.compose_end(),
-            KeyCode::Char('b') | KeyCode::Char('B') => app.compose_step(-1),
-            KeyCode::Char('f') | KeyCode::Char('F') => app.compose_step(1),
-            KeyCode::Char('p') | KeyCode::Char('P') => app.compose_line(-1),
-            KeyCode::Char('n') | KeyCode::Char('N') => app.compose_line(1),
-            KeyCode::Char('h') | KeyCode::Char('H') => app.compose_backspace(),
-            KeyCode::Char('d') | KeyCode::Char('D') => app.compose_delete_forward(),
-            KeyCode::Char('k') | KeyCode::Char('K') => app.compose_kill_to_end(),
-            KeyCode::Char('u') | KeyCode::Char('U') => app.compose_kill_to_start(),
-            KeyCode::Char('w') | KeyCode::Char('W') => app.compose_delete_word_back(),
-            KeyCode::Char('y') | KeyCode::Char('Y') => app.compose_yank(),
-            KeyCode::Char('t') | KeyCode::Char('T') => app.compose_transpose(),
-            KeyCode::Char('m') | KeyCode::Char('M') | KeyCode::Char('j') | KeyCode::Char('J') => {
-                app.compose_insert('\n')
-            }
-            // Ctrl+I is Tab on terminals without the kitty protocol;
-            // the global history path matches both forms, so this does.
-            KeyCode::Char('i') | KeyCode::Char('I') => app.compose_insert('\t'),
-            KeyCode::Enter => app.compose_insert('\n'),
-            // Every other control chord is swallowed: Ctrl+C never
-            // quits here and control bytes never reach the draft.
-            _ => {}
-        }
-        return;
-    }
-    if alt && !ctrl {
-        match key.code {
-            KeyCode::Char('b') | KeyCode::Char('B') => app.compose_word_back(),
-            KeyCode::Char('f') | KeyCode::Char('F') => app.compose_word_forward(),
-            KeyCode::Char('d') | KeyCode::Char('D') => app.compose_delete_word_forward(),
-            KeyCode::Backspace => app.compose_delete_word_back(),
-            _ => {}
-        }
-        return;
-    }
-    if ctrl && alt {
-        // Meta-control chords edit nothing: swallow them so they
-        // neither type nor escape the modal.
-        return;
-    }
-    match key.code {
-        KeyCode::Esc => app.request_discard_compose(),
-        KeyCode::Enter => app.compose_insert('\n'),
-        KeyCode::Backspace => app.compose_backspace(),
-        KeyCode::Delete => app.compose_delete_forward(),
-        KeyCode::Home => app.compose_home(),
-        KeyCode::End => app.compose_end(),
-        KeyCode::Left => app.compose_step(-1),
-        KeyCode::Right => app.compose_step(1),
-        KeyCode::Up => app.compose_line(-1),
-        KeyCode::Down => app.compose_line(1),
-        KeyCode::Char(c) => app.compose_insert(c),
-        KeyCode::Tab => app.compose_insert('\t'),
-        _ => {}
-    }
-}
-
-/// Graph keys act only while the Graph tab has main focus: arrows and
-/// hjkl move between nodes, Enter loads the selected issue. Anywhere
-/// else those keys keep their existing meaning.
-pub(crate) fn graph_focused(app: &App) -> bool {
-    app.visual_graph() && app.nav.pane == Pane::Main && app.nav.focus == Focus::Main
 }
 
 /// j/k walks one sidebar list: issues or PRs, never crossing over.
@@ -513,64 +150,6 @@ fn jump_search_hit(app: &mut App, delta: isize) {
     }
 }
 
-/// Board format form keys. While the text row edits, keys type into it
-/// (`Esc` backs out to navigate mode, `Enter` applies); otherwise `j`/`k`
-/// and the arrows move the active widget, `space` toggles the pill or
-/// field under the cursor, typing on the text row starts editing it,
-/// `Enter` applies, and `Esc` clears the whole filter.
-fn handle_board_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    if app.sidebar.query_edit {
-        match key.code {
-            // Revert the draft; the dialog stays open.
-            KeyCode::Esc => app.pop_layer(),
-            KeyCode::Enter => {
-                app.sidebar.query_edit = false;
-                app.sidebar.filter_open = false;
-                app.board.filter_focus = 0;
-                app.apply_board_filter();
-            }
-            KeyCode::Up => {
-                app.sidebar.query_edit = false;
-                app.board_filter_step(-1);
-            }
-            KeyCode::Down => {
-                app.sidebar.query_edit = false;
-                app.board_filter_step(1);
-            }
-            KeyCode::Char(c) => app.sidebar.query_draft.push(c),
-            KeyCode::Backspace => {
-                app.sidebar.query_draft.pop();
-            }
-            _ => {}
-        }
-        return;
-    }
-    match key.code {
-        KeyCode::Esc => app.pop_layer(),
-        KeyCode::Enter => {
-            app.sidebar.filter_open = false;
-            app.board.filter_focus = 0;
-            app.apply_board_filter();
-        }
-        KeyCode::Char(' ') if app.board.filter_focus > 0 => toggle_board_focused(app),
-        KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('l') | KeyCode::Right => {
-            app.board_filter_step(1);
-        }
-        KeyCode::Char('k') | KeyCode::Up | KeyCode::Char('h') | KeyCode::Left => {
-            app.board_filter_step(-1);
-        }
-        KeyCode::Backspace if app.board.filter_focus == 0 => {
-            app.sidebar.query_draft.pop();
-        }
-        KeyCode::Char(c) if app.board.filter_focus == 0 => {
-            // Typing on the text row starts editing, like the old dialog.
-            app.sidebar.query_edit = true;
-            app.sidebar.query_draft.push(c);
-        }
-        _ => {}
-    }
-}
-
 /// Toggle the widget under the board dialog cursor: a milestone pill
 /// flips in the draft (Enter applies it), a Card fields row flips live
 /// and persists.
@@ -588,101 +167,6 @@ fn toggle_board_focused(app: &mut App) {
         }
     } else {
         app.toggle_board_card_field(pill_index - pills.len());
-    }
-}
-
-/// Format dialog keys. Over the board the dialog is a form: the text row,
-/// one milestone pill per milestone on the board, and card field rows.
-/// `j`/`k` and the arrows move the active widget, `space` toggles the
-/// pill or field under the cursor, typing on the text row edits it,
-/// Enter applies, Esc clears the filter. Everywhere else 1/2/3/4 set the
-/// window, `0` resets to the recency default, `e` edits the server-side
-/// GitHub query, state toggles stay client-side, and `j`/`k` plus
-/// `space` flip label pills, milestone pills, grouping, and Row fields.
-fn handle_filter_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    use crate::app::QueryAction;
-    if board_open(app) {
-        handle_board_filter_key(app, key);
-        return;
-    }
-    if app.sidebar.name_edit {
-        match key.code {
-            KeyCode::Esc => app.pop_layer(),
-            KeyCode::Enter => app.save_named_query(),
-            KeyCode::Char(c) => app.sidebar.name_draft.push(c),
-            KeyCode::Backspace => { app.sidebar.name_draft.pop(); }
-            _ => {}
-        }
-        return;
-    }
-    if app.sidebar.query_edit {
-        match key.code {
-            // Revert the draft; the dialog stays open.
-            KeyCode::Esc => app.pop_layer(),
-            KeyCode::Enter => {
-                match app.commit_query_draft() {
-                    QueryAction::Run(q) => app.run_gh_search(q),
-                    QueryAction::Refetch => {
-                        app.refetch_recent();
-                        app.notify("back to recent".to_string());
-                    }
-                }
-                app.persist_prefs();
-            }
-            KeyCode::Char(c) => app.sidebar.query_draft.push(c),
-            KeyCode::Backspace => {
-                app.sidebar.query_draft.pop();
-            }
-            _ => {}
-        }
-        return;
-    }
-    match key.code {
-        KeyCode::Esc => app.pop_layer(),
-        KeyCode::Char('f') | KeyCode::Char('q') => app.sidebar.filter_open = false,
-        KeyCode::Char('e') => app.start_query_edit(),
-        KeyCode::Char('s') => app.start_name_edit(),
-        KeyCode::Char('x') => app.delete_named_query(),
-        KeyCode::Char('u') if app.undo_live() => app.undo_last(),
-        KeyCode::Char('1') => app.set_window(1),
-        KeyCode::Char('2') => app.set_window(24),
-        KeyCode::Char('3') => app.set_window(168),
-        // All time: the listing window stops limiting merged/closed rows
-        // and the search path adds no `updated:` token.
-        KeyCode::Char('4') => app.set_window(0),
-        KeyCode::Char('0') => app.reset_recent_default(),
-        KeyCode::Char('w') => {
-            app.set_window(core::cycle_window(app.sections.merged_window_hours));
-        }
-        // State toggles are client-side: they never refetch or edit the
-        // query text.
-        KeyCode::Char('o') => {
-            app.sidebar.show_open_prs = !app.sidebar.show_open_prs;
-            app.persist_prefs();
-        }
-        KeyCode::Char('m') => {
-            app.sidebar.show_merged_prs = !app.sidebar.show_merged_prs;
-            app.persist_prefs();
-        }
-        KeyCode::Char('i') => {
-            app.sidebar.show_open_issues = !app.sidebar.show_open_issues;
-            app.persist_prefs();
-        }
-        KeyCode::Char('c') => {
-            app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues;
-            app.persist_prefs();
-        }
-        KeyCode::Char('g') => {
-            app.sidebar.group_by = app.sidebar.group_by.next();
-            app.persist_prefs();
-        }
-        KeyCode::Char('h' | 'l') | KeyCode::Tab | KeyCode::BackTab => {
-            app.format_switch_column();
-        }
-        KeyCode::Char('j') | KeyCode::Down => app.format_step(1),
-        KeyCode::Char('k') | KeyCode::Up => app.format_step(-1),
-        KeyCode::Char(' ') | KeyCode::Enter => app.toggle_format_widget(),
-        _ => {}
     }
 }
 
@@ -1226,10 +710,9 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
     app.nav.focus = Focus::Main;
 }
 
-/// Open a URL in the browser. Stubbed in tests so suites never launch one.
-#[cfg(not(test))]
+/// Open a URL in the browser and say so in the bar.
 fn open_url(url: &str, app: &mut App) {
-    if open::that(url).is_ok() {
+    if crate::app::open_in_browser(url).is_ok() {
         app.notify(format!("opened {url}"));
     } else {
         app.notify(format!("couldn't open {url}"));
@@ -1237,9 +720,7 @@ fn open_url(url: &str, app: &mut App) {
 }
 
 #[cfg(test)]
-fn open_url(url: &str, app: &mut App) {
-    app.notify(format!("opened {url}"));
-}
+mod parity;
 
 #[cfg(test)]
 mod tests {
