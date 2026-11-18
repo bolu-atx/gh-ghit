@@ -8,6 +8,7 @@ use crate::app::{App, Focus, QueryAction, Tab, board_move, board_selected_number
 use crate::core::{self, Dialog, Layer, TextInput};
 use crate::keymap::Action;
 
+use super::reach::{Reach, reach};
 use super::{jump_search_hit, move_diff_cursor, pane_down};
 
 pub(super) fn perform(app: &mut App, action: Action) {
@@ -34,10 +35,12 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::MoveUp => pane_down(app, -1),
         Action::StepPrev => app.step_issue(-1),
         Action::StepNext => app.step_issue(1),
-        Action::ScrollDown => app.nav.scroll = app.nav.scroll.saturating_add(3),
-        Action::ScrollUp => app.nav.scroll = app.nav.scroll.saturating_sub(3),
-        Action::PageDown => app.nav.scroll = app.nav.scroll.saturating_add(12),
-        Action::PageUp => app.nav.scroll = app.nav.scroll.saturating_sub(12),
+        Action::JumpTop => reach(app, Reach::Top),
+        Action::JumpBottom => reach(app, Reach::Bottom),
+        Action::HalfPageDown => reach(app, Reach::Half(1)),
+        Action::HalfPageUp => reach(app, Reach::Half(-1)),
+        Action::PageDown => reach(app, Reach::Page(1)),
+        Action::PageUp => reach(app, Reach::Page(-1)),
         Action::CommandBar => {
             app.sidebar.searching = false;
             app.nav.focus = Focus::Bar;
@@ -80,6 +83,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ToggleLabel => app.toggle_filter_item(app.labels.cursor),
         Action::ClearLabels => app.clear_filter_items(),
         Action::OpenHistoryRow => app.open_history_row(),
+        Action::OpenRow => open_row(app),
 
         Action::DiffNextFile => app.jump_diff_file(1),
         Action::DiffPrevFile => app.jump_diff_file(-1),
@@ -87,6 +91,8 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::DiffLineUp => move_diff_cursor(app, -1),
         Action::DiffSplit => app.toggle_diff_split(),
         Action::DiffToggleFile => app.toggle_diff_file(),
+        Action::DiffFold => app.set_diff_file(Some(false)),
+        Action::DiffUnfold => app.set_diff_file(Some(true)),
         Action::GraphNext => app.graph_move(1),
         Action::GraphPrev => app.graph_move(-1),
         Action::GraphOpen => app.open_graph_selection(),
@@ -94,8 +100,6 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::CloseHelp => app.shortcuts_open = false,
         Action::HelpDown => app.help_scroll = app.help_scroll.saturating_add(1),
         Action::HelpUp => app.help_scroll = app.help_scroll.saturating_sub(1),
-        Action::HelpPageDown => app.help_scroll = app.help_scroll.saturating_add(10),
-        Action::HelpPageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
         Action::ConfirmFirst => app.confirm_choose(0),
 
         Action::ComposeSend => app.submit_compose(),
@@ -165,10 +169,9 @@ pub(super) fn perform(app: &mut App, action: Action) {
             app.board.loading = false;
         }
         Action::BoardFilter => app.open_board_filter(),
+        Action::BoardClearFilter => app.clear_board_filter(),
         Action::BoardDown => board_move(app, 0, 1),
         Action::BoardUp => board_move(app, 0, -1),
-        Action::BoardPageDown => board_move(app, 0, 5),
-        Action::BoardPageUp => board_move(app, 0, -5),
         Action::BoardLeft => board_move(app, -1, 0),
         Action::BoardRight => board_move(app, 1, 0),
         Action::BoardExpand => {
@@ -201,6 +204,18 @@ pub(super) fn perform(app: &mut App, action: Action) {
             app.board_filter_step(1);
         }
     }
+}
+
+/// Enter in Issues or PRs: the selected row becomes the current item and
+/// is filed, as the second click on a row does.
+fn open_row(app: &mut App) {
+    let order = if app.nav.pane == crate::core::Pane::PRs { app.pr_numbers() } else { app.issue_numbers() };
+    let Some(n) = app.nav.hover.filter(|n| order.contains(n)).or(app.nav.current.filter(|n| order.contains(n)))
+    else {
+        return;
+    };
+    app.request_issue(n);
+    app.ensure_visited(n);
 }
 
 /// `Z`: fold every parent, or unfold all when any is folded.

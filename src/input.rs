@@ -4,6 +4,7 @@
 //! cursor math delegates to `core` so the rules stay testable without a TUI.
 
 mod actions;
+mod reach;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -14,9 +15,20 @@ use crate::keymap;
 
 pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
     let chain = keymap::active_contexts(app);
+    // A waiting prefix takes the next key; any other key drops the
+    // prefix and runs as usual.
+    if let Some(prefix) = app.pending_prefix.take() {
+        if let Some(binding) = keymap::lookup_after(&chain, prefix, key, app) {
+            actions::perform(app, binding.action);
+            return;
+        }
+    }
     match keymap::lookup(&chain, key, app) {
         Some(binding) => actions::perform(app, binding.action),
-        None => type_text(app, key),
+        None => match keymap::sequence_start(&chain, key, app) {
+            Some(prefix) => app.pending_prefix = Some(prefix),
+            None => type_text(app, key),
+        },
     }
 }
 
@@ -41,7 +53,7 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
             }
         }
         // Typing on the text row starts editing, like the old dialog.
-        Layer::Dialog(Dialog::BoardFilter) if app.board.filter_focus == 0 => {
+        Layer::Dialog(Dialog::BoardFilter) if app.board.filter_focus == 0 && !chord => {
             app.sidebar.query_edit = true;
             app.sidebar.query_draft.push(c);
         }
@@ -308,6 +320,9 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
+    if matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
+        app.pending_prefix = None;
+    }
     let stack = app.layer_stack();
     let open = |dialog: Dialog| stack.contains(&Layer::Dialog(dialog));
     if open(Dialog::Confirm) {
@@ -1282,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_s_submits_pending_review() {
+    fn ctrl_s_submits_pending_review() {
         let mut app = compose_app();
         let d = app.issues.data.get_mut(&7).unwrap();
         d.is_pr = true;
@@ -1293,8 +1308,8 @@ mod tests {
             comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
             ..Default::default()
         }];
-        handle_key(&mut app, plain_key(KeyCode::Char('S')));
-        assert!(app.compose.submitting.contains(&7), "S starts the submit");
+        handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.compose.submitting.contains(&7), "ctrl-s starts the submit");
     }
 
     fn step_app() -> App {
@@ -1370,24 +1385,21 @@ mod tests {
     }
 
     #[test]
-    fn board_esc_clears_filter_then_closes_and_filter_form_esc_clears_and_closes() {
+    fn board_esc_closes_one_layer_and_keeps_the_filter() {
         use crate::core::{Dialog, Layer};
         let mut app = step_app();
         app.board.loading = true;
         assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Board));
         app.board.filter = "bug".to_string();
-        handle_key(&mut app, plain_key(KeyCode::Esc));
-        assert!(board_open(&app), "first Esc only clears the filter");
-        assert!(app.board.filter.is_empty());
         app.open_board_filter();
         assert_eq!(app.focus().layer, Layer::Dialog(Dialog::BoardFilter));
-        app.board.filter = "bug".to_string();
         handle_key(&mut app, plain_key(KeyCode::Esc));
         assert!(!app.sidebar.filter_open, "form Esc closes the form");
-        assert!(app.board.filter.is_empty(), "and clears the filter (differs from Format)");
+        assert_eq!(app.board.filter, "bug", "and keeps the filter");
         assert!(board_open(&app), "the board stays up");
         handle_key(&mut app, plain_key(KeyCode::Esc));
-        assert!(!board_open(&app));
+        assert!(!board_open(&app), "board Esc closes the board");
+        assert_eq!(app.board.filter, "bug", "and keeps the filter");
     }
 
     #[test]
@@ -1515,5 +1527,130 @@ mod tests {
         assert!(app.confirm.is_none(), "esc dismisses");
         assert!(app.auth.dismissed, "esc counts as dismissed");
         assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
+    }
+    fn press(app: &mut App, c: char) {
+        handle_key(app, plain_key(KeyCode::Char(c)));
+    }
+
+    #[test]
+    fn gg_jumps_and_a_stray_key_cancels_the_prefix() {
+        let mut app = step_app();
+        app.nav.pane = Pane::Issues;
+        app.show_issue(8);
+        press(&mut app, 'g');
+        assert_eq!(app.pending_prefix, Some('g'), "g waits");
+        assert_eq!(app.nav.current, Some(8));
+        press(&mut app, 'g');
+        assert_eq!(app.pending_prefix, None);
+        assert_eq!(app.nav.current, Some(7), "gg selects the first row");
+        press(&mut app, 'G');
+        assert_eq!(app.nav.current, Some(8), "G selects the last row");
+        press(&mut app, 'g');
+        press(&mut app, 'k');
+        assert_eq!(app.pending_prefix, None, "any other key cancels");
+        assert_eq!(app.nav.current, Some(7), "and runs as usual");
+    }
+
+    #[test]
+    fn a_mouse_press_drops_a_waiting_prefix() {
+        let mut app = step_app();
+        press(&mut app, 'g');
+        handle_mouse(&mut app, MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.pending_prefix, None);
+    }
+
+    #[test]
+    fn q_closes_the_top_dialog_and_quits_only_at_base() {
+        let mut app = step_app();
+        app.sidebar.filter_open = true;
+        press(&mut app, 'q');
+        assert!(!app.sidebar.filter_open && !app.quit, "q closes the Format dialog");
+        app.shortcuts_open = true;
+        press(&mut app, 'q');
+        assert!(!app.shortcuts_open && !app.quit, "q closes help");
+        app.board.loading = true;
+        press(&mut app, 'q');
+        assert!(!board_open(&app) && !app.quit, "q closes the board");
+        press(&mut app, 'q');
+        assert!(app.quit, "q at base quits");
+    }
+
+    #[test]
+    fn q_types_in_text_inputs_and_esc_never_quits() {
+        let mut app = step_app();
+        app.nav.focus = Focus::Bar;
+        press(&mut app, 'q');
+        assert_eq!(app.bar, "q");
+        assert!(!app.quit);
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(app.bar.is_empty() && app.nav.focus == Focus::Main);
+        handle_key(&mut app, plain_key(KeyCode::Esc));
+        assert!(!app.quit, "Esc at base does nothing");
+    }
+
+    #[test]
+    fn help_opens_from_the_board_and_its_filter_form() {
+        let mut app = step_app();
+        app.board.loading = true;
+        press(&mut app, '?');
+        assert!(app.shortcuts_open);
+        app.shortcuts_open = false;
+        app.open_board_filter();
+        app.board.filter_focus = 1;
+        press(&mut app, '?');
+        assert!(app.shortcuts_open, "help opens on a form row");
+        app.shortcuts_open = false;
+        app.board.filter_focus = 0;
+        press(&mut app, '?');
+        assert!(!app.shortcuts_open && app.sidebar.query_draft == "?", "the text row types ?");
+    }
+
+    #[test]
+    fn enter_opens_the_selected_row_and_files_it() {
+        let mut app = step_app();
+        app.nav.pane = Pane::Issues;
+        app.nav.visited.clear();
+        app.nav.recent = vec![7, 8];
+        app.show_issue(8);
+        assert!(!app.nav.visited.contains(&8), "a preview does not file the row");
+        handle_key(&mut app, plain_key(KeyCode::Enter));
+        assert_eq!(app.nav.current, Some(8));
+        assert!(app.nav.visited.contains(&8), "Enter files the row like a second click");
+    }
+
+    #[test]
+    fn brackets_step_issues_from_any_pane() {
+        let mut app = step_app();
+        for pane in [Pane::Main, Pane::Issues, Pane::Refs] {
+            app.nav.pane = pane;
+            press(&mut app, ']');
+            assert_eq!(app.nav.current, Some(8), "{pane:?}");
+            press(&mut app, '[');
+            assert_eq!(app.nav.current, Some(7), "{pane:?}");
+        }
+    }
+
+    #[test]
+    fn page_and_half_page_follow_the_visible_height() {
+        let mut app = step_app();
+        app.hits.body_area = Rect::new(0, 0, 40, 20);
+        app.hits.body_total = 200;
+        handle_key(&mut app, plain_key(KeyCode::PageDown));
+        assert_eq!(app.nav.scroll, 20, "a page is the visible height");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('d')));
+        assert_eq!(app.nav.scroll, 30, "half a page");
+        handle_key(&mut app, ctrl_key(KeyCode::Char('u')));
+        handle_key(&mut app, plain_key(KeyCode::PageUp));
+        assert_eq!(app.nav.scroll, 0);
+        press(&mut app, 'G');
+        assert_eq!(app.nav.scroll, 180, "G ends on the last full view");
+        press(&mut app, 'g');
+        press(&mut app, 'g');
+        assert_eq!(app.nav.scroll, 0);
     }
 }

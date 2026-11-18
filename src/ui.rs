@@ -2070,6 +2070,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if let (Some(n), crate::app::Tab::Details) = (app.refs.highlight, app.nav.tab) {
         highlight_mentions(&mut text.lines, n, app.repo_key().as_deref());
     }
+    app.hits.body_total = text_rows(&text, usize::from(rows[4].width.saturating_sub(5)).max(1));
     let pane = Paragraph::new(text)
         .style(base())
         .wrap(Wrap { trim: false })
@@ -2082,6 +2083,11 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.body_area = gutter[1];
     f.render_widget(pane, gutter[1]);
 
+}
+
+/// Rows `text` takes at `width` cells, counting each line's wraps.
+fn text_rows(text: &ratatui::text::Text, width: usize) -> usize {
+    text.lines.iter().map(|line| line.width().max(1).div_ceil(width)).sum()
 }
 
 /// Status bar spinner frames, stepped by the event-loop tick. Braille
@@ -2105,7 +2111,7 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let shown = if text.is_empty() {
             if app.sidebar.searching {
                 format!(
-                    "instant filter loaded: title, #n, label, author · sort {} (a/A) …",
+                    "instant filter loaded: title, #n, label, author · sort {} (s/S) …",
                     app.sort_label()
                 )
             } else {
@@ -2157,6 +2163,9 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             let frame = spinner_frame(app.tick);
             segments.push((format!("{frame} {shown}"), false));
         }
+    }
+    if let Some(prefix) = app.pending_prefix {
+        segments.push((format!("{prefix}…"), true));
     }
     if app.message_visible() && !app.message.is_empty() {
         segments.push((format!("\u{f071} {}", app.message), true));
@@ -3298,7 +3307,7 @@ mod render_smoke {
     }
 
     #[test]
-    fn board_filter_narrows_columns_then_esc_restores() {
+    fn board_filter_narrows_columns_then_x_restores() {
         use crossterm::event::KeyEvent;
         // Enter/Esc persist the filter, so isolate the data dir.
         let _prefs = TempPrefs::new();
@@ -3340,7 +3349,7 @@ mod render_smoke {
         board_move(&mut app, 0, 1);
         assert_eq!((app.board.col, app.board.row), (0, 0), "cursor clamps to the filtered column");
 
-        key(&mut app, KeyCode::Esc);
+        key(&mut app, KeyCode::Char('X'));
         let restored = frame_text(&mut app);
         assert!(restored.contains("Todo (2)") && restored.contains("Done (1)"), "clear restores: {restored}");
         assert!(!restored.contains("no matches"), "empty label clears: {restored}");
@@ -4128,11 +4137,11 @@ mod render_smoke {
     }
 
     #[test]
-    fn g_opens_the_format_dialog_in_query_edit_mode() {
+    fn capital_f_opens_the_format_dialog_in_query_edit_mode() {
         let _prefs = TempPrefs::new();
         let mut app = loaded_app();
-        handle_key(&mut app, key(KeyCode::Char('g')));
-        assert!(app.sidebar.filter_open, "g opens the sidebar dialog");
+        handle_key(&mut app, key(KeyCode::Char('F')));
+        assert!(app.sidebar.filter_open, "F opens the sidebar dialog");
         assert!(app.sidebar.query_edit, "the query field starts editing");
         let text = frame_text(&mut app);
         assert!(text.contains("1 Query"), "{text}");
@@ -4144,9 +4153,9 @@ mod render_smoke {
         assert!(app.sidebar.filter_open, "esc keeps the dialog up");
         assert!(!app.sidebar.query_edit);
         assert!(app.sidebar.query_draft.is_empty(), "esc reverts the draft");
-        // `S` still submits pending review; it never opens the dialog.
+        // `ctrl-s` submits the pending review; it never opens the dialog.
         app.sidebar.filter_open = false;
-        handle_key(&mut app, key(KeyCode::Char('S')));
+        handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
         assert!(!app.sidebar.filter_open);
         assert!(app.message.contains("no pending comments"), "{}", app.message);
     }
@@ -4255,8 +4264,8 @@ mod render_smoke {
         assert!(!app.sidebar.sort_desc);
         assert_ne!(app.issue_rows(), descending);
         let mut via_shortcuts = loaded_app();
-        handle_key(&mut via_shortcuts, key(KeyCode::Char('a')));
-        handle_key(&mut via_shortcuts, key(KeyCode::Char('A')));
+        handle_key(&mut via_shortcuts, key(KeyCode::Char('s')));
+        handle_key(&mut via_shortcuts, key(KeyCode::Char('S')));
         assert_eq!((app.sidebar.sort, app.sidebar.sort_desc),
             (via_shortcuts.sidebar.sort, via_shortcuts.sidebar.sort_desc));
     }
@@ -4458,13 +4467,18 @@ mod render_smoke {
     }
 
     #[test]
-    fn arrows_scroll_instead() {
+    fn arrows_move_like_j_and_k() {
+        use crate::core::Pane;
         let mut app = loaded_app();
+        app.nav.pane = Pane::Main;
         handle_key(&mut app, key(KeyCode::Down));
         assert_eq!(app.nav.scroll, 3);
         assert_eq!(app.nav.current, Some(7));
         handle_key(&mut app, key(KeyCode::Up));
         assert_eq!(app.nav.scroll, 0);
+        app.nav.pane = Pane::Issues;
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.nav.scroll, 0, "in a list the arrow selects");
     }
 
     #[test]
@@ -4527,7 +4541,7 @@ mod render_smoke {
         assert!(text.contains("01/05/20 · \u{f10c} Todo"), "date and status: {text}");
 
         // One key cycles the sort; the `/` hint names key and direction.
-        handle_key(&mut app, key(KeyCode::Char('a')));
+        handle_key(&mut app, key(KeyCode::Char('s')));
         assert_eq!(app.sidebar.sort, crate::core::SideSort::Updated);
         let sorted = sidebar_text(&mut app);
         assert!(
@@ -5954,6 +5968,31 @@ mod render_smoke {
     }
 
     #[test]
+    fn pending_g_shows_in_the_bar_until_the_next_key() {
+        let mut app = loaded_app();
+        assert!(!frame_text(&mut app).contains("g…"));
+        handle_key(&mut app, key(KeyCode::Char('g')));
+        assert!(frame_text(&mut app).contains("g…"), "the prefix waits in the bar");
+        handle_key(&mut app, key(KeyCode::Char('g')));
+        assert!(!frame_text(&mut app).contains("g…"), "gg ends the wait");
+    }
+
+    #[test]
+    fn h_and_l_fold_and_unfold_the_diff_file() {
+        let mut app = diff_loaded_app();
+        app.nav.pane = crate::core::Pane::Main;
+        let key9 = (9, "src/a.rs".to_string());
+        assert!(app.diff.expanded_files.contains(&key9));
+        handle_key(&mut app, key(KeyCode::Char('h')));
+        assert!(!app.diff.expanded_files.contains(&key9), "h folds");
+        handle_key(&mut app, key(KeyCode::Char('h')));
+        assert!(!app.diff.expanded_files.contains(&key9), "h on a folded file stays folded");
+        handle_key(&mut app, key(KeyCode::Char('l')));
+        assert!(app.diff.expanded_files.contains(&key9), "l unfolds");
+        assert_eq!(app.nav.current, Some(9), "h/l no longer step issues here");
+    }
+
+    #[test]
     fn unified_mode_hints_at_split() {
         let mut app = diff_loaded_app();
         let text = frame_text(&mut app);
@@ -5962,7 +6001,9 @@ mod render_smoke {
 
     #[test]
     fn s_toggles_split_only_on_diff_tab() {
+        use crate::core::Pane;
         let mut app = diff_loaded_app();
+        app.nav.pane = Pane::Main;
         handle_key(&mut app, key(KeyCode::Char('s')));
         assert!(app.diff.split);
         assert!(app.message.contains("split"));

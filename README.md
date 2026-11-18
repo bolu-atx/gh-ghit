@@ -65,7 +65,7 @@ A window refresh can remove vanished background rows that were not opened or pin
 
 The Visual tab shows a PR diff with line numbers or an issue graph.
 In a diff, `c` starts a line comment or replies to the review thread under the cursor.
-Use `S` to submit a pending review.
+Use `Ctrl+S` to submit a pending review.
 The board opens the first Projects v2 project for the repository owner and loads its item pages through GraphQL.
 Its filter matches card title, number, or label and can select milestones.
 
@@ -85,18 +85,27 @@ The essentials:
 | Keys | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Cycle panes in screen order (Issues, PRs, Main, Refs, Filters, History) |
-| `j` / `k` | Select the next or previous row |
-| `↑` / `↓`, Page Up / Page Down | Scroll the main pane |
+| `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards, graph nodes (scroll the main pane) |
+| `gg` / `G` | Jump to the top / bottom of any list or scroll area |
+| `Ctrl+D` / `Ctrl+U`, Page Down / Page Up | Half page / full page |
+| `Enter` | Open the selected row, reference, card or graph node; apply in dialogs |
+| `Space` | Expand a row, toggle a chip, fold a diff file |
+| `[` / `]` | Previous / next issue from any pane |
+| `h` / `l` | Fold / unfold tree rows and diff files; move between graph nodes and board columns; elsewhere step issues |
+| `s` / `S` | Cycle / reverse the sort in Issues and PRs (`s` toggles split in the diff) |
+| `Ctrl+S` | Submit the pending review |
 | `1` / `2` | Details / Visual tab |
 | `:` / `/` | Command bar / find |
-| `f` / `b` | Format and filter / board |
+| `f` / `b` / `F` | Format and filter / board / search GitHub |
 | `c` | Comment |
 | `u` | Undo the last evict or saved-query delete (within 4 s) |
 | `Ctrl+O` / `Ctrl+I` | Back / forward in history |
-| `?` / `q` | Shortcuts / quit |
+| `Esc` | Back: closes one layer; at the base it clears find and highlight |
+| `q` | Close the top dialog; at the base, quit |
+| `?` | Shortcuts |
 
-Outside dialogs, `h` / `l` step between neighboring issues and PRs from any pane.
-In a focused issue graph, they move between graph nodes instead.
+After `g`, the status bar shows `g…` until the next key.
+
 `R` reopens the re-authentication prompt when authentication is degraded.
 
 ## Mouse and keyboard

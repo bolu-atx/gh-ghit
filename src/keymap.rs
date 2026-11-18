@@ -7,8 +7,12 @@
 //! Resolution follows the focus layer stack. A dialog or text input
 //! owns every key, so only its own table is searched. Under them the
 //! base layer searches the Graph sub-mode, the focused pane, the Diff
-//! sub-mode, then Global. In each table the first match wins, so a
-//! Ctrl row must come before a plain row with the same key.
+//! sub-mode, then Global. In each table the first match wins.
+//!
+//! A binding may name a `prefix`: it then fires on its key only right
+//! after the prefix key, as in `gg`. A key that starts a sequence and
+//! has no binding of its own waits for the next key; `input` keeps the
+//! pending prefix on `App`.
 
 mod tables;
 
@@ -35,17 +39,17 @@ actions! {
     // Global.
     HistoryBack, HistoryForward, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
     OpenBoard, Comment, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
-    ScrollDown, ScrollUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
+    JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     OpenBrowser, Refresh, Reauth, Pin, Yank, ToggleRefs, ToggleSidebar, SubmitReview,
     ToggleRow, MergedWindow, Back, NextPane, PrevPane,
     // Panes.
     TreeExpand, TreeCollapse, TreeToggle, TreeFoldAll, CycleSort, ReverseSort, Evict,
-    OpenRef, ToggleLabel, ClearLabels, OpenHistoryRow,
+    OpenRef, ToggleLabel, ClearLabels, OpenHistoryRow, OpenRow,
     // Main sub-modes.
     DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile,
-    GraphNext, GraphPrev, GraphOpen,
+    DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen,
     // Shortcuts, confirm, compose.
-    CloseHelp, HelpDown, HelpUp, HelpPageDown, HelpPageUp, ConfirmFirst,
+    CloseHelp, HelpDown, HelpUp, ConfirmFirst,
     ComposeSend, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
     ComposeUp, ComposeDown, ComposeBackspace, ComposeDelete, ComposeKillEnd, ComposeKillStart,
     ComposeDeleteWordBack, ComposeYank, ComposeTranspose, ComposeNewline, ComposeTab,
@@ -56,9 +60,9 @@ actions! {
     ToggleOpenIssues, ToggleClosedIssues, CycleGroup, FormatColumn, FormatDown, FormatUp,
     FormatToggle,
     // Board and board filter.
-    CloseBoard, BoardFilter, BoardDown, BoardUp, BoardPageDown, BoardPageUp, BoardLeft,
+    CloseBoard, BoardFilter, BoardDown, BoardUp, BoardLeft,
     BoardRight, BoardExpand, BoardOpen, BoardApply, BoardToggle, BoardFilterNext,
-    BoardFilterPrev,
+    BoardFilterPrev, BoardClearFilter,
     // Text inputs.
     InputSubmit, InputBackspace, InputUp, InputDown,
 }
@@ -83,9 +87,9 @@ pub(crate) enum Context {
 
 /// Modifier rule of a binding.
 ///
-/// `Plain` ignores Shift. In most contexts it also ignores Ctrl and Alt,
-/// as the old `match` blocks did, so a Ctrl row must come first. A strict
-/// context (see `Context::strict`) needs exact modifiers.
+/// `Plain` ignores Shift but fails while Ctrl or Alt is held. `Ctrl` and
+/// `Alt` need exactly their modifier. A strict context (see
+/// `Context::strict`) also folds letter case in chords.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mods {
     Plain,
@@ -109,6 +113,8 @@ pub(crate) enum Gesture {
 #[derive(Clone, Copy)]
 pub(crate) struct Binding {
     pub(crate) key: KeyCode,
+    /// Key that must come right before this one, as the first `g` of `gg`.
+    pub(crate) prefix: Option<char>,
     pub(crate) mods: Mods,
     pub(crate) action: Action,
     /// Short help and hint text, imperative, sentence case.
@@ -130,7 +136,7 @@ impl Binding {
         group: &'static str,
         mouse: Gesture,
     ) -> Self {
-        Self { key, mods: Mods::Plain, action, label, group, hint: None, mouse, when: None }
+        Self { key, prefix: None, mods: Mods::Plain, action, label, group, hint: None, mouse, when: None }
     }
 
     pub(crate) const fn ctrl(mut self) -> Self {
@@ -145,6 +151,11 @@ impl Binding {
 
     pub(crate) const fn any(mut self) -> Self {
         self.mods = Mods::Any;
+        self
+    }
+
+    pub(crate) const fn after(mut self, prefix: char) -> Self {
+        self.prefix = Some(prefix);
         self
     }
 
@@ -166,12 +177,9 @@ impl Binding {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match (self.mods, strict) {
             (Mods::Any, _) => true,
-            (Mods::Plain, false) => true,
-            (Mods::Plain, true) => !ctrl && !alt,
-            (Mods::Ctrl, false) => ctrl,
-            (Mods::Ctrl, true) => ctrl && !alt,
-            (Mods::Alt, false) => alt,
-            (Mods::Alt, true) => alt && !ctrl,
+            (Mods::Plain, _) => !ctrl && !alt,
+            (Mods::Ctrl, _) => ctrl && !alt,
+            (Mods::Alt, _) => alt && !ctrl,
         }
     }
 
@@ -195,6 +203,10 @@ impl Binding {
             KeyCode::PageUp => "page up".to_string(),
             KeyCode::PageDown => "page down".to_string(),
             other => format!("{other:?}").to_lowercase(),
+        };
+        let base = match self.prefix {
+            Some(prefix) => format!("{prefix}{base}"),
+            None => base,
         };
         match self.mods {
             Mods::Ctrl => format!("ctrl-{base}"),
@@ -323,13 +335,43 @@ pub(crate) fn base_contexts(app: &App) -> Vec<Context> {
     chain
 }
 
-/// First binding that takes `key`, searching `chain` top down.
-pub(crate) fn lookup(chain: &[Context], key: KeyEvent, app: &App) -> Option<&'static Binding> {
+/// First binding that takes `key` after `prefix`, searching `chain` top down.
+fn find(chain: &[Context], key: KeyEvent, prefix: Option<char>, app: &App) -> Option<&'static Binding> {
     chain.iter().find_map(|context| {
         bindings(*context).find(|binding| {
-            binding.matches(key, context.strict()) && binding.when.is_none_or(|test| test(app))
+            binding.prefix == prefix
+                && binding.matches(key, context.strict())
+                && binding.when.is_none_or(|test| test(app))
         })
     })
+}
+
+/// First binding that takes `key` on its own, searching `chain` top down.
+pub(crate) fn lookup(chain: &[Context], key: KeyEvent, app: &App) -> Option<&'static Binding> {
+    find(chain, key, None, app)
+}
+
+/// The binding that `key` completes after `prefix` was pressed.
+pub(crate) fn lookup_after(
+    chain: &[Context],
+    prefix: char,
+    key: KeyEvent,
+    app: &App,
+) -> Option<&'static Binding> {
+    find(chain, key, Some(prefix), app)
+}
+
+/// The prefix `key` opens: a plain character that some live binding in
+/// `chain` waits on. Call it only after `lookup` found nothing.
+pub(crate) fn sequence_start(chain: &[Context], key: KeyEvent, app: &App) -> Option<char> {
+    let KeyCode::Char(c) = key.code else { return None };
+    if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return None;
+    }
+    chain.iter()
+        .flat_map(|context| bindings(*context))
+        .any(|binding| binding.prefix == Some(c) && binding.when.is_none_or(|test| test(app)))
+        .then_some(c)
 }
 
 /// One line of the help screen: the keys that run one action.
