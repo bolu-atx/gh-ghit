@@ -44,8 +44,8 @@ What good code looks like here:
   unrelated code and only grow.
 - Size budget (project rule). When a file passes about 800 lines without
   its tests, or about 1500 lines in total, split it before you add more.
-  This file is over budget today: `model.rs`. When you change it, do not
-  add a new concern to it. Split it in a separate `refactor:` change instead.
+  No file is over budget today. Split any file that grows past it in a
+  separate `refactor:` change.
 - How to split. Cut along a path seam: a group of functions that call each
   other, plus their tests. Do not cut by item kind (all structs here, all
   functions there). The parent file stays the module root. It re-exports
