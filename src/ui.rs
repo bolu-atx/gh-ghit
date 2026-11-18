@@ -21,6 +21,30 @@ use crate::keymap::{Action, Context};
 use crate::model::{self, IssueData};
 use crate::theme;
 
+/// Record which columns this frame hides for width, drop focus from a
+/// hidden pane, and toast once when a column newly goes away.
+fn apply_narrow(app: &mut App, sidebar_w: u16, right_w: u16) {
+    use crate::core::Pane;
+    let sidebar = app.sidebar.show && sidebar_w == 0;
+    let right = app.right_wanted() && right_w == 0;
+    let notice = match (sidebar && !app.hits.narrow_sidebar, right && !app.hits.narrow_right) {
+        (true, _) => Some("narrow terminal: sidebar hidden"),
+        (_, true) => Some("narrow terminal: right column hidden"),
+        _ => None,
+    };
+    app.hits.narrow_sidebar = sidebar;
+    app.hits.narrow_right = right;
+    if sidebar && matches!(app.nav.pane, Pane::Issues | Pane::PRs) {
+        app.nav.pane = Pane::Main;
+    }
+    if right && matches!(app.nav.pane, Pane::Refs | Pane::Labels | Pane::History) {
+        app.nav.pane = Pane::Main;
+    }
+    if let Some(msg) = notice {
+        app.notify(msg.to_string());
+    }
+}
+
 pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     use crate::theme::ink;
     f.render_widget(Block::default().style(Style::new().bg(ink())), f.area());
@@ -40,15 +64,18 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     app.hits.labels_rows.clear();
     app.hits.side_issue_area = Rect::default();
     app.hits.side_pr_area = Rect::default();
+    let (sidebar_w, right_w) =
+        crate::core::columns(root[0].width, app.sidebar.show, app.right_wanted());
+    apply_narrow(app, sidebar_w, right_w);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(if app.sidebar.show { 44 } else { 0 }),
+            Constraint::Length(sidebar_w),
             Constraint::Min(1),
-            Constraint::Length(if app.right_visible() { 36 } else { 0 }),
+            Constraint::Length(right_w),
         ])
         .split(root[0]);
-    if app.sidebar.show {
+    if app.sidebar_visible() {
         render_sidebar(f, cols[0], app);
     }
     render_main(f, cols[1], app);
@@ -3244,6 +3271,65 @@ mod render_smoke {
         assert_eq!(app.nav.current, current, "release changes nothing");
         assert_eq!(app.nav.hover, hover, "release keeps hover");
         assert_eq!(app.nav.visited, visited, "release files nothing");
+    }
+
+    fn frame_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
+    }
+
+    /// Issue 7 with a Refs pane, a History stack and a toggled-on sidebar.
+    fn wide_content_app() -> App {
+        let mut app = loaded_app();
+        app.refs.numbers = vec![9];
+        app.nav.history = vec![9];
+        app
+    }
+
+    #[test]
+    fn narrow_frames_keep_main_wide_and_drop_columns_in_order() {
+        use crate::core::Pane;
+        // Pins the rule: main keeps 40 columns.
+        const MIN_MAIN_WIDTH: u16 = 40;
+        // Main's border and padding take this many columns off the body.
+        const MAIN_CHROME: u16 = 5;
+        for (width, sidebar, right) in [(80u16, false, false), (100, true, false), (120, true, true)] {
+            let mut app = wide_content_app();
+            let rows = frame_rows(&mut app, width, 30);
+            let text = rows.join("\n");
+            assert_eq!(text.contains("Issues"), sidebar, "sidebar at {width}: {text}");
+            assert_eq!(text.contains("Refs"), right, "right column at {width}: {text}");
+            assert!(rows.iter().any(|r| r.contains("Fix the thing")), "title on one row at {width}: {text}");
+            assert!(app.hits.body_area.width + MAIN_CHROME >= MIN_MAIN_WIDTH, "main width {:?} at {width}", app.hits.body_area);
+            assert!(app.sidebar.show && app.refs.show, "saved toggles stay on at {width}");
+            let mut seen = vec![app.nav.pane];
+            for _ in 0..6 {
+                handle_key(&mut app, key(KeyCode::Tab));
+                seen.push(app.nav.pane);
+            }
+            assert_eq!(seen.contains(&Pane::Issues), sidebar, "Tab reaches sidebar at {width}: {seen:?}");
+            assert_eq!(seen.contains(&Pane::Refs), right, "Tab reaches Refs at {width}: {seen:?}");
+        }
+    }
+
+    #[test]
+    fn focus_on_a_width_hidden_pane_falls_to_main_and_toasts_once() {
+        use crate::core::Pane;
+        let mut app = wide_content_app();
+        frame_rows(&mut app, 120, 30);
+        app.nav.pane = Pane::Refs;
+        frame_rows(&mut app, 90, 30);
+        assert_eq!(app.nav.pane, Pane::Main);
+        assert_eq!(app.message, "narrow terminal: right column hidden");
+        app.message.clear();
+        frame_rows(&mut app, 90, 30);
+        assert!(app.message.is_empty(), "no repeat toast while the width holds");
+        frame_rows(&mut app, 120, 30);
+        assert!(app.right_visible(), "column returns when the width does");
     }
 
     #[test]

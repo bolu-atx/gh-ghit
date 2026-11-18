@@ -679,6 +679,11 @@ pub(crate) struct HitAreas {
     pub(crate) last_click: Option<(Rect, Instant)>,
     /// Title controls, dialog-footer hints, popup and menu rows.
     pub(crate) ctl: crate::controls::ControlHits,
+    /// Columns this frame hid for lack of width. Set by `render` before it
+    /// draws, read by every "is this pane visible" check. The saved
+    /// toggles (`sidebar.show`, `refs.show`) stay untouched.
+    pub(crate) narrow_sidebar: bool,
+    pub(crate) narrow_right: bool,
 }
 
 pub(crate) struct App {
@@ -1985,6 +1990,11 @@ impl App {
     /// The right column shows when toggled on and it has Refs, History or
     /// the Labels pane.
     pub(crate) fn right_visible(&self) -> bool {
+        !self.hits.narrow_right && self.right_wanted()
+    }
+
+    /// The right column's content rule, before the terminal width has a say.
+    pub(crate) fn right_wanted(&self) -> bool {
         self.refs.show
             && (self.refs_visible() || !self.nav.history.is_empty() || self.labels_visible())
     }
@@ -2023,6 +2033,11 @@ impl App {
         }
         self.persist_prefs();
         self.notify(if self.refs.show { "right pane: shown" } else { "right pane: hidden" }.to_string());
+    }
+
+    /// The sidebar is on screen: toggled on and not hidden by width.
+    pub(crate) fn sidebar_visible(&self) -> bool {
+        self.sidebar.show && !self.hits.narrow_sidebar
     }
 
     /// Flip the left sidebar (`E`). Focus leaves the hidden panes.
@@ -2100,9 +2115,9 @@ impl App {
     /// Visible panes in screen order.
     pub(crate) fn visible_panes(&self) -> Vec<Pane> {
         core::visible_panes(&core::PaneVisibility {
-            sidebar: self.sidebar.show,
-            refs: self.refs_visible(),
-            labels: self.labels_visible(),
+            sidebar: self.sidebar_visible(),
+            refs: self.refs_visible() && self.right_visible(),
+            labels: self.labels_visible() && self.right_visible(),
             history: self.history_visible(),
         })
     }
