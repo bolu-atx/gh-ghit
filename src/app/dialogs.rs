@@ -5,6 +5,7 @@
 
 use crate::app::{App, ConfirmDialog, MenuState};
 use crate::app::compose::ComposeState;
+use crate::app::finder::FinderState;
 use crate::core::{Dialog, Layer, TextInput};
 
 /// Which row of the Format dialog takes typed text, if any.
@@ -20,6 +21,7 @@ pub(crate) enum Entry {
     Board,
     Format(FormatEdit),
     Menu(MenuState),
+    Finder(FinderState),
     Compose(ComposeState),
     Confirm(ConfirmDialog),
     Shortcuts,
@@ -27,12 +29,15 @@ pub(crate) enum Entry {
 
 /// The kind of an entry. Declaration order is stacking order: a kind
 /// opens above every kind declared before it, so a late confirm or a
-/// menu never lands under the help screen or the board.
+/// menu never lands under the help screen or the board. The finder sits
+/// above the menu and the board, but under the editor, the confirm and
+/// the help: a late confirm must stay on top of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Slot {
     Board,
     Format,
     Menu,
+    Finder,
     Compose,
     Confirm,
     Shortcuts,
@@ -44,6 +49,7 @@ impl Entry {
             Entry::Board => Slot::Board,
             Entry::Format(_) => Slot::Format,
             Entry::Menu(_) => Slot::Menu,
+            Entry::Finder(_) => Slot::Finder,
             Entry::Compose(_) => Slot::Compose,
             Entry::Confirm(_) => Slot::Confirm,
             Entry::Shortcuts => Slot::Shortcuts,
@@ -166,6 +172,7 @@ impl App {
                     }
                 }
                 Entry::Menu(_) => stack.push(Layer::Dialog(Dialog::Menu)),
+                Entry::Finder(_) => stack.push(Layer::Dialog(Dialog::Finder)),
                 Entry::Compose(_) => stack.push(Layer::Dialog(Dialog::Compose)),
                 Entry::Confirm(_) => stack.push(Layer::Dialog(Dialog::Confirm)),
                 Entry::Shortcuts => stack.push(Layer::Dialog(Dialog::Shortcuts)),

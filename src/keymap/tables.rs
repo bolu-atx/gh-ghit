@@ -53,6 +53,7 @@ const GLOBAL: &[Binding] = &[
     key(ch('2'), Action::TabVisual, "Visual tab", "View", Gesture::Click).hint_if(8, main_pane),
     key(ch('t'), Action::CycleTheme, "Cycle theme", "View", MENU),
     key(ch('b'), Action::OpenBoard, "Open board", "Open", HINT).hint(10),
+    key(ch('p'), Action::OpenFinder, "Go to issue or PR", "Open", MENU).ctrl(),
     key(ch('c'), Action::Comment, "Comment", "Open", HINT).hint(6),
     key(ch('C'), Action::CloseItem, "Close or reopen", "Open", TITLE).hint_if(12, main_pane),
     key(ch('f'), Action::OpenFormat, "Format and filter", "Open", TITLE),
@@ -153,6 +154,16 @@ const MENU_KEYS: &[Binding] = &[
     key(ch('k'), Action::MenuUp, "Previous action", "Menu", Gesture::Wheel).hint(3),
     key(KeyCode::Up, Action::MenuUp, "Previous action", "Menu", ALIAS),
     key(KeyCode::Enter, Action::MenuRun, "Run action", "Menu", Gesture::Click).hint(4),
+];
+
+const FINDER: &[Binding] = &[
+    key(KeyCode::Esc, Action::Back, "Close", "Finder", OUTSIDE).hint(4),
+    key(KeyCode::Enter, Action::FinderRun, "Open", "Finder", Gesture::Click).hint(1),
+    key(KeyCode::Up, Action::FinderUp, "Previous", "Finder", Gesture::Wheel).hint(2),
+    key(KeyCode::Down, Action::FinderDown, "Next", "Finder", Gesture::Wheel).hint(3),
+    key(ch('p'), Action::FinderUp, "Previous", "Finder", ALIAS).ctrl(),
+    key(ch('n'), Action::FinderDown, "Next", "Finder", ALIAS).ctrl(),
+    key(KeyCode::Backspace, Action::FinderBackspace, "Delete character", "Finder", EDIT).any(),
 ];
 
 const SHORTCUTS: &[Binding] = &[
@@ -335,6 +346,7 @@ pub(super) fn tables(context: Context) -> &'static [&'static [Binding]] {
         Context::Dialog(Dialog::Confirm) => &[CONFIRM],
         Context::Dialog(Dialog::Compose) => &[COMPOSE],
         Context::Dialog(Dialog::Menu) => &[MENU_KEYS],
+        Context::Dialog(Dialog::Finder) => &[FINDER],
         Context::Dialog(Dialog::Format) => &[FORMAT],
         Context::Dialog(Dialog::Board) => &[BOARD],
         Context::Dialog(Dialog::BoardFilter) => &[BOARD_FILTER],

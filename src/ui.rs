@@ -9,6 +9,7 @@ mod compose;
 mod controls;
 mod dialogs;
 mod diff;
+mod finder;
 mod help;
 mod hints;
 mod main_pane;
@@ -23,6 +24,8 @@ mod compose_tests;
 mod dialogs_tests;
 #[cfg(test)]
 mod diff_tests;
+#[cfg(test)]
+mod finder_tests;
 #[cfg(test)]
 mod help_tests;
 #[cfg(test)]
@@ -72,6 +75,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     app.hits.legend.clear();
     app.hits.popup = Rect::default();
     app.hits.menu_rows.clear();
+    app.hits.finder_rows.clear();
     app.hits.history_rows.clear();
     app.hits.history_area = Rect::default();
     app.hits.refs_area = Rect::default();
@@ -219,6 +223,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         render_filter(f, f.area(), app);
     }
     controls::render_menu(f, f.area(), app);
+    if app.finder().is_some() {
+        dim_background(f, 0.35);
+        finder::render_finder(f, f.area(), app);
+    }
     if app.shortcuts_open() {
         dim_background(f, 0.35);
         help::render_shortcuts(f, f.area(), app);

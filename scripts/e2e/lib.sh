@@ -79,6 +79,7 @@ e2e_key_line() { # $1 key name
     C-d) printf '{"type":"key","key":"d","ctrl":true}\n' ;;
     C-u) printf '{"type":"key","key":"u","ctrl":true}\n' ;;
     C-r) printf '{"type":"key","key":"r","ctrl":true}\n' ;;
+    C-p) printf '{"type":"key","key":"p","ctrl":true}\n' ;;
     C-s) printf '{"type":"key","key":"s","ctrl":true}\n' ;;
     \[*\;5u) # kitty CSI-u release, e.g. [105;5u for Ctrl+I redo.
       local code="${1#\[}"; code="${code%%;*}"

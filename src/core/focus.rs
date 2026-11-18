@@ -24,6 +24,8 @@ pub(crate) enum Dialog {
     BoardFilter,
     /// Right-click or repo-segment actions menu.
     Menu,
+    /// Ctrl+P fuzzy finder over issues and PRs.
+    Finder,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

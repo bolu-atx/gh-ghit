@@ -377,6 +377,7 @@ impl App {
             Layer::Dialog(Dialog::Confirm) => self.confirm_cancel(),
             Layer::Dialog(Dialog::Compose) => self.request_discard_compose(),
             Layer::Dialog(Dialog::Menu) => { self.close(Slot::Menu); }
+            Layer::Dialog(Dialog::Finder) => { self.close(Slot::Finder); }
             Layer::Dialog(Dialog::Format) => { self.close(Slot::Format); }
             Layer::Dialog(Dialog::BoardFilter) => {
                 self.close(crate::app::Slot::Format);

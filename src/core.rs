@@ -6,6 +6,7 @@
 //! these functions instead of reimplementing the rules inline.
 
 mod focus;
+mod fuzzy;
 mod layout;
 mod tree;
 mod urgency;
@@ -15,6 +16,7 @@ pub(crate) use focus::{
     Dialog, Layer, Pane, PaneVisibility, TextInput, step_pane,
     visible_panes,
 };
+pub(crate) use fuzzy::score as fuzzy_score;
 pub(crate) use layout::{MAX_DIFF_FILES, SMALL_DIFF_LINES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
 #[cfg(test)]
 pub(crate) use layout::MIN_MAIN_WIDTH;

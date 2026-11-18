@@ -103,6 +103,10 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         menu::handle_modal_mouse(app, m, open(Dialog::Shortcuts));
         return;
     }
+    if open(Dialog::Finder) {
+        super::finder::handle_finder_mouse(app, m);
+        return;
+    }
     if open(Dialog::Menu) {
         menu::handle_menu_mouse(app, m);
         return;

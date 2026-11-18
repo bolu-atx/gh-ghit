@@ -41,7 +41,7 @@ macro_rules! actions {
 actions! {
     // Global.
     HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
-    OpenBoard, Comment, CloseItem, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
+    OpenBoard, OpenFinder, Comment, CloseItem, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     OpenBrowser, Refresh, Reauth, Pin, Yank, ToggleRefs, ToggleSidebar, SubmitReview,
     ToggleRow, MergedWindow, Back, NextPane, PrevPane,
@@ -66,6 +66,8 @@ actions! {
     CloseBoard, BoardFilter, BoardDown, BoardUp, BoardLeft,
     BoardRight, BoardExpand, BoardOpen, BoardApply, BoardToggle, BoardFilterNext,
     BoardFilterPrev, BoardClearFilter,
+    // Finder.
+    FinderDown, FinderUp, FinderRun, FinderBackspace,
     // Text inputs.
     InputSubmit, InputBackspace, InputUp, InputDown,
 }
@@ -259,7 +261,7 @@ impl Context {
     pub(crate) fn types_text(self) -> bool {
         matches!(
             self,
-            Context::Input(_) | Context::Dialog(Dialog::Compose | Dialog::Confirm | Dialog::BoardFilter)
+            Context::Input(_) | Context::Dialog(Dialog::Compose | Dialog::Confirm | Dialog::BoardFilter | Dialog::Finder)
         )
     }
 
@@ -280,6 +282,7 @@ impl Context {
             Context::Dialog(Dialog::Confirm) => "Confirm dialog",
             Context::Dialog(Dialog::Compose) => "Comment editor",
             Context::Dialog(Dialog::Menu) => "Actions menu",
+            Context::Dialog(Dialog::Finder) => "Finder",
             Context::Dialog(Dialog::Format) => "Format dialog",
             Context::Dialog(Dialog::Board) => "Board",
             Context::Dialog(Dialog::BoardFilter) => "Board filter",
@@ -292,7 +295,7 @@ impl Context {
 }
 
 /// Every context, in help order.
-pub(crate) const ALL_CONTEXTS: [Context; 21] = [
+pub(crate) const ALL_CONTEXTS: [Context; 22] = [
     Context::Global,
     Context::Pane(Pane::Issues),
     Context::Pane(Pane::PRs),
@@ -307,6 +310,7 @@ pub(crate) const ALL_CONTEXTS: [Context; 21] = [
     Context::Dialog(Dialog::Confirm),
     Context::Dialog(Dialog::Compose),
     Context::Dialog(Dialog::Menu),
+    Context::Dialog(Dialog::Finder),
     Context::Dialog(Dialog::Format),
     Context::Dialog(Dialog::Board),
     Context::Dialog(Dialog::BoardFilter),

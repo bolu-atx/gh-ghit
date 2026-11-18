@@ -146,6 +146,12 @@ fn compose() -> App {
     app
 }
 
+fn finder() -> App {
+    let mut app = base();
+    app.open_finder();
+    app
+}
+
 fn confirm() -> App {
     let mut app = compose();
     app.request_discard_compose();
@@ -239,6 +245,7 @@ fn contexts() -> Vec<Setup> {
         ("shortcuts", shortcuts),
         ("compose", compose),
         ("confirm", confirm),
+        ("finder", finder),
         ("format", format),
         ("format-query", query),
         ("format-name", name),
@@ -261,7 +268,8 @@ fn keys() -> Vec<(String, KeyEvent)> {
         out.push((format!("{c:?}"), KeyEvent::new(KeyCode::Char(c), mods)));
     }
     for c in 'a'..='z' {
-        if SKIP.contains(&c) {
+        // Plain `p` pins and writes to disk; Ctrl+P only opens the finder.
+        if SKIP.contains(&c) && c != 'p' {
             continue;
         }
         out.push((format!("ctrl-{c}"), KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)));
@@ -325,6 +333,7 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("labels-cursor", app.labels.cursor.to_string()),
         ("compose", format!("{draft:?}/{}", app.compose.editor_requested)),
         ("confirm", format!("{confirm:?}")),
+        ("finder", format!("{:?}", app.finder().map(|f| (f.query.clone(), f.cursor)))),
         ("board", format!("{}/{}/{}/{:?}/{}", app.board.data.is_some(), app.board.col, app.board.row,
             app.board.expanded, app.board.filter_focus)),
         ("board-filter", format!("{:?}/{}", app.board.filter, sorted(&app.board.milestone_draft.iter().cloned().collect()))),

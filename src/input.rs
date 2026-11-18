@@ -5,6 +5,7 @@
 
 mod actions;
 mod click;
+mod finder;
 mod hit;
 mod menu;
 mod mouse;
@@ -57,6 +58,7 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
         Layer::Input(TextInput::Bar) => app.bar.push(c),
         Layer::Input(TextInput::Query | TextInput::BoardQuery) => app.sidebar.query_draft.push(c),
         Layer::Input(TextInput::Name) => app.sidebar.name_draft.push(c),
+        Layer::Dialog(Dialog::Finder) if !chord => app.finder_type(c),
         // The editor never types a control chord into the draft.
         Layer::Dialog(Dialog::Compose) if !chord => app.compose_insert(c),
         Layer::Dialog(Dialog::Confirm) => {
