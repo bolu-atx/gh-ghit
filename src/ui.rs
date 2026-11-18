@@ -306,12 +306,16 @@ struct FormatColumn {
     focus: usize,
     focus_line: Option<usize>,
     rows: Vec<(usize, usize)>,
+    /// Click cells: line, start cell, width, widget index, option index.
+    cells: Vec<FormCell>,
     gutter: usize,
 }
 
+type FormCell = (usize, usize, usize, usize, Option<usize>);
+
 impl FormatColumn {
     fn new(width: usize, focus: usize) -> Self {
-        Self { lines: Vec::new(), width, focus, focus_line: None, rows: Vec::new(), gutter: 0 }
+        Self { lines: Vec::new(), width, focus, focus_line: None, rows: Vec::new(), cells: Vec::new(), gutter: 0 }
     }
 
     /// Label gutter shared by every row in the column: the widest label
@@ -374,6 +378,7 @@ impl FormatColumn {
     fn field(&mut self, index: usize, label: Option<&str>, spans: Vec<Span<'static>>) {
         let active = self.focus == index;
         self.rows.push((index, self.lines.len()));
+        self.cells.push((self.lines.len(), 0, self.width, index, None));
         if active {
             self.focus_line = Some(self.lines.len());
         }
@@ -400,7 +405,7 @@ impl FormatColumn {
         let mut width = indent;
         // Same cells as a chip: marker, radio glyph, space, name, air.
         // The glyph keeps the selection readable without color.
-        for (selected, name) in options.iter() {
+        for (option, (selected, name)) in options.iter().enumerate() {
             let marked = active && *selected;
             let text = format!("{}{} {name}  ", if marked { "▌" } else { " " },
                 if *selected { "●" } else { "○" });
@@ -410,6 +415,7 @@ impl FormatColumn {
                 line = vec![self.blank_span(indent)];
                 width = indent;
             }
+            self.cells.push((self.lines.len(), width, chip_width, index, Some(option)));
             line.push(Span::styled(text, Style::new().bg(theme::ink()).fg(
                 if marked { theme::amber() } else if *selected { theme::paper() } else { theme::muted() })));
             width += chip_width;
@@ -439,6 +445,7 @@ impl FormatColumn {
                 width = indent;
             }
             self.rows.push((index, self.lines.len()));
+            self.cells.push((self.lines.len(), width, chip_width, index, None));
             if active {
                 self.focus_line = Some(self.lines.len());
             }
@@ -483,6 +490,8 @@ impl FormatColumn {
 }
 
 fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    app.hits.form_popup = Rect::default();
+    app.hits.form_cells.clear();
     if crate::app::board_open(app) {
         render_board_filter(f, area, app);
         return;
@@ -619,6 +628,18 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
     let content = Rect { height: inner.height.saturating_sub(2), ..inner };
     let scroll = scroll_to(content, focus_line, app.sidebar.query_edit || app.sidebar.name_edit);
+    app.hits.form_popup = popup;
+    let right_x = if two_columns { content.x + column_width as u16 + 3 } else { content.x };
+    let right_skip = if two_columns { 0 } else { left.lines.len() };
+    let cells = left.cells.iter().map(|&(l, x, w, i, o)| (l, content.x, x, w, i, o)).chain(
+        right.cells.iter().map(|&(l, x, w, i, o)| (l + right_skip, right_x, x, w, i, o)));
+    for (line, base, x, w, index, option) in cells {
+        let Some(y) = line.checked_sub(scroll as usize).filter(|y| *y < content.height as usize)
+        else { continue };
+        let x = base + x as u16;
+        let w = (w as u16).min(content.right().saturating_sub(x));
+        app.hits.form_cells.push((Rect::new(x, content.y + y as u16, w, 1), index, option));
+    }
     if two_columns {
         let left_area = Rect { width: column_width as u16, ..content };
         let divider = Rect { x: left_area.right(), width: 3, ..content };
@@ -672,7 +693,7 @@ fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// The active widget carries the `▌` marker; `space` toggles a pill or a
 /// field, typing on the text row edits it, Enter applies, Esc clears.
 /// Empty pills select every card.
-fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
+fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
     let pills = app.board_pills();
     // Nerd Font Font Awesome fa-check-square / fa-square-o, same as the
@@ -758,6 +779,19 @@ fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let scroll = scroll_to(inner, focus_line, app.sidebar.query_edit);
+    app.hits.form_popup = popup;
+    // Widget rows: the text row, then pills and card fields at the
+    // lines `lines` laid out (2 header lines, blank and label gaps).
+    let first_pill = 3 + usize::from(pills.is_empty());
+    let mut widget_lines = vec![0];
+    widget_lines.extend((0..pills.len()).map(|i| first_pill + i));
+    let fields_at = first_pill + pills.len() + 2;
+    widget_lines.extend((0..model::CardFields::ORDER.len()).map(|i| fields_at + i));
+    for (index, line) in widget_lines.into_iter().enumerate() {
+        let Some(y) = line.checked_sub(scroll as usize).filter(|y| *y < inner.height as usize)
+        else { continue };
+        app.hits.form_cells.push((Rect::new(inner.x, inner.y + y as u16, inner.width, 1), index, None));
+    }
     f.render_widget(Paragraph::new(lines).style(base()).scroll((scroll, 0)), inner);
     if app.sidebar.query_edit {
         let x = inner.x + 9 + app.sidebar.query_draft.chars().count() as u16;
@@ -889,6 +923,7 @@ struct SectionFrame {
     footer: Line<'static>,
     fields: model::RowFields,
     checks: bool,
+    loading: bool,
 }
 
 /// One pane (Issues or PRs): pinned, requested, then recent rows with a
@@ -1033,6 +1068,9 @@ fn section_list(
         }
         lines.push(Line::from(""));
         items.push(ListItem::new(lines));
+    }
+    if rows.is_empty() && frame.loading {
+        items.extend(skeleton_lines(4).chunks(3).map(|c| ListItem::new(c.to_vec())));
     }
     let border = if focused { amber() } else { muted() };
     List::new(items)
@@ -1500,6 +1538,36 @@ fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line
     Line::from(vec![icon_span, name_span, detail_span])
 }
 
+/// Braille frame for the current tick; the bar and pane titles share it.
+fn spinner_frame(tick: u64) -> &'static str {
+    SPINNER[(tick as usize) % SPINNER.len()]
+}
+
+/// Append the spinner to a pane title while that pane's data is in flight.
+fn spinning(mut title: Line<'static>, loading: bool, tick: u64) -> Line<'static> {
+    if loading {
+        title.spans.push(Span::styled(
+            format!(" {}", spinner_frame(tick)),
+            Style::new().fg(theme::amber()),
+        ));
+    }
+    title
+}
+
+/// Ghost rows for a pane with nothing to show yet.
+fn skeleton_lines(rows: usize) -> Vec<Line<'static>> {
+    let ghost = Style::new().fg(theme::muted());
+    (0..rows)
+        .flat_map(|_| {
+            [
+                Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", ghost)),
+                Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", ghost)),
+                Line::from(""),
+            ]
+        })
+        .collect()
+}
+
 fn side_section_title(name: &str, detail: &str, icon: &str, active: bool,
     tag: Option<&str>) -> Line<'static> {
     let mut title = section_title(name, detail, icon, active);
@@ -1532,6 +1600,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .split(area);
     let issue_rows = app.issue_rows();
     let pr_rows = app.pr_rows();
+    let pane = app.pane_loading();
     app.hits.side_issue_area = panes[0];
     app.hits.side_pr_area = panes[1];
     app.hits.side_issue_rows = issue_rows.clone();
@@ -1542,10 +1611,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let il = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
-            title: side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag()),
+            title: spinning(side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag()), pane.sidebar, app.tick),
             footer: footer_line(&app.side_footer(false)),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_issue.checks,
+            loading: pane.sidebar,
         },
         &issue_rows,
         app,
@@ -1562,10 +1632,11 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let pl = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
-            title: side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag()),
+            title: spinning(side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag()), pane.sidebar, app.tick),
             footer: footer_line(&app.side_footer(true)),
             fields: app.sidebar.row_pr,
             checks: app.sidebar.row_pr.checks,
+            loading: pane.sidebar,
         },
         &pr_rows,
         app,
@@ -1592,10 +1663,11 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let list = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-link.
-            title: section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused),
+            title: spinning(section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused), app.pane_loading().refs, app.tick),
             footer: footer_line(&app.refs_footer()),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_pr.checks,
+            loading: false,
         },
         &rows,
         app,
@@ -1967,6 +2039,14 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Span::styled(repo, Style::new().fg(muted())),
         ])],
     };
+    let mast = match mast.len() {
+        0 => mast,
+        n => {
+            let mut mast = mast;
+            mast[n - 1] = spinning(std::mem::take(&mut mast[n - 1]), app.pane_loading().main_spinner, app.tick);
+            mast
+        }
+    };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
     let main_focused = app.nav.pane == crate::app::Pane::Main;
@@ -2015,6 +2095,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 model::VisualContent::Graph => graph_text(app, d),
             },
         },
+        None if app.pane_loading().main => ratatui::text::Text::from(skeleton_lines(6)),
         None => crate::theme::render_markdown(
             "No issue loaded.\n\nRecent issues and PRs are on the left.\nType a number and hit Enter (`:`), or instantly filter loaded rows (title, label, author) with `/`.",
         ),
@@ -2118,7 +2199,7 @@ fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         let room = (left_width as usize).saturating_sub(used + segments.len() * 3 + 2);
         if room > 0 {
             let shown = crate::core::toast_snippet(&label, room.max(1));
-            let frame = SPINNER[(app.tick as usize) % SPINNER.len()];
+            let frame = spinner_frame(app.tick);
             segments.push((format!("{frame} {shown}"), false));
         }
     }
@@ -2896,6 +2977,81 @@ mod render_smoke {
         app
     }
 
+    fn press_cell(app: &mut App, widget: usize, option: Option<usize>) {
+        let rect = app.hits.form_cells.iter()
+            .find(|(_, w, o)| *w == widget && *o == option)
+            .map(|(r, _, _)| *r)
+            .unwrap_or_else(|| panic!("no cell for widget {widget} option {option:?}"));
+        handle_mouse(app, click(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y));
+    }
+
+    #[test]
+    fn format_dialog_clicks_pick_options_and_toggle_chips() {
+        let mut app = loaded_app();
+        app.sidebar.filter_open = true;
+        let _ = frame_text(&mut app);
+        let left = app.format_left_widgets();
+        // A choice option selects that option and focuses its row.
+        press_cell(&mut app, left + 2, Some(2));
+        assert_eq!(app.sidebar.sort, crate::core::SideSort::Author);
+        assert_eq!(app.sidebar.format_focus, left + 2);
+        let _ = frame_text(&mut app);
+        press_cell(&mut app, left + 3, Some(1));
+        assert!(app.sidebar.sort_desc, "descending option");
+        // A chip toggles like space.
+        let _ = frame_text(&mut app);
+        let before = app.sidebar.show_open_prs;
+        press_cell(&mut app, 2, None);
+        assert_eq!(app.sidebar.show_open_prs, !before);
+        // The search row starts the query edit.
+        let _ = frame_text(&mut app);
+        press_cell(&mut app, 0, None);
+        assert!(app.sidebar.query_edit);
+        // Clicks never reach the panes behind the dialog.
+        let current = app.nav.current;
+        let side = app.hits.side_issue_area;
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), side.x + 1, side.y + 2));
+        assert_eq!(app.nav.current, current);
+        assert!(app.sidebar.filter_open, "edit swallows outside clicks");
+    }
+
+    #[test]
+    fn format_dialog_outside_click_closes_and_wheel_is_inert() {
+        let mut app = loaded_app();
+        app.sidebar.filter_open = true;
+        let _ = frame_text(&mut app);
+        let scroll = app.nav.scroll;
+        let p = app.hits.form_popup;
+        handle_mouse(&mut app, click(MouseEventKind::ScrollDown, p.x + 2, p.y + 2));
+        assert_eq!(app.nav.scroll, scroll);
+        assert!(app.sidebar.filter_open);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
+        assert!(!app.sidebar.filter_open, "outside press closes like Esc");
+    }
+
+    #[test]
+    fn board_filter_form_clicks_toggle_fields_and_focus_text() {
+        let mut app = board_app(2);
+        app.sidebar.filter_open = true;
+        let _ = frame_text(&mut app);
+        let pills = app.board_pills().len();
+        let before = app.board.fields.shown(0).unwrap_or(false);
+        press_cell(&mut app, pills + 1, None);
+        assert_eq!(app.board.fields.shown(0).unwrap_or(false), !before);
+        assert_eq!(app.board.filter_focus, pills + 1);
+        let _ = frame_text(&mut app);
+        press_cell(&mut app, 0, None);
+        assert!(app.sidebar.query_edit);
+        assert_eq!(app.board.filter_focus, 0);
+        // Outside press and wheel leave the board and the form alone.
+        let pos = (app.board.col, app.board.row);
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
+        handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 0, 0));
+        assert!(app.sidebar.filter_open);
+        assert_eq!((app.board.col, app.board.row), pos);
+        assert!(app.board.data.is_some());
+    }
+
     #[test]
     fn board_skeleton_shows_while_loading() {
         let mut app = App::new(Some("o/r".to_string()));
@@ -2974,6 +3130,50 @@ mod render_smoke {
         app.auth.degraded = false;
         let text = frame_text(&mut app);
         assert!(!text.contains("auth degraded"), "a successful re-auth clears it: {text}");
+    }
+
+    #[test]
+    fn sidebar_shows_spinner_and_skeleton_while_sections_load() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.tick = 0;
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.sections.rx = Some(rx);
+        let text = sidebar_text(&mut app);
+        assert!(text.contains("Issues") && text.contains("⠋"), "title spinner: {text}");
+        assert!(text.contains("▓▓▓"), "skeleton rows: {text}");
+        app.sections.rx = None;
+        let text = sidebar_text(&mut app);
+        assert!(!text.contains("⠋") && !text.contains("▓▓▓"), "idle sidebar: {text}");
+    }
+
+    #[test]
+    fn main_shows_skeleton_while_first_issue_loads() {
+        let mut app = App::new(Some("o/r".to_string()));
+        app.nav.requested = Some(7);
+        app.issues.pending.insert(7);
+        let text = frame_text(&mut app);
+        assert!(text.contains("▓▓▓") && !text.contains("No issue loaded"), "main skeleton: {text}");
+        app.issues.pending.clear();
+        assert!(frame_text(&mut app).contains("No issue loaded"), "idle main");
+        // A cached issue keeps its text while another one is fetching.
+        let mut app = loaded_app();
+        app.tick = 0;
+        app.nav.requested = Some(12);
+        app.issues.pending.insert(12);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Fix the thing ⠋"), "main spinner: {text}");
+        assert!(!text.contains("▓▓▓"), "no skeleton over cached text: {text}");
+    }
+
+    #[test]
+    fn refs_title_spins_while_mentions_fetch() {
+        let mut app = loaded_app();
+        app.issues.data.get_mut(&7).unwrap().body = "see #9".to_string();
+        app.show_issue(7);
+        app.tick = 0;
+        app.issues.pending.insert(9);
+        let text = frame_text(&mut app);
+        assert!(text.contains("Refs") && text.contains("mentioned ⠋"), "refs spinner: {text}");
     }
 
     #[test]

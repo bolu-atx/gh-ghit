@@ -852,6 +852,10 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
     // The compose modal steals all mouse focus: clicks and wheel never
     // reach the panes behind it, so the draft and selection survive.
     if app.compose_open() { return; }
+    if app.sidebar.filter_open {
+        handle_form_mouse(app, m);
+        return;
+    }
     if board_open(app) {
         handle_board_mouse(app, m);
         return;
@@ -873,6 +877,47 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         }
         _ => {}
     }
+}
+
+/// Mouse path while the Format dialog or board filter form is open. The
+/// dialog owns every event: a press on a recorded cell focuses its widget
+/// and runs the keyboard action, a press outside the popup closes the
+/// sidebar dialog (as Esc does) and is ignored over the board, where Esc
+/// would clear the filter. Wheel and drag never reach the panes behind.
+fn handle_form_mouse(app: &mut App, m: MouseEvent) {
+    if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        return;
+    }
+    let on_board = board_open(app);
+    let hit = app.hits.form_cells.iter()
+        .find(|(rect, _, _)| in_rect(*rect, m.column, m.row)).copied();
+    let Some((rect, index, option)) = hit else {
+        if !on_board && !in_rect(app.hits.form_popup, m.column, m.row)
+            && !app.sidebar.query_edit && !app.sidebar.name_edit
+        {
+            app.sidebar.filter_open = false;
+        }
+        return;
+    };
+    if on_board {
+        app.sidebar.query_edit = false;
+        app.board.filter_focus = index;
+        if index == 0 {
+            app.sidebar.query_edit = true;
+        } else {
+            toggle_board_focused(app);
+        }
+    } else {
+        if app.sidebar.query_edit || app.sidebar.name_edit {
+            return;
+        }
+        app.sidebar.format_focus = index;
+        match option {
+            Some(option) => app.select_format_option(option),
+            None => app.toggle_format_widget(),
+        }
+    }
+    app.note_click(rect);
 }
 
 /// Board mouse path: press opens (double-press), drag only trails the
