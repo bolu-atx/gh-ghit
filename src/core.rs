@@ -5,8 +5,12 @@
 //! unit test without a TUI. The stateful shells (`app`, `input`) delegate to
 //! these functions instead of reimplementing the rules inline.
 
+mod focus;
 mod tree;
 
+pub(crate) use focus::{
+    Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, layer_stack, step_pane, visible_panes,
+};
 pub(crate) use tree::{needs_lazy_children, tree_rows};
 
 use std::collections::{HashMap, HashSet};

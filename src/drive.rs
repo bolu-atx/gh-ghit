@@ -28,7 +28,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
     /// Key press: `key` is one printable char (`"j"`, `" "`, `":"`) or
-    /// a name (`"Enter"`, `"Esc"`, `"Tab"`, `"Backspace"`, `"Delete"`,
+    /// a name (`"Enter"`, `"Esc"`, `"Tab"`, `"BackTab"`, `"Backspace"`, `"Delete"`,
     /// `"Up"`, `"Down"`, `"Left"`, `"Right"`, `"PageUp"`, `"PageDown"`,
     /// `"Home"`, `"End"`), plus modifier flags.
     Key { key: String, #[serde(default)] ctrl: bool, #[serde(default)] alt: bool, #[serde(default)] shift: bool },
@@ -93,6 +93,7 @@ pub fn key_event(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<KeyEve
             "Enter" => KeyCode::Enter,
             "Esc" | "Escape" => KeyCode::Esc,
             "Tab" => KeyCode::Tab,
+            "BackTab" => KeyCode::BackTab,
             "Backspace" => KeyCode::Backspace,
             "Delete" => KeyCode::Delete,
             "Up" => KeyCode::Up,

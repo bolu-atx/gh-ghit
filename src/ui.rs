@@ -24,6 +24,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         .split(f.area());
 
     app.hits.history_rows.clear();
+    app.hits.history_area = Rect::default();
     app.hits.refs_area = Rect::default();
     app.hits.labels_area = Rect::default();
     app.hits.labels_rows.clear();
@@ -42,9 +43,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     }
     render_main(f, cols[1], app);
     if app.right_visible() {
-        let count = if app.nav.current.is_some() && !app.nav.history.is_empty() {
-            app.nav.history.len().min(4) + 1
-        } else { 0 };
+        let count = if app.history_visible() { app.history_rows_back() + 1 } else { 0 };
         let height = if count > 0 { (count as u16 + 2).min(cols[2].height) } else { 0 };
         // Refs and Labels split what History leaves; Labels takes it all
         // when there are no refs.
@@ -268,7 +267,7 @@ fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
 fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     use crate::theme::{amber, base, ink, muted, paper, teal};
     let width = area.width.min(76);
-    let height = area.height.min(27);
+    let height = area.height.min(28);
     let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
@@ -277,13 +276,14 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let body = [
-        "Navigation", "  tab panes · j/k select · ↑/↓ scroll · page up/down",
+        "Navigation", "  tab/shift-tab panes · j/k select · ↑/↓ scroll · page up/down",
         "  1/2 details/visual · e right pane · E sidebar · n/N search matches",
         "  ctrl-o back · ctrl-i forward", "",
         "Actions", "  : command · / find · g search · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
         "  a sort · A reverse · x evict · u undo evict/delete",
-        "  Labels pane: j/k move · space toggle · X clear all", "",
+        "  Labels pane: j/k move · space toggle · X clear all",
+        "  History pane: j/k move · enter go back", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
         "Diff", "  ↑/↓ lines · J/K files · space expand · s split · S submit pending",
         "Comment  c open · emacs keys · ctrl-o $EDITOR · ctrl-s send",
@@ -953,7 +953,7 @@ fn section_list(
     focused: bool,
     now: chrono::DateTime<chrono::Utc>,
 ) -> List<'static> {
-    use crate::theme::{amber, code_bg, ink, muted, paper, state_color};
+    use crate::theme::{amber, ink, muted, paper, state_color, RowState};
     use crate::model::SideRow;
     let query = app.sidebar.search.clone();
     let mut items: Vec<ListItem<'static>> = vec![ListItem::new(Line::from(""))];
@@ -987,12 +987,14 @@ fn section_list(
         // is untouched, so tabbing away and back restores the exact row
         // and scroll position.
         let sel = app.nav.current == Some(n) || mark == Some(n);
-        let marker = if sel { "█ " } else { "  " };
-        let marker_style = if sel {
-            Style::new().fg(amber()).bold()
+        let state = if sel {
+            RowState::Active
+        } else if app.nav.hover == Some(n) {
+            RowState::Hover
         } else {
-            Style::new().fg(muted())
+            RowState::Plain
         };
+        let (marker, marker_style) = theme::row_marker(state, focused, "█ ");
         let (title_text, labels, updated, status, author, milestone) =
             match app.issues.data.get(&n) {
             Some(d) => {
@@ -1086,22 +1088,9 @@ fn section_list(
     if rows.is_empty() && frame.loading {
         items.extend(skeleton_lines(4).chunks(3).map(|c| ListItem::new(c.to_vec())));
     }
-    let border = if focused { amber() } else { muted() };
     List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(if focused { BorderType::Double } else { BorderType::Plain })
-                .border_style(Style::new().bg(ink()).fg(border))
-                .title(frame.title)
-                .title_bottom(frame.footer)
-                .style(Style::new().bg(ink())),
-        )
-        .highlight_style(if focused {
-            Style::new().bold().bg(code_bg())
-        } else {
-            Style::new()
-        })
+        .block(theme::pane_block(focused).title(frame.title).title_bottom(frame.footer))
+        .highlight_style(theme::row_highlight(focused))
 }
 
 /// Styled header for the body pane: the color-coded meta lines. The
@@ -1203,7 +1192,7 @@ fn diff_text(app: &App, d: &IssueData, width: usize) -> ratatui::text::Text<'sta
         ),
         Style::new().bg(ink()).fg(muted()),
     ))];
-    let cursor_here = app.nav.pane == crate::app::Pane::Main;
+    let cursor_here = app.nav.pane == crate::core::Pane::Main;
     let rule = Span::styled("─".repeat(width.max(8)), Style::new().bg(ink()).fg(muted()));
     // Hunk rows sit two cells in so they read as belonging to the section.
     let dent = || Span::styled("  ", Style::new().bg(ink()));
@@ -1621,7 +1610,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.side_pr_rows = pr_rows.clone();
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
     let now = chrono::Utc::now();
-    let issues_focused = app.nav.pane == crate::app::Pane::Issues;
+    let issues_focused = app.pane_focused(crate::core::Pane::Issues);
     let il = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-exclamation-circle.
@@ -1642,7 +1631,7 @@ fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     istate.select(selected_index(&issue_rows, app.effective(&issue_rows)));
     f.render_stateful_widget(il, panes[0], &mut istate);
     app.sidebar.issue_state = istate;
-    let prs_focused = app.nav.pane == crate::app::Pane::PRs;
+    let prs_focused = app.pane_focused(crate::core::Pane::PRs);
     let pl = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-code-fork.
@@ -1673,7 +1662,7 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.refs_area = area;
     app.hits.ref_rows = rows.clone();
     let inner = (area.width as usize).saturating_sub(2);
-    let refs_focused = app.nav.pane == crate::app::Pane::Refs;
+    let refs_focused = app.pane_focused(crate::core::Pane::Refs);
     let list = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-link.
@@ -1704,8 +1693,8 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// selected ones. It edits the same filter sets as the Format dialog and
 /// frames like its sibling list panes.
 fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    use crate::theme::{amber, code_bg, ink, muted, paper, teal, violet};
-    let focused = app.nav.pane == crate::app::Pane::Labels;
+    use crate::theme::{amber, ink, muted, paper, teal, violet, RowState};
+    let focused = app.pane_focused(crate::core::Pane::Labels);
     let on_labels = app.sidebar.label_filter.len();
     let on_milestones = app.sidebar.milestone_filter.len();
     let items = app.filter_items();
@@ -1720,12 +1709,7 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         format!("milestones ({}/{milestones}) · labels ({on_labels}/{})",
             on_milestones, items.len() - milestones)
     };
-    let block = Block::default().borders(Borders::ALL)
-        .border_type(if focused { BorderType::Double } else { BorderType::Plain })
-        .border_style(Style::new().bg(ink()).fg(if focused { amber() } else { muted() }))
-        .title(title)
-        .title_bottom(footer_line(&footer))
-        .style(theme::base());
+    let block = theme::pane_block(focused).title(title).title_bottom(footer_line(&footer));
     let inner = block.inner(area);
     f.render_widget(block, area);
     app.hits.labels_area = area;
@@ -1778,8 +1762,9 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             FilterItem::Milestone(None) => ("(no milestone)".to_string(), true),
             FilterItem::Label(name) => (name.clone(), false),
         };
-        let here = focused && index == app.labels.cursor;
-        let bg = if here { code_bg() } else { ink() };
+        let state = if index == app.labels.cursor { RowState::Active } else { RowState::Plain };
+        let bg = theme::row_bg(state, focused);
+        let (marker, marker_style) = theme::row_marker(state, focused, "█ ");
         // Nerd Font Font Awesome fa-check-square / fa-square-o, same as the
         // sidebar filter toggles.
         let name_style = if on {
@@ -1791,7 +1776,7 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         };
         let room = (inner.width as usize).saturating_sub(5);
         let line = Line::from(vec![
-            Span::styled(if here { "█ " } else { "  " }, Style::new().bg(bg).fg(amber())),
+            Span::styled(marker, marker_style.bg(bg)),
             Span::styled(if on { "\u{f14a} " } else { "\u{f096} " },
                 Style::new().bg(bg).fg(if on { amber() } else { muted() })),
             Span::styled(model::slug(&name, room), name_style),
@@ -1806,12 +1791,12 @@ fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 /// steps through `go_back_n`, so Ctrl+I replays the skipped entries.
 fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-history.
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Plain)
-        .border_style(Style::new().bg(theme::ink()).fg(theme::muted()))
-        .style(theme::base())
-        .title(section_title("History", "", "\u{f1da}", false));
+    let focused = app.pane_focused(crate::core::Pane::History);
+    let block = theme::pane_block(focused).title(section_title("History", "", "\u{f1da}", focused));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.hits.history_area = area;
+    let cursor = app.history_steps();
     let mut numbers: Vec<u64> = app.nav.history.iter().rev().take(4).copied().collect();
     numbers.reverse();
     if let Some(current) = app.nav.current {
@@ -1825,7 +1810,9 @@ fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         // `▌`, not the sidebar's `█`: the list selection marker stays
         // unique on screen (e2e counts it), and "current" is not a
         // list selection.
-        let marker = if steps == 0 { "▌ " } else { "  " };
+        let state = if steps == cursor { theme::RowState::Active } else { theme::RowState::Plain };
+        let (marker, marker_style) = theme::row_marker(state, focused, "▌ ");
+        let bg = theme::row_bg(state, focused);
         let head = format!("#{number}");
         let room = (inner.width as usize).saturating_sub(2 + head.chars().count() + 1);
         let title = app.issues.data.get(&number)
@@ -1833,11 +1820,11 @@ fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             .map(|issue| format!(" {}", model::slug(&issue.title, room)))
             .unwrap_or_default();
         let line = Line::from(vec![
-            Span::styled(marker, Style::new().bg(theme::ink()).fg(theme::amber()).bold()),
-            Span::styled(head, Style::new().bg(theme::ink()).fg(theme::paper())),
-            Span::styled(title, Style::new().bg(theme::ink()).fg(theme::muted())),
+            Span::styled(marker, marker_style.bg(bg)),
+            Span::styled(head, Style::new().bg(bg).fg(theme::paper())),
+            Span::styled(title, Style::new().bg(bg).fg(theme::muted())),
         ]);
-        f.render_widget(Paragraph::new(line).style(theme::base()), row);
+        f.render_widget(Paragraph::new(line).style(Style::new().bg(bg)), row);
         app.hits.history_rows.push((row, steps));
     }
 }
@@ -2063,7 +2050,7 @@ fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
-    let main_focused = app.nav.pane == crate::app::Pane::Main;
+    let main_focused = app.pane_focused(crate::core::Pane::Main);
     // Second tab follows the current item: PRs show their diff, issues
     // the dependency graph. Nothing loaded yet reads as Graph.
     let visual_label = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
@@ -2868,7 +2855,7 @@ mod render_smoke {
 
     #[test]
     fn labels_pane_keys_move_toggle_and_clear() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = labels_app();
         frame_text(&mut app);
         app.nav.pane = Pane::Labels;
@@ -2892,7 +2879,7 @@ mod render_smoke {
 
     #[test]
     fn labels_pane_click_toggles_and_wheel_moves() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = labels_app();
         frame_text(&mut app);
         let (rect, index) = app.hits.labels_rows[3];
@@ -2917,7 +2904,7 @@ mod render_smoke {
 
     #[test]
     fn history_alone_and_sidebar_toggle_resize_main() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         app.refs.numbers.clear();
         app.refs.paired.clear();
@@ -2933,7 +2920,7 @@ mod render_smoke {
         handle_key(&mut app, key(KeyCode::Char('E')));
         assert_eq!(app.nav.pane, Pane::Main);
         handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::Main);
+        assert_eq!(app.nav.pane, Pane::History, "Main and History are the only visible panes");
         let before = app.hits.body_area.width;
         let text = frame_text_sized(&mut app, 160, 40);
         assert!(!text.contains("Pull requests"));
@@ -3638,7 +3625,7 @@ mod render_smoke {
 
     #[test]
     fn jk_stays_in_the_focused_pane() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         // A second issue to walk between.
         let mut extra = sample(5);
@@ -3666,28 +3653,26 @@ mod render_smoke {
 
     #[test]
     fn tab_cycles_issues_prs_refs() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         assert_eq!(app.nav.pane, Pane::Issues);
-        // No refs yet: Tab alternates the two sidebar lists.
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::PRs);
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::Issues);
-        // With mentions, Refs joins the cycle after PRs; the body keeps
-        // its dedicated keys so it never takes Tab focus.
+        // No refs yet: Tab walks Issues, PRs, Main.
+        for want in [Pane::PRs, Pane::Main, Pane::Issues] {
+            handle_key(&mut app, key(KeyCode::Tab));
+            assert_eq!(app.nav.pane, want);
+        }
+        // With mentions, Refs joins the cycle after Main.
         app.issues.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
         app.show_issue(7);
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::PRs);
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::Refs);
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::Issues);
-        // From the body (mouse), Tab returns to the sidebar.
-        app.nav.pane = Pane::Main;
-        handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(app.nav.pane, Pane::Issues);
+        for want in [Pane::PRs, Pane::Main, Pane::Refs, Pane::Issues] {
+            handle_key(&mut app, key(KeyCode::Tab));
+            assert_eq!(app.nav.pane, want);
+        }
+        // Shift-Tab walks the same order backwards.
+        for want in [Pane::Refs, Pane::Main, Pane::PRs, Pane::Issues] {
+            handle_key(&mut app, key(KeyCode::BackTab));
+            assert_eq!(app.nav.pane, want);
+        }
     }
 
     /// Foreground color of the first cell spelling `needle` on buffer row
@@ -3713,7 +3698,7 @@ mod render_smoke {
 
     #[test]
     fn pane_focus_drives_border_title_and_marker() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         assert_eq!(app.nav.pane, Pane::Issues);
         let backend = TestBackend::new(120, 40);
@@ -3741,8 +3726,8 @@ mod render_smoke {
         assert_eq!(title_fg(&buf, 0, "Issues"), Some(crate::theme::muted()));
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("█"), "blurred pane keeps the active marker");
-        // Tab back: everything returns on the same row.
-        handle_key(&mut app, key(KeyCode::Tab));
+        // Shift-Tab back: everything returns on the same row.
+        handle_key(&mut app, key(KeyCode::BackTab));
         assert_eq!(app.nav.pane, Pane::Issues);
         terminal.draw(|f| render(f, &mut app)).expect("draw");
         let buf = terminal.backend().buffer().clone();
@@ -3752,9 +3737,74 @@ mod render_smoke {
         assert_eq!(app.nav.current, Some(7));
     }
 
+    fn draw_buffer(app: &mut App) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).expect("test backend");
+        terminal.draw(|f| render(f, app)).expect("draw");
+        terminal.backend().buffer().clone()
+    }
+
+    fn cells<'a>(buf: &'a ratatui::buffer::Buffer, symbol: &str) -> Vec<&'a ratatui::buffer::Cell> {
+        buf.content().iter().filter(|c| c.symbol() == symbol).collect()
+    }
+
+    #[test]
+    fn active_row_is_amber_shaded_when_focused_and_muted_bare_when_not() {
+        use crate::core::Pane;
+        let mut app = loaded_app();
+        app.nav.pane = Pane::Issues;
+        let buf = draw_buffer(&mut app);
+        let marker = cells(&buf, "█")[0];
+        assert_eq!((marker.fg, marker.bg), (crate::theme::amber(), crate::theme::code_bg()));
+        app.nav.pane = Pane::PRs;
+        let buf = draw_buffer(&mut app);
+        let marker = cells(&buf, "█")[0];
+        assert_eq!(marker.fg, crate::theme::muted(), "unfocused marker is quiet");
+        assert_eq!(marker.bg, crate::theme::ink(), "unfocused row has no shade");
+    }
+
+    #[test]
+    fn hover_row_never_looks_like_the_selection() {
+        let mut app = loaded_app();
+        app.nav.hover = Some(9);
+        let buf = draw_buffer(&mut app);
+        assert_eq!(cells(&buf, "█").len(), 1, "one selection marker");
+        let hover = cells(&buf, "\u{203a}");
+        assert_eq!(hover.len(), 1, "hover has its own marker");
+        assert_eq!(hover[0].bg, crate::theme::ink(), "hover has no selection shade");
+        assert_ne!(hover[0].fg, crate::theme::amber());
+    }
+
+    #[test]
+    fn every_pane_takes_the_double_amber_frame_and_one_focus_shows() {
+        use crate::core::Pane;
+        let mut app = loaded_app();
+        app.nav.history = vec![9];
+        // Issues, History: boxed panes draw a double top-left corner.
+        for pane in [Pane::Issues, Pane::History] {
+            app.nav.pane = pane;
+            let buf = draw_buffer(&mut app);
+            let corners = cells(&buf, "╔");
+            assert_eq!(corners.len(), 1, "{pane:?}: exactly one double frame");
+            assert_eq!(corners[0].fg, crate::theme::amber());
+        }
+        let area = app.hits.history_area;
+        assert_eq!(draw_buffer(&mut app)[(area.x, area.y)].symbol(), "╔");
+        // Main has no box: its tab rule turns double and amber.
+        app.nav.pane = Pane::Main;
+        let buf = draw_buffer(&mut app);
+        assert!(cells(&buf, "╔").is_empty());
+        let rule = app.hits.tabs_area;
+        let cell = &buf[(rule.x + 1, rule.y + rule.height - 1)];
+        assert_eq!((cell.symbol(), cell.fg), ("═", crate::theme::amber()));
+        // A dialog on top takes the only focus: panes go quiet.
+        app.nav.pane = Pane::Issues;
+        app.shortcuts_open = true;
+        assert!(cells(&draw_buffer(&mut app), "╔").is_empty());
+    }
+
     #[test]
     fn main_focus_keeps_sidebar_marker_for_current() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         // Clicking the Diff/Visual tab moves focus to Main; the sidebar
         // marker must stay coupled to what the main pane displays.
@@ -3782,7 +3832,7 @@ mod render_smoke {
 
     #[test]
     fn jk_in_main_scrolls_instead_of_moving_selection() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         app.nav.pane = Pane::Main;
         handle_key(&mut app, key(KeyCode::Char('j')));
@@ -3795,7 +3845,7 @@ mod render_smoke {
 
     #[test]
     fn jk_in_refs_moves_highlight_instead_of_opening() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         app.issues.data.get_mut(&7).unwrap().body = "see #9 then #12".to_string();
         app.show_issue(7);
@@ -3895,7 +3945,7 @@ mod render_smoke {
 
     #[test]
     fn paired_header_click_opens_counterpart_in_main() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         let mut app = loaded_app();
         app.issues.data.get_mut(&7).unwrap().paired =
             vec![PairedRef { number: 9, state: "MERGED".to_string() }];
@@ -3912,7 +3962,7 @@ mod render_smoke {
 
     #[test]
     fn refs_pane_lists_paired_rows_and_enter_opens() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         use crate::model::SideRow::{Divider, Item};
         let mut app = loaded_app();
         let d = app.issues.data.get_mut(&7).unwrap();
@@ -4379,7 +4429,7 @@ mod render_smoke {
         app.issues.data.insert(2, child);
         app.nav.recent = vec![1, 2];
         app.sidebar.sub_issue_tree = true;
-        app.nav.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::core::Pane::Issues;
         app.show_issue(1);
         handle_key(&mut app, key(KeyCode::Left));
         assert!(app.sidebar.folded_issues.contains(&1));
@@ -5081,7 +5131,7 @@ mod render_smoke {
     #[test]
     fn undo_toast_frame_and_click_restores() {
         let mut app = loaded_app();
-        app.nav.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::core::Pane::Issues;
         app.nav.current = Some(7);
         handle_key(&mut app, key(KeyCode::Char('x')));
         let text = frame_text(&mut app);
@@ -5320,7 +5370,7 @@ mod render_smoke {
         assert_eq!(app.diff.line, Some(back - 1));
         // j/k stays with the side panes: in Issues it walks issues only.
         app.show_issue(7);
-        app.nav.pane = crate::app::Pane::Issues;
+        app.nav.pane = crate::core::Pane::Issues;
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.diff.cursor, 0);
         assert_eq!(app.nav.current, Some(7));
@@ -5418,7 +5468,7 @@ mod render_smoke {
 
     #[test]
     fn mouse_click_highlights_the_row_it_expands() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         use crate::model::DiffFile;
         let mut app = loaded_app();
         app.issues.data.insert(9, diff_pr(9));
@@ -5721,7 +5771,7 @@ mod render_smoke {
 
     #[test]
     fn yank_text_covers_issue_diff_and_refs() {
-        use crate::app::Pane;
+        use crate::core::Pane;
         use crate::model::DiffFile;
         // Issue identity.
         let app = loaded_app();
@@ -5959,7 +6009,7 @@ mod render_smoke {
     #[test]
     fn four_opens_graph_and_keys_stay_tab_scoped() {
         let mut app = graph_app();
-        app.nav.pane = crate::app::Pane::Main;
+        app.nav.pane = crate::core::Pane::Main;
         // j on Body scrolls; the graph cursor never moves.
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert_eq!(app.graph.cursor, 0);
@@ -5989,7 +6039,7 @@ mod render_smoke {
     fn graph_enter_opens_selected_issue_per_issue() {
         use crate::model::DiffFile;
         let mut app = graph_app();
-        app.nav.pane = crate::app::Pane::Main;
+        app.nav.pane = crate::core::Pane::Main;
         // Switching issues on the Graph tab refetches per issue: cache #9's
         // graph and diff so the open stays synchronous with no fetch.
         app.graph.data.insert(9, crate::model::build_graph(graph_node(9, "Blocked work", "OPEN"), vec![]));

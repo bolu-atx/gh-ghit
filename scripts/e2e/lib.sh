@@ -69,6 +69,7 @@ e2e_key_line() { # $1 key name
   case "$1" in
     Enter) printf '{"type":"key","key":"Enter"}\n' ;;
     Escape) printf '{"type":"key","key":"Esc"}\n' ;;
+    BTab) printf '{"type":"key","key":"BackTab"}\n' ;;
     Tab) printf '{"type":"key","key":"Tab"}\n' ;;
     Space) printf '{"type":"key","key":" "}\n' ;;
     BSpace|Backspace) printf '{"type":"key","key":"Backspace"}\n' ;;

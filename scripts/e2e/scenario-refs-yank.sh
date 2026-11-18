@@ -5,8 +5,7 @@ e2e_start
 e2e_wait "move title" 60 || fail "pr data never landed"
 e2e_bar 24
 e2e_wait "/pull/24" 20 || fail "show #24"
-e2e_key Tab
-e2e_key Tab
+e2e_key Tab Tab Tab
 e2e_shot refs-focus
 [ "$(e2e_markers)" -le 1 ] || fail "marker leak $(e2e_markers)"
 e2e_key j

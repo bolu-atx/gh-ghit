@@ -77,8 +77,9 @@ Press `?` for the in-app shortcuts modal.
 
 | Context | Keys | Action |
 | --- | --- | --- |
-| Navigation | `Tab` | Cycle panes (Issues, PRs, Refs, Labels) |
+| Navigation | `Tab` / `Shift-Tab` | Cycle panes in screen order (Issues, PRs, Main, Refs, Filters, History) |
 | Navigation | `j` / `k` | Select |
+| History | `j` / `k`, `Enter` | Move the cursor; go back to that issue |
 | Navigation | `↑` / `↓`, Page Up / Page Down | Scroll |
 | Navigation | `1` / `2` | Details / Visual tab |
 | Navigation | `e` | Toggle refs |

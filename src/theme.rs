@@ -9,6 +9,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, BorderType, Borders};
 use ratatui::text::Text;
 use tui_markdown::{Options, StyleSheet, from_str_with_options};
 
@@ -178,6 +179,49 @@ pub fn pr_ref() -> Color {
 pub fn base() -> Style {
     let p = pal();
     Style::new().bg(p.ink).fg(p.paper)
+}
+
+/// How one list row relates to the pane's selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowState {
+    /// The selected item of its pane.
+    Active,
+    /// Wheel or drag preview. Never reads as selection.
+    Hover,
+    Plain,
+}
+
+/// Block for a pane: a double amber frame while focused, a plain muted
+/// one otherwise. Every pane frames itself through this one function.
+pub fn pane_block(focused: bool) -> Block<'static> {
+    let (kind, fg) = if focused { (BorderType::Double, amber()) } else { (BorderType::Plain, muted()) };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(kind)
+        .border_style(Style::new().bg(ink()).fg(fg))
+        .style(base())
+}
+
+/// Marker glyph and style for a row. The active row of the focused pane
+/// is amber and bold; in an unfocused pane it goes muted. A hover row
+/// gets its own glyph so it never matches a selection.
+pub fn row_marker(state: RowState, focused: bool, active_glyph: &'static str) -> (&'static str, Style) {
+    match state {
+        RowState::Active if focused => (active_glyph, Style::new().fg(amber()).bold()),
+        RowState::Active => (active_glyph, Style::new().fg(muted())),
+        RowState::Hover => ("\u{203a} ", Style::new().fg(paper())),
+        RowState::Plain => ("  ", Style::new().fg(muted())),
+    }
+}
+
+/// Row background: only the active row of the focused pane is shaded.
+pub fn row_bg(state: RowState, focused: bool) -> Color {
+    if state == RowState::Active && focused { code_bg() } else { ink() }
+}
+
+/// List highlight style for the focused pane's active row.
+pub fn row_highlight(focused: bool) -> Style {
+    if focused { Style::new().bold().bg(code_bg()) } else { Style::new() }
 }
 
 pub fn state_color(state: &str) -> Color {
