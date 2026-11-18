@@ -4,7 +4,7 @@
 //! the action does. Actions that several contexts share (`Back`,
 //! `InputSubmit`, `InputBackspace`) read the top focus layer.
 
-use crate::app::{App, Focus, QueryAction, Tab, board_move, board_selected_number};
+use crate::app::{App, Focus, QueryAction, Slot, Tab, board_move, board_selected_number};
 use crate::core::{self, Dialog, Layer, TextInput};
 use crate::keymap::Action;
 
@@ -17,12 +17,12 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::HistoryBack => app.go_back(),
         Action::HistoryForward => app.go_forward(),
         Action::OpenMenu => menu::open_for_focus(app),
-        Action::CloseMenu => app.menu = None,
+        Action::CloseMenu => { app.close(Slot::Menu); }
         Action::MenuDown => menu::step(app, 1),
         Action::MenuUp => menu::step(app, -1),
         Action::MenuRun => menu::run(app),
         Action::ShowHelp => {
-            app.shortcuts_open = true;
+            app.open(crate::app::Entry::Shortcuts);
             app.help_scroll = 0;
         }
         Action::Quit => app.request_quit(),
@@ -103,7 +103,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::GraphPrev => app.graph_move(-1),
         Action::GraphOpen => app.open_graph_selection(),
 
-        Action::CloseHelp => app.shortcuts_open = false,
+        Action::CloseHelp => { app.close(Slot::Shortcuts); }
         Action::HelpDown => app.help_scroll = app.help_scroll.saturating_add(1),
         Action::HelpUp => app.help_scroll = app.help_scroll.saturating_sub(1),
         Action::ConfirmFirst => app.confirm_choose(0),
@@ -129,7 +129,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ComposeWordForward => app.compose_word_forward(),
         Action::ComposeDeleteWordForward => app.compose_delete_word_forward(),
 
-        Action::CloseFormat => app.sidebar.filter_open = false,
+        Action::CloseFormat => { app.close(Slot::Format); }
         Action::FormatEditQuery => app.start_query_edit(),
         Action::FormatSaveName => app.start_name_edit(),
         Action::FormatDeleteQuery => app.delete_named_query(),
@@ -170,10 +170,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::FormatUp => app.format_step(-1),
         Action::FormatToggle => app.toggle_format_widget(),
 
-        Action::CloseBoard => {
-            app.board.data = None;
-            app.board.loading = false;
-        }
+        Action::CloseBoard => app.close_board(),
         Action::BoardFilter => app.open_board_filter(),
         Action::BoardClearFilter => app.clear_board_filter(),
         Action::BoardDown => board_move(app, 0, 1),
@@ -186,12 +183,12 @@ pub(super) fn perform(app: &mut App, action: Action) {
         }
         Action::BoardOpen => {
             if let Some(n) = board_selected_number(app) {
-                app.board.data = None;
+                app.close_board();
                 app.open_issue(n);
             }
         }
         Action::BoardApply => {
-            app.sidebar.filter_open = false;
+            app.close(Slot::Format);
             app.board.filter_focus = 0;
             app.apply_board_filter();
         }
@@ -202,11 +199,11 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::InputSubmit => submit_input(app),
         Action::InputBackspace => backspace_input(app),
         Action::InputUp => {
-            app.sidebar.query_edit = false;
+            app.set_format_edit(crate::app::FormatEdit::None);
             app.board_filter_step(-1);
         }
         Action::InputDown => {
-            app.sidebar.query_edit = false;
+            app.set_format_edit(crate::app::FormatEdit::None);
             app.board_filter_step(1);
         }
     }
@@ -302,8 +299,7 @@ fn submit_input(app: &mut App) {
         }
         Layer::Input(TextInput::Name) => app.save_named_query(),
         Layer::Input(TextInput::BoardQuery) => {
-            app.sidebar.query_edit = false;
-            app.sidebar.filter_open = false;
+            app.close(Slot::Format);
             app.board.filter_focus = 0;
             app.apply_board_filter();
         }

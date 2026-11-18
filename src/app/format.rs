@@ -3,15 +3,13 @@
 use crate::app::{App, FilterItem};
 use crate::core::{self, Pane};
 use crate::{github, model};
-use crate::app::board_open;
+use crate::app::{Entry, FormatEdit, board_open};
 
 impl App {
     /// Open the sidebar Format dialog in navigate mode. The picker lists
     /// load lazily the first time.
     pub(crate) fn open_sidebar_format(&mut self) {
-        self.sidebar.filter_open = true;
-        self.sidebar.query_edit = false;
-        self.sidebar.name_edit = false;
+        self.open(Entry::Format(FormatEdit::None));
         self.ensure_repo_meta();
     }
 

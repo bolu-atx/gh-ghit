@@ -33,6 +33,7 @@ pub(super) fn board_app(n_cards: usize) -> App {
         items,
         url: "https://github.com/orgs/o/projects/1".to_string(),
     });
+    app.open(crate::app::Entry::Board);
     app
 }
 

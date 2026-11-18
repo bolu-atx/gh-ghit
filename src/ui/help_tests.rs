@@ -31,7 +31,7 @@ fn shortcuts_modal_opens_and_each_close_key_dismisses_it() {
         assert!(frame_text(&mut app).contains("Shortcuts"));
         assert!(frame_text(&mut app).contains("Back in history"));
         handle_key(&mut app, key(close));
-        assert!(!app.shortcuts_open);
+        assert!(!app.shortcuts_open());
         assert!(!app.quit);
         assert!(!frame_text(&mut app).contains("Back in history"));
     }
@@ -41,7 +41,7 @@ fn shortcuts_modal_opens_and_each_close_key_dismisses_it() {
 fn shortcuts_modal_shows_credit_footer() {
     let mut app = loaded_app();
     handle_key(&mut app, key(KeyCode::Char('?')));
-    assert!(app.shortcuts_open);
+    assert!(app.shortcuts_open());
     let text = frame_text(&mut app);
     assert!(text.contains("Everywhere"), "sections render first: {text}");
     assert!(text.contains("esc close · j scroll down · k scroll up"), "closer survives: {text}");

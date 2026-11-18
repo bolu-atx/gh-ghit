@@ -11,7 +11,7 @@ mod tree;
 mod urgency;
 
 pub(crate) use focus::{
-    Dialog, Layer, LayerFlags, Pane, PaneVisibility, TextInput, layer_stack, step_pane,
+    Dialog, Layer, Pane, PaneVisibility, TextInput, step_pane,
     visible_panes,
 };
 pub(crate) use layout::{MAX_DIFF_FILES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};

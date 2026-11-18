@@ -166,12 +166,12 @@ impl App {
 
     /// `Esc` in compose: an empty draft closes at once, a typed one asks.
     pub(crate) fn request_discard_compose(&mut self) {
-        let typed = self.compose.draft.as_ref().is_some_and(|d| !d.body.is_empty());
+        let typed = self.draft().is_some_and(|d| !d.body.is_empty());
         if !typed {
             self.discard_compose();
             return;
         }
-        self.confirm = Some(ConfirmDialog {
+        self.open_confirm(ConfirmDialog {
             title: "Discard draft".to_string(),
             body: vec![ConfirmLine::plain("The comment draft has text that will be lost.".to_string())],
             choices: vec![
@@ -185,7 +185,7 @@ impl App {
     /// Quit now, unless a typed draft or unsubmitted review comments
     /// would be lost: then ask first.
     pub(crate) fn request_quit(&mut self) {
-        let draft = self.compose.draft.as_ref().is_some_and(|d| !d.body.is_empty());
+        let draft = self.draft().is_some_and(|d| !d.body.is_empty());
         let pending = self.pending_threads();
         if !draft && pending == 0 {
             self.quit = true;
@@ -196,7 +196,7 @@ impl App {
         } else {
             format!("{pending} unsubmitted review comment thread{} stay pending on GitHub.", if pending == 1 { "" } else { "s" })
         };
-        self.confirm = Some(ConfirmDialog {
+        self.open_confirm(ConfirmDialog {
             title: "Quit ghit".to_string(),
             body: vec![ConfirmLine::plain(line)],
             choices: vec![
@@ -209,14 +209,14 @@ impl App {
 
     /// A confirm modal is up, whatever it decides.
     pub(crate) fn confirm_open(&self) -> bool {
-        self.confirm.is_some()
+        self.confirm().is_some()
     }
 
     /// Pick choice `index` of the open dialog, then run what the
     /// specialization decides. Out-of-range indexes are ignored so a
     /// stale key never acts on the wrong button.
     pub(crate) fn confirm_choose(&mut self, index: usize) {
-        let Some(dialog) = self.confirm.take() else { return };
+        let Some(dialog) = self.take_confirm() else { return };
         match dialog.kind.clone() {
             ConfirmKind::PendingNav { intent } => match index {
                 0 => {
@@ -239,7 +239,7 @@ impl App {
             ConfirmKind::Reauth => match index {
                 0 => {
                     self.auth.reauth_requested = true;
-                    self.confirm = Some(dialog);
+                    self.open_confirm(dialog);
                 }
                 1 => self.dismiss_reauth(),
                 _ => {}
@@ -251,7 +251,7 @@ impl App {
     /// dropped re-auth question counts as dismissed, like its `n`
     /// choice, so later auth failures notify only.
     pub(crate) fn confirm_cancel(&mut self) {
-        let kind = self.confirm.take().map(|d| d.kind);
+        let kind = self.take_confirm().map(|d| d.kind);
         if matches!(kind, Some(ConfirmKind::Reauth)) {
             self.dismiss_reauth();
         }
@@ -286,7 +286,7 @@ impl App {
     pub(crate) fn open_pending_nav(&mut self, intent: NavIntent) {
         let Some(n) = self.nav.current else { return };
         let count = self.pending_threads();
-        self.confirm = Some(ConfirmDialog {
+        self.open_confirm(ConfirmDialog {
             title: "Unsubmitted comments".to_string(),
             body: vec![
                 ConfirmLine::plain(format!("#{n} has {count} unsubmitted comment{s}.", s = if count == 1 { "" } else { "s" })),
@@ -309,7 +309,7 @@ impl App {
     /// failure re-raises it.
     pub(crate) fn open_reauth(&mut self, cause: String, missing: Vec<String>, scopes_known: bool) {
         self.auth.degraded = true;
-        if self.confirm.is_some() {
+        if self.confirm_open() {
             return;
         }
         let mut body = vec![ConfirmLine::plain(cause)];
@@ -324,7 +324,7 @@ impl App {
             body.push(ConfirmLine::plain(format!("needed: {}", crate::github::REQUIRED_SCOPES.join(", "))));
         }
         body.push(ConfirmLine::plain(crate::github::reauth_command()));
-        self.confirm = Some(ConfirmDialog {
+        self.open_confirm(ConfirmDialog {
             title: "GitHub auth".to_string(),
             body,
             choices: vec![
@@ -339,7 +339,7 @@ impl App {
     /// No-op unless degraded with no dialog up, so `R` never steals a
     /// healthy key or stacks a second modal.
     pub(crate) fn reopen_reauth(&mut self) {
-        if !self.auth.degraded || self.confirm.is_some() {
+        if !self.auth.degraded || self.confirm_open() {
             return;
         }
         self.open_reauth("auth still failing after dismissal".to_string(), vec![], false);
@@ -386,7 +386,7 @@ pub(crate) fn auth_failure(app: &mut App, e: &str) {
         return;
     }
     app.auth.degraded = true;
-    if app.auth.dismissed || app.confirm.is_some() {
+    if app.auth.dismissed || app.confirm_open() {
         return;
     }
     app.open_reauth(e.to_string(), vec![], false);
@@ -420,8 +420,8 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     let _ = enable_raw_mode();
     let _ = terminal.backend_mut().execute(EnterAlternateScreen);
     let _ = terminal.clear();
-    if matches!(app.confirm.as_ref().map(|d| &d.kind), Some(ConfirmKind::Reauth)) {
-        app.confirm = None;
+    if matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::Reauth)) {
+        app.take_confirm();
     }
     app.auth.reauth_requested = false;
     // Re-probe so the modal returns if the refresh did not cover it.

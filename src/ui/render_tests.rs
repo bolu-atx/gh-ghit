@@ -258,7 +258,7 @@ fn every_pane_takes_the_double_amber_frame_and_one_focus_shows() {
     assert_eq!((cell.symbol(), cell.fg), ("═", crate::theme::amber()));
     // A dialog on top takes the only focus: panes go quiet.
     app.nav.pane = Pane::Issues;
-    app.shortcuts_open = true;
+    app.open(crate::app::Entry::Shortcuts);
     assert!(cells(&draw_buffer(&mut app), "╔").is_empty());
 }
 

@@ -14,7 +14,7 @@ use super::test_support::{board_app, press_cell, TempPrefs, click, frame_text};
 #[test]
 fn board_filter_form_clicks_toggle_fields_and_focus_text() {
     let mut app = board_app(2);
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     let _ = frame_text(&mut app);
     let pills = app.board_pills().len();
     let before = app.board.fields.shown(0).unwrap_or(false);
@@ -23,13 +23,13 @@ fn board_filter_form_clicks_toggle_fields_and_focus_text() {
     assert_eq!(app.board.filter_focus, pills + 1);
     let _ = frame_text(&mut app);
     press_cell(&mut app, 0, None);
-    assert!(app.sidebar.query_edit);
+    assert!(app.query_edit());
     assert_eq!(app.board.filter_focus, 0);
     // Outside press and wheel leave the board and the form alone.
     let pos = (app.board.col, app.board.row);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
     handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 0, 0));
-    assert!(app.sidebar.filter_open);
+    assert!(app.format_open());
     assert_eq!((app.board.col, app.board.row), pos);
     assert!(app.board.data.is_some());
 }
@@ -38,6 +38,7 @@ fn board_filter_form_clicks_toggle_fields_and_focus_text() {
 fn board_skeleton_shows_while_loading() {
     let mut app = App::new(Some("o/r".to_string()));
     app.board.loading = true;
+    app.open(crate::app::Entry::Board);
     let text = frame_text(&mut app);
     assert!(text.contains("Fetching"), "skeleton title");
 }

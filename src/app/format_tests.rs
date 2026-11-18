@@ -27,6 +27,7 @@ fn format_prefs_survive_across_sessions() {
     first.board.filter = "auth".to_string();
     first.board.milestones.insert(Some("v1".to_string()));
     first.board.loading = true;
+    first.open(crate::app::Entry::Board);
     first.persist_prefs();
     // Second session: startup applies everything except the board
     // filter, which returns when its owner board opens.
@@ -90,6 +91,7 @@ fn stale_saved_milestones_prune_when_board_lands() {
         items: vec![card(Some("v2")), card(None)],
         url: String::new(),
     });
+    app.open(crate::app::Entry::Board);
     app.board.filter_focus = 99;
     app.prune_board_milestones();
     assert!(app.board.milestones.is_empty(), "stale v1 drops");
@@ -124,6 +126,7 @@ fn prefs_saved_under_another_host_stay_unrestored() {
     first.board.filter = "auth".to_string();
     first.board.milestones.insert(Some("v1".to_string()));
     first.board.loading = true;
+    first.open(crate::app::Entry::Board);
     first.persist_prefs();
     // Same owner and repo on github.com restore nothing: Format
     // prefs never bleed across hosts.

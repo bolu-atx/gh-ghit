@@ -69,12 +69,12 @@ fn compose_app() -> App {
 fn shift_r_reopens_reauth_only_while_degraded() {
     let mut app = compose_app();
     handle_key(&mut app, plain_key(KeyCode::Char('R')));
-    assert!(app.confirm.is_none(), "healthy key is a no-op");
+    assert!(!app.confirm_open(), "healthy key is a no-op");
     app.auth.dismissed = true;
     app.auth.degraded = true;
     handle_key(&mut app, plain_key(KeyCode::Char('R')));
     assert!(
-        matches!(app.confirm.as_ref().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)),
+        matches!(app.confirm().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)),
         "degraded key reopens the dialog",
     );
 }
@@ -85,7 +85,7 @@ fn c_opens_compose_and_esc_discards() {
     handle_key(&mut app, plain_key(KeyCode::Char('c')));
     assert!(app.compose_open());
     handle_key(&mut app, plain_key(KeyCode::Char('x')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "x");
+    assert_eq!(app.draft().unwrap().body, "x");
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert!(app.confirm_open(), "typed draft asks before discarding");
     assert!(app.compose_open());
@@ -110,7 +110,7 @@ fn compose_ctrl_s_with_empty_draft_stays_open() {
     handle_key(&mut app, plain_key(KeyCode::Char('c')));
     handle_key(&mut app, ctrl_key(KeyCode::Char('s')));
     assert!(app.compose_open(), "empty draft never sends");
-    assert!(!app.compose.draft.as_ref().unwrap().sending);
+    assert!(!app.draft().unwrap().sending);
     assert!(app.message.contains("empty"));
 }
 
@@ -130,7 +130,7 @@ fn type_text(app: &mut App, text: &str) {
 }
 
 fn compose_cursor(app: &App) -> usize {
-    app.compose.draft.as_ref().expect("compose").cursor
+    app.draft().expect("compose").cursor
 }
 
 #[test]
@@ -172,15 +172,15 @@ fn compose_kill_ring_kills_and_yanks() {
     handle_key(&mut app, plain_key(KeyCode::Char('c')));
     type_text(&mut app, "hello world");
     handle_key(&mut app, ctrl_key(KeyCode::Char('w')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hello ");
+    assert_eq!(app.draft().unwrap().body, "hello ");
     handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hello world");
+    assert_eq!(app.draft().unwrap().body, "hello world");
     assert_eq!(compose_cursor(&app), 11);
     handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
     handle_key(&mut app, ctrl_key(KeyCode::Char('k')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "");
+    assert_eq!(app.draft().unwrap().body, "");
     handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "hello world");
+    assert_eq!(app.draft().unwrap().body, "hello world");
 }
 
 #[test]
@@ -190,10 +190,10 @@ fn compose_alt_d_deletes_the_word_ahead() {
     type_text(&mut app, "foo bar");
     handle_key(&mut app, ctrl_key(KeyCode::Char('a')));
     handle_key(&mut app, alt_key(KeyCode::Char('d')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, " bar");
+    assert_eq!(app.draft().unwrap().body, " bar");
     assert_eq!(compose_cursor(&app), 0, "cursor stays put");
     handle_key(&mut app, ctrl_key(KeyCode::Char('y')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "foo bar");
+    assert_eq!(app.draft().unwrap().body, "foo bar");
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn compose_ctrl_u_kills_to_line_start() {
     handle_key(&mut app, plain_key(KeyCode::Left));
     handle_key(&mut app, plain_key(KeyCode::Left));
     handle_key(&mut app, ctrl_key(KeyCode::Char('u')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "lo");
+    assert_eq!(app.draft().unwrap().body, "lo");
     assert_eq!(compose_cursor(&app), 0);
 }
 
@@ -216,7 +216,7 @@ fn compose_ctrl_d_deletes_the_char_ahead() {
     handle_key(&mut app, plain_key(KeyCode::Left));
     handle_key(&mut app, plain_key(KeyCode::Left));
     handle_key(&mut app, ctrl_key(KeyCode::Char('d')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "ac");
+    assert_eq!(app.draft().unwrap().body, "ac");
     assert_eq!(compose_cursor(&app), 1);
 }
 
@@ -226,7 +226,7 @@ fn compose_ctrl_t_transposes_chars() {
     handle_key(&mut app, plain_key(KeyCode::Char('c')));
     type_text(&mut app, "ab");
     handle_key(&mut app, ctrl_key(KeyCode::Char('t')));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "ba");
+    assert_eq!(app.draft().unwrap().body, "ba");
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn compose_home_end_and_delete_keys() {
     assert_eq!(compose_cursor(&app), 2, "end jumps to line end");
     handle_key(&mut app, plain_key(KeyCode::Left));
     handle_key(&mut app, plain_key(KeyCode::Delete));
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "h");
+    assert_eq!(app.draft().unwrap().body, "h");
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn compose_ctrl_i_inserts_tab_and_never_walks_history() {
     type_text(&mut app, "a");
     handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
     type_text(&mut app, "b");
-    assert_eq!(app.compose.draft.as_ref().unwrap().body, "a\tb");
+    assert_eq!(app.draft().unwrap().body, "a\tb");
     assert_eq!(app.nav.current, Some(7), "tab never leaves the modal");
     assert!(app.compose_open());
 }
@@ -370,12 +370,12 @@ fn top_layer_owns_keys_and_esc_pops_exactly_one() {
     assert_eq!(app.focus().layer, Layer::Base);
 
     // Shortcuts swallow navigation; Esc closes.
-    app.shortcuts_open = true;
+    app.open(crate::app::Entry::Shortcuts);
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
     assert_eq!(app.nav.current, Some(7), "shortcuts swallow l");
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Shortcuts));
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert!(!app.shortcuts_open);
+    assert!(!app.shortcuts_open());
 
     // Confirm swallows everything, quit included; Esc cancels.
     app.open_pending_nav(crate::app::NavIntent::Back(1));
@@ -404,10 +404,10 @@ fn top_layer_owns_keys_and_esc_pops_exactly_one() {
     assert_eq!(app.focus().layer, Layer::Input(TextInput::Query));
     handle_key(&mut app, plain_key(KeyCode::Char('x')));
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert!(app.sidebar.filter_open && !app.sidebar.query_edit, "Esc pops the text row");
+    assert!(app.format_open() && !app.query_edit(), "Esc pops the text row");
     assert_eq!(app.sidebar.query_draft, app.sidebar.query_active, "draft reverts");
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert!(!app.sidebar.filter_open);
+    assert!(!app.format_open());
 
     // Bar: Esc leaves it and clears the text.
     handle_key(&mut app, plain_key(KeyCode::Char(':')));
@@ -423,12 +423,13 @@ fn board_esc_closes_one_layer_and_keeps_the_filter() {
     use crate::core::{Dialog, Layer};
     let mut app = step_app();
     app.board.loading = true;
+    app.open(crate::app::Entry::Board);
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Board));
     app.board.filter = "bug".to_string();
     app.open_board_filter();
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::BoardFilter));
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert!(!app.sidebar.filter_open, "form Esc closes the form");
+    assert!(!app.format_open(), "form Esc closes the form");
     assert_eq!(app.board.filter, "bug", "and keeps the filter");
     assert!(board_open(&app), "the board stays up");
     handle_key(&mut app, plain_key(KeyCode::Esc));
@@ -509,14 +510,15 @@ fn bar_filter_and_board_keep_their_h_and_l() {
     assert_eq!(app.nav.current, Some(7));
     // The filter dialog swallows them.
     app.nav.focus = crate::app::Focus::Main;
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     handle_key(&mut app, plain_key(KeyCode::Char('h')));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
     assert_eq!(app.nav.current, Some(7));
     assert_eq!(app.nav.step_pending, None);
     // The board modal moves columns instead of stepping issues.
-    app.sidebar.filter_open = false;
+    app.close(crate::app::Slot::Format);
     app.board.loading = true;
+    app.open(crate::app::Entry::Board);
     handle_key(&mut app, plain_key(KeyCode::Char('h')));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
     assert_eq!(app.nav.current, Some(7), "board keeps h/l");
@@ -534,7 +536,7 @@ fn auth_prompt_y_requests_reauth_and_n_dismisses() {
     );
     handle_key(&mut app, plain_key(KeyCode::Char('y')));
     assert!(app.auth.reauth_requested, "y arms the refresh");
-    assert!(app.confirm.is_some(), "loop clears the modal after running");
+    assert!(app.confirm_open(), "loop clears the modal after running");
     let mut app = step_app();
     app.open_reauth(
         "GitHub auth check failed: 401 Unauthorized".to_string(),
@@ -543,7 +545,7 @@ fn auth_prompt_y_requests_reauth_and_n_dismisses() {
     );
     handle_key(&mut app, plain_key(KeyCode::Char('n')));
     assert!(!app.auth.reauth_requested, "n never refreshes");
-    assert!(app.confirm.is_none(), "n dismisses");
+    assert!(!app.confirm_open(), "n dismisses");
     assert!(matches!(app.nav.focus, crate::app::Focus::Main), "hint must render");
     assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
 }
@@ -558,7 +560,7 @@ fn auth_esc_dismisses_like_n() {
     );
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert!(!app.auth.reauth_requested, "esc never refreshes");
-    assert!(app.confirm.is_none(), "esc dismisses");
+    assert!(!app.confirm_open(), "esc dismisses");
     assert!(app.auth.dismissed, "esc counts as dismissed");
     assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
 }
@@ -601,13 +603,14 @@ fn a_mouse_press_drops_a_waiting_prefix() {
 #[test]
 fn q_closes_the_top_dialog_and_quits_only_at_base() {
     let mut app = step_app();
-    app.sidebar.filter_open = true;
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     press(&mut app, 'q');
-    assert!(!app.sidebar.filter_open && !app.quit, "q closes the Format dialog");
-    app.shortcuts_open = true;
+    assert!(!app.format_open() && !app.quit, "q closes the Format dialog");
+    app.open(crate::app::Entry::Shortcuts);
     press(&mut app, 'q');
-    assert!(!app.shortcuts_open && !app.quit, "q closes help");
+    assert!(!app.shortcuts_open() && !app.quit, "q closes help");
     app.board.loading = true;
+    app.open(crate::app::Entry::Board);
     press(&mut app, 'q');
     assert!(!board_open(&app) && !app.quit, "q closes the board");
     press(&mut app, 'q');
@@ -631,17 +634,18 @@ fn q_types_in_text_inputs_and_esc_never_quits() {
 fn help_opens_from_the_board_and_its_filter_form() {
     let mut app = step_app();
     app.board.loading = true;
+    app.open(crate::app::Entry::Board);
     press(&mut app, '?');
-    assert!(app.shortcuts_open);
-    app.shortcuts_open = false;
+    assert!(app.shortcuts_open());
+    app.close(crate::app::Slot::Shortcuts);
     app.open_board_filter();
     app.board.filter_focus = 1;
     press(&mut app, '?');
-    assert!(app.shortcuts_open, "help opens on a form row");
-    app.shortcuts_open = false;
+    assert!(app.shortcuts_open(), "help opens on a form row");
+    app.close(crate::app::Slot::Shortcuts);
     app.board.filter_focus = 0;
     press(&mut app, '?');
-    assert!(!app.shortcuts_open && app.sidebar.query_draft == "?", "the text row types ?");
+    assert!(!app.shortcuts_open() && app.sidebar.query_draft == "?", "the text row types ?");
 }
 
 #[test]

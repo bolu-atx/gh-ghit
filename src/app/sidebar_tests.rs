@@ -331,11 +331,11 @@ fn auto_refresh_guards_each_active_view() {
         let (_tx, rx) = std::sync::mpsc::channel();
         match guard {
             0 => app.sections.rx = Some(rx),
-            1 => app.board.loading = true,
-            2 => app.board.data = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }),
-            3 => app.compose.draft = Some(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
-            4 => app.sidebar.filter_open = true,
-            5 => app.shortcuts_open = true,
+            1 => { app.board.loading = true; app.open(crate::app::Entry::Board); }
+            2 => { app.board.data = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }); app.open(crate::app::Entry::Board); }
+            3 => app.open_draft(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new() }),
+            4 => app.open(crate::app::Entry::Format(crate::app::FormatEdit::None)),
+            5 => app.open(crate::app::Entry::Shortcuts),
             6 => app.nav.focus = Focus::Bar,
             _ => unreachable!(),
         }

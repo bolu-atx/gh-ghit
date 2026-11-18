@@ -295,8 +295,8 @@ pub(crate) fn serve(
         // so an accepted prompt degrades to naming the command.
         if app.auth.reauth_requested {
             app.auth.reauth_requested = false;
-            if matches!(app.confirm.as_ref().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)) {
-                app.confirm = None;
+            if matches!(app.confirm().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)) {
+                app.take_confirm();
             }
             app.notify(format!("re-auth by hand: {}", crate::github::reauth_command()));
         }
@@ -510,12 +510,12 @@ mod tests {
         send(&mut app, "h", false, false);
         send(&mut app, "i", false, false);
         send(&mut app, "a", true, false);
-        assert_eq!(app.compose.draft.as_ref().unwrap().cursor, 0, "ctrl-a over the socket");
+        assert_eq!(app.draft().unwrap().cursor, 0, "ctrl-a over the socket");
         send(&mut app, "f", false, true);
-        assert_eq!(app.compose.draft.as_ref().unwrap().cursor, 2, "alt-f over the socket");
+        assert_eq!(app.draft().unwrap().cursor, 2, "alt-f over the socket");
         send(&mut app, "a", true, false);
         send(&mut app, "k", true, false);
-        assert!(app.compose.draft.as_ref().unwrap().body.is_empty(), "ctrl-k over the socket");
+        assert!(app.draft().unwrap().body.is_empty(), "ctrl-k over the socket");
         // No terminal exists to suspend here, so the armed run degrades.
         app.compose.editor_requested = true;
         assert!(super::land_editor_request_drive(&mut app));

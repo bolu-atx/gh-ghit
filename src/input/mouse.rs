@@ -164,24 +164,24 @@ fn handle_form_mouse(app: &mut App, m: MouseEvent) {
     let on_board = board_open(app);
     let Some((rect, index, option)) = hit(&app.hits.form_cells, m.column, m.row) else {
         if !on_board && !in_rect(app.hits.form_popup, m.column, m.row)
-            && !app.sidebar.query_edit && !app.sidebar.name_edit
+            && !app.query_edit() && !app.name_edit()
         {
-            app.sidebar.filter_open = false;
-        } else if on_board && !in_rect(app.hits.form_popup, m.column, m.row) && !app.sidebar.query_edit {
+            app.close(crate::app::Slot::Format);
+        } else if on_board && !in_rect(app.hits.form_popup, m.column, m.row) && !app.query_edit() {
             menu::apply_board_filter(app);
         }
         return;
     };
     if on_board {
-        app.sidebar.query_edit = false;
+        app.set_format_edit(crate::app::FormatEdit::None);
         app.board.filter_focus = index;
         if index == 0 {
-            app.sidebar.query_edit = true;
+            app.set_format_edit(crate::app::FormatEdit::Query);
         } else {
             toggle_board_focused(app);
         }
     } else {
-        if app.sidebar.query_edit || app.sidebar.name_edit {
+        if app.query_edit() || app.name_edit() {
             return;
         }
         app.sidebar.format_focus = index;
@@ -240,7 +240,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                 }
                 if app.board.col == c && app.board.row == r {
                     if let Some(n) = board_selected_number(app) {
-                        app.board.data = None;
+                        app.close_board();
                         app.board.expanded = None;
                         app.open_issue(n);
                     }

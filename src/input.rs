@@ -61,7 +61,7 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
         Layer::Dialog(Dialog::Compose) if !chord => app.compose_insert(c),
         Layer::Dialog(Dialog::Confirm) => {
             let lower = c.to_ascii_lowercase();
-            if let Some(index) = app.confirm.as_ref()
+            if let Some(index) = app.confirm()
                 .and_then(|d| d.choices.iter().position(|ch| ch.key == lower))
             {
                 app.confirm_choose(index);
@@ -69,7 +69,7 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         // Typing on the text row starts editing, like the old dialog.
         Layer::Dialog(Dialog::BoardFilter) if app.board.filter_focus == 0 && !chord => {
-            app.sidebar.query_edit = true;
+            app.set_format_edit(crate::app::FormatEdit::Query);
             app.sidebar.query_draft.push(c);
         }
         _ => {}

@@ -5,9 +5,8 @@ use std::collections::HashSet;
 use ratatui::layout::Rect;
 
 use crate::app::{App, Tab, Focus, NavIntent, Focused, Columns, open_in_browser};
-use crate::core::{self, Layer, LayerFlags, Pane};
+use crate::core::{self, Layer, Pane};
 use crate::model;
-use crate::app::board_open;
 
 /// Navigation state: where the user is and how they got there. `current`
 /// is the open issue, `requested`/`step_pending` are in-flight fetches,
@@ -338,21 +337,6 @@ impl App {
         self.nav.history_cursor = 0;
     }
 
-    /// Open layers, bottom to top. The one derivation of "who owns input".
-    pub(crate) fn layer_stack(&self) -> Vec<Layer> {
-        core::layer_stack(&LayerFlags {
-            bar: self.nav.focus == Focus::Bar,
-            board: board_open(self),
-            format: self.sidebar.filter_open,
-            query_edit: self.sidebar.query_edit,
-            name_edit: self.sidebar.name_edit,
-            menu: self.menu.is_some(),
-            compose: self.compose_open(),
-            confirm: self.confirm_open(),
-            shortcuts: self.shortcuts_open,
-        })
-    }
-
     /// Top layer plus the active pane beneath it.
     pub(crate) fn focus(&self) -> Focused {
         let layer = self.layer_stack().last().copied().unwrap_or(Layer::Base);
@@ -387,29 +371,27 @@ impl App {
     /// clears the bar and the refs highlight.
     pub(crate) fn pop_layer(&mut self) {
         use crate::core::{Dialog, TextInput};
+        use crate::app::{Slot, FormatEdit};
         match self.focus().layer {
-            Layer::Dialog(Dialog::Shortcuts) => self.shortcuts_open = false,
+            Layer::Dialog(Dialog::Shortcuts) => { self.close(Slot::Shortcuts); }
             Layer::Dialog(Dialog::Confirm) => self.confirm_cancel(),
             Layer::Dialog(Dialog::Compose) => self.request_discard_compose(),
-            Layer::Dialog(Dialog::Menu) => self.menu = None,
-            Layer::Dialog(Dialog::Format) => self.sidebar.filter_open = false,
+            Layer::Dialog(Dialog::Menu) => { self.close(Slot::Menu); }
+            Layer::Dialog(Dialog::Format) => { self.close(Slot::Format); }
             Layer::Dialog(Dialog::BoardFilter) => {
-                self.sidebar.filter_open = false;
+                self.close(crate::app::Slot::Format);
                 self.board.filter_focus = 0;
             }
-            Layer::Dialog(Dialog::Board) => {
-                self.board.data = None;
-                self.board.loading = false;
-            }
+            Layer::Dialog(Dialog::Board) => self.close_board(),
             Layer::Input(TextInput::Query) => {
                 self.sidebar.query_draft = self.sidebar.query_active.clone();
-                self.sidebar.query_edit = false;
+                self.set_format_edit(crate::app::FormatEdit::None);
             }
             Layer::Input(TextInput::BoardQuery) => {
                 self.sidebar.query_draft = self.board.filter.clone();
-                self.sidebar.query_edit = false;
+                self.set_format_edit(crate::app::FormatEdit::None);
             }
-            Layer::Input(TextInput::Name) => self.sidebar.name_edit = false,
+            Layer::Input(TextInput::Name) => self.set_format_edit(FormatEdit::None),
             Layer::Input(TextInput::Bar) => {
                 self.nav.focus = Focus::Main;
                 self.sidebar.searching = false;
