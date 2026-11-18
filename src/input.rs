@@ -231,6 +231,8 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.open_graph_selection();
             } else if app.nav.pane == Pane::Refs {
                 app.open_selected_ref();
+            } else if app.nav.pane == Pane::Labels {
+                app.toggle_filter_item(app.labels.cursor);
             }
         }
         KeyCode::Char('J') if app.visual_diff() => app.jump_diff_file(1),
@@ -290,6 +292,10 @@ pub(crate) fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('x') if matches!(app.nav.pane, Pane::Issues | Pane::PRs) => app.evict_current(),
         KeyCode::Char('s') if app.visual_diff() => app.toggle_diff_split(),
         KeyCode::Char('S') => app.submit_pending_review(),
+        KeyCode::Char(' ') if app.nav.pane == Pane::Labels => {
+            app.toggle_filter_item(app.labels.cursor);
+        }
+        KeyCode::Char('X') if app.nav.pane == Pane::Labels => app.clear_filter_items(),
         KeyCode::Char(' ') if app.visual_diff() => app.toggle_diff_file(),
 
         KeyCode::Char(' ') => app.toggle_row_expansion(),
@@ -443,6 +449,7 @@ fn pane_down(app: &mut App, delta: isize) {
                 app.select_ref(n);
             }
         }
+        Pane::Labels => app.move_filter_cursor(delta),
         Pane::Main => {
             app.nav.scroll = app.nav.scroll.saturating_add_signed(delta as i16 * 3);
         }
@@ -789,6 +796,7 @@ pub(crate) enum WheelTarget {
     Issues,
     PRs,
     Refs,
+    Labels,
     Main,
 }
 
@@ -799,6 +807,8 @@ pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
         WheelTarget::PRs
     } else if app.refs_visible() && in_rect(app.hits.refs_area, x, y) {
         WheelTarget::Refs
+    } else if in_rect(app.hits.labels_area, x, y) {
+        WheelTarget::Labels
     } else {
         WheelTarget::Main
     }
@@ -829,6 +839,7 @@ fn wheel_move(app: &mut App, target: WheelTarget, delta: isize) {
                 app.refs.highlight = Some(n);
             }
         }
+        WheelTarget::Labels => app.move_filter_cursor(delta),
         WheelTarget::Main => {
             app.nav.scroll = app.nav.scroll.saturating_add_signed(delta as i16 * 3);
         }
@@ -958,6 +969,16 @@ fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             app.go_back_n(steps);
             return;
         }
+    }
+    if !drag && in_rect(app.hits.labels_area, x, y) {
+        app.nav.focus = Focus::Main;
+        app.nav.pane = Pane::Labels;
+        let row = app.hits.labels_rows.iter().find(|(rect, _)| in_rect(*rect, x, y)).copied();
+        if let Some((rect, index)) = row {
+            app.toggle_filter_item(index);
+            app.note_click(rect);
+        }
+        return;
     }
     // Hit-test against the render-cached pane rows by borrow: computed
     // once per frame in `render`, reused here with no clone.

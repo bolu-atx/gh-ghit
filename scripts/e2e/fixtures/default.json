@@ -1,296 +1,304 @@
 {
   "GET /rate_limit": {
-    "status": 200,
-    "body": {}
+    "body": {},
+    "status": 200
   },
   "GET /repos/bolu-atx/gh-ghit": {
-    "status": 200,
-    "body": {}
-  },
-  "GET /repos/bolu-atx/gh-ghit/issues/9": {
-    "status": 200,
-    "body": {
-      "number": 9,
-      "title": "Precompiled binaries",
-      "state": "open",
-      "user": {
-        "login": "author"
-      },
-      "labels": [],
-      "assignees": [],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "html_url": "https://github.com/bolu-atx/gh-ghit/issues/9",
-      "body": "Fixture body",
-      "comments": 0,
-      "milestone": null
-    }
+    "body": {},
+    "status": 200
   },
   "GET /repos/bolu-atx/gh-ghit/issues/19": {
-    "status": 200,
     "body": {
-      "number": 19,
-      "title": "unified interface",
-      "state": "open",
-      "user": {
-        "login": "author"
-      },
-      "labels": [],
       "assignees": [],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "html_url": "https://github.com/bolu-atx/gh-ghit/pull/19",
       "body": "Fixture body",
       "comments": 0,
+      "created_at": "2026-01-01T00:00:00Z",
+      "html_url": "https://github.com/bolu-atx/gh-ghit/pull/19",
+      "labels": [],
       "milestone": null,
+      "number": 19,
       "pull_request": {
         "merged_at": null
-      }
-    }
-  },
-  "GET /repos/bolu-atx/gh-ghit/issues/24": {
-    "status": 200,
-    "body": {
-      "number": 24,
-      "title": "move title into header",
+      },
       "state": "open",
+      "title": "unified interface",
+      "updated_at": "2026-01-01T00:00:00Z",
       "user": {
         "login": "author"
-      },
-      "labels": [],
+      }
+    },
+    "status": 200
+  },
+  "GET /repos/bolu-atx/gh-ghit/issues/24": {
+    "body": {
       "assignees": [],
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z",
-      "html_url": "https://github.com/bolu-atx/gh-ghit/pull/24",
       "body": "Closes #9",
       "comments": 0,
+      "created_at": "2026-01-01T00:00:00Z",
+      "html_url": "https://github.com/bolu-atx/gh-ghit/pull/24",
+      "labels": [],
       "milestone": null,
+      "number": 24,
       "pull_request": {
         "merged_at": null
+      },
+      "state": "open",
+      "title": "move title into header",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "user": {
+        "login": "author"
       }
-    }
+    },
+    "status": 200
+  },
+  "GET /repos/bolu-atx/gh-ghit/issues/9": {
+    "body": {
+      "assignees": [],
+      "body": "Fixture body",
+      "comments": 0,
+      "created_at": "2026-01-01T00:00:00Z",
+      "html_url": "https://github.com/bolu-atx/gh-ghit/issues/9",
+      "labels": [],
+      "milestone": null,
+      "number": 9,
+      "state": "open",
+      "title": "Precompiled binaries",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "user": {
+        "login": "author"
+      }
+    },
+    "status": 200
+  },
+  "GET /repos/bolu-atx/gh-ghit/labels?per_page=100": {
+    "body": [],
+    "status": 200
+  },
+  "GET /repos/bolu-atx/gh-ghit/milestones?per_page=100&state=all": {
+    "body": [],
+    "status": 200
+  },
+  "GET /repos/bolu-atx/gh-ghit/pulls/19/files?page=1&per_page=100": {
+    "body": [],
+    "status": 200
   },
   "GET /repos/bolu-atx/gh-ghit/pulls/24/files?page=1&per_page=100": {
-    "status": 200,
     "body": [
       {
-        "filename": "src/main.rs",
-        "status": "modified",
         "additions": 1,
         "deletions": 1,
-        "patch": "@@ -1,2 +1,2 @@\n-old line\n+new line\n context"
+        "filename": "src/main.rs",
+        "patch": "@@ -1,2 +1,2 @@\n-old line\n+new line\n context",
+        "status": "modified"
       },
       {
-        "filename": "src/ui.rs",
-        "status": "modified",
         "additions": 1,
         "deletions": 0,
-        "patch": "@@ -1,1 +1,2 @@\n context\n+more"
+        "filename": "src/ui.rs",
+        "patch": "@@ -1,1 +1,2 @@\n context\n+more",
+        "status": "modified"
       }
-    ]
+    ],
+    "status": 200
   },
-  "POST /graphql repository a62c073da9e52763": {
-    "status": 200,
+  "POST /graphql repository 264bc1ffdc35a18f": {
     "body": {
       "data": {
         "repository": {
-          "open": {
-            "nodes": [
-              {
-                "number": 19,
-                "title": "unified interface",
-                "state": "OPEN",
-                "author": {
-                  "login": "author"
-                },
-                "labels": {
-                  "nodes": []
-                },
-                "assignees": {
-                  "nodes": []
-                },
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-01T00:00:00Z",
-                "url": "https://github.com/bolu-atx/gh-ghit/pull/19",
-                "comments": {
-                  "totalCount": 0
-                },
-                "projectItems": {
-                  "nodes": []
-                }
-              },
-              {
-                "number": 24,
-                "title": "move title into header",
-                "state": "OPEN",
-                "author": {
-                  "login": "author"
-                },
-                "labels": {
-                  "nodes": []
-                },
-                "assignees": {
-                  "nodes": []
-                },
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-01T00:00:00Z",
-                "url": "https://github.com/bolu-atx/gh-ghit/pull/24",
-                "comments": {
-                  "totalCount": 0
-                },
-                "projectItems": {
-                  "nodes": []
-                }
-              },
-              {
-                "number": 25,
-                "title": "Recent pull request",
-                "state": "OPEN",
-                "author": {
-                  "login": "author"
-                },
-                "labels": {
-                  "nodes": []
-                },
-                "assignees": {
-                  "nodes": []
-                },
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-01T00:00:00Z",
-                "url": "https://github.com/bolu-atx/gh-ghit/pull/25",
-                "comments": {
-                  "totalCount": 0
-                },
-                "projectItems": {
-                  "nodes": []
-                }
-              }
-            ],
+          "issue": {
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "projectItems": {
+              "nodes": []
+            },
+            "reviewThreads": {
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    "status": 200
+  },
+  "POST /graphql repository 7f55ac5d96402430": {
+    "body": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "projectItems": {
+              "nodes": []
+            },
+            "reviewThreads": {
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    "status": 200
+  },
+  "POST /graphql repository a62c073da9e52763": {
+    "body": {
+      "data": {
+        "repository": {
+          "closedIssues": {
+            "nodes": [],
             "pageInfo": {
-              "hasNextPage": false,
-              "endCursor": null
+              "endCursor": null,
+              "hasNextPage": false
             }
           },
           "merged": {
             "nodes": [],
             "pageInfo": {
-              "hasNextPage": false,
-              "endCursor": null
+              "endCursor": null,
+              "hasNextPage": false
+            }
+          },
+          "open": {
+            "nodes": [
+              {
+                "assignees": {
+                  "nodes": []
+                },
+                "author": {
+                  "login": "author"
+                },
+                "comments": {
+                  "totalCount": 0
+                },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": {
+                  "nodes": []
+                },
+                "number": 19,
+                "projectItems": {
+                  "nodes": []
+                },
+                "state": "OPEN",
+                "title": "unified interface",
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "url": "https://github.com/bolu-atx/gh-ghit/pull/19"
+              },
+              {
+                "assignees": {
+                  "nodes": []
+                },
+                "author": {
+                  "login": "author"
+                },
+                "comments": {
+                  "totalCount": 0
+                },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": {
+                  "nodes": []
+                },
+                "number": 24,
+                "projectItems": {
+                  "nodes": []
+                },
+                "state": "OPEN",
+                "title": "move title into header",
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "url": "https://github.com/bolu-atx/gh-ghit/pull/24"
+              },
+              {
+                "assignees": {
+                  "nodes": []
+                },
+                "author": {
+                  "login": "author"
+                },
+                "comments": {
+                  "totalCount": 0
+                },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": {
+                  "nodes": []
+                },
+                "number": 25,
+                "projectItems": {
+                  "nodes": []
+                },
+                "state": "OPEN",
+                "title": "Recent pull request",
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "url": "https://github.com/bolu-atx/gh-ghit/pull/25"
+              }
+            ],
+            "pageInfo": {
+              "endCursor": null,
+              "hasNextPage": false
             }
           },
           "openIssues": {
             "nodes": [
               {
-                "number": 9,
-                "title": "Precompiled binaries",
-                "state": "OPEN",
-                "author": {
-                  "login": "author"
-                },
-                "labels": {
-                  "nodes": []
-                },
                 "assignees": {
                   "nodes": []
                 },
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-01T00:00:00Z",
-                "url": "https://github.com/bolu-atx/gh-ghit/issues/9",
+                "author": {
+                  "login": "author"
+                },
                 "comments": {
                   "totalCount": 0
                 },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": {
+                  "nodes": []
+                },
+                "number": 9,
                 "projectItems": {
                   "nodes": []
-                }
+                },
+                "state": "OPEN",
+                "title": "Precompiled binaries",
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "url": "https://github.com/bolu-atx/gh-ghit/issues/9"
               }
             ],
             "pageInfo": {
-              "hasNextPage": false,
-              "endCursor": null
-            }
-          },
-          "closedIssues": {
-            "nodes": [],
-            "pageInfo": {
-              "hasNextPage": false,
-              "endCursor": null
+              "endCursor": null,
+              "hasNextPage": false
             }
           }
         }
       }
-    }
-  },
-  "POST /graphql repository 264bc1ffdc35a18f": {
-    "status": 200,
-    "body": {
-      "data": {
-        "repository": {
-          "issue": {
-            "projectItems": {
-              "nodes": []
-            },
-            "reviewThreads": {
-              "nodes": []
-            },
-            "closingIssuesReferences": {
-              "nodes": []
-            },
-            "closedByPullRequestsReferences": {
-              "nodes": []
-            }
-          }
-        }
-      }
-    }
+    },
+    "status": 200
   },
   "POST /graphql repository b2a5adbfcdeda89a": {
-    "status": 200,
     "body": {
       "data": {
         "repository": {
           "pullRequest": {
-            "projectItems": {
-              "nodes": []
-            },
-            "reviewThreads": {
+            "closedByPullRequestsReferences": {
               "nodes": []
             },
             "closingIssuesReferences": {
               "nodes": []
             },
-            "closedByPullRequestsReferences": {
-              "nodes": []
-            }
-          }
-        }
-      }
-    }
-  },
-  "POST /graphql repository 7f55ac5d96402430": {
-    "status": 200,
-    "body": {
-      "data": {
-        "repository": {
-          "pullRequest": {
             "projectItems": {
               "nodes": []
             },
             "reviewThreads": {
               "nodes": []
-            },
-            "closingIssuesReferences": {
-              "nodes": []
-            },
-            "closedByPullRequestsReferences": {
-              "nodes": []
             }
           }
         }
       }
-    }
-  },
-  "GET /repos/bolu-atx/gh-ghit/pulls/19/files?page=1&per_page=100": {
-    "status": 200,
-    "body": []
+    },
+    "status": 200
   }
 }

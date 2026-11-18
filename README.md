@@ -77,7 +77,7 @@ Press `?` for the in-app shortcuts modal.
 
 | Context | Keys | Action |
 | --- | --- | --- |
-| Navigation | `Tab` | Cycle panes |
+| Navigation | `Tab` | Cycle panes (Issues, PRs, Refs, Labels) |
 | Navigation | `j` / `k` | Select |
 | Navigation | `↑` / `↓`, Page Up / Page Down | Scroll |
 | Navigation | `1` / `2` | Details / Visual tab |
@@ -89,6 +89,7 @@ Press `?` for the in-app shortcuts modal.
 | Actions | `o` / `r` / `p` / `y` | Open in browser / refresh / pin / yank |
 | Actions | `t` / `q` / `c` | Cycle theme / quit / comment |
 | Actions | `a` / `A` / `x` | Sort sidebar / reverse sort / evict row |
+| Labels pane | `j` / `k`, `Space` / `Enter`, `X` | Move / toggle label or milestone filter / clear all |
 | Board | `h` / `l`, `j` / `k` | Move between columns / cards |
 | Board | `Space` / `Enter` / `f` | Expand card / open card / filter board |
 | Diff | `↑` / `↓`, `J` / `K` | Move by line / file |

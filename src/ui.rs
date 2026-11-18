@@ -11,7 +11,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
 };
 
-use crate::app::{App, Tab};
+use crate::app::{App, FilterItem, Tab};
 use crate::model::{self, IssueData};
 use crate::theme;
 
@@ -25,6 +25,8 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
 
     app.hits.history_rows.clear();
     app.hits.refs_area = Rect::default();
+    app.hits.labels_area = Rect::default();
+    app.hits.labels_rows.clear();
     app.hits.side_issue_area = Rect::default();
     app.hits.side_pr_area = Rect::default();
     let cols = Layout::default()
@@ -44,13 +46,29 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
             app.nav.history.len().min(4) + 1
         } else { 0 };
         let height = if count > 0 { (count as u16 + 2).min(cols[2].height) } else { 0 };
+        // Refs and Labels split what History leaves; Labels takes it all
+        // when there are no refs.
+        let avail = cols[2].height - height;
+        let refs_height = match (app.refs_visible(), app.labels_visible()) {
+            // Labels takes only what its rows need, up to half; Refs gets the rest.
+            (true, true) => avail - (app.filter_items().len() as u16 + 4).min(avail / 2),
+            (true, false) => avail,
+            (false, _) => 0,
+        };
         let panes = Layout::default().direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(height)]).split(cols[2]);
+            .constraints([
+                Constraint::Length(refs_height),
+                Constraint::Min(0),
+                Constraint::Length(height),
+            ]).split(cols[2]);
         if app.refs_visible() {
             render_refs(f, panes[0], app);
         }
+        if app.labels_visible() {
+            render_labels(f, panes[1], app);
+        }
         if height > 0 {
-            render_history(f, panes[1], app);
+            render_history(f, panes[2], app);
         }
     }
     app.capture_body_rows(f.buffer_mut());
@@ -236,7 +254,7 @@ fn paint_click_flash(f: &mut ratatui::Frame, app: &mut App) {
 fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
     use crate::theme::{amber, base, ink, muted, paper, teal};
     let width = area.width.min(76);
-    let height = area.height.min(26);
+    let height = area.height.min(27);
     let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
@@ -250,7 +268,8 @@ fn render_shortcuts(f: &mut ratatui::Frame, area: Rect) {
         "  ctrl-o back · ctrl-i forward", "",
         "Actions", "  : command · / find · g search · f format · b board · w window",
         "  o open · r refresh · p pin · y yank · t theme · q quit · c comment",
-        "  a sort · A reverse · x evict", "",
+        "  a sort · A reverse · x evict",
+        "  Labels pane: j/k move · space toggle · X clear all", "",
         "Board", "  h/l columns · j/k cards · space expand · enter open · f format", "",
         "Diff", "  ↑/↓ lines · J/K files · space expand · s split · S submit pending",
         "Comment  c open · emacs keys · ctrl-o $EDITOR · ctrl-s send",
@@ -1595,6 +1614,107 @@ fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.refs.state = state;
 }
 
+/// Labels pane: milestones then labels, one row each, a checkbox on the
+/// selected ones. It edits the same filter sets as the Format dialog and
+/// frames like its sibling list panes.
+fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    use crate::theme::{amber, code_bg, ink, muted, paper, teal, violet};
+    let focused = app.nav.pane == crate::app::Pane::Labels;
+    let on_labels = app.sidebar.label_filter.len();
+    let on_milestones = app.sidebar.milestone_filter.len();
+    let items = app.filter_items();
+    let milestones = items.iter().filter(|item| matches!(item, FilterItem::Milestone(_))).count();
+    // Nerd Font Font Awesome fa-filter.
+    let mut title = section_title("Filters", "", "\u{f0b0}", focused);
+    if on_labels + on_milestones > 0 {
+        title.spans[2] = Span::styled(format!("{} on", on_labels + on_milestones),
+            Style::new().fg(amber()));
+    }
+    let footer = if items.is_empty() { String::new() } else {
+        format!("milestones ({}/{milestones}) · labels ({on_labels}/{})",
+            on_milestones, items.len() - milestones)
+    };
+    let block = Block::default().borders(Borders::ALL)
+        .border_type(if focused { BorderType::Double } else { BorderType::Plain })
+        .border_style(Style::new().bg(ink()).fg(if focused { amber() } else { muted() }))
+        .title(title)
+        .title_bottom(footer_line(&footer))
+        .style(theme::base());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    app.hits.labels_area = area;
+    if items.is_empty() {
+        let line = Line::styled("  loading …", Style::new().bg(ink()).fg(muted()));
+        f.render_widget(Paragraph::new(line).style(theme::base()), inner);
+        return;
+    }
+    // Display lines: a group header before each group, `Some(index)` for items.
+    let mut lines: Vec<Option<usize>> = vec![None];
+    for index in 0..items.len() {
+        if index == milestones {
+            lines.push(None);
+        }
+        lines.push(Some(index));
+    }
+    let height = inner.height as usize;
+    app.labels.cursor = app.labels.cursor.min(items.len() - 1);
+    let cursor_line = lines.iter().position(|i| *i == Some(app.labels.cursor)).unwrap_or(0);
+    let mut offset = app.labels.offset.min(lines.len().saturating_sub(height));
+    if cursor_line < offset {
+        offset = cursor_line;
+    } else if cursor_line >= offset + height {
+        offset = cursor_line + 1 - height;
+    }
+    // Keep the group header with the first row of its group.
+    if offset == cursor_line && cursor_line > 0 && lines[cursor_line - 1].is_none() {
+        offset -= 1;
+    }
+    app.labels.offset = offset;
+    for (row, line_index) in lines.iter().enumerate().skip(offset).take(height) {
+        let rect = Rect::new(inner.x, inner.y + (row - offset) as u16, inner.width, 1);
+        let Some(index) = *line_index else {
+            // Nerd Font Font Awesome fa-flag / fa-tag.
+            let (icon, name, accent) = if row == 0 {
+                ("\u{f024}", "Milestones", violet())
+            } else {
+                ("\u{f02b}", "Labels", teal())
+            };
+            let line = Line::from(vec![
+                Span::styled(format!("  {icon} "), Style::new().bg(ink()).fg(accent)),
+                Span::styled(name, Style::new().bg(ink()).fg(muted()).bold()),
+            ]);
+            f.render_widget(Paragraph::new(line).style(theme::base()), rect);
+            continue;
+        };
+        let on = app.filter_item_on(&items[index]);
+        let (name, none) = match &items[index] {
+            FilterItem::Milestone(Some(title)) => (title.clone(), false),
+            FilterItem::Milestone(None) => ("(no milestone)".to_string(), true),
+            FilterItem::Label(name) => (name.clone(), false),
+        };
+        let here = focused && index == app.labels.cursor;
+        let bg = if here { code_bg() } else { ink() };
+        // Nerd Font Font Awesome fa-check-square / fa-square-o, same as the
+        // sidebar filter toggles.
+        let name_style = if on {
+            Style::new().bg(bg).fg(amber()).bold()
+        } else if none {
+            Style::new().bg(bg).fg(muted())
+        } else {
+            Style::new().bg(bg).fg(paper())
+        };
+        let room = (inner.width as usize).saturating_sub(5);
+        let line = Line::from(vec![
+            Span::styled(if here { "█ " } else { "  " }, Style::new().bg(bg).fg(amber())),
+            Span::styled(if on { "\u{f14a} " } else { "\u{f096} " },
+                Style::new().bg(bg).fg(if on { amber() } else { muted() })),
+            Span::styled(model::slug(&name, room), name_style),
+        ]);
+        f.render_widget(Paragraph::new(line).style(Style::new().bg(bg)), rect);
+        app.hits.labels_rows.push((rect, index));
+    }
+}
+
 /// Last visits under Refs: up to four back entries above the current
 /// issue, bottom-aligned. A click on a row `k` steps up walks back `k`
 /// steps through `go_back_n`, so Ctrl+I replays the skipped entries.
@@ -2617,6 +2737,83 @@ mod render_smoke {
         handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
         assert_eq!(app.nav.current, Some(12));
         assert_eq!(app.nav.future, vec![15, 13]);
+    }
+
+    fn labels_app() -> App {
+        let mut app = loaded_app();
+        app.refs.numbers = vec![9];
+        app.sidebar.meta_loaded = true;
+        app.sidebar.labels = vec!["bug".to_string(), "docs".to_string()];
+        app.sidebar.milestones = vec![crate::model::Milestone {
+            title: "v1".to_string(),
+            due_on: None,
+        }];
+        app
+    }
+
+    #[test]
+    fn labels_pane_lists_milestones_then_labels_inside_120x40() {
+        let mut app = labels_app();
+        let text = frame_text(&mut app);
+        assert!(text.contains("Filters"), "{text}");
+        let order: Vec<usize> = ["v1", "(no milestone)", "bug", "docs"]
+            .iter().map(|name| text.find(name).expect(name)).collect();
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "group order: {text}");
+        assert!(!text.contains('\u{f14a}'), "nothing selected yet: {text}");
+        assert!(text.contains("milestones (0/2) · labels (0/2)"), "{text}");
+        assert_eq!(app.hits.labels_rows.len(), 4);
+        let (refs, labels) = (app.hits.refs_area, app.hits.labels_area);
+        assert_eq!(refs.bottom(), labels.y, "panes stack without a gap");
+        assert!(labels.height >= 8, "no truncation at 120x40: {labels:?}");
+    }
+
+    #[test]
+    fn labels_pane_keys_move_toggle_and_clear() {
+        use crate::app::Pane;
+        let mut app = labels_app();
+        frame_text(&mut app);
+        app.nav.pane = Pane::Labels;
+        // Rows: v1, (no milestone), bug, docs.
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert!(app.sidebar.label_filter.contains("bug"));
+        let text = frame_text(&mut app);
+        assert!(text.contains("\u{f14a} bug") && text.contains("█ "), "{text}");
+        assert!(text.contains("1 on"), "{text}");
+        handle_key(&mut app, key(KeyCode::Char('k')));
+        handle_key(&mut app, key(KeyCode::Enter));
+        assert!(app.sidebar.milestone_filter.contains(&None));
+        handle_key(&mut app, key(KeyCode::Char('X')));
+        assert!(app.sidebar.label_filter.is_empty() && app.sidebar.milestone_filter.is_empty());
+        // The Format dialog flips the same set the pane reads.
+        app.sidebar.label_filter.insert("docs".to_string());
+        assert!(frame_text(&mut app).contains("\u{f14a} docs"));
+    }
+
+    #[test]
+    fn labels_pane_click_toggles_and_wheel_moves() {
+        use crate::app::Pane;
+        let mut app = labels_app();
+        frame_text(&mut app);
+        let (rect, index) = app.hits.labels_rows[3];
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x + 3, rect.y));
+        assert_eq!(app.nav.pane, Pane::Labels);
+        assert_eq!(index, 3);
+        assert!(app.sidebar.label_filter.contains("docs"));
+        handle_mouse(&mut app, click(MouseEventKind::ScrollUp, rect.x + 3, rect.y));
+        assert_eq!(app.labels.cursor, 2);
+        assert_eq!(app.nav.pane, Pane::Labels);
+    }
+
+    #[test]
+    fn labels_pane_shows_loading_until_meta_lands() {
+        let mut app = loaded_app();
+        app.refs.numbers = vec![9];
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.sidebar.meta_rx = Some(rx);
+        assert!(frame_text(&mut app).contains("loading …"));
+        assert!(app.hits.labels_rows.is_empty());
     }
 
     #[test]
