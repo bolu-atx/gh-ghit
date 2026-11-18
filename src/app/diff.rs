@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::app::{App, rt};
+use crate::app::{App, spawn_bg};
 use crate::core::{self, Pane};
 use crate::{github, model};
 use crate::app::auth_failure;
@@ -332,7 +332,7 @@ impl App {
         self.compose.submitting.insert(n);
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         let tx = self.compose.review_tx.clone();
-        rt().spawn(async move {
+        spawn_bg(async move {
             let result = github::submit_pending_review(&repo, n).await;
             let _ = tx.send((n, result));
         });

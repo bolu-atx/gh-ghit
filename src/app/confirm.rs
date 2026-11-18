@@ -6,7 +6,7 @@ use std::time::Instant;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{App, Focus, NavIntent, rt};
+use crate::app::{App, Focus, NavIntent, spawn_bg};
 use crate::github;
 use crate::model::IssueData;
 
@@ -427,7 +427,7 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     // Re-probe so the modal returns if the refresh did not cover it.
     let (atx, arx) = std::sync::mpsc::channel();
     app.auth.rx = Some(arx);
-    rt().spawn(async move {
+    spawn_bg(async move {
         let _ = atx.send(github::check_auth().await);
     });
 }
