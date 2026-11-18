@@ -6,7 +6,8 @@
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use super::hit::{hit, in_rect};
-use super::{actions, handle_left, sidebar_hit};
+use super::click::{handle_left, sidebar_hit};
+use super::actions;
 use crate::app::{App, Focus};
 use crate::controls::{MenuKind, MenuState};
 use crate::core::Pane;
