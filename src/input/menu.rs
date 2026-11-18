@@ -1,15 +1,14 @@
 //! Mouse paths for the actions menu and the muted controls: right-click
 //! menus, title and footer controls, dialog-footer hints, click outside
 //! a dialog, and the wheel inside dialogs. Input never draws; it reads
-//! the rects `ui` recorded in `app.hits.ctl`.
+//! the rects `ui` recorded in `app.hits`.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use super::hit::{hit, in_rect};
 use super::click::{handle_left, sidebar_hit};
 use super::actions;
-use crate::app::{App, Focus};
-use crate::controls::{MenuKind, MenuState};
+use crate::app::{App, Focus, MenuKind, MenuState};
 use crate::core::Pane;
 use crate::keymap::Action;
 
@@ -24,7 +23,7 @@ fn open(app: &mut App, kind: MenuKind, anchor: (u16, u16)) {
 /// Over the board it is the board menu.
 pub(super) fn open_for_focus(app: &mut App) {
     let (kind, area) = if crate::app::board_open(app) {
-        (MenuKind::Board, app.hits.ctl.popup)
+        (MenuKind::Board, app.hits.popup)
     } else {
         match app.nav.pane {
             Pane::Issues => (MenuKind::Issue, app.hits.side_issue_area),
@@ -48,7 +47,8 @@ pub(super) fn run(app: &mut App) {
 
 pub(super) fn step(app: &mut App, delta: isize) {
     if let Some(menu) = &mut app.menu {
-        menu.step(delta);
+        let last = menu.entries.len().saturating_sub(1) as isize;
+        menu.cursor = (menu.cursor as isize + delta).clamp(0, last) as usize;
     }
 }
 
@@ -57,7 +57,7 @@ pub(super) fn step(app: &mut App, delta: isize) {
 pub(super) fn handle_menu_mouse(app: &mut App, m: MouseEvent) {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            match hit(&app.hits.ctl.menu_rows, m.column, m.row) {
+            match hit(&app.hits.menu_rows, m.column, m.row) {
                 Some((rect, index)) => {
                     if let Some(menu) = &mut app.menu {
                         menu.cursor = index;
@@ -65,11 +65,11 @@ pub(super) fn handle_menu_mouse(app: &mut App, m: MouseEvent) {
                     app.note_click(rect);
                     run(app);
                 }
-                None if !in_rect(app.hits.ctl.popup, m.column, m.row) => app.menu = None,
+                None if !in_rect(app.hits.popup, m.column, m.row) => app.menu = None,
                 None => {}
             }
         }
-        MouseEventKind::Down(_) if !in_rect(app.hits.ctl.popup, m.column, m.row) => app.menu = None,
+        MouseEventKind::Down(_) if !in_rect(app.hits.popup, m.column, m.row) => app.menu = None,
         MouseEventKind::ScrollDown => step(app, 1),
         MouseEventKind::ScrollUp => step(app, -1),
         _ => {}
@@ -89,7 +89,7 @@ pub(super) fn legend_click(app: &mut App, m: &MouseEvent) -> bool {
     if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         return false;
     }
-    let hint = hit(&app.hits.ctl.legend, m.column, m.row);
+    let hint = hit(&app.hits.legend, m.column, m.row);
     press(app, hint)
 }
 
@@ -101,7 +101,7 @@ pub(super) fn handle_modal_mouse(app: &mut App, m: MouseEvent, help: bool) {
         return;
     }
     match m.kind {
-        MouseEventKind::Down(MouseButton::Left) if !in_rect(app.hits.ctl.popup, m.column, m.row) => {
+        MouseEventKind::Down(MouseButton::Left) if !in_rect(app.hits.popup, m.column, m.row) => {
             app.shortcuts_open = false;
         }
         MouseEventKind::ScrollDown => app.help_scroll = app.help_scroll.saturating_add(3),
@@ -112,7 +112,7 @@ pub(super) fn handle_modal_mouse(app: &mut App, m: MouseEvent, help: bool) {
 
 /// A press on a pane-title or footer control: focus its pane, run it.
 pub(super) fn control_click(app: &mut App, x: u16, y: u16) -> bool {
-    let Some((rect, action, pane)) = hit(&app.hits.ctl.controls, x, y) else { return false };
+    let Some((rect, action, pane)) = hit(&app.hits.controls, x, y) else { return false };
     app.nav.focus = Focus::Main;
     app.nav.pane = pane;
     app.note_click(rect);
@@ -122,10 +122,10 @@ pub(super) fn control_click(app: &mut App, x: u16, y: u16) -> bool {
 
 /// A press on the repo segment of the status bar opens the global menu.
 pub(super) fn repo_click(app: &mut App, x: u16, y: u16) -> bool {
-    if !in_rect(app.hits.ctl.repo, x, y) {
+    if !in_rect(app.hits.repo, x, y) {
         return false;
     }
-    let rect = app.hits.ctl.repo;
+    let rect = app.hits.repo;
     app.note_click(rect);
     open(app, MenuKind::Global, (rect.x, rect.y));
     if let Some(menu) = &mut app.menu {

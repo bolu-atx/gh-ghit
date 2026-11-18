@@ -191,11 +191,11 @@ fn every_menu_entry_has_a_mouse_gesture() {
     let gaps: Vec<Action> = mouse_gaps().into_iter().map(|(action, _)| action).collect();
     let app = App::new(Some("o/r".to_string()));
     for kind in [
-        crate::controls::MenuKind::Issue, crate::controls::MenuKind::Ref, crate::controls::MenuKind::History,
-        crate::controls::MenuKind::Labels, crate::controls::MenuKind::Body, crate::controls::MenuKind::Board,
-        crate::controls::MenuKind::Global,
+        crate::app::MenuKind::Issue, crate::app::MenuKind::Ref, crate::app::MenuKind::History,
+        crate::app::MenuKind::Labels, crate::app::MenuKind::Body, crate::app::MenuKind::Board,
+        crate::app::MenuKind::Global,
     ] {
-        let menu = crate::controls::MenuState::new(kind, &app, (0, 0));
+        let menu = crate::app::MenuState::new(kind, &app, (0, 0));
         for entry in menu.entries {
             assert!(!gaps.contains(&entry.action), "{kind:?}: {:?}", entry.action);
         }

@@ -34,10 +34,6 @@ impl Hint {
     }
 }
 
-fn is_essential(action: Action) -> bool {
-    matches!(action, Action::ShowHelp | Action::Quit)
-}
-
 /// Hint wording: the label with a lowercase first letter, unless the
 /// second letter is capital (`PRs`) or the word is a variable (`$EDITOR`).
 fn lower_first(label: &str) -> String {
@@ -107,7 +103,7 @@ pub(crate) fn bar_hints(app: &App) -> (Vec<Hint>, Vec<Hint>) {
         return (vec![], vec![]);
     }
     let (essentials, rest): (Vec<_>, Vec<_>) =
-        collect(&keymap::active_contexts(app), app).into_iter().partition(|h| is_essential(h.action));
+        collect(&keymap::active_contexts(app), app).into_iter().partition(|h| matches!(h.action, Action::ShowHelp | Action::Quit));
     (rest, essentials)
 }
 

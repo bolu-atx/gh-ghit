@@ -135,6 +135,11 @@ pub fn ink() -> Color {
 pub fn code_bg() -> Color {
     pal().code_bg
 }
+/// Foreground of non-RGB cells while the background dims.
+pub fn dim_fg() -> Color {
+    Color::Rgb(70, 76, 88)
+}
+
 pub fn paper() -> Color {
     pal().paper
 }

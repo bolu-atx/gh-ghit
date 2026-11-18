@@ -25,7 +25,7 @@ pub(super) fn render_confirm(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     use crate::theme::{amber, base, ink, muted, paper};
     let Some(d) = app.confirm.clone() else { return };
     let popup = centered(area, 64, 30);
-    app.hits.ctl.popup = popup;
+    app.hits.popup = popup;
     f.render_widget(Clear, popup);
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(amber()))
@@ -443,7 +443,7 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         height: inner.height.min(footer_height), ..inner };
     f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
     let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Format), app, legend_width, 3, (footer.x, footer.y));
-    app.hits.ctl.legend.extend(legend_hits);
+    app.hits.legend.extend(legend_hits);
     if app.sidebar.name_edit && content.height > 1 {
         let x = inner.x + left.gutter as u16 + 3
             + Line::raw(app.sidebar.name_draft.as_str()).width() as u16;
@@ -527,7 +527,7 @@ pub(super) fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     if !c.sending {
         let at = (chunks[2].x, chunks[2].y);
         let legend_hits = hints::legend_hits(Context::Dialog(Dialog::Compose), app, chunks[2].width, 1, at);
-        app.hits.ctl.legend.extend(legend_hits);
+        app.hits.legend.extend(legend_hits);
     }
     f.render_widget(Paragraph::new(footer), chunks[2]);
 }

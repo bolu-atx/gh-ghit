@@ -1,6 +1,6 @@
 //! Clickable controls drawn outside rows: sidebar title and footer
 //! controls, the Filters "clear all", the diff strip and the actions menu.
-//! Each records its rect in `app.hits.ctl` while it draws.
+//! Each records its rect in `app.hits` while it draws.
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -39,7 +39,7 @@ pub(super) fn side_controls(app: &mut App, area: Rect, title: &Line<'static>, wa
     rects.push((clipped(area, area.x + 1, area.bottom().saturating_sub(1), footer_w), Action::OpenFormat));
     for (rect, action) in rects {
         if let Some(rect) = rect {
-            app.hits.ctl.controls.push((rect, action, pane));
+            app.hits.controls.push((rect, action, pane));
         }
     }
 }
@@ -50,7 +50,7 @@ pub(super) fn clear_all_control(app: &mut App, area: Rect, title: &mut Line<'sta
     title.spans.push(Span::styled("clear all", Style::new().fg(muted())));
     let x = area.x + 1 + (title.width() - 9) as u16;
     if let Some(rect) = clipped(area, x, area.y, 9) {
-        app.hits.ctl.controls.push((rect, Action::ClearLabels, Pane::Labels));
+        app.hits.controls.push((rect, Action::ClearLabels, Pane::Labels));
     }
 }
 
@@ -68,14 +68,14 @@ pub(super) fn diff_strip(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
     let strip = Rect::new(x, tabs.y, width, 1);
     f.render_widget(Paragraph::new(TEXT).style(Style::new().bg(ink()).fg(muted())), strip);
     for (dx, w, action) in [(0, 1, Action::DiffPrevFile), (2, 1, Action::DiffNextFile), (4, 5, Action::DiffSplit)] {
-        app.hits.ctl.controls.push((Rect::new(x + dx, tabs.y, w, 1), action, Pane::Main));
+        app.hits.controls.push((Rect::new(x + dx, tabs.y, w, 1), action, Pane::Main));
     }
 }
 
 /// Draws the open actions menu: one row per entry, the cursor row in the
 /// same amber marker as a focused list, the key at the right edge.
 pub(super) fn render_menu(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    app.hits.ctl.menu_rows.clear();
+    app.hits.menu_rows.clear();
     let Some(menu) = &app.menu else { return };
     let label_w = menu.entries.iter().map(|e| e.label.chars().count()).max().unwrap_or(0);
     let key_w = menu.entries.iter().map(|e| e.key.chars().count()).max().unwrap_or(0);
@@ -110,6 +110,6 @@ pub(super) fn render_menu(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         f.render_widget(Paragraph::new(line).style(Style::new().bg(bg)), rect);
         rows.push((rect, i));
     }
-    app.hits.ctl.menu_rows = rows;
-    app.hits.ctl.popup = popup;
+    app.hits.menu_rows = rows;
+    app.hits.popup = popup;
 }

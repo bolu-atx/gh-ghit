@@ -14,6 +14,8 @@ mod diff;
 mod fetch_queue;
 mod format;
 mod issue;
+mod menu;
+pub(crate) use menu::{MenuKind, MenuState};
 mod nav;
 mod poll;
 mod sidebar;
@@ -188,8 +190,16 @@ pub(crate) struct HitAreas {
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
     pub(crate) last_click: Option<(Rect, Instant)>,
-    /// Title controls, dialog-footer hints, popup and menu rows.
-    pub(crate) ctl: crate::controls::ControlHits,
+    /// Title and footer controls: rect, action, pane the click focuses.
+    pub(crate) controls: Vec<(Rect, crate::keymap::Action, Pane)>,
+    /// Dialog footer hints: rect plus the action a click runs.
+    pub(crate) legend: Vec<(Rect, crate::keymap::Action)>,
+    /// Rect of the top dialog; a click outside it dismisses the dialog.
+    pub(crate) popup: Rect,
+    /// Menu rows as drawn: rect plus entry index.
+    pub(crate) menu_rows: Vec<(Rect, usize)>,
+    /// The repo segment of the status bar.
+    pub(crate) repo: Rect,
 }
 
 /// Side column widths for the current terminal width, set once per frame
@@ -225,7 +235,7 @@ pub(crate) struct App {
     pub(crate) hits: HitAreas,
     pub(crate) layout: Columns,
     /// Open actions menu (right-click or `m`).
-    pub(crate) menu: Option<crate::controls::MenuState>,
+    pub(crate) menu: Option<MenuState>,
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
     pub(crate) initial_numbers: Vec<u64>,

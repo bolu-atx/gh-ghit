@@ -64,10 +64,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         let offset = diff_header_offset(app, fi, delta);
         app.finish_diff_jump(delta, offset);
     }
-    app.hits.ctl.controls.clear();
-    app.hits.ctl.legend.clear();
-    app.hits.ctl.popup = Rect::default();
-    app.hits.ctl.menu_rows.clear();
+    app.hits.controls.clear();
+    app.hits.legend.clear();
+    app.hits.popup = Rect::default();
+    app.hits.menu_rows.clear();
     app.hits.history_rows.clear();
     app.hits.history_area = Rect::default();
     app.hits.refs_area = Rect::default();
@@ -270,7 +270,7 @@ fn dim_background(f: &mut ratatui::Frame, amount: f32) {
             }
             Color::Reset => {}
             _ => {
-                cell.set_fg(Color::Rgb(70, 76, 88));
+                cell.set_fg(crate::theme::dim_fg());
             }
         }
     }
