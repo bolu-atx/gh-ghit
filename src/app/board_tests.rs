@@ -6,6 +6,18 @@ use super::*;
 use crate::model::BoardData;
 
 #[test]
+fn a_failed_board_load_closes_the_board() {
+    let mut app = super::test_support::sidebar_app(&[1]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.open(Entry::Board);
+    app.board.loading = true;
+    app.board.rx = Some(rx);
+    tx.send(Err("boom".to_string())).unwrap();
+    assert!(poll_board(&mut app));
+    assert!(!board_open(&app));
+}
+
+#[test]
 fn board_columns_gate_on_milestone_pills_and_text() {
     use crate::model::BoardItem;
     let card = |number: u64, milestone: Option<&str>| BoardItem {

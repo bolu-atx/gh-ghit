@@ -258,7 +258,13 @@ pub(crate) fn poll_board(app: &mut App) -> bool {
             app.prune_board_milestones();
             kick_off_details(app);
         }
-        Err(e) => { auth_failure(app, &e); app.notify(e); }
+        Err(e) => {
+            // A failed load closes the board, as it did when "open"
+            // meant "has data or is loading".
+            app.close_board();
+            auth_failure(app, &e);
+            app.notify(e);
+        }
     }
     true
 }
