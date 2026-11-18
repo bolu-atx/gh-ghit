@@ -16,9 +16,10 @@ use crate::model::{
 
 const GOLDEN: &str = include_str!("key_parity.golden");
 
-/// Keys that touch the network, the clipboard or disk. The registry
-/// test checks their routing instead.
-const SKIP: [char; 5] = ['y', 'p', 'r', 'w', 'S'];
+/// Keys that touch the network, the clipboard or disk. The keymap
+/// tests check their routing instead. `t` cycles the process-wide
+/// theme, which would race the frame tests.
+const SKIP: [char; 6] = ['y', 'p', 'r', 'w', 'S', 't'];
 
 fn issue(number: u64, is_pr: bool) -> IssueData {
     IssueData {
@@ -221,7 +222,9 @@ fn search_bar() -> App {
     app
 }
 
-fn contexts() -> Vec<(&'static str, fn() -> App)> {
+type Setup = (&'static str, fn() -> App);
+
+fn contexts() -> Vec<Setup> {
     vec![
         ("issues", || pane(Pane::Issues)),
         ("issues-tree", tree),

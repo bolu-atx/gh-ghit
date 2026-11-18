@@ -16,7 +16,6 @@ issues | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; his
 issues | 'n' | message:  -> no search: press /
 issues | 'o' | message:  -> opened #8 in browser
 issues | 'q' | quit: false -> true
-issues | 't' | message:  -> theme: *
 issues | 'x' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
 issues | ctrl-a | sort: Default/false/None -> Updated/true/None
 issues | alt-a | sort: Default/false/None -> Updated/true/None
@@ -41,8 +40,6 @@ issues | ctrl-o | message:  -> no older issue
 issues | alt-o | message:  -> opened #8 in browser
 issues | ctrl-q | quit: false -> true
 issues | alt-q | quit: false -> true
-issues | ctrl-t | message:  -> theme: *
-issues | alt-t | message:  -> theme: *
 issues | ctrl-x | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
 issues | alt-x | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; message:  -> removed #8 · u undo ; undo: false -> true
 issues | ctrl-S | message:  -> no pending comments to submit
@@ -72,7 +69,6 @@ issues-tree | 'l' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) 
 issues-tree | 'n' | message:  -> no search: press /
 issues-tree | 'o' | message:  -> opened #7 in browser
 issues-tree | 'q' | quit: false -> true
-issues-tree | 't' | message:  -> theme: *
 issues-tree | 'x' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
 issues-tree | 'z' | folded: [] -> [7]
 issues-tree | ctrl-a | sort: Default/false/None -> Updated/true/None
@@ -98,8 +94,6 @@ issues-tree | ctrl-o | message:  -> no older issue
 issues-tree | alt-o | message:  -> opened #7 in browser
 issues-tree | ctrl-q | quit: false -> true
 issues-tree | alt-q | quit: false -> true
-issues-tree | ctrl-t | message:  -> theme: *
-issues-tree | alt-t | message:  -> theme: *
 issues-tree | ctrl-x | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
 issues-tree | alt-x | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; message:  -> removed #7 · u undo ; undo: false -> true
 issues-tree | ctrl-z | folded: [] -> [7]
@@ -131,7 +125,6 @@ prs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; histor
 prs | 'n' | message:  -> no search: press /
 prs | 'o' | message:  -> opened #8 in browser
 prs | 'q' | quit: false -> true
-prs | 't' | message:  -> theme: *
 prs | ctrl-a | sort: Default/false/None -> Updated/true/None
 prs | alt-a | sort: Default/false/None -> Updated/true/None
 prs | ctrl-c | quit: false -> true
@@ -157,8 +150,6 @@ prs | ctrl-o | message:  -> no older issue
 prs | alt-o | message:  -> opened #8 in browser
 prs | ctrl-q | quit: false -> true
 prs | alt-q | quit: false -> true
-prs | ctrl-t | message:  -> theme: *
-prs | alt-t | message:  -> theme: *
 prs | ctrl-S | message:  -> no pending comments to submit
 prs | ctrl-alt-o | message:  -> no older issue
 prs | tab | pane: PRs -> Main
@@ -183,7 +174,6 @@ main-details | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 main-details | 'n' | message:  -> no search: press /
 main-details | 'o' | message:  -> opened #8 in browser
 main-details | 'q' | quit: false -> true
-main-details | 't' | message:  -> theme: *
 main-details | ctrl-c | quit: false -> true
 main-details | alt-c | compose: None/false -> Some(("", 0, ""))/false
 main-details | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
@@ -205,8 +195,6 @@ main-details | ctrl-o | message:  -> no older issue
 main-details | alt-o | message:  -> opened #8 in browser
 main-details | ctrl-q | quit: false -> true
 main-details | alt-q | quit: false -> true
-main-details | ctrl-t | message:  -> theme: *
-main-details | alt-t | message:  -> theme: *
 main-details | ctrl-S | message:  -> no pending comments to submit
 main-details | ctrl-alt-o | message:  -> no older issue
 main-details | tab | pane: Main -> Refs
@@ -232,7 +220,6 @@ main-diff | 'n' | message:  -> no search: press /
 main-diff | 'o' | message:  -> opened #9 in browser
 main-diff | 'q' | quit: false -> true
 main-diff | 's' | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
-main-diff | 't' | message:  -> theme: *
 main-diff | ctrl-c | quit: false -> true
 main-diff | alt-c | compose: None/false -> Some(("", 0, ""))/false
 main-diff | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
@@ -256,8 +243,6 @@ main-diff | ctrl-q | quit: false -> true
 main-diff | alt-q | quit: false -> true
 main-diff | ctrl-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
 main-diff | alt-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
-main-diff | ctrl-t | message:  -> theme: *
-main-diff | alt-t | message:  -> theme: *
 main-diff | ctrl-S | message:  -> no pending comments to submit
 main-diff | ctrl-alt-o | message:  -> no older issue
 main-diff | ctrl-alt-s | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
@@ -282,7 +267,6 @@ main-graph | 'l' | graph: 0 -> 1
 main-graph | 'n' | message:  -> no search: press /
 main-graph | 'o' | message:  -> opened #7 in browser
 main-graph | 'q' | quit: false -> true
-main-graph | 't' | message:  -> theme: *
 main-graph | ctrl-c | quit: false -> true
 main-graph | alt-c | compose: None/false -> Some(("", 0, ""))/false
 main-graph | ctrl-e | message:  -> right pane: hidden ; refs: true/None -> false/None
@@ -302,8 +286,6 @@ main-graph | ctrl-o | message:  -> no older issue
 main-graph | alt-o | message:  -> opened #7 in browser
 main-graph | ctrl-q | quit: false -> true
 main-graph | alt-q | quit: false -> true
-main-graph | ctrl-t | message:  -> theme: *
-main-graph | alt-t | message:  -> theme: *
 main-graph | ctrl-S | message:  -> no pending comments to submit
 main-graph | ctrl-alt-o | message:  -> no older issue
 main-graph | tab | pane: Main -> Refs
@@ -329,7 +311,6 @@ refs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; histo
 refs | 'n' | message:  -> no search: press /
 refs | 'o' | message:  -> opened #8 in browser
 refs | 'q' | quit: false -> true
-refs | 't' | message:  -> theme: *
 refs | ctrl-c | quit: false -> true
 refs | alt-c | compose: None/false -> Some(("", 0, ""))/false
 refs | ctrl-e | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
@@ -353,8 +334,6 @@ refs | ctrl-o | message:  -> no older issue
 refs | alt-o | message:  -> opened #8 in browser
 refs | ctrl-q | quit: false -> true
 refs | alt-q | quit: false -> true
-refs | ctrl-t | message:  -> theme: *
-refs | alt-t | message:  -> theme: *
 refs | ctrl-S | message:  -> no pending comments to submit
 refs | ctrl-alt-o | message:  -> no older issue
 refs | tab | pane: Refs -> Issues
@@ -380,7 +359,6 @@ labels | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; his
 labels | 'n' | message:  -> no search: press /
 labels | 'o' | message:  -> opened #8 in browser
 labels | 'q' | quit: false -> true
-labels | 't' | message:  -> theme: *
 labels | ctrl-c | quit: false -> true
 labels | alt-c | compose: None/false -> Some(("", 0, ""))/false
 labels | ctrl-e | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
@@ -402,8 +380,6 @@ labels | ctrl-o | message:  -> no older issue
 labels | alt-o | message:  -> opened #8 in browser
 labels | ctrl-q | quit: false -> true
 labels | alt-q | quit: false -> true
-labels | ctrl-t | message:  -> theme: *
-labels | alt-t | message:  -> theme: *
 labels | ctrl-S | message:  -> no pending comments to submit
 labels | ctrl-alt-o | message:  -> no older issue
 labels | enter | filters: []/0 -> ["bug"]/0
@@ -431,7 +407,6 @@ history | 'l' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; 
 history | 'n' | message:  -> no search: press /
 history | 'o' | message:  -> opened #9 in browser
 history | 'q' | quit: false -> true
-history | 't' | message:  -> theme: *
 history | ctrl-c | quit: false -> true
 history | alt-c | compose: None/false -> Some(("", 0, ""))/false
 history | ctrl-e | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
@@ -453,8 +428,6 @@ history | ctrl-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ;
 history | alt-o | message:  -> opened #9 in browser
 history | ctrl-q | quit: false -> true
 history | alt-q | quit: false -> true
-history | ctrl-t | message:  -> theme: *
-history | alt-t | message:  -> theme: *
 history | ctrl-S | message:  -> no pending comments to submit
 history | ctrl-alt-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ; history: [8, 7]/[]/0 -> [8]/[9]/0
 history | tab | pane: History -> Issues
@@ -549,7 +522,6 @@ compose | 'n' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello 
 compose | 'o' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlod\nx", 11, ""))/false
 compose | 'q' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlqd\nx", 11, ""))/false
 compose | 's' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlsd\nx", 11, ""))/false
-compose | 't' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worltd\nx", 11, ""))/false
 compose | 'u' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlud\nx", 11, ""))/false
 compose | 'v' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlvd\nx", 11, ""))/false
 compose | 'x' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlxd\nx", 11, ""))/false
@@ -574,7 +546,6 @@ compose | ctrl-m | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hel
 compose | ctrl-n | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 13, ""))/false
 compose | ctrl-o | message:  -> no $EDITOR set: export EDITOR to edit comments outside ghit
 compose | ctrl-s | message:  -> sending comment…
-compose | ctrl-t | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello wordl\nx", 11, ""))/false
 compose | ctrl-u | compose: Some(("hello world\nx", 10, ""))/false -> Some(("d\nx", 0, "hello worl"))/false
 compose | ctrl-S | message:  -> sending comment…
 compose | alt-F | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
@@ -732,7 +703,6 @@ format-query | 'n' | drafts: ""/"" -> "n"/""
 format-query | 'o' | drafts: ""/"" -> "o"/""
 format-query | 'q' | drafts: ""/"" -> "q"/""
 format-query | 's' | drafts: ""/"" -> "s"/""
-format-query | 't' | drafts: ""/"" -> "t"/""
 format-query | 'u' | drafts: ""/"" -> "u"/""
 format-query | 'v' | drafts: ""/"" -> "v"/""
 format-query | 'x' | drafts: ""/"" -> "x"/""
@@ -775,8 +745,6 @@ format-query | ctrl-q | drafts: ""/"" -> "q"/""
 format-query | alt-q | drafts: ""/"" -> "q"/""
 format-query | ctrl-s | drafts: ""/"" -> "s"/""
 format-query | alt-s | drafts: ""/"" -> "s"/""
-format-query | ctrl-t | drafts: ""/"" -> "t"/""
-format-query | alt-t | drafts: ""/"" -> "t"/""
 format-query | ctrl-u | drafts: ""/"" -> "u"/""
 format-query | alt-u | drafts: ""/"" -> "u"/""
 format-query | ctrl-v | drafts: ""/"" -> "v"/""
@@ -874,7 +842,6 @@ format-name | 'n' | drafts: ""/"" -> ""/"n"
 format-name | 'o' | drafts: ""/"" -> ""/"o"
 format-name | 'q' | drafts: ""/"" -> ""/"q"
 format-name | 's' | drafts: ""/"" -> ""/"s"
-format-name | 't' | drafts: ""/"" -> ""/"t"
 format-name | 'u' | drafts: ""/"" -> ""/"u"
 format-name | 'v' | drafts: ""/"" -> ""/"v"
 format-name | 'x' | drafts: ""/"" -> ""/"x"
@@ -917,8 +884,6 @@ format-name | ctrl-q | drafts: ""/"" -> ""/"q"
 format-name | alt-q | drafts: ""/"" -> ""/"q"
 format-name | ctrl-s | drafts: ""/"" -> ""/"s"
 format-name | alt-s | drafts: ""/"" -> ""/"s"
-format-name | ctrl-t | drafts: ""/"" -> ""/"t"
-format-name | alt-t | drafts: ""/"" -> ""/"t"
 format-name | ctrl-u | drafts: ""/"" -> ""/"u"
 format-name | alt-u | drafts: ""/"" -> ""/"u"
 format-name | ctrl-v | drafts: ""/"" -> ""/"v"
@@ -940,7 +905,6 @@ board | 'f' | format: false/false/false -> true/false/false
 board | 'j' | board: true/0/0/None/0 -> true/0/1/None/0
 board | 'l' | board: true/0/0/None/0 -> true/1/0/None/0
 board | 'q' | board: true/0/0/None/0 -> false/0/0/None/0
-board | 't' | message:  -> theme: *
 board | ctrl-f | format: false/false/false -> true/false/false
 board | alt-f | format: false/false/false -> true/false/false
 board | ctrl-j | board: true/0/0/None/0 -> true/0/1/None/0
@@ -949,8 +913,6 @@ board | ctrl-l | board: true/0/0/None/0 -> true/1/0/None/0
 board | alt-l | board: true/0/0/None/0 -> true/1/0/None/0
 board | ctrl-q | board: true/0/0/None/0 -> false/0/0/None/0
 board | alt-q | board: true/0/0/None/0 -> false/0/0/None/0
-board | ctrl-t | message:  -> theme: *
-board | alt-t | message:  -> theme: *
 board | enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0
 board | esc | board: true/0/0/None/0 -> false/0/0/None/0
 board | down | board: true/0/0/None/0 -> true/0/1/None/0
@@ -1039,7 +1001,6 @@ board-filter | 'n' | format: true/false/false -> true/true/false ; drafts: ""/""
 board-filter | 'o' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
 board-filter | 'q' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
 board-filter | 's' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
-board-filter | 't' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
 board-filter | 'u' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
 board-filter | 'v' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
 board-filter | 'x' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
@@ -1082,8 +1043,6 @@ board-filter | ctrl-q | format: true/false/false -> true/true/false ; drafts: ""
 board-filter | alt-q | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
 board-filter | ctrl-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
 board-filter | alt-s | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
-board-filter | ctrl-t | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
-board-filter | alt-t | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
 board-filter | ctrl-u | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
 board-filter | alt-u | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
 board-filter | ctrl-v | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
@@ -1206,7 +1165,6 @@ board-query | 'n' | drafts: ""/"" -> "n"/""
 board-query | 'o' | drafts: ""/"" -> "o"/""
 board-query | 'q' | drafts: ""/"" -> "q"/""
 board-query | 's' | drafts: ""/"" -> "s"/""
-board-query | 't' | drafts: ""/"" -> "t"/""
 board-query | 'u' | drafts: ""/"" -> "u"/""
 board-query | 'v' | drafts: ""/"" -> "v"/""
 board-query | 'x' | drafts: ""/"" -> "x"/""
@@ -1249,8 +1207,6 @@ board-query | ctrl-q | drafts: ""/"" -> "q"/""
 board-query | alt-q | drafts: ""/"" -> "q"/""
 board-query | ctrl-s | drafts: ""/"" -> "s"/""
 board-query | alt-s | drafts: ""/"" -> "s"/""
-board-query | ctrl-t | drafts: ""/"" -> "t"/""
-board-query | alt-t | drafts: ""/"" -> "t"/""
 board-query | ctrl-u | drafts: ""/"" -> "u"/""
 board-query | alt-u | drafts: ""/"" -> "u"/""
 board-query | ctrl-v | drafts: ""/"" -> "v"/""
@@ -1350,7 +1306,6 @@ bar | 'n' | bar: "ab" -> "abn"
 bar | 'o' | bar: "ab" -> "abo"
 bar | 'q' | bar: "ab" -> "abq"
 bar | 's' | bar: "ab" -> "abs"
-bar | 't' | bar: "ab" -> "abt"
 bar | 'u' | bar: "ab" -> "abu"
 bar | 'v' | bar: "ab" -> "abv"
 bar | 'x' | bar: "ab" -> "abx"
@@ -1393,8 +1348,6 @@ bar | ctrl-q | bar: "ab" -> "abq"
 bar | alt-q | bar: "ab" -> "abq"
 bar | ctrl-s | bar: "ab" -> "abs"
 bar | alt-s | bar: "ab" -> "abs"
-bar | ctrl-t | bar: "ab" -> "abt"
-bar | alt-t | bar: "ab" -> "abt"
 bar | ctrl-u | bar: "ab" -> "abu"
 bar | alt-u | bar: "ab" -> "abu"
 bar | ctrl-v | bar: "ab" -> "abv"
@@ -1495,7 +1448,6 @@ search-bar | 'n' | search: "ab"/true -> "abn"/true
 search-bar | 'o' | search: "ab"/true -> "abo"/true
 search-bar | 'q' | search: "ab"/true -> "abq"/true
 search-bar | 's' | search: "ab"/true -> "abs"/true
-search-bar | 't' | search: "ab"/true -> "abt"/true
 search-bar | 'u' | search: "ab"/true -> "abu"/true
 search-bar | 'v' | search: "ab"/true -> "abv"/true
 search-bar | 'x' | search: "ab"/true -> "abx"/true
@@ -1538,8 +1490,6 @@ search-bar | ctrl-q | search: "ab"/true -> "abq"/true
 search-bar | alt-q | search: "ab"/true -> "abq"/true
 search-bar | ctrl-s | search: "ab"/true -> "abs"/true
 search-bar | alt-s | search: "ab"/true -> "abs"/true
-search-bar | ctrl-t | search: "ab"/true -> "abt"/true
-search-bar | alt-t | search: "ab"/true -> "abt"/true
 search-bar | ctrl-u | search: "ab"/true -> "abu"/true
 search-bar | alt-u | search: "ab"/true -> "abu"/true
 search-bar | ctrl-v | search: "ab"/true -> "abv"/true

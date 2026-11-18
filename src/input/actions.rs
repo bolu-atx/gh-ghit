@@ -1,0 +1,310 @@
+//! Action runner: maps a keymap `Action` to the `App` call that does it.
+//!
+//! The keymap decides which action a key means; this file decides what
+//! the action does. Actions that several contexts share (`Back`,
+//! `InputSubmit`, `InputBackspace`) read the top focus layer.
+
+use crate::app::{App, Focus, QueryAction, Tab, board_move, board_selected_number};
+use crate::core::{self, Dialog, Layer, TextInput};
+use crate::keymap::Action;
+
+use super::{jump_search_hit, move_diff_cursor, pane_down};
+
+pub(super) fn perform(app: &mut App, action: Action) {
+    match action {
+        Action::HistoryBack => app.go_back(),
+        Action::HistoryForward => app.go_forward(),
+        Action::ShowHelp => {
+            app.shortcuts_open = true;
+            app.help_scroll = 0;
+        }
+        Action::Quit => app.request_quit(),
+        Action::Undo => app.undo_last(),
+        Action::TabDetails => app.set_tab(Tab::Details),
+        Action::TabVisual => app.set_tab(Tab::Visual),
+        Action::CycleTheme => app.notify(format!("theme: {}", crate::theme::cycle())),
+        Action::OpenBoard => app.open_board(),
+        Action::Comment => app.open_compose(),
+        Action::OpenFormat => app.open_sidebar_format(),
+        Action::QuerySearch => {
+            app.open_sidebar_format();
+            app.start_query_edit();
+        }
+        Action::MoveDown => pane_down(app, 1),
+        Action::MoveUp => pane_down(app, -1),
+        Action::StepPrev => app.step_issue(-1),
+        Action::StepNext => app.step_issue(1),
+        Action::ScrollDown => app.nav.scroll = app.nav.scroll.saturating_add(3),
+        Action::ScrollUp => app.nav.scroll = app.nav.scroll.saturating_sub(3),
+        Action::PageDown => app.nav.scroll = app.nav.scroll.saturating_add(12),
+        Action::PageUp => app.nav.scroll = app.nav.scroll.saturating_sub(12),
+        Action::CommandBar => {
+            app.sidebar.searching = false;
+            app.nav.focus = Focus::Bar;
+        }
+        Action::FindBar => {
+            app.sidebar.searching = true;
+            app.sidebar.search.clear();
+            app.nav.focus = Focus::Bar;
+        }
+        Action::NextHit => jump_search_hit(app, 1),
+        Action::PrevHit => jump_search_hit(app, -1),
+        Action::OpenBrowser => match app.nav.current {
+            Some(n) => app.open_number(n),
+            None => app.notify("view an issue first".to_string()),
+        },
+        Action::Refresh => app.refresh_current(),
+        Action::Reauth => app.reopen_reauth(),
+        Action::Pin => app.toggle_pin(),
+        Action::Yank => app.yank(),
+        Action::ToggleRefs => app.toggle_refs(),
+        Action::ToggleSidebar => app.toggle_sidebar(),
+        Action::SubmitReview => app.submit_pending_review(),
+        Action::ToggleRow => app.toggle_row_expansion(),
+        Action::MergedWindow => {
+            app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
+            app.refetch_recent();
+            app.persist_prefs();
+            app.notify(format!("merged window: {}", app.window_label()));
+        }
+        Action::Back => app.pop_layer(),
+        Action::NextPane => app.cycle_pane(1),
+        Action::PrevPane => app.cycle_pane(-1),
+
+        Action::TreeFoldAll => fold_all(app),
+        Action::TreeExpand | Action::TreeCollapse | Action::TreeToggle => tree_step(app, action),
+        Action::CycleSort => app.cycle_sort(),
+        Action::ReverseSort => app.toggle_sort_dir(),
+        Action::Evict => app.evict_current(),
+        Action::OpenRef => app.open_selected_ref(),
+        Action::ToggleLabel => app.toggle_filter_item(app.labels.cursor),
+        Action::ClearLabels => app.clear_filter_items(),
+        Action::OpenHistoryRow => app.open_history_row(),
+
+        Action::DiffNextFile => app.jump_diff_file(1),
+        Action::DiffPrevFile => app.jump_diff_file(-1),
+        Action::DiffLineDown => move_diff_cursor(app, 1),
+        Action::DiffLineUp => move_diff_cursor(app, -1),
+        Action::DiffSplit => app.toggle_diff_split(),
+        Action::DiffToggleFile => app.toggle_diff_file(),
+        Action::GraphNext => app.graph_move(1),
+        Action::GraphPrev => app.graph_move(-1),
+        Action::GraphOpen => app.open_graph_selection(),
+
+        Action::CloseHelp => app.shortcuts_open = false,
+        Action::HelpDown => app.help_scroll = app.help_scroll.saturating_add(1),
+        Action::HelpUp => app.help_scroll = app.help_scroll.saturating_sub(1),
+        Action::HelpPageDown => app.help_scroll = app.help_scroll.saturating_add(10),
+        Action::HelpPageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
+        Action::ConfirmFirst => app.confirm_choose(0),
+
+        Action::ComposeSend => app.submit_compose(),
+        Action::ComposeEditor => app.request_compose_editor(),
+        Action::ComposeLineStart => app.compose_home(),
+        Action::ComposeLineEnd => app.compose_end(),
+        Action::ComposeLeft => app.compose_step(-1),
+        Action::ComposeRight => app.compose_step(1),
+        Action::ComposeUp => app.compose_line(-1),
+        Action::ComposeDown => app.compose_line(1),
+        Action::ComposeBackspace => app.compose_backspace(),
+        Action::ComposeDelete => app.compose_delete_forward(),
+        Action::ComposeKillEnd => app.compose_kill_to_end(),
+        Action::ComposeKillStart => app.compose_kill_to_start(),
+        Action::ComposeDeleteWordBack => app.compose_delete_word_back(),
+        Action::ComposeYank => app.compose_yank(),
+        Action::ComposeTranspose => app.compose_transpose(),
+        Action::ComposeNewline => app.compose_insert('\n'),
+        Action::ComposeTab => app.compose_insert('\t'),
+        Action::ComposeWordBack => app.compose_word_back(),
+        Action::ComposeWordForward => app.compose_word_forward(),
+        Action::ComposeDeleteWordForward => app.compose_delete_word_forward(),
+
+        Action::CloseFormat => app.sidebar.filter_open = false,
+        Action::FormatEditQuery => app.start_query_edit(),
+        Action::FormatSaveName => app.start_name_edit(),
+        Action::FormatDeleteQuery => app.delete_named_query(),
+        Action::Window1h => app.set_window(1),
+        Action::Window1d => app.set_window(24),
+        Action::Window1w => app.set_window(168),
+        // All time: the listing window stops limiting merged/closed rows
+        // and the search path adds no `updated:` token.
+        Action::WindowAll => app.set_window(0),
+        Action::WindowReset => app.reset_recent_default(),
+        Action::FormatCycleWindow => {
+            app.set_window(core::cycle_window(app.sections.merged_window_hours));
+        }
+        // State toggles are client-side: they never refetch or edit the
+        // query text.
+        Action::ToggleOpenPrs => {
+            app.sidebar.show_open_prs = !app.sidebar.show_open_prs;
+            app.persist_prefs();
+        }
+        Action::ToggleMergedPrs => {
+            app.sidebar.show_merged_prs = !app.sidebar.show_merged_prs;
+            app.persist_prefs();
+        }
+        Action::ToggleOpenIssues => {
+            app.sidebar.show_open_issues = !app.sidebar.show_open_issues;
+            app.persist_prefs();
+        }
+        Action::ToggleClosedIssues => {
+            app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues;
+            app.persist_prefs();
+        }
+        Action::CycleGroup => {
+            app.sidebar.group_by = app.sidebar.group_by.next();
+            app.persist_prefs();
+        }
+        Action::FormatColumn => app.format_switch_column(),
+        Action::FormatDown => app.format_step(1),
+        Action::FormatUp => app.format_step(-1),
+        Action::FormatToggle => app.toggle_format_widget(),
+
+        Action::CloseBoard => {
+            app.board.data = None;
+            app.board.loading = false;
+        }
+        Action::BoardFilter => app.open_board_filter(),
+        Action::BoardDown => board_move(app, 0, 1),
+        Action::BoardUp => board_move(app, 0, -1),
+        Action::BoardPageDown => board_move(app, 0, 5),
+        Action::BoardPageUp => board_move(app, 0, -5),
+        Action::BoardLeft => board_move(app, -1, 0),
+        Action::BoardRight => board_move(app, 1, 0),
+        Action::BoardExpand => {
+            let pos = (app.board.col, app.board.row);
+            app.board.expanded = if app.board.expanded == Some(pos) { None } else { Some(pos) };
+        }
+        Action::BoardOpen => {
+            if let Some(n) = board_selected_number(app) {
+                app.board.data = None;
+                app.open_issue(n);
+            }
+        }
+        Action::BoardApply => {
+            app.sidebar.filter_open = false;
+            app.board.filter_focus = 0;
+            app.apply_board_filter();
+        }
+        Action::BoardToggle => super::toggle_board_focused(app),
+        Action::BoardFilterNext => app.board_filter_step(1),
+        Action::BoardFilterPrev => app.board_filter_step(-1),
+
+        Action::InputSubmit => submit_input(app),
+        Action::InputBackspace => backspace_input(app),
+        Action::InputUp => {
+            app.sidebar.query_edit = false;
+            app.board_filter_step(-1);
+        }
+        Action::InputDown => {
+            app.sidebar.query_edit = false;
+            app.board_filter_step(1);
+        }
+    }
+}
+
+/// `Z`: fold every parent, or unfold all when any is folded.
+fn fold_all(app: &mut App) {
+    let (_, _, recent) = app.pane_groups(false, true);
+    let all = core::tree_rows(&recent, &app.issues.data, &Default::default(), &app.subs.state);
+    let parents: Vec<u64> = all.iter().filter_map(|row| match row {
+        crate::model::SideRow::Tree { number, has_children: true, .. } => Some(*number),
+        _ => None,
+    }).collect();
+    if parents.iter().any(|n| app.sidebar.folded_issues.contains(n)) {
+        app.sidebar.folded_issues.clear();
+    } else {
+        app.sidebar.folded_issues.extend(parents);
+    }
+}
+
+/// `→`, `←` and `z` act on the highlighted tree row.
+fn tree_step(app: &mut App, action: Action) {
+    let rows = app.issue_rows();
+    let Some(n) = app.effective(&rows) else { return };
+    let Some(crate::model::SideRow::Tree { has_children, folded, depth, .. }) =
+        rows.iter().find(|row| row.number() == Some(n))
+    else {
+        return;
+    };
+    let (has_children, folded, depth) = (*has_children, *folded, *depth);
+    match action {
+        Action::TreeExpand if has_children => {
+            app.sidebar.folded_issues.remove(&n);
+            app.load_sub_issues(n);
+        }
+        // Act on the fold the row shows: an unloaded parent
+        // reads folded without being in `folded_issues`.
+        Action::TreeToggle if has_children => {
+            if folded {
+                app.sidebar.folded_issues.remove(&n);
+                app.load_sub_issues(n);
+            } else {
+                app.sidebar.folded_issues.insert(n);
+            }
+        }
+        Action::TreeCollapse if has_children && !folded => {
+            app.sidebar.folded_issues.insert(n);
+        }
+        Action::TreeCollapse if depth > 0 => {
+            if let Some(parent) = app.issues.data.get(&n).and_then(|d| d.parent) {
+                app.request_issue(parent);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Enter in a text input or on the board filter row.
+fn submit_input(app: &mut App) {
+    match app.focus().layer {
+        Layer::Input(TextInput::Bar) => {
+            if app.sidebar.searching {
+                app.commit_search();
+                return;
+            }
+            let quit = matches!(app.bar.trim(), "q" | "quit" | "exit");
+            app.submit_bar();
+            if quit {
+                app.request_quit();
+            }
+        }
+        Layer::Input(TextInput::Query) => {
+            match app.commit_query_draft() {
+                QueryAction::Run(q) => app.run_gh_search(q),
+                QueryAction::Refetch => {
+                    app.refetch_recent();
+                    app.notify("back to recent".to_string());
+                }
+            }
+            app.persist_prefs();
+        }
+        Layer::Input(TextInput::Name) => app.save_named_query(),
+        Layer::Input(TextInput::BoardQuery) => {
+            app.sidebar.query_edit = false;
+            app.sidebar.filter_open = false;
+            app.board.filter_focus = 0;
+            app.apply_board_filter();
+        }
+        _ => {}
+    }
+}
+
+fn backspace_input(app: &mut App) {
+    match app.focus().layer {
+        Layer::Input(TextInput::Bar) if app.sidebar.searching => {
+            app.sidebar.search.pop();
+        }
+        Layer::Input(TextInput::Bar) => {
+            app.bar.pop();
+        }
+        Layer::Input(TextInput::Name) => {
+            app.sidebar.name_draft.pop();
+        }
+        Layer::Input(TextInput::Query | TextInput::BoardQuery)
+        | Layer::Dialog(Dialog::BoardFilter) => {
+            app.sidebar.query_draft.pop();
+        }
+        _ => {}
+    }
+}

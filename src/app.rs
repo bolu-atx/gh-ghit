@@ -688,6 +688,8 @@ pub(crate) struct App {
     pub(crate) prefs_loaded: bool,
     pub(crate) bar: String,
     pub(crate) shortcuts_open: bool,
+    /// First visible line of the help screen. Render clamps it.
+    pub(crate) help_scroll: u16,
     pub(crate) message: String,
     pub(crate) message_at: Option<std::time::Instant>,
     pub(crate) quit: bool,
@@ -721,6 +723,7 @@ impl App {
             bar: String::new(),
             sidebar: Sidebar::new(),
             shortcuts_open: false,
+            help_scroll: 0,
             message: String::new(),
             message_at: None,
             confirm: None,
