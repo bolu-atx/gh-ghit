@@ -501,7 +501,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                         if let Some(url) = cols
                             .get(c)
                             .and_then(|(_, cards)| cards.get(r))
-                            .and_then(|card| crate::ui::card_url(card))
+                            .and_then(|card| card.url())
                         {
                             open_url(&url, app);
                             return;

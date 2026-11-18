@@ -16,7 +16,7 @@ use ratatui::widgets::{
 };
 
 use crate::app::{App, FilterItem, Tab};
-use crate::core::Dialog;
+use crate::core::{Dialog, MAX_DIFF_FILES};
 use crate::keymap::{Action, Context};
 use crate::model::{self, IssueData};
 use crate::theme;
@@ -1135,10 +1135,6 @@ fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<Lin
     }
     lines
 }
-
-/// First 50 files render; the rest collapse to a one-line note so a
-/// huge PR cannot flood the pane.
-pub(crate) const MAX_DIFF_FILES: usize = 50;
 
 /// Diff tab body: one ruled section per file, folded by default.
 /// Issues get a short note, PRs without data yet get a loading line.
@@ -2534,10 +2530,6 @@ fn card_kind(c: &model::BoardItem) -> String {
     }
 }
 
-pub(crate) fn card_url(c: &model::BoardItem) -> Option<String> {
-    c.content.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
-}
-
 fn card_excerpt(c: &model::BoardItem, width: usize) -> String {
     let body = c.content.get("body").and_then(|b| b.as_str()).unwrap_or("");
     match body.lines().map(str::trim).find(|l| !l.is_empty()) {
@@ -2639,7 +2631,7 @@ fn board_card(
         Line::from(vec![
             Span::styled("    ", Style::new().bg(ink())),
             Span::styled(
-                card_url(c).unwrap_or_else(|| "–".to_string()),
+                c.url().unwrap_or_else(|| "–".to_string()),
                 Style::new().bg(ink()).fg(teal()).underlined(),
             ),
         ]),

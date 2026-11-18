@@ -246,6 +246,13 @@ pub struct BoardItem {
     pub content: serde_json::Value,
 }
 
+impl BoardItem {
+    /// The card's web URL, when its content carries one.
+    pub fn url(&self) -> Option<String> {
+        self.content.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
+    }
+}
+
 /// Per-card detail fetched in the background: dates plus comment count.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BoardDetail {

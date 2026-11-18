@@ -1870,7 +1870,7 @@ impl App {
         let Some(n) = self.nav.current else { return };
         self.nav.pane = Pane::Main;
         let Some(files) = self.diff.files.get(&n) else { return };
-        let count = files.len().min(crate::ui::MAX_DIFF_FILES);
+        let count = files.len().min(crate::core::MAX_DIFF_FILES);
         if count == 0 {
             return;
         }
@@ -1900,7 +1900,7 @@ impl App {
             return;
         }
         let Some(n) = self.nav.current else { return };
-        let count = self.diff.files.get(&n).map(|f| f.len().min(crate::ui::MAX_DIFF_FILES)).unwrap_or(0);
+        let count = self.diff.files.get(&n).map(|f| f.len().min(crate::core::MAX_DIFF_FILES)).unwrap_or(0);
         if count == 0 {
             return;
         }
