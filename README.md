@@ -2,8 +2,8 @@
 
 ghit is a terminal viewer for GitHub issues and pull requests.
 It uses the GitHub API to load issues, PRs, and project boards.
-ghit has first-class mouse and keyboard support.
-Every control works both ways, and focus and selection look the same everywhere.
+ghit aims for first-class mouse and keyboard support.
+Every control should work both ways, and focus and selection should look the same everywhere.
 
 ![ghit demo](demo.gif)
 
