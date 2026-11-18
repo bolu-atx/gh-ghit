@@ -400,7 +400,7 @@ impl App {
         }
     }
 
-    /// Per-pane loading flags for the pane spinners and skeletons.
+    /// Per-pane loading flags for the pane spinners and loading bodies.
     pub(crate) fn pane_loading(&self) -> core::PaneLoading {
         let shown = self.nav.current.or(self.nav.requested);
         let refs_pending = self

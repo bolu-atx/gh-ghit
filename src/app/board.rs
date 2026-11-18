@@ -57,7 +57,7 @@ impl BoardView {
 }
 
 impl App {
-    /// Modal opens instantly with a skeleton; the network fetch lands in
+    /// Modal opens instantly with a loading spinner; the network fetch lands in
     /// the background.
     pub(crate) fn open_board(&mut self) {
         if board_open(self) {

@@ -63,7 +63,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 
 Key patterns:
 
-- **Background fetch, instant UI.** The board modal opens with a skeleton;
+- **Background fetch, instant UI.** The board modal opens with a loading spinner;
   a thread fetches and the loop picks it up via `poll_board`. Do the same
   for any new network path — never block the event loop.
 - **Capture the frame buffer inside `render`.** `terminal.current_buffer_mut()`

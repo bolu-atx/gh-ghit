@@ -127,17 +127,17 @@ fn labels_pane_shows_loading_until_meta_lands() {
 }
 
 #[test]
-fn sidebar_shows_spinner_and_skeleton_while_sections_load() {
+fn sidebar_shows_spinner_and_loading_body_while_sections_load() {
     let mut app = App::new(Some("o/r".to_string()));
     app.tick = 0;
     let (_tx, rx) = std::sync::mpsc::channel();
     app.sections.rx = Some(rx);
     let text = sidebar_text(&mut app);
     assert!(text.contains("Issues") && text.contains("⠋"), "title spinner: {text}");
-    assert!(text.contains("▓▓▓"), "skeleton rows: {text}");
+    assert!(text.contains("Loading issues…"), "loading body: {text}");
     app.sections.rx = None;
     let text = sidebar_text(&mut app);
-    assert!(!text.contains("⠋") && !text.contains("▓▓▓"), "idle sidebar: {text}");
+    assert!(!text.contains("⠋") && !text.contains("Loading"), "idle sidebar: {text}");
 }
 
 #[test]
@@ -150,10 +150,10 @@ fn sidebar_loading_goes_quiet_while_the_current_issue_loads() {
     app.issues.pending.insert(7);
     let text = sidebar_text(&mut app);
     assert!(text.contains("⠋"), "title spinner stays: {text}");
-    assert!(!text.contains("▓▓▓"), "no sidebar skeleton under the main skeleton: {text}");
+    assert!(!text.contains("Loading issues…"), "no sidebar loading body under the main loading body: {text}");
     assert!(!text.contains("No issues"), "no empty hint while loading: {text}");
     app.issues.pending.clear();
-    assert!(sidebar_text(&mut app).contains("▓▓▓"), "skeleton returns once the main pane is done");
+    assert!(sidebar_text(&mut app).contains("Loading issues…"), "loading body returns once the main pane is done");
 }
 
 #[test]

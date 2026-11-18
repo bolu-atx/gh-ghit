@@ -248,7 +248,10 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
     let Some(board) = &app.board.data else {
-        render_skeleton(f, inner);
+        f.render_widget(
+            Paragraph::new(super::loading_body("Loading board…", app.tick, usize::from(inner.height))).style(base()),
+            inner,
+        );
         return;
     };
     let cols = crate::app::board_columns(board, &app.board.filter, &app.board.milestones);
@@ -517,30 +520,5 @@ fn comment_word(n: usize) -> String {
         "no comments".to_string()
     } else {
         format!("{} comment{}", n, if n == 1 { "" } else { "s" })
-    }
-}
-
-/// Placeholder columns shown while the network fetch is in flight.
-fn render_skeleton(f: &mut ratatui::Frame, area: Rect) {
-    use crate::theme::{ink, muted, base};
-    let col_areas = column_layout(area, 3);
-    for a in col_areas.iter() {
-        let ghost: Vec<ListItem> = (0..4)
-            .map(|_| {
-                ListItem::new(vec![
-                    Line::from(Span::styled("  ▓▓▓▓▓▓▓▓▓▓▓▓", Style::new().bg(ink()).fg(muted()))),
-                    Line::from(Span::styled("    ▓▓▓▓▓▓▓▓", Style::new().bg(ink()).fg(muted()))),
-                    Line::from(""),
-                ])
-            })
-            .collect();
-        let list = List::new(ghost).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::new().bg(ink()).fg(muted()))
-                .style(base())
-                .title(Span::styled(" ━━━ ", Style::new().bg(ink()).fg(muted()))),
-        );
-        f.render_widget(list, *a);
     }
 }

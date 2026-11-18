@@ -88,12 +88,12 @@ fn style_links_colors_refs_across_span_edges() {
 }
 
 #[test]
-fn main_shows_skeleton_while_first_issue_loads() {
+fn main_shows_loading_while_first_issue_loads() {
     let mut app = App::new(Some("o/r".to_string()));
     app.nav.requested = Some(7);
     app.issues.pending.insert(7);
     let text = frame_text(&mut app);
-    assert!(text.contains("▓▓▓") && !text.contains("No issue loaded"), "main skeleton: {text}");
+    assert!(text.contains("Loading #7…") && text.contains("⣾") && !text.contains("No issue loaded"), "main loading: {text}");
     app.issues.pending.clear();
     assert!(frame_text(&mut app).contains("No issue loaded"), "idle main");
     // A cached issue keeps its text while another one is fetching.
@@ -103,7 +103,7 @@ fn main_shows_skeleton_while_first_issue_loads() {
     app.issues.pending.insert(12);
     let text = frame_text(&mut app);
     assert!(text.contains("Fix the thing ⠋"), "main spinner: {text}");
-    assert!(!text.contains("▓▓▓"), "no skeleton over cached text: {text}");
+    assert!(!text.contains("Loading #"), "no loading body over cached text: {text}");
 }
 
 #[test]
@@ -574,13 +574,13 @@ fn number_keys_switch_content_tabs() {
 }
 
 #[test]
-fn graph_tab_shows_skeleton_while_pending() {
+fn graph_tab_shows_loading_while_pending() {
     let mut app = loaded_app();
     app.nav.tab = Tab::Visual;
     app.graph.pending.insert(7);
     let text = frame_text(&mut app);
     assert!(text.contains("Graph"), "tab label: {text}");
-    assert!(text.contains("Fetching graph"), "skeleton: {text}");
+    assert!(text.contains("Fetching graph…") && text.contains("⣾"), "loading: {text}");
 }
 
 #[test]
@@ -602,7 +602,7 @@ fn graph_draws_at_most_eight_nodes() {
     let neighbors = (20..30).map(|n| (graph_node(n, "Neighbor", "OPEN"), GraphEdgeKind::References)).collect();
     app.graph.data.insert(7, crate::model::build_graph(center, neighbors));
     app.set_tab(Tab::Visual);
-    let text = super::main_pane::graph_text(&app, app.issues.data.get(&7).unwrap()).lines.iter().map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+    let text = super::main_pane::graph_text(&app, app.issues.data.get(&7).unwrap(), 20).lines.iter().map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
     assert_eq!(text.matches('╭').count(), 8, "{text}");
     assert!(text.contains("+3 more"), "{text}");
     assert_eq!(app.graph_order_numbers().len(), 8);
@@ -670,4 +670,17 @@ fn graph_fetch_lands_without_touching_selection() {
     assert!(!app.graph.pending.contains(&7));
     assert!(app.graph.data.contains_key(&7));
     assert_eq!(app.nav.current, Some(7));
+}
+
+#[test]
+fn loading_body_spinner_advances_with_the_tick() {
+    let mut app = App::new(Some("o/r".to_string()));
+    app.nav.requested = Some(7);
+    app.issues.pending.insert(7);
+    app.tick = 0;
+    let first = frame_text(&mut app);
+    app.tick = 1;
+    let second = frame_text(&mut app);
+    assert!(first.contains("⣾ Loading #7…"), "tick 0: {first}");
+    assert!(second.contains("⣽ Loading #7…"), "tick 1: {second}");
 }
