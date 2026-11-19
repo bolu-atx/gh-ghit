@@ -40,15 +40,15 @@ const MAX_SECTION_PAGES: usize = 3;
 // NOTE(#12): that issue also touches this sections query, and either may
 // land first — so this change only adds the cursor/pageInfo plumbing that
 // pagination needs, nothing else.
-fn query() -> String {
-    format!(r#"query($owner: String!, $repo: String!, $openAfter: String, $mergedAfter: String, $openIssuesAfter: String, $closedIssuesAfter: String) {{
- repository(owner: $owner, name: $repo) {{
- open: pullRequests(first: 50, states: OPEN, after: $openAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
- merged: pullRequests(first: 50, states: MERGED, after: $mergedAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
- openIssues: issues(first: 50, states: OPEN, after: $openIssuesAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
- closedIssues: issues(first: 50, states: CLOSED, after: $closedIssuesAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
- }}
- {RATE_LIMIT_FIELD} }}"#)
+fn query(show: [bool; 4]) -> String {
+    let decl = |i: usize, d: &str| if show[i] { format!(", {d}") } else { String::new() };
+    let decls = format!("{}{}{}{}", decl(0, "$openAfter: String"), decl(1, "$mergedAfter: String"), decl(2, "$openIssuesAfter: String"), decl(3, "$closedIssuesAfter: String"));
+    let field = |i: usize, body: String| if show[i] { format!(" {body}\n") } else { String::new() };
+    let open = field(0, format!("open: pullRequests(first: 50, states: OPEN, after: $openAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}"));
+    let merged = field(1, format!("merged: pullRequests(first: 50, states: MERGED, after: $mergedAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}"));
+    let open_issues = field(2, format!("openIssues: issues(first: 50, states: OPEN, after: $openIssuesAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}"));
+    let closed_issues = field(3, format!("closedIssues: issues(first: 50, states: CLOSED, after: $closedIssuesAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}"));
+    format!("query($owner: String!, $repo: String!{decls}) {{\n repository(owner: $owner, name: $repo) {{\n{open}{merged}{open_issues}{closed_issues} }}\n {RATE_LIMIT_FIELD} }}")
 }
 
 fn within_window(s: Option<&str>, now: chrono::DateTime<chrono::Utc>, hours: u64) -> bool {
@@ -82,7 +82,8 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
         // order within each section across page boundaries.
         for page in pages {
             let repo = page.pointer("/data/repository").filter(|v| v.is_object()).ok_or("missing section rows")?;
-            let nodes = repo.pointer(&format!("/{section}/nodes")).and_then(Value::as_array).ok_or("missing section rows")?;
+            // A hidden section is left out of the query, so its alias is absent.
+            let Some(nodes) = repo.pointer(&format!("/{section}/nodes")).and_then(Value::as_array) else { continue };
             for n in nodes {
                 if rows.len() >= MAX_SECTION_ROWS { return Ok(rows); }
                 let window_at = windowed.then(|| n.get(date_key).and_then(Value::as_str)).flatten().map(str::to_owned);
@@ -136,12 +137,19 @@ const ALIASES: [&str; 4] = ["open", "merged", "openIssues", "closedIssues"];
 /// closed updated-desc, so overlap marks the cached tail), and
 /// `MAX_SECTION_PAGES` bounds a burst of new rows. Without a cache the
 /// walk keeps today's shape.
+///
+/// The merged and closed-issue lists are updated-desc and `updatedAt >=
+/// mergedAt`, so once a page's last node is older than the window no later
+/// page holds an in-window row: the section retires. `hours == 0` (all time)
+/// never retires this way, and open sections are unaffected.
 fn absorb_page(
     value: &mut Value,
     live: &mut [bool; 4],
     cursors: &mut [Option<String>; 4],
     page_count: &mut [usize; 4],
     cached: Option<&HashSet<u64>>,
+    now: chrono::DateTime<chrono::Utc>,
+    hours: u64,
 ) -> usize {
     let was_live = *live;
     for (i, section) in ALIASES.iter().enumerate() {
@@ -164,7 +172,12 @@ fn absorb_page(
         let (more, cursor) = section_cursor(value, section);
         let anchored = cached.is_some() && overlap >= OVERLAP_STOP;
         let capped = cached.is_some() && page_count[i] >= MAX_SECTION_PAGES;
-        if more && cursor.is_some() && !anchored && !capped {
+        // Sections 1 (merged) and 3 (closedIssues) are updated-desc.
+        let past_window = hours > 0 && (i == 1 || i == 3) && nodes
+            .and_then(|n| n.last())
+            .and_then(|n| n.get("updatedAt")?.as_str())
+            .is_some_and(|t| !within_window(Some(t), now, hours));
+        if more && cursor.is_some() && !anchored && !capped && !past_window {
             cursors[i] = cursor;
         } else {
             live[i] = false;
@@ -187,8 +200,12 @@ pub async fn sections(
     hours: u64,
     bearer: &str,
     cached: Option<&HashSet<u64>>,
+    show: [bool; 4],
     progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
 ) -> Result<SectionRows, String> {
+    if !show.iter().any(|s| *s) {
+        return Ok(SectionRows { rows: Vec::new(), capped: false });
+    }
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let url = graphql_url();
     let client = client();
@@ -197,13 +214,19 @@ pub async fn sections(
     // fetch, append, stop a section when its page has no next cursor — plus
     // the warm-refresh overlap/page stops and the raw-node row cap.
     let mut cursors: [Option<String>; 4] = [None, None, None, None];
-    let mut live = [true; 4];
+    // A hidden section starts retired and is left out of the query text.
+    let mut live = show;
+    let query = query(show);
     let mut page_count = [0usize; 4];
     let mut pages = Vec::new();
     let mut fetched: usize = 0;
     loop {
-        let mut value = post_json(&client, &url, bearer, &json!({"query": query(), "variables": {"owner": owner, "repo": name, "openAfter": cursors[0], "mergedAfter": cursors[1], "openIssuesAfter": cursors[2], "closedIssuesAfter": cursors[3]}})).await?;
-        fetched += absorb_page(&mut value, &mut live, &mut cursors, &mut page_count, cached);
+        let mut variables = json!({"owner": owner, "repo": name});
+        for (i, var) in ["openAfter", "mergedAfter", "openIssuesAfter", "closedIssuesAfter"].into_iter().enumerate() {
+            if show[i] { variables[var] = json!(cursors[i]); }
+        }
+        let mut value = post_json(&client, &url, bearer, &json!({"query": query, "variables": variables})).await?;
+        fetched += absorb_page(&mut value, &mut live, &mut cursors, &mut page_count, cached, chrono::Utc::now(), hours);
         // Rows fetched vs the row cap, while more pages remain: a single
         // page is one request and stays indeterminate.
         if live.iter().any(|l| *l) && fetched < MAX_SECTION_ROWS {
@@ -256,16 +279,71 @@ pub fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chron
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc)
+    }
+    #[test]
+    fn subset_query_omits_hidden_aliases_and_variables() {
+        let q = query([true, false, true, false]);
+        assert!(q.contains("open: pullRequests") && q.contains("openIssues: issues"));
+        assert!(q.contains("$openAfter") && q.contains("$openIssuesAfter"));
+        for gone in ["merged: pullRequests", "closedIssues: issues", "$mergedAfter", "$closedIssuesAfter"] {
+            assert!(!q.contains(gone), "hidden section leaked: {gone}");
+        }
+        assert!(q.contains("$owner: String!, $repo: String!, $openAfter: String, $openIssuesAfter: String)"));
+    }
+    #[test]
+    fn parse_rows_tolerates_missing_aliases() {
+        let v = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":1,"title":"one","state":"OPEN"}]}}}});
+        let rows = parse_rows(&[v], test_now(), 24).unwrap();
+        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1]);
+    }
+    #[test]
+    fn merged_and_closed_stop_at_the_window_cutoff_while_open_keeps_paging() {
+        let mut page = json!({"data":{"repository":{
+            "open":{"nodes":[{"number":1,"updatedAt":"2026-01-01T00:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"o1"}},
+            "merged":{"nodes":[{"number":2,"updatedAt":"2026-11-10T11:30:00Z"},{"number":3,"updatedAt":"2026-11-09T10:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"m1"}},
+            "openIssues":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"i1"}},
+            "closedIssues":{"nodes":[{"number":4,"updatedAt":"2026-11-10T11:30:00Z"},{"number":5,"updatedAt":"2026-11-09T10:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}});
+        let mut live = [true; 4];
+        let mut cursors: [Option<String>; 4] = [None, None, None, None];
+        let mut count = [0usize; 4];
+        absorb_page(&mut page, &mut live, &mut cursors, &mut count, None, test_now(), 1);
+        assert_eq!(live, [true, false, true, false], "past-window merged and closed retire");
+        assert_eq!(cursors[0].as_deref(), Some("o1"));
+        assert_eq!(cursors[2].as_deref(), Some("i1"));
+        assert!(cursors[1].is_none() && cursors[3].is_none());
+    }
+    #[test]
+    fn in_window_last_node_and_all_time_keep_merged_paging() {
+        let page = || json!({"data":{"repository":{
+            "open":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "merged":{"nodes":[{"number":2,"updatedAt":"2026-11-10T11:30:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"m1"}},
+            "openIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}},
+            "closedIssues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}});
+        let old = || { let mut p = page(); p["data"]["repository"]["merged"]["nodes"][0]["updatedAt"] = json!("2020-01-01T00:00:00Z"); p };
+        let run = |mut p: Value, hours: u64| {
+            let mut live = [true; 4];
+            let mut cursors: [Option<String>; 4] = [None, None, None, None];
+            let mut count = [0usize; 4];
+            absorb_page(&mut p, &mut live, &mut cursors, &mut count, None, test_now(), hours);
+            live[1]
+        };
+        assert!(run(page(), 1), "last node inside the window keeps paging");
+        assert!(run(old(), 0), "hours 0 never stops early");
+        assert!(!run(old(), 1));
+    }
     #[test]
     fn query_has_both_sections_and_metadata() {
-        let q = query();
+        let q = query([true; 4]);
         for field in ["open: pullRequests", "merged: pullRequests", "openIssues: issues", "closedIssues: issues", "projectItems", "totalCount", "$owner", "$repo", "pageInfo", "hasNextPage", "endCursor", "$openAfter", "$mergedAfter", "$openIssuesAfter", "$closedIssuesAfter", "commits(last: 1)", "statusCheckRollup", "parent { number }", "subIssuesSummary { total completed }"] { assert!(q.contains(field)); }
     }
     #[test]
     fn sections_query_stays_slim_and_rows_stay_partial() {
         // Startup fetches list-weight rows only: bodies and per-PR review
         // threads load when a row opens through the full fetch.
-        let q = query();
+        let q = query([true; 4]);
         assert!(q.contains("labels(first: 20)") && q.contains("assignees(first: 10)"));
         assert!(!q.contains("labels(first: 100)") && !q.contains("assignees(first: 100)"));
         assert!(q.contains("rateLimit { cost remaining resetAt }"));
@@ -394,10 +472,10 @@ mod tests {
         let mut cursors: [Option<String>; 4] = [None, None, None, None];
         let mut count = [0usize; 4];
         let mut pages = Vec::new();
-        absorb_page(&mut page1, &mut live, &mut cursors, &mut count, None);
+        absorb_page(&mut page1, &mut live, &mut cursors, &mut count, None, test_now(), 0);
         assert!(live[0] && !live[1], "open stays live, merged retires on page 1");
         pages.push(page1);
-        absorb_page(&mut page2, &mut live, &mut cursors, &mut count, None);
+        absorb_page(&mut page2, &mut live, &mut cursors, &mut count, None, test_now(), 0);
         assert!(page2.pointer("/data/repository/merged/nodes").and_then(Value::as_array).is_some_and(Vec::is_empty), "retired merged nodes are cleared from page 2");
         pages.push(page2);
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
@@ -458,7 +536,7 @@ mod tests {
         let mut live = [true; 4];
         let mut cursors: [Option<String>; 4] = [None, None, None, None];
         let mut count = [0usize; 4];
-        absorb_page(&mut page, &mut live, &mut cursors, &mut count, Some(&cached));
+        absorb_page(&mut page, &mut live, &mut cursors, &mut count, Some(&cached), test_now(), 0);
         assert!(!live[0], "OVERLAP_STOP cached rows anchor the walk");
         assert!(cursors[0].is_none(), "a retired section holds no cursor");
         assert_eq!(count[0], 1);
@@ -470,7 +548,7 @@ mod tests {
         let mut live = [true; 4];
         let mut cursors: [Option<String>; 4] = [None, None, None, None];
         let mut count = [0usize; 4];
-        absorb_page(&mut page, &mut live, &mut cursors, &mut count, Some(&cached));
+        absorb_page(&mut page, &mut live, &mut cursors, &mut count, Some(&cached), test_now(), 0);
         assert!(live[0], "two cached rows are not enough to stop");
         assert_eq!(cursors[0].as_deref(), Some("c1"));
     }
@@ -482,7 +560,7 @@ mod tests {
         let mut count = [0usize; 4];
         for page in 1..=MAX_SECTION_PAGES {
             let mut value = open_page(&[100 + page as u64], true, Some("c"));
-            absorb_page(&mut value, &mut live, &mut cursors, &mut count, Some(&cached));
+            absorb_page(&mut value, &mut live, &mut cursors, &mut count, Some(&cached), test_now(), 0);
         }
         assert!(!live[0], "no overlap: MAX_SECTION_PAGES retires the section");
         assert_eq!(count[0], MAX_SECTION_PAGES);
@@ -493,7 +571,7 @@ mod tests {
         let mut count = [0usize; 4];
         for page in 1..=MAX_SECTION_PAGES + 1 {
             let mut value = open_page(&[100 + page as u64], true, Some("c"));
-            absorb_page(&mut value, &mut live, &mut cursors, &mut count, None);
+            absorb_page(&mut value, &mut live, &mut cursors, &mut count, None, test_now(), 0);
         }
         assert!(live[0], "a cache miss never early-stops");
         assert_eq!(cursors[0].as_deref(), Some("c"));

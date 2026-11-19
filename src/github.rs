@@ -154,18 +154,25 @@ pub async fn fetch_number(
 }
 
 /// Recent rows: open + windowed merged PRs, open + windowed closed issues.
-/// The last payload is persisted per repo and window (`sections-<repo>-<hours>`)
+/// `show` is the visible-list mask (open PRs, merged PRs, open issues, closed
+/// issues); hidden lists are not queried.
+/// The last payload is persisted per repo, window and mask (`sections-<repo>-<hours>-<mask>`)
 /// so the next refresh fetches head-first and stops on overlap with it; a
 /// cache miss walks every page like before. `progress` re-tags the page
 /// counts onto the caller's existing section channel.
 pub async fn fetch_recent_sections(
     repo: &str,
     hours: u64,
+    show: [bool; 4],
     progress: Option<std::sync::mpsc::Sender<SectionEvent>>,
 ) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
+    // Every list hidden: nothing to fetch.
+    if !show.iter().any(|s| *s) {
+        return Ok(Vec::new());
+    }
     let token = require_token()?;
-    let name = cache::Key::Sections { repo: repo.to_string(), hours }.name();
+    let name = cache::Key::Sections { repo: repo.to_string(), hours, show }.name();
     let read_name = name.clone();
     let cached: Option<Vec<api::Row>> =
         tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
@@ -181,6 +188,7 @@ pub async fn fetch_recent_sections(
         hours,
         &token,
         cached_numbers.as_ref(),
+        show,
         Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
     )
     .await?;
@@ -199,8 +207,8 @@ pub async fn fetch_recent_sections(
 /// Last persisted sections payload for a repo and window (`None` when no
 /// fresh cache exists). Startup hydration reads through here so the
 /// sidebar paints previous state before the background refresh lands.
-pub(crate) fn cached_sections(repo: &str, hours: u64) -> Option<Vec<api::Row>> {
-    cache::cache_get(&cache::Key::Sections { repo: repo.to_string(), hours }.name())
+pub(crate) fn cached_sections(repo: &str, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
+    cache::cache_get(&cache::Key::Sections { repo: repo.to_string(), hours, show }.name())
 }
 
 /// Typed cache keys, re-exported so UI layers never touch `cache`.
@@ -463,7 +471,7 @@ mod tests {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
         assert!(fetch_number("", 1, false, None).await.is_err());
-        assert!(fetch_recent_sections("", 24, None).await.is_err());
+        assert!(fetch_recent_sections("", 24, [true; 4], None).await.is_err());
         assert!(search_repo("", "bug", None).await.is_err());
         assert!(fetch_repo_meta("").await.is_err());
         assert!(fetch_board("").await.is_err());

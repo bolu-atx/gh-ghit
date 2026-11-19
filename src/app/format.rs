@@ -57,16 +57,7 @@ impl App {
         match focus {
             0 => self.start_query_edit(),
             1 => self.set_window(core::cycle_window(self.sections.merged_window_hours)),
-            2..=5 => {
-                let value = match focus {
-                    2 => &mut self.sidebar.show_open_prs,
-                    3 => &mut self.sidebar.show_merged_prs,
-                    4 => &mut self.sidebar.show_open_issues,
-                    _ => &mut self.sidebar.show_closed_issues,
-                };
-                *value = !*value;
-                self.persist_prefs();
-            }
+            2..=5 => self.toggle_list(focus - 2),
             n if n < 6 + labels => {
                 let name = self.sidebar.labels[n - 6].clone();
                 self.toggle_label_filter(name);

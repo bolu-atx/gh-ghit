@@ -175,7 +175,7 @@ impl App {
     /// never resurrect evicted rows, so nothing else calls this.
     pub(super) fn hydrate_cached_sections(&mut self) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
-        let Some(rows) = github::cached_sections(&repo, self.sections.merged_window_hours) else { return };
+        let Some(rows) = github::cached_sections(&repo, self.sections.merged_window_hours, self.show_mask()) else { return };
         for row in rows {
             let n = row.issue.number;
             if self.issues.data.contains_key(&n) {
@@ -199,14 +199,38 @@ impl App {
         self.sections.auto_refresh = false;
         self.sections.replace = false;
         let hours = self.sections.merged_window_hours;
+        let show = self.show_mask();
         let probe = std::mem::take(&mut self.sections.probe);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         self.enqueue(core::Kind::Sections, None, async move {
             if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, Some(tx.clone())).await;
+            let result = github::fetch_recent_sections(&repo, hours, show, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });
+    }
+
+    /// Visible lists in section order: open PRs, merged PRs, open issues,
+    /// closed issues. Hidden lists are not fetched.
+    pub(crate) fn show_mask(&self) -> [bool; 4] {
+        [self.sidebar.show_open_prs, self.sidebar.show_merged_prs, self.sidebar.show_open_issues, self.sidebar.show_closed_issues]
+    }
+
+    /// Flip one list (0 open PRs, 1 merged PRs, 2 open issues, 3 closed
+    /// issues). The mask picks what the sections query fetches, so a plain
+    /// listing refetches; an active search ignores the toggles server-side.
+    pub(crate) fn toggle_list(&mut self, index: usize) {
+        let value = match index {
+            0 => &mut self.sidebar.show_open_prs,
+            1 => &mut self.sidebar.show_merged_prs,
+            2 => &mut self.sidebar.show_open_issues,
+            _ => &mut self.sidebar.show_closed_issues,
+        };
+        *value = !*value;
+        self.persist_prefs();
+        if self.sidebar.query_active.trim().is_empty() {
+            self.refetch_recent();
+        }
     }
 
     pub(super) fn auto_refresh_recent(&mut self, now: Instant) {
