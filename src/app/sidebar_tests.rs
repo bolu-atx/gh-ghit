@@ -1,7 +1,7 @@
 //! Tests for sidebar rows, sort, filters and auto-refresh.
 
 use super::*;
-use super::sidebar::{FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, refresh_interval_from};
+use super::sidebar::{FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, STATUS_REFRESH_INTERVAL, refresh_interval_from, refresh_plan};
 use super::test_support::{issue, restore_xdg, sidebar_app, temp_xdg};
 use crate::model::BoardData;
 
@@ -386,20 +386,36 @@ fn auto_refresh_failure_backs_off_and_success_resets() {
 }
 
 #[test]
-fn auto_refresh_probes_first_until_a_full_fetch_is_due() {
+fn refresh_plan_picks_delta_status_or_full() {
+    let secs = Duration::from_secs;
+    assert_eq!(refresh_plan(secs(30), secs(30)), github::Refresh::Delta);
+    assert_eq!(refresh_plan(STATUS_REFRESH_INTERVAL - secs(1), secs(60)), github::Refresh::Delta);
+    assert_eq!(refresh_plan(STATUS_REFRESH_INTERVAL, secs(600)), github::Refresh::Status);
+    assert_eq!(refresh_plan(secs(10), FULL_REFRESH_INTERVAL - secs(1)), github::Refresh::Delta);
+    assert_eq!(refresh_plan(STATUS_REFRESH_INTERVAL, FULL_REFRESH_INTERVAL), github::Refresh::Full);
+    assert_eq!(refresh_plan(secs(0), FULL_REFRESH_INTERVAL), github::Refresh::Full);
+}
+
+#[test]
+fn auto_refresh_probes_until_a_status_refresh_is_due() {
     let mut app = sidebar_app(&[7]);
     app.repo_slug = Some("o/r".to_string());
     let start = app.sections.last_fetch;
+    let status_clock = app.sections.last_status;
+    let full_clock = app.sections.last_full;
     app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
     assert!(app.sections.rx.is_some());
     assert!(!app.sections.probe, "probe flag is consumed by the spawn");
-    // Past the full-refresh span, the auto-refresh skips the probe.
+    assert_eq!(app.sections.last_status, status_clock, "a change-only pass keeps the status clock");
+    // Past the status span, the refresh runs without the probe.
     app.sections.rx = None;
-    app.sections.last_full = start;
-    let late = start + FULL_REFRESH_INTERVAL;
+    app.sections.last_status = status_clock - STATUS_REFRESH_INTERVAL;
+    let late = start + RECENT_REFRESH_INTERVAL * 2;
     app.sections.last_fetch = late - RECENT_REFRESH_INTERVAL;
     app.auto_refresh_recent(late);
     assert!(app.sections.rx.is_some());
+    assert!(app.sections.last_status > status_clock, "status clock restarts");
+    assert_eq!(app.sections.last_full, full_clock, "a status pass is not a full walk");
     app.sections.rx = None;
 }
 

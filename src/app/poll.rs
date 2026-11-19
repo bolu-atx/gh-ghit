@@ -1,7 +1,6 @@
 //! Per-frame polls that land background fetches into `App`, plus startup bootstrap.
 
 use std::collections::HashSet;
-use std::time::Instant;
 
 use crate::app::{App, Focus, rt, spawn_bg};
 use crate::core::self;
@@ -187,7 +186,6 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
         github::SectionEvent::Done(result) => {
             app.sections.rx = None;
             app.sections.progress = None;
-            app.sections.last_full = Instant::now();
             let auto = std::mem::take(&mut app.sections.auto_refresh);
             if auto {
                 app.sections.auto_refresh_interval = if result.is_ok() {
@@ -220,6 +218,7 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                             if !replace && row.issue.updated_at >= d.updated_at {
                                 d.title = row.issue.title;
                                 d.state = row.issue.state;
+                                d.checks = row.issue.checks;
                                 d.labels = row.issue.labels;
                                 d.updated_at = row.issue.updated_at;
                                 app.issues.statuses.insert(n, row.statuses);

@@ -25,6 +25,83 @@ const ISSUE_FIELDS: &str = r#"
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
 
+const STATUS_PR_FIELDS: &str = r#"
+ commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+ projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
+ ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
+"#;
+
+const STATUS_ISSUE_FIELDS: &str = r#"
+ projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
+ ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
+"#;
+
+/// Numbers per status query.
+const STATUS_CHUNK: usize = 50;
+
+/// Silent-change fields of one row: CI rollup and project statuses.
+pub struct StatusUpdate {
+    pub number: u64,
+    pub checks: Option<crate::model::CheckState>,
+    pub statuses: super::Statuses,
+}
+
+/// The open rows whose CI or project status can change without bumping
+/// `updatedAt`: `(number, is_pr)`.
+pub fn status_targets(rows: &[Row]) -> Vec<(u64, bool)> {
+    rows.iter().filter(|r| r.issue.state == "OPEN").map(|r| (r.issue.number, r.issue.is_pr)).collect()
+}
+
+/// One aliased query per chunk of 50 targets: `p<n>` pull requests,
+/// `i<n>` issues.
+fn status_queries(targets: &[(u64, bool)]) -> Vec<String> {
+    targets.chunks(STATUS_CHUNK).map(|chunk| {
+        let fields: String = chunk.iter().map(|&(n, is_pr)| if is_pr {
+            format!(" p{n}: pullRequest(number: {n}) {{ {STATUS_PR_FIELDS} }}")
+        } else {
+            format!(" i{n}: issue(number: {n}) {{ {STATUS_ISSUE_FIELDS} }}")
+        }).collect();
+        format!("query($owner: String!, $repo: String!) {{\n repository(owner: $owner, name: $repo) {{{fields} }}\n {RATE_LIMIT_FIELD} }}")
+    }).collect()
+}
+
+fn parse_status_page(value: &Value, chunk: &[(u64, bool)]) -> Result<Vec<StatusUpdate>, String> {
+    if let Some(e) = graphql_auth_failure(value) {
+        return Err(e);
+    }
+    let repo = value.pointer("/data/repository").filter(|v| v.is_object())
+        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
+    Ok(chunk.iter().filter_map(|&(number, is_pr)| {
+        let n = repo.get(format!("{}{number}", if is_pr { "p" } else { "i" })).filter(|v| v.is_object())?;
+        let statuses = n.pointer("/projectItems/nodes").and_then(Value::as_array).into_iter().flatten().map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
+        Some(StatusUpdate { number, checks: crate::model::parse_check_state(n), statuses })
+    }).collect())
+}
+
+/// Fetch CI and project status for the open `targets`, chunked.
+pub async fn fetch_statuses(repo: &str, targets: &[(u64, bool)], bearer: &str) -> Result<Vec<StatusUpdate>, String> {
+    let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
+    let url = graphql_url();
+    let client = client();
+    let mut updates = Vec::new();
+    for (query, chunk) in status_queries(targets).iter().zip(targets.chunks(STATUS_CHUNK)) {
+        let body = json!({"query": query, "variables": {"owner": owner, "repo": name}});
+        updates.extend(parse_status_page(&post_json(&client, &url, bearer, &body).await?, chunk)?);
+    }
+    Ok(updates)
+}
+
+/// Write status-only updates into matching rows; every other field stays.
+/// Numbers with no row are ignored.
+pub fn apply_statuses(rows: &mut [Row], updates: Vec<StatusUpdate>) {
+    for u in updates {
+        if let Some(r) = rows.iter_mut().find(|r| r.issue.number == u.number) {
+            if r.issue.is_pr { r.issue.checks = u.checks; }
+            r.statuses = u.statuses;
+        }
+    }
+}
+
 /// Total-row ceiling across the four section lists: one giant repo must not
 /// blow up the sidebar (or memory) no matter how many pages it fills.
 /// Fetching stops once the raw nodes reach this many, and `parse_rows`
@@ -423,6 +500,52 @@ mod tests {
     fn test_now() -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc)
     }
+    fn status_row(number: u64, is_pr: bool, state: &str) -> Row {
+        let mut r = parse_node(&json!({"number": number, "title": "t", "state": state, "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-02T00:00:00Z", "url": "u"}), is_pr, None).unwrap();
+        r.issue.is_pr = is_pr;
+        r
+    }
+
+    #[test]
+    fn status_queries_alias_and_chunk_at_fifty() {
+        let targets: Vec<(u64, bool)> = (1..=120).map(|n| (n, n % 2 == 0)).collect();
+        let qs = status_queries(&targets);
+        assert_eq!(qs.len(), 3);
+        assert!(qs[0].contains(" p2: pullRequest(number: 2)") && qs[0].contains(" i1: issue(number: 1)"));
+        assert!(qs[0].contains("statusCheckRollup") && qs[0].contains(RATE_LIMIT_FIELD));
+        assert!(qs[2].contains("i101:") && !qs[2].contains("i100:"), "chunks split 50/50/20");
+        let q = status_queries(&[(5, false)]).remove(0);
+        assert!(!q.contains("statusCheckRollup"), "issues ask project status only");
+        assert!(q.contains("projectItems"));
+    }
+
+    #[test]
+    fn status_targets_take_open_rows_only() {
+        let rows = vec![status_row(1, true, "OPEN"), status_row(2, true, "MERGED"), status_row(3, false, "OPEN"), status_row(4, false, "CLOSED")];
+        assert_eq!(status_targets(&rows), vec![(1, true), (3, false)]);
+    }
+
+    #[test]
+    fn status_updates_touch_only_ci_and_project_status() {
+        let mut rows = vec![status_row(1, true, "OPEN"), status_row(3, false, "OPEN")];
+        rows[0].issue.title = "keep".into();
+        let value = json!({"data": {"repository": {
+            "p1": {"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
+                   "projectItems": {"nodes": [{"project": {"title": "Board"}, "status": {"name": "Done"}}]}},
+            "i3": {"projectItems": {"nodes": [{"project": {"title": "Board"}, "status": {"name": "Todo"}}]}},
+            "p99": {"projectItems": {"nodes": []}}}}});
+        let updates = parse_status_page(&value, &[(1, true), (3, false), (99, true), (7, true)]).unwrap();
+        assert_eq!(updates.len(), 3, "a missing alias is skipped");
+        apply_statuses(&mut rows, updates);
+        assert_eq!(rows[0].issue.checks, Some(crate::model::CheckState::Fail));
+        assert_eq!(rows[0].statuses[0].1.as_deref(), Some("Done"));
+        assert_eq!(rows[0].issue.title, "keep");
+        assert_eq!(rows[0].issue.updated_at, "2026-11-02T00:00:00Z");
+        assert_eq!(rows[1].statuses[0].1.as_deref(), Some("Todo"));
+        assert_eq!(rows[1].issue.checks, None);
+        assert_eq!(rows.len(), 2, "unknown numbers add no rows");
+    }
+
     #[test]
     fn subset_query_omits_hidden_aliases_and_variables() {
         let q = query([true, false, true, false]);
