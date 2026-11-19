@@ -348,7 +348,6 @@ pub async fn issue(
     repo: &str,
     number: u64,
     bearer: &str,
-    cached_comments: Option<Vec<Comment>>,
     progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
 ) -> Result<(IssueData, Statuses), String> {
     let base = rest_base();
@@ -361,10 +360,7 @@ pub async fn issue(
     if v["body"].is_null() { v["body"] = json!(""); }
     if is_pr && !v["pull_request"]["merged_at"].is_null() { v["state"] = json!("MERGED"); }
     else if let Some(state) = v["state"].as_str() { v["state"] = json!(state.to_uppercase()); }
-    let comments = match cached_comments {
-        Some(comments) => comments,
-        None => fetch_comment_pages(&client, &base, repo, number, bearer, v["comments"].as_u64().ok_or("missing comment count")?, progress).await?,
-    };
+    let comments = fetch_comment_pages(&client, &base, repo, number, bearer, v["comments"].as_u64().ok_or("missing comment count")?, progress).await?;
     v["comments"] = json!(comments);
     v["isPr"] = json!(is_pr);
     // REST ships `milestone` as an object; flatten to its title so the

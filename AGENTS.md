@@ -58,7 +58,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/github.rs` | Data-access facade over `api`/`cache`/`store`; UI layers never import those directly |
 | `src/api.rs` + `src/api/{client,sections,graph,board}.rs` | Token-backed GraphQL/REST calls |
 | `src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
-| `src/store.rs` | Local repo copy: one SQLite file per host + `owner/repo` (`store/<host>/<owner>/<repo>.sqlite`, WAL), shared by every clone and process; holds the sidebar rows and the last sync |
+| `src/store.rs` | Local repo copy: one SQLite file per host + `owner/repo` (`store/<host>/<owner>/<repo>.sqlite`, WAL), shared by every clone and process; holds the sidebar rows, the last sync, and item details (issue, diff, graph) keyed by `updated_at` |
 | `src/keymap.rs` + `src/keymap/` | The key table: one binding list per focus context. Input, `?` help and hints read it. Change a key here, not in `input` |
 | `src/input.rs` + `src/input/` | Looks keys up in `keymap`, runs actions (`input/actions.rs`), maps mouse into `App` calls (`input/mouse.rs` wheel and entry, `input/click.rs` left-click routing); reads `ui` hit areas, never draws |
 | `src/ui.rs` | All rendering + frame tests; reads `App`, never fetches |
