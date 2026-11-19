@@ -455,6 +455,7 @@ mod tests {
             milestone: None,
             parent: None,
             sub_summary: None,
+            links: Default::default(),
             is_pr: false,
         };
         let mut app = crate::app::App::new(Some("o/r".to_string()));

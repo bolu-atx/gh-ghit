@@ -1077,6 +1077,7 @@ mod tests {
             milestone: None,
             parent: None,
             sub_summary: None,
+            links: Default::default(),
         }
     }
 

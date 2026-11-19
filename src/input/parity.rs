@@ -40,6 +40,7 @@ fn issue(number: u64, is_pr: bool) -> IssueData {
         milestone: None,
         parent: None,
         sub_summary: None,
+            links: Default::default(),
         is_pr,
     }
 }

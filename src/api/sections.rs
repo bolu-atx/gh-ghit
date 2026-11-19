@@ -1,6 +1,6 @@
 use super::{Row, SectionRows};
 use super::client::{client, graphql_auth_failure, graphql_url, http_fail, note_rate_limit, post_json, rest_base, RATE_LIMIT_FIELD};
-use crate::model::{Author, BoardDetail, IssueData, Label, SubSummary};
+use crate::model::{Author, BoardDetail, IssueData, IssueLinks, Label, SubSummary};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -21,6 +21,8 @@ pub(super) const ISSUE_FIELDS: &str = r#"
  comments(first: 1) { totalCount }
  parent { number }
  subIssuesSummary { total completed }
+ blockedBy(first: 10) { nodes { number } }
+ closedByPullRequestsReferences(first: 3, includeClosedPrs: true) { nodes { number } }
  projectItems(first: 10) { nodes { project { title } status: fieldValueByName(name: "Status") {
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
@@ -173,7 +175,7 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
 }
 
 /// One sections node (Issue or PullRequest fields) as a slim listing row.
-pub(super) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> Result<Row, String> {
+pub(crate) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> Result<Row, String> {
     let string = |k: &str| n.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
     let number = n.get("number").and_then(Value::as_u64).ok_or("missing row number")?;
     let labels = n.pointer("/labels/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("name")?.as_str().map(|s| Label { name: s.to_owned() })).collect();
@@ -187,12 +189,14 @@ pub(super) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> R
     // payload carries them.
     let milestone = n.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
     let parent = n.pointer("/parent/number").and_then(Value::as_u64);
+    let numbers = |path: &str| n.pointer(path).and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("number")?.as_u64()).collect();
+    let links = IssueLinks { blocked_by: numbers("/blockedBy/nodes"), closed_by: numbers("/closedByPullRequestsReferences/nodes") };
     let summary = n.get("subIssuesSummary").filter(|s| s.is_object());
     let sub_summary = summary.map(|s| SubSummary {
         total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
         completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
     });
-    Ok(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, parent, sub_summary, is_pr }, statuses, detail, complete: false, window_at })
+    Ok(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, parent, sub_summary, links, is_pr }, statuses, detail, complete: false, window_at })
 }
 
 /// `(hasNextPage, endCursor)` for one section connection of a sections page.
@@ -627,6 +631,16 @@ mod tests {
         assert_eq!(row.issue.checks, Some(crate::model::CheckState::Pass));
     }
     #[test]
+    fn missing_or_null_link_fields_parse_as_no_links() {
+        let node = json!({"number": 1, "blockedBy": null, "closedByPullRequestsReferences": {"nodes": null}});
+        assert_eq!(parse_node(&node, false, None).unwrap().issue.links, IssueLinks::default());
+        assert_eq!(parse_node(&json!({"number": 1}), false, None).unwrap().issue.links, IssueLinks::default());
+        let node = json!({"number": 1, "blockedBy": {"nodes": [{"number": 4}, null]}, "closedByPullRequestsReferences": {"nodes": [{"number": 9}]}});
+        let links = parse_node(&node, false, None).unwrap().issue.links;
+        assert_eq!((links.blocked_by, links.closed_by), (vec![4], vec![9]));
+    }
+
+    #[test]
     fn parses_parent_and_sub_issue_summary_on_issue_nodes() {
         let v = json!({"data":{"repository":{
             "open":{"nodes":[{"number":1,"title":"pr","state":"OPEN"}]},
@@ -802,6 +816,7 @@ mod tests {
                 url: String::new(), body: String::new(), comments: vec![],
                 is_pr, review_threads: vec![], paired: vec![], checks: None, milestone: None,
                 parent: None, sub_summary: None,
+            links: Default::default(),
             },
             statuses: vec![],
             detail: BoardDetail::default(),

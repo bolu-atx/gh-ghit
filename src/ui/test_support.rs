@@ -78,6 +78,7 @@ pub(super) fn sample(number: u64) -> IssueData {
         milestone: None,
         parent: None,
         sub_summary: None,
+            links: Default::default(),
         is_pr: false,
     }
 }

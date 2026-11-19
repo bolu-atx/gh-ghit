@@ -342,6 +342,7 @@ fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
         milestone: None,
         parent: None,
         sub_summary: None,
+            links: Default::default(),
         is_pr: true,
     });
     app.nav.current = Some(9);

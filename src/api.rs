@@ -11,6 +11,8 @@ pub use client::{
 pub use backfill::{age_cutoff, fetch_page, Conn};
 pub use board::fetch_board;
 pub use graph::{graph, sub_issues};
+#[cfg(test)]
+pub(crate) use sections::parse_node;
 pub use sections::{
     apply_statuses, changed_rows, delta_since, fetch_statuses, sections, status_targets, visible_rows,
     MAX_SECTION_ROWS,
@@ -119,6 +121,7 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             milestone: v.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned),
             parent: None,
             sub_summary: if is_pr { None } else { sub_summary },
+            links: Default::default(),
             is_pr,
         },
         statuses: vec![],

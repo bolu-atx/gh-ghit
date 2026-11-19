@@ -22,6 +22,7 @@ pub(super) fn issue(number: u64, updated: &str) -> IssueData {
         milestone: None,
         parent: None,
         sub_summary: None,
+            links: Default::default(),
         is_pr: false,
     }
 }
