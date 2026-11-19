@@ -153,17 +153,33 @@ pub async fn fetch_number(
     Ok((data, statuses))
 }
 
+/// Persisted sections payload: the rows plus the RFC 3339 start of the
+/// fetch that produced them, which the next change-only search reaches
+/// back to.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SectionsCache {
+    started_at: String,
+    rows: Vec<api::Row>,
+}
+
+fn read_sections(name: &str) -> Option<SectionsCache> {
+    cache::cache_get_within(name, api::DELTA_MAX_AGE_SECS as u64)
+}
+
 /// Recent rows: open + windowed merged PRs, open + windowed closed issues.
 /// `show` is the visible-list mask (open PRs, merged PRs, open issues, closed
 /// issues); hidden lists are not queried.
 /// The last payload is persisted per repo, window and mask (`sections-<repo>-<hours>-<mask>`)
-/// so the next refresh fetches head-first and stops on overlap with it; a
-/// cache miss walks every page like before. `progress` re-tags the page
-/// counts onto the caller's existing section channel.
+/// with its fetch start. A cached payload under an hour old refreshes
+/// through one change-only search (`api::changed_rows`) merged into it;
+/// `full`, a miss, or an older payload walks the lists head-first and stops
+/// on overlap with the cache. `progress` re-tags the page counts onto the
+/// caller's existing section channel.
 pub async fn fetch_recent_sections(
     repo: &str,
     hours: u64,
     show: [bool; 4],
+    full: bool,
     progress: Option<std::sync::mpsc::Sender<SectionEvent>>,
 ) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
@@ -172,35 +188,46 @@ pub async fn fetch_recent_sections(
         return Ok(Vec::new());
     }
     let token = require_token()?;
+    let started = chrono::Utc::now();
     let name = cache::Key::Sections { repo: repo.to_string(), hours, show }.name();
     let read_name = name.clone();
-    let cached: Option<Vec<api::Row>> =
-        tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
-    let cached_numbers: Option<std::collections::HashSet<u64>> =
-        cached.as_ref().map(|rows| rows.iter().map(|r| r.issue.number).collect());
-    let report = |done: usize, total: usize| {
-        if let Some(tx) = &progress {
-            let _ = tx.send(SectionEvent::Progress { done, total });
+    let cached: Option<SectionsCache> =
+        tokio::task::spawn_blocking(move || read_sections(&read_name)).await.unwrap_or(None);
+    let since = api::delta_since(cached.as_ref().map(|c| c.started_at.as_str()), started, full);
+    let cached = cached.map(|c| c.rows);
+    let (rows, capped) = match (since, cached) {
+        (Some(since), Some(cached)) => {
+            let delta = api::changed_rows(repo, since, &token).await?;
+            (api::merge_delta(delta, cached, chrono::Utc::now(), hours, show), false)
+        }
+        (_, cached) => {
+            let cached_numbers: Option<std::collections::HashSet<u64>> =
+                cached.as_ref().map(|rows| rows.iter().map(|r| r.issue.number).collect());
+            let report = |done: usize, total: usize| {
+                if let Some(tx) = &progress {
+                    let _ = tx.send(SectionEvent::Progress { done, total });
+                }
+            };
+            let fresh = api::sections(
+                repo,
+                hours,
+                &token,
+                cached_numbers.as_ref(),
+                show,
+                Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
+            )
+            .await?;
+            let rows = api::merge_rows(fresh.rows, cached.unwrap_or_default(), chrono::Utc::now(), hours);
+            (rows, fresh.capped)
         }
     };
-    let fresh = api::sections(
-        repo,
-        hours,
-        &token,
-        cached_numbers.as_ref(),
-        show,
-        Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
-    )
-    .await?;
-    let capped = fresh.capped;
-    let rows = api::merge_rows(fresh.rows, cached.unwrap_or_default(), chrono::Utc::now(), hours);
     if capped || rows.len() >= api::MAX_SECTION_ROWS {
         if let Some(tx) = &progress {
             let _ = tx.send(SectionEvent::Capped);
         }
     }
-    let rows_c = rows.clone();
-    let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &rows_c)).await;
+    let payload = SectionsCache { started_at: started.to_rfc3339(), rows: rows.clone() };
+    let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &payload)).await;
     Ok(rows)
 }
 
@@ -208,7 +235,7 @@ pub async fn fetch_recent_sections(
 /// fresh cache exists). Startup hydration reads through here so the
 /// sidebar paints previous state before the background refresh lands.
 pub(crate) fn cached_sections(repo: &str, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
-    cache::cache_get(&cache::Key::Sections { repo: repo.to_string(), hours, show }.name())
+    read_sections(&cache::Key::Sections { repo: repo.to_string(), hours, show }.name()).map(|c| c.rows)
 }
 
 /// Typed cache keys, re-exported so UI layers never touch `cache`.
@@ -471,7 +498,7 @@ mod tests {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
         assert!(fetch_number("", 1, false, None).await.is_err());
-        assert!(fetch_recent_sections("", 24, [true; 4], None).await.is_err());
+        assert!(fetch_recent_sections("", 24, [true; 4], false, None).await.is_err());
         assert!(search_repo("", "bug", None).await.is_err());
         assert!(fetch_repo_meta("").await.is_err());
         assert!(fetch_board("").await.is_err());

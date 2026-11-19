@@ -88,29 +88,34 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
                 if rows.len() >= MAX_SECTION_ROWS { return Ok(rows); }
                 let window_at = windowed.then(|| n.get(date_key).and_then(Value::as_str)).flatten().map(str::to_owned);
                 if windowed && !within_window(window_at.as_deref(), now, hours) { continue; }
-            let string = |k: &str| n.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
-            let number = n.get("number").and_then(Value::as_u64).ok_or("missing row number")?;
-            let labels = n.pointer("/labels/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("name")?.as_str().map(|s| Label { name: s.to_owned() })).collect();
-            let assignees = n.pointer("/assignees/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("login")?.as_str().map(|s| Author { login: s.to_owned() })).collect();
-            let statuses = n.pointer("/projectItems/nodes").and_then(Value::as_array).into_iter().flatten().map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
-            let created = string("createdAt");
-            let updated = string("updatedAt");
-            let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
-            // Slim listing row: body and review threads load on open
-            // through the full fetch, so they stay empty here even when a
-            // payload carries them.
-            let milestone = n.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
-            let parent = n.pointer("/parent/number").and_then(Value::as_u64);
-            let summary = n.get("subIssuesSummary").filter(|s| s.is_object());
-            let sub_summary = summary.map(|s| SubSummary {
-                total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
-                completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
-            });
-            rows.push(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, parent, sub_summary, is_pr }, statuses, detail, complete: false, window_at });
+                rows.push(parse_node(n, is_pr, window_at)?);
             }
         }
     }
     Ok(rows)
+}
+
+/// One sections node (Issue or PullRequest fields) as a slim listing row.
+fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> Result<Row, String> {
+    let string = |k: &str| n.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+    let number = n.get("number").and_then(Value::as_u64).ok_or("missing row number")?;
+    let labels = n.pointer("/labels/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("name")?.as_str().map(|s| Label { name: s.to_owned() })).collect();
+    let assignees = n.pointer("/assignees/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("login")?.as_str().map(|s| Author { login: s.to_owned() })).collect();
+    let statuses = n.pointer("/projectItems/nodes").and_then(Value::as_array).into_iter().flatten().map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
+    let created = string("createdAt");
+    let updated = string("updatedAt");
+    let detail = BoardDetail { created: created.get(..10).unwrap_or("").to_owned(), updated: updated.get(..10).unwrap_or("").to_owned(), comments: n.pointer("/comments/totalCount").and_then(Value::as_u64).unwrap_or(0) as usize };
+    // Slim listing row: body and review threads load on open
+    // through the full fetch, so they stay empty here even when a
+    // payload carries them.
+    let milestone = n.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
+    let parent = n.pointer("/parent/number").and_then(Value::as_u64);
+    let summary = n.get("subIssuesSummary").filter(|s| s.is_object());
+    let sub_summary = summary.map(|s| SubSummary {
+        total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
+        completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
+    });
+    Ok(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, parent, sub_summary, is_pr }, statuses, detail, complete: false, window_at })
 }
 
 /// `(hasNextPage, endCursor)` for one section connection of a sections page.
@@ -274,6 +279,142 @@ pub fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chron
         sections[section(&row)].push(row);
     }
     sections.into_iter().flatten().take(MAX_SECTION_ROWS).collect()
+}
+
+/// Search-index lag margin: the change-only search reaches back this far
+/// before the last fetch start.
+const DELTA_OVERLAP: chrono::TimeDelta = chrono::TimeDelta::minutes(2);
+
+/// A cached payload whose fetch start is older than this takes the full
+/// walk instead of the change-only search.
+pub const DELTA_MAX_AGE_SECS: i64 = 3600;
+
+/// Delta vs full: the cached fetch start to search from, or `None` for the
+/// full walk (forced, no cache, missing or bad timestamp, or too old).
+pub fn delta_since(
+    started: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+    full: bool,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    if full {
+        return None;
+    }
+    let at = chrono::DateTime::parse_from_rfc3339(started?).ok()?.with_timezone(&chrono::Utc);
+    let age = now - at;
+    (age >= chrono::TimeDelta::zero() && age < chrono::TimeDelta::seconds(DELTA_MAX_AGE_SECS))
+        .then_some(at)
+}
+
+/// Issue-search text for every issue and PR changed since `started`, minus
+/// the index-lag overlap.
+fn delta_search_query(repo: &str, started: chrono::DateTime<chrono::Utc>) -> String {
+    let since = (started - DELTA_OVERLAP).format("%Y-%m-%dT%H:%M:%SZ");
+    format!("repo:{repo} updated:>={since} sort:updated-desc")
+}
+
+/// Change-only search: same row fields as the sections lists, either kind.
+fn delta_query() -> String {
+    format!("query($q: String!, $after: String) {{\n search(type: ISSUE, query: $q, first: 50, after: $after) {{ nodes {{ __typename ... on Issue {{ {ISSUE_FIELDS} }} ... on PullRequest {{ {PR_FIELDS} }} }} pageInfo {{ hasNextPage endCursor }} }}\n {RATE_LIMIT_FIELD} }}")
+}
+
+/// Rows plus `(hasNextPage, endCursor)` for one change-only search page.
+/// The window anchor matches `parse_rows`: `mergedAt` for merged PRs,
+/// `updatedAt` for closed issues, none otherwise.
+fn parse_delta_page(value: &Value) -> Result<(Vec<Row>, bool, Option<String>), String> {
+    if let Some(e) = graphql_auth_failure(value) {
+        return Err(e);
+    }
+    let search = value.pointer("/data/search").filter(|v| v.is_object())
+        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
+    let mut rows = Vec::new();
+    for n in search.get("nodes").and_then(Value::as_array).into_iter().flatten() {
+        let is_pr = match n.get("__typename").and_then(Value::as_str) {
+            Some("PullRequest") => true,
+            Some("Issue") => false,
+            _ => continue,
+        };
+        let anchor = match (is_pr, n.get("state").and_then(Value::as_str)) {
+            (true, Some("MERGED")) => Some("mergedAt"),
+            (false, Some("CLOSED")) => Some("updatedAt"),
+            _ => None,
+        };
+        let window_at = anchor.and_then(|k| n.get(k)?.as_str()).map(str::to_owned);
+        rows.push(parse_node(n, is_pr, window_at)?);
+    }
+    let info = search.get("pageInfo");
+    let more = info.and_then(|v| v.get("hasNextPage")).and_then(Value::as_bool).unwrap_or(false);
+    let cursor = info.and_then(|v| v.get("endCursor")).and_then(Value::as_str).map(str::to_owned);
+    Ok((rows, more, cursor))
+}
+
+/// Every issue and PR in `repo` updated since `started` (minus the
+/// overlap), one search page at a time up to the row cap.
+pub async fn changed_rows(
+    repo: &str,
+    started: chrono::DateTime<chrono::Utc>,
+    bearer: &str,
+) -> Result<Vec<Row>, String> {
+    let url = graphql_url();
+    let client = client();
+    let query = delta_query();
+    let q = delta_search_query(repo, started);
+    let mut after: Option<String> = None;
+    let mut rows = Vec::new();
+    loop {
+        let body = json!({"query": query, "variables": {"q": q, "after": after}});
+        let value = post_json(&client, &url, bearer, &body).await?;
+        let (page, more, cursor) = parse_delta_page(&value)?;
+        rows.extend(page);
+        if !more || cursor.is_none() || rows.len() >= MAX_SECTION_ROWS { break; }
+        after = cursor;
+    }
+    Ok(rows)
+}
+
+/// Sidebar list a row belongs to; `None` for closed, unmerged PRs, which
+/// no list shows.
+fn listed_section(row: &Row) -> Option<usize> {
+    match (row.issue.is_pr, row.issue.state.as_str()) {
+        (true, "OPEN") => Some(0),
+        (true, "MERGED") => Some(1),
+        (false, "OPEN") => Some(2),
+        (false, "CLOSED") => Some(3),
+        _ => None,
+    }
+}
+
+/// Merge change-only rows into the last cached payload. A changed row
+/// that stays in its list replaces the cached one in place; a new row, or
+/// one that moved list, goes in as fresh. A changed row that is now
+/// hidden, out of the window, or in no list drops, cached copy included.
+pub fn merge_delta(
+    delta: Vec<Row>,
+    cached: Vec<Row>,
+    now: chrono::DateTime<chrono::Utc>,
+    hours: u64,
+    show: [bool; 4],
+) -> Vec<Row> {
+    let touched: HashSet<u64> = delta.iter().map(|r| r.issue.number).collect();
+    let order: Vec<u64> = delta.iter().map(|r| r.issue.number).collect();
+    let mut changed: std::collections::HashMap<u64, Row> = delta.into_iter()
+        .filter(|r| listed_section(r).is_some_and(|i| show[i]))
+        .filter(|r| r.window_at.as_deref().is_none_or(|at| within_window(Some(at), now, hours)))
+        .map(|r| (r.issue.number, r))
+        .collect();
+    let mut kept = Vec::with_capacity(cached.len());
+    for row in cached {
+        let n = row.issue.number;
+        if !touched.contains(&n) {
+            kept.push(row);
+            continue;
+        }
+        let same_list = changed.get(&n).is_some_and(|c| listed_section(c) == listed_section(&row));
+        if same_list {
+            kept.extend(changed.remove(&n));
+        }
+    }
+    let fresh = order.into_iter().filter_map(|n| changed.remove(&n)).collect();
+    merge_rows(fresh, kept, now, hours)
 }
 
 #[cfg(test)]
@@ -664,5 +805,85 @@ mod tests {
             "errors": [{"type": "FORBIDDEN", "message": "Resource not accessible by personal access token"}],
         });
         assert!(parse_rows(&[denied], now, 24).is_err());
+    }
+    #[test]
+    fn delta_search_query_names_repo_and_reaches_back_two_minutes() {
+        let started = test_now();
+        let q = delta_search_query("o/r", started);
+        assert_eq!(q, "repo:o/r updated:>=2026-11-10T11:58:00Z sort:updated-desc");
+        let gql = delta_query();
+        for field in ["search(type: ISSUE, query: $q, first: 50, after: $after)", "... on Issue {",
+            "... on PullRequest {", "__typename", "pageInfo { hasNextPage endCursor }",
+            "subIssuesSummary", "mergedAt", "statusCheckRollup", RATE_LIMIT_FIELD] {
+            assert!(gql.contains(field), "delta query missing: {field}");
+        }
+    }
+    #[test]
+    fn delta_or_full_follows_cache_age_and_timestamp() {
+        let now = test_now();
+        let at = |s: &str| delta_since(Some(s), now, false);
+        assert_eq!(at("2026-11-10T11:30:00Z"), Some(now - chrono::TimeDelta::minutes(30)));
+        assert!(at("2026-11-10T11:00:01Z").is_some(), "just under an hour old");
+        assert_eq!(at("2026-11-10T11:00:00Z"), None, "an hour old takes the full walk");
+        assert_eq!(at("2026-11-10T13:00:00Z"), None, "a future timestamp is not trusted");
+        assert_eq!(at("garbage"), None, "a bad timestamp takes the full walk");
+        assert_eq!(delta_since(None, now, false), None, "no timestamp takes the full walk");
+        assert_eq!(delta_since(Some("2026-11-10T11:30:00Z"), now, true), None, "forced full");
+    }
+    #[test]
+    fn delta_page_parses_issues_and_prs_into_section_rows() {
+        let v = json!({"data": {"search": {
+            "nodes": [
+                {"__typename": "PullRequest", "number": 1, "title": "pr", "state": "MERGED",
+                 "mergedAt": "2026-11-10T11:00:00Z", "updatedAt": "2026-11-10T11:05:00Z",
+                 "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}},
+                {"__typename": "Issue", "number": 2, "title": "bug", "state": "CLOSED",
+                 "updatedAt": "2026-11-10T11:10:00Z", "parent": {"number": 9},
+                 "labels": {"nodes": [{"name": "bug"}]}},
+                {"__typename": "Issue", "number": 3, "title": "open", "state": "OPEN",
+                 "updatedAt": "2026-11-10T11:20:00Z"},
+                {"__typename": "PullRequest", "number": 4, "title": "draft", "state": "OPEN"},
+                {}],
+            "pageInfo": {"hasNextPage": true, "endCursor": "c1"}}}});
+        let (rows, more, cursor) = parse_delta_page(&v).unwrap();
+        assert!(more);
+        assert_eq!(cursor.as_deref(), Some("c1"));
+        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+        let row = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap();
+        assert!(row(1).issue.is_pr && !row(2).issue.is_pr && row(4).issue.is_pr);
+        assert_eq!(row(1).window_at.as_deref(), Some("2026-11-10T11:00:00Z"), "merged anchors on mergedAt");
+        assert_eq!(row(2).window_at.as_deref(), Some("2026-11-10T11:10:00Z"), "closed anchors on updatedAt");
+        assert_eq!(row(3).window_at, None);
+        assert_eq!(row(1).issue.checks, Some(crate::model::CheckState::Pass));
+        assert_eq!(row(2).issue.parent, Some(9));
+        assert_eq!(row(2).issue.labels[0].name, "bug");
+        assert!(parse_delta_page(&json!({"errors": [{"message": "boom"}]})).is_err());
+    }
+    #[test]
+    fn merge_delta_replaces_adds_and_drops_rows() {
+        let now = test_now();
+        let cached = vec![
+            section_row(1, "old open pr", "OPEN", true, None),
+            section_row(2, "kept pr", "OPEN", true, None),
+            section_row(3, "open issue", "OPEN", false, None),
+            section_row(4, "soon closed pr", "OPEN", true, None),
+            section_row(5, "soon hidden", "OPEN", false, None),
+        ];
+        let delta = vec![
+            section_row(1, "old open pr, edited", "OPEN", true, None),
+            section_row(9, "new pr", "OPEN", true, None),
+            section_row(3, "issue now closed", "CLOSED", false, Some("2026-11-10T11:30:00Z")),
+            section_row(4, "closed unmerged", "CLOSED", true, None),
+            section_row(5, "closed long ago", "CLOSED", false, Some("2026-11-01T00:00:00Z")),
+            section_row(6, "merged, hidden list", "MERGED", true, Some("2026-11-10T11:00:00Z")),
+        ];
+        let rows = merge_delta(delta, cached, now, 24, [true, false, true, true]);
+        let shown: Vec<(u64, &str)> = rows.iter().map(|r| (r.issue.number, r.issue.title.as_str())).collect();
+        assert_eq!(shown, vec![
+            (9, "new pr"),
+            (1, "old open pr, edited"),
+            (2, "kept pr"),
+            (3, "issue now closed"),
+        ], "new rows lead their list, changed rows replace in place, aged-out, unlisted and hidden rows drop");
     }
 }

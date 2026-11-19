@@ -27,6 +27,9 @@ pub(crate) struct SectionFeed {
     pub(crate) auto_refresh: bool,
     /// The next spawned fetch runs the change probe first.
     pub(crate) probe: bool,
+    /// The next spawned fetch walks every list instead of the change-only
+    /// search.
+    pub(crate) full: bool,
     /// When the last full section fetch landed.
     pub(crate) last_full: Instant,
     /// Section page progress: rows fetched vs the row cap, while pages
@@ -44,7 +47,7 @@ impl SectionFeed {
     pub(crate) fn new() -> Self {
         Self { rx: None, last_fetch: Instant::now(),
             auto_refresh_interval: auto_refresh_interval_default(),
-            auto_refresh: false, probe: false, last_full: Instant::now(),
+            auto_refresh: false, probe: false, full: false, last_full: Instant::now(),
             progress: None, replace: false, merged_window_hours: 24,
             cap_notified: false }
     }
@@ -201,11 +204,12 @@ impl App {
         let hours = self.sections.merged_window_hours;
         let show = self.show_mask();
         let probe = std::mem::take(&mut self.sections.probe);
+        let full = std::mem::take(&mut self.sections.full);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         self.enqueue(core::Kind::Sections, None, async move {
             if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, show, Some(tx.clone())).await;
+            let result = github::fetch_recent_sections(&repo, hours, show, full, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });
     }
@@ -242,6 +246,7 @@ impl App {
             return;
         }
         self.sections.probe = now.duration_since(self.sections.last_full) < FULL_REFRESH_INTERVAL;
+        self.sections.full = !self.sections.probe;
         if self.sidebar.query_active.trim().is_empty() {
             self.merge_recent_sections();
         } else {
@@ -249,6 +254,7 @@ impl App {
             self.search_fetch(self.sidebar.query_active.clone());
         }
         self.sections.probe = false;
+        self.sections.full = false;
         if self.sections.rx.is_some() {
             self.sections.auto_refresh = true;
         }
