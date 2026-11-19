@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use crate::api::Row;
 use crate::cache;
 
-const SCHEMA_VERSION: &str = "3";
+const SCHEMA_VERSION: &str = "4";
 
 /// How long a write waits for another process's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -46,6 +46,13 @@ CREATE TABLE details (
     updated_at TEXT NOT NULL,
     payload TEXT NOT NULL,
     PRIMARY KEY (number, kind)
+);
+CREATE TABLE backfill (
+    name TEXT PRIMARY KEY,
+    cursor TEXT,
+    done INTEGER NOT NULL DEFAULT 0,
+    fetched INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0
 );
 ";
 
@@ -187,36 +194,41 @@ impl Store {
     pub fn write(&mut self, started_at: &str, rows: &[Row]) -> Result<(), String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
-        {
-            let mut upsert = tx.prepare(UPSERT).map_err(fail)?;
-            for row in rows {
-                let issue = &row.issue;
-                let names = |list: Vec<&str>| serde_json::to_string(&list).unwrap_or_default();
-                let merged_at = (issue.is_pr && issue.state == "MERGED").then(|| row.window_at.clone()).flatten();
-                upsert
-                    .execute(params![
-                        issue.number as i64,
-                        if issue.is_pr { "pr" } else { "issue" },
-                        issue.state,
-                        issue.title,
-                        issue.author.login,
-                        names(issue.labels.iter().map(|l| l.name.as_str()).collect()),
-                        names(issue.assignees.iter().map(|a| a.login.as_str()).collect()),
-                        issue.milestone,
-                        issue.created_at,
-                        issue.updated_at,
-                        merged_at,
-                        issue.checks.map(|c| format!("{c:?}")),
-                        serde_json::to_string(&row.statuses).unwrap_or_default(),
-                        row.window_at,
-                        serde_json::to_string(row).map_err(|e| format!("store: {e}"))?,
-                    ])
-                    .map_err(fail)?;
-            }
-        }
+        upsert_rows(&tx, UPSERT, rows)?;
         tx.execute("UPDATE sync_state SET started_at = ?1 WHERE id = 1", [started_at]).map_err(fail)?;
         tx.commit().map_err(fail)
     }
+}
+
+/// Upsert `rows` inside `tx` with the given upsert statement.
+fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<(), String> {
+    let fail = |e: rusqlite::Error| format!("store: {e}");
+    let mut upsert = tx.prepare(sql).map_err(fail)?;
+    for row in rows {
+        let issue = &row.issue;
+        let names = |list: Vec<&str>| serde_json::to_string(&list).unwrap_or_default();
+        let merged_at = (issue.is_pr && issue.state == "MERGED").then(|| row.window_at.clone()).flatten();
+        upsert
+            .execute(params![
+                issue.number as i64,
+                if issue.is_pr { "pr" } else { "issue" },
+                issue.state,
+                issue.title,
+                issue.author.login,
+                names(issue.labels.iter().map(|l| l.name.as_str()).collect()),
+                names(issue.assignees.iter().map(|a| a.login.as_str()).collect()),
+                issue.milestone,
+                issue.created_at,
+                issue.updated_at,
+                merged_at,
+                issue.checks.map(|c| format!("{c:?}")),
+                serde_json::to_string(&row.statuses).unwrap_or_default(),
+                row.window_at,
+                serde_json::to_string(row).map_err(|e| format!("store: {e}"))?,
+            ])
+            .map_err(fail)?;
+    }
+    Ok(())
 }
 
 /// The detail payloads a store keeps per item number.
@@ -360,6 +372,84 @@ impl Store {
     /// How long this connection waits for another process's lock.
     pub fn set_busy_timeout(&self, timeout: Duration) -> Result<(), String> {
         self.conn.busy_timeout(timeout).map_err(|e| format!("store: {e}"))
+    }
+}
+
+/// Backfill upsert: a row the sync wrote at the same or a later
+/// `updated_at` stays as it is. Same-time rows keep the sync's version
+/// because a status refresh changes statuses without moving `updated_at`.
+fn upsert_newer_sql() -> String {
+    format!("{} WHERE excluded.updated_at > items.updated_at", UPSERT.trim_end())
+}
+
+/// Resume state of one backfill connection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackfillConn {
+    /// `endCursor` of the last stored page; `None` before the first page.
+    pub cursor: Option<String>,
+    pub done: bool,
+    /// Rows stored so far.
+    pub fetched: u64,
+    /// The connection's `totalCount` at the last page (an upper bound
+    /// when an age limit stops the walk early).
+    pub total: u64,
+}
+
+/// Backfill progress, kept in the store so any process resumes it.
+impl Store {
+    /// State of the named connection; the default before its first page.
+    pub fn backfill_conn(&self, name: &str) -> BackfillConn {
+        self.conn
+            .query_row("SELECT cursor, done, fetched, total FROM backfill WHERE name = ?1", [name], |r| {
+                Ok(BackfillConn {
+                    cursor: r.get(0)?,
+                    done: r.get::<_, i64>(1)? != 0,
+                    fetched: r.get::<_, i64>(2)? as u64,
+                    total: r.get::<_, i64>(3)? as u64,
+                })
+            })
+            .optional()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    /// One transaction: store a fetched page and move the connection to
+    /// `next`. Rows only replace a stored row with an older `updated_at`;
+    /// `sync_state` stays untouched, so other processes see no sync.
+    /// False (nothing stored) when the stored cursor is no longer
+    /// `expected`: another process advanced the walk first.
+    pub fn backfill_save(
+        &mut self,
+        name: &str,
+        expected: Option<&str>,
+        rows: &[Row],
+        next: Option<&str>,
+        done: bool,
+        total: u64,
+    ) -> Result<bool, String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
+        let stored = {
+            let mut stmt = tx.prepare("SELECT cursor, fetched FROM backfill WHERE name = ?1").map_err(fail)?;
+            stmt.query_row([name], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)))
+                .optional()
+                .map_err(fail)?
+        };
+        let (cursor, fetched) = stored.unwrap_or((None, 0));
+        if cursor.as_deref() != expected {
+            return Ok(false);
+        }
+        upsert_rows(&tx, &upsert_newer_sql(), rows)?;
+        tx.execute(
+            "INSERT INTO backfill (name, cursor, done, fetched, total) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (name) DO UPDATE SET cursor = excluded.cursor, done = excluded.done,
+                 fetched = excluded.fetched, total = excluded.total",
+            params![name, next, done, fetched + rows.len() as i64, total as i64],
+        )
+        .map_err(fail)?;
+        tx.commit().map_err(fail)?;
+        Ok(true)
     }
 }
 
@@ -564,5 +654,62 @@ mod tests {
         assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
         let left: i64 = store.conn.query_row("SELECT count(*) FROM details", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    fn dated(number: u64, title: &str, updated: &str) -> Row {
+        let mut r = row(number, "CLOSED");
+        r.issue.title = title.into();
+        r.issue.updated_at = updated.into();
+        r
+    }
+
+    #[test]
+    fn backfill_never_clobbers_a_newer_or_equal_synced_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("s.sqlite")).unwrap();
+        store.write("s1", &[dated(1, "synced", "2026-05-01T00:00:00Z"), dated(2, "synced", "2026-05-01T00:00:00Z")]).unwrap();
+        let page = [
+            dated(1, "backfill", "2026-01-01T00:00:00Z"),
+            dated(2, "backfill", "2026-05-01T00:00:00Z"),
+            dated(3, "backfill", "2026-01-01T00:00:00Z"),
+        ];
+        assert!(store.backfill_save("issues_closed", None, &page, Some("c1"), false, 9).unwrap());
+        let titles: Vec<_> = store.rows().unwrap().iter().map(|r| (r.issue.number, r.issue.title.clone())).collect();
+        assert_eq!(titles, vec![(3, "backfill".to_string()), (2, "synced".to_string()), (1, "synced".to_string())]);
+        // A backfilled row is replaced by a newer backfill page.
+        assert!(store.backfill_save("issues_closed", Some("c1"), &[dated(3, "newer", "2026-02-01T00:00:00Z")], None, true, 9).unwrap());
+        assert_eq!(store.rows().unwrap()[0].issue.title, "newer");
+        assert_eq!(store.sync_started_at().as_deref(), Some("s1"), "backfill leaves the sync start alone");
+    }
+
+    #[test]
+    fn backfill_resumes_from_the_stored_cursor_across_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite");
+        let mut store = open_at(&path).unwrap();
+        assert_eq!(store.backfill_conn("prs_open"), BackfillConn::default());
+        assert!(store.backfill_save("prs_open", None, &[dated(1, "a", "2026-01-01T00:00:00Z")], Some("c1"), false, 5).unwrap());
+        drop(store);
+        // Another process (a new connection) continues from the cursor.
+        let mut store = open_at(&path).unwrap();
+        let state = store.backfill_conn("prs_open");
+        assert_eq!((state.cursor.as_deref(), state.done, state.fetched, state.total), (Some("c1"), false, 1, 5));
+        assert!(!store.backfill_save("prs_open", None, &[dated(2, "b", "2026-01-01T00:00:00Z")], Some("c2"), false, 5).unwrap(), "a stale cursor stores nothing");
+        assert_eq!(numbers(&store), vec![1]);
+        assert!(store.backfill_save("prs_open", Some("c1"), &[dated(2, "b", "2026-01-01T00:00:00Z")], None, true, 5).unwrap());
+        let state = store.backfill_conn("prs_open");
+        assert_eq!((state.cursor, state.done, state.fetched), (None, true, 2));
+    }
+
+    #[test]
+    fn schema_rebuild_restarts_the_backfill() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite");
+        let mut store = open_at(&path).unwrap();
+        store.backfill_save("prs_open", None, &[], None, true, 0).unwrap();
+        store.conn.execute("UPDATE meta SET value = 'old' WHERE key = 'schema_version'", []).unwrap();
+        drop(store);
+        let store = open_at(&path).unwrap();
+        assert!(!store.backfill_conn("prs_open").done);
     }
 }

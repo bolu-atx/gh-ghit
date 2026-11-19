@@ -24,6 +24,8 @@ E2E_CMD_FD=""
 # fresh and issues exactly one sections fetch instead of hammering the
 # API every 5s (which also exhausts CI rate budget mid-run).
 export GHIT_AUTO_REFRESH_SECS=3600
+# The fixtures hold no backfill queries: keep the store backfill off.
+export GHIT_NO_BACKFILL=1
 if [ -z "${E2E_ROOT:-}" ]; then
   E2E_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -z "$E2E_ROOT" ]; then

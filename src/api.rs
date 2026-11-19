@@ -1,3 +1,4 @@
+mod backfill;
 mod board;
 mod client;
 mod graph;
@@ -7,6 +8,7 @@ pub use client::{
     check_auth, check_repo_access, forget_token, is_auth_error, rate_limited, reauth_command, token,
     REQUIRED_SCOPES,
 };
+pub use backfill::{age_cutoff, fetch_page, Conn};
 pub use board::fetch_board;
 pub use graph::{graph, sub_issues};
 pub use sections::{

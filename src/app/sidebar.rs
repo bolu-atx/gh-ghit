@@ -46,6 +46,8 @@ pub(crate) struct SectionFeed {
     /// The repo store's sync lease and change watch, opened at startup.
     /// `None` (no repo, or the store cannot open) syncs on its own.
     pub(crate) link: Option<github::StoreLink>,
+    /// Store backfill pacing and progress.
+    pub(crate) backfill: crate::app::backfill::BackfillFeed,
 }
 
 impl SectionFeed {
@@ -55,7 +57,8 @@ impl SectionFeed {
             auto_refresh: false, probe: false, refresh: github::Refresh::Delta,
             last_status: Instant::now(), last_full: Instant::now(),
             progress: None, replace: false, merged_window_hours: 24,
-            cap_notified: false, link: None }
+            cap_notified: false, link: None,
+            backfill: crate::app::backfill::BackfillFeed::new() }
     }
 }
 
