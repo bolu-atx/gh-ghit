@@ -3,14 +3,19 @@
 //! One layout lives for the whole session, so moving between issues of
 //! one component keeps every surviving node where it was.
 
+use std::time::{Duration, Instant};
+
 use crate::app::App;
 use crate::core::map::{Camera, ZOOM_STEP};
 use crate::model::physics::{Layout, Physics};
 use crate::model::{self, MapGraph, MapItem, MapLink, MapScope};
 
-/// Layout steps per frame while the map moves: a few, so a frame stays
-/// cheap and the motion reads as animation.
-const STEPS_PER_FRAME: usize = 4;
+/// Most layout steps per frame while the map moves: a few, so the motion
+/// reads as animation.
+const MAX_STEPS_PER_FRAME: usize = 4;
+/// Time one frame may spend on layout steps. A step is O(n²), so a large
+/// repo takes fewer steps per frame and input stays responsive.
+const FRAME_BUDGET: Duration = Duration::from_millis(4);
 /// Steps every change runs at least, so a layout at rest starts moving.
 const WAKE_STEPS: usize = 40;
 /// Layout seed. Fixed, so a repo lays out the same way every run.
@@ -114,7 +119,8 @@ impl App {
 
     /// Per-frame map work while the Graph tab shows: reread the store after
     /// a write, rebuild on a new center or scope, then step the layout a
-    /// few times while it moves. True when the map changed on screen.
+    /// few times within the frame budget while it moves. True when the map
+    /// changed on screen.
     pub(crate) fn map_tick(&mut self) -> bool {
         if !self.visual_graph() {
             return false;
@@ -130,13 +136,26 @@ impl App {
         }
         let mut changed = self.rebuild_map();
         if self.map.moving() {
-            for _ in 0..STEPS_PER_FRAME {
-                self.map.layout.step();
-            }
-            self.map.wake = self.map.wake.saturating_sub(STEPS_PER_FRAME);
+            self.step_map(FRAME_BUDGET);
             changed = true;
         }
         changed
+    }
+
+    /// Step the layout until `budget` elapses: at least one step, at most
+    /// `MAX_STEPS_PER_FRAME`. Returns the steps taken.
+    pub(crate) fn step_map(&mut self, budget: Duration) -> usize {
+        let start = Instant::now();
+        let mut steps = 0;
+        while steps < MAX_STEPS_PER_FRAME {
+            self.map.layout.step();
+            steps += 1;
+            if start.elapsed() >= budget {
+                break;
+            }
+        }
+        self.map.wake = self.map.wake.saturating_sub(steps);
+        steps
     }
 
     /// Rebuild the graph when the center or scope moved. A new center
@@ -258,8 +277,10 @@ impl App {
         self.map_place(i, col + cols * NUDGE_CELLS, row + rows * NUDGE_CELLS / 2);
     }
 
-    /// Put node `index` at view cell `(col, row)` and pin it.
+    /// Put node `index` at view cell `(col, row)` and pin it. The view
+    /// stops following, so it holds still under the placed node.
     fn map_place(&mut self, index: usize, col: i32, row: i32) {
+        self.map.follow = false;
         let area = self.hits.map_area;
         let (x, y) = self.map.camera.world(col, row, area.width, area.height);
         self.map.layout.set_position(index, x, y);
@@ -290,8 +311,6 @@ impl App {
                     self.map.drag = None;
                     return;
                 };
-                // The view holds still under a dragged node.
-                self.map.follow = false;
                 self.map_place(index, i32::from(col), i32::from(row));
                 self.map.drag = Some(MapDrag::Node { id, moved: true, was_selected });
             }

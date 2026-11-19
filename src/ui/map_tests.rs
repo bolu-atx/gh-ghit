@@ -234,6 +234,7 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     let before = app.map.layout.bodies()[twelve].x;
     handle_key(&mut app, key(KeyCode::Char('L')));
     assert!(app.map.layout.bodies()[twelve].x > before && app.map.layout.bodies()[twelve].pinned);
+    assert!(!app.map.follow, "a nudge stops the fit, so the view holds still");
     handle_key(&mut app, key(KeyCode::Char('s')));
     assert_eq!(app.map.scope, MapScope::Repo);
     app.settle_map();
@@ -304,4 +305,21 @@ fn a_drag_follows_its_node_through_a_rebuild_and_ends_when_it_vanishes() {
     app.map_tick();
     handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x - 4, y + 1));
     assert_eq!(app.map.drag, None, "the drag ends once #8 is gone");
+}
+
+#[test]
+fn one_tick_steps_a_moving_layout_at_least_once() {
+    let mut app = map_app();
+    app.settle_map();
+    draw_buffer(&mut app);
+    // A nudge pins #8 somewhere new and wakes the layout.
+    app.map_step(1);
+    assert_eq!(app.map.selected, Some(8));
+    app.map_nudge(4, 4);
+    assert!(app.map.moving());
+    let before: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+    assert!(app.map_tick(), "a moving layout changes the screen");
+    let after: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+    assert_ne!(before, after, "the tick stepped the layout");
+    assert_eq!(app.step_map(std::time::Duration::ZERO), 1, "a spent budget still takes one step");
 }

@@ -187,10 +187,10 @@ main-graph | 'C' | confirm: None -> Some(("Close #7?", 2))
 main-graph | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-graph | 'F' | format: false/false/false -> true/true/false
 main-graph | 'G' | graph: Some(7)/Component/true/0 -> Some(11)/Component/true/0
-main-graph | 'H' | graph: Some(7)/Component/true/0 -> Some(7)/Component/true/1
-main-graph | 'J' | graph: Some(7)/Component/true/0 -> Some(7)/Component/true/1
-main-graph | 'K' | graph: Some(7)/Component/true/0 -> Some(7)/Component/true/1
-main-graph | 'L' | graph: Some(7)/Component/true/0 -> Some(7)/Component/true/1
+main-graph | 'H' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/1
+main-graph | 'J' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/1
+main-graph | 'K' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/1
+main-graph | 'L' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/1
 main-graph | 'N' | graph: Some(7)/Component/true/0 -> Some(11)/Component/true/0
 main-graph | '[' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
 main-graph | ']' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
