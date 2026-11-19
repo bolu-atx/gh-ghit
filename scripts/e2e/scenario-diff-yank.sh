@@ -7,6 +7,9 @@ e2e_bar 24
 e2e_wait "/pull/24" 20 || fail "show #24"
 e2e_key 2
 e2e_wait "files ·" 60 || fail "diff summary never rendered"
+# Diff keys act only while Main has focus.
+e2e_key Tab Tab
+e2e_wait '═══' 10 || fail "Main never took focus"
 e2e_shot diff-folded
 e2e_key Space
 e2e_wait "@@" 20 || fail "expand never revealed hunks"
