@@ -289,6 +289,7 @@ pub const TOOL_FOLD: &str = "\u{f066}";
 pub const TOOL_SCOPE: &str = "\u{f0e8}";
 pub const TOOL_FIT: &str = "\u{f065}";
 pub const TOOL_CONTEXT: &str = "\u{f0c9}";
+pub const TOOL_PHYSICS: &str = "\u{f085}";
 
 /// Swimlane header color, matched by keyword so custom board
 /// vocabularies ("In progress", "In Progress", …) still resolve.

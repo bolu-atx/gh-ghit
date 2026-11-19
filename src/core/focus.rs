@@ -26,6 +26,8 @@ pub(crate) enum Dialog {
     Menu,
     /// Ctrl+P fuzzy finder over issues and PRs.
     Finder,
+    /// Dependency map physics steppers.
+    Physics,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

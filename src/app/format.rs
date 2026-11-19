@@ -290,6 +290,7 @@ impl App {
         self.sidebar.sort = prefs.sort;
         self.sidebar.sort_desc = prefs.sort_desc;
         self.board.fields = prefs.board_cards;
+        self.map.layout.physics = github::load_physics();
         if let Some(key) = self.repo_key() {
             let repo_key = github::prefs_repo_key(&key);
             if let Some(q) = prefs.queries.get(&repo_key) {

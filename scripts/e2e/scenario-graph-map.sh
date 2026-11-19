@@ -95,5 +95,17 @@ e2e_wait "[open ↵]" 10 || fail "an end card did not show its node card"
 e2e_key Escape
 sleep 1
 e2e_pane | grep -qF "[next link e]" && fail "Esc left the card open"
+# Physics dialog: P opens it, j x4 focuses growth direction, l turns it
+# right -> down, r resets it, Esc closes it.
+e2e_key P
+e2e_wait "growth direction" 10 || fail "P did not open the physics dialog"
+for _ in 1 2 3 4; do e2e_key j; done
+e2e_key l
+e2e_wait "−  down  +" 10 || fail "l did not turn the growth direction to down"
+e2e_key r
+e2e_wait "−  right  +" 10 || fail "r did not reset the growth direction"
+e2e_key Escape
+sleep 1
+e2e_pane | grep -qF "growth direction" && fail "Esc left the physics dialog open"
 e2e_send '{"type":"quit"}'
 echo "PASS graph map"

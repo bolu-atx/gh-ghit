@@ -25,6 +25,8 @@ pub(crate) enum Entry {
     Compose(ComposeState),
     Confirm(ConfirmDialog),
     Shortcuts,
+    /// The map physics dialog, holding the focused row.
+    Physics(usize),
 }
 
 /// The kind of an entry. Declaration order is stacking order: a kind
@@ -36,6 +38,7 @@ pub(crate) enum Entry {
 pub(crate) enum Slot {
     Board,
     Format,
+    Physics,
     Menu,
     Finder,
     Compose,
@@ -48,6 +51,7 @@ impl Entry {
         match self {
             Entry::Board => Slot::Board,
             Entry::Format(_) => Slot::Format,
+            Entry::Physics(_) => Slot::Physics,
             Entry::Menu(_) => Slot::Menu,
             Entry::Finder(_) => Slot::Finder,
             Entry::Compose(_) => Slot::Compose,
@@ -126,6 +130,19 @@ impl App {
         self.is_open(Slot::Format)
     }
 
+    /// The focused row of the open physics dialog, `None` while closed.
+    pub(crate) fn physics_focus(&self) -> Option<usize> {
+        self.dialogs.iter().find_map(|e| if let Entry::Physics(row) = e { Some(*row) } else { None })
+    }
+
+    pub(crate) fn set_physics_focus(&mut self, row: usize) {
+        for e in &mut self.dialogs {
+            if let Entry::Physics(focus) = e {
+                *focus = row;
+            }
+        }
+    }
+
     fn format_edit(&self) -> FormatEdit {
         self.dialogs.iter()
             .find_map(|e| if let Entry::Format(edit) = e { Some(*edit) } else { None })
@@ -171,6 +188,7 @@ impl App {
                         _ => {}
                     }
                 }
+                Entry::Physics(_) => stack.push(Layer::Dialog(Dialog::Physics)),
                 Entry::Menu(_) => stack.push(Layer::Dialog(Dialog::Menu)),
                 Entry::Finder(_) => stack.push(Layer::Dialog(Dialog::Finder)),
                 Entry::Compose(_) => stack.push(Layer::Dialog(Dialog::Compose)),

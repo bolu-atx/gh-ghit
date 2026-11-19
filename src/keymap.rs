@@ -54,6 +54,9 @@ actions! {
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen, GraphPanLeft, GraphPanRight, GraphPanUp,
     GraphPanDown, GraphMoveLeft, GraphMoveRight, GraphMoveUp, GraphMoveDown, GraphZoomIn, GraphZoomOut,
     GraphFit, GraphUnpin, GraphScope, GraphCard, GraphNextEdge, GraphPrevEdge, GraphCloseCard,
+    GraphPhysics,
+    // Map physics dialog.
+    ClosePhysics, PhysicsDown, PhysicsUp, PhysicsLower, PhysicsRaise, PhysicsReset,
     // Shortcuts, confirm, compose.
     CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
     ComposeSend, ComposeTogglePreview, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
@@ -289,6 +292,7 @@ impl Context {
             Context::Dialog(Dialog::Menu) => "Actions menu",
             Context::Dialog(Dialog::Finder) => "Finder",
             Context::Dialog(Dialog::Format) => "Format dialog",
+            Context::Dialog(Dialog::Physics) => "Map physics",
             Context::Dialog(Dialog::Board) => "Board",
             Context::Dialog(Dialog::BoardFilter) => "Board filter",
             Context::Input(TextInput::Bar) => "Command and search bar",
@@ -300,7 +304,7 @@ impl Context {
 }
 
 /// Every context, in help order.
-pub(crate) const ALL_CONTEXTS: [Context; 22] = [
+pub(crate) const ALL_CONTEXTS: [Context; 23] = [
     Context::Global,
     Context::Pane(Pane::Issues),
     Context::Pane(Pane::PRs),
@@ -317,6 +321,7 @@ pub(crate) const ALL_CONTEXTS: [Context; 22] = [
     Context::Dialog(Dialog::Menu),
     Context::Dialog(Dialog::Finder),
     Context::Dialog(Dialog::Format),
+    Context::Dialog(Dialog::Physics),
     Context::Dialog(Dialog::Board),
     Context::Dialog(Dialog::BoardFilter),
     Context::Input(TextInput::Bar),

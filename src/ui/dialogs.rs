@@ -171,6 +171,34 @@ impl FormatColumn {
         self.gap();
     }
 
+    /// Focusable `− value +` row. The three parts are separate click
+    /// cells: option 0 lowers, 1 is the value, 2 raises.
+    fn stepper(&mut self, index: usize, label: &str, value: &str) {
+        let active = self.focus == index;
+        self.rows.push((index, self.lines.len()));
+        if active {
+            self.focus_line = Some(self.lines.len());
+        }
+        let (button, shown) = if active {
+            (Style::new().bg(theme::ink()).fg(theme::amber()), Style::new().bg(theme::ink()).fg(theme::amber()).bold())
+        } else {
+            (Style::new().bg(theme::ink()).fg(theme::muted()), Style::new().bg(theme::ink()).fg(theme::paper()))
+        };
+        let mut line = self.label_spans(Some(label));
+        line.push(Span::styled(if active { "▌  " } else { "   " }, Style::new().bg(theme::ink()).fg(theme::amber())));
+        let x = self.gutter + 3;
+        let parts = [(" − ".to_string(), button), (format!("{value:^7}"), shown), (" + ".to_string(), button)];
+        let mut at = x;
+        for (option, (text, style)) in parts.into_iter().enumerate() {
+            let width = Line::raw(text.clone()).width();
+            self.cells.push((self.lines.len(), at, width, index, Some(option)));
+            line.push(Span::styled(text, style));
+            at += width;
+        }
+        self.lines.push(Line::from(line));
+        self.gap();
+    }
+
     /// Focusable row of mutually exclusive options. The marker sits before
     /// the selected option, which reads amber while the row is focused.
     fn choice(&mut self, index: usize, label: Option<&str>, options: &[(bool, &str)]) {
@@ -455,4 +483,53 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         // The search row sits under the Query header and its blank line.
         f.set_cursor_position((x.min(inner.right().saturating_sub(1)), inner.y + 2));
     }
+}
+
+/// The map physics dialog: one `− value +` row per parameter, over the
+/// map. Its popup and click cells share `form_popup` and `form_cells`
+/// with the Format dialog, which is never open at the same time.
+pub(super) fn render_physics(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    use crate::model::physics::Param;
+    app.hits.form_popup = Rect::default();
+    app.hits.form_cells.clear();
+    let focus = app.physics_focus().unwrap_or(0);
+    let column_width = sized_popup(area, 60, 1).width.saturating_sub(4) as usize;
+    let mut column = FormatColumn::new(column_width, focus);
+    column.gutter(&Param::ALL.map(Param::label));
+    for (index, param) in Param::ALL.into_iter().enumerate() {
+        column.stepper(index, param.label(), &app.map.layout.physics.show(param));
+    }
+    column.hint("The map keeps its node positions and settles again after each change.");
+    let context = Context::Dialog(Dialog::Physics);
+    let legend_width = sized_popup(area, 60, 1).width.saturating_sub(4);
+    let footer_lines = hints::legend(context, app, legend_width, 3);
+    let footer_height = footer_lines.len().max(1) as u16;
+    let popup = sized_popup(area, 60, column.lines.len() + 3 + footer_height as usize);
+    f.render_widget(Clear, popup);
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
+        .title(Line::from(vec![
+            Span::styled(format!(" {} Physics ", theme::TOOL_PHYSICS), Style::new().bg(theme::ink())
+                .fg(theme::amber()).bold()),
+            Span::styled("map ", Style::new().bg(theme::ink()).fg(theme::muted())),
+        ]));
+    let framed = block.inner(popup);
+    f.render_widget(block, popup);
+    let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+    let content = Rect { height: inner.height.saturating_sub(1 + footer_height), ..inner };
+    let scroll = scroll_to(content, column.focus_line.unwrap_or(0), false);
+    app.hits.form_popup = popup;
+    for &(line, x, width, index, option) in &column.cells {
+        let Some(y) = line.checked_sub(scroll as usize).filter(|y| *y < content.height as usize)
+        else { continue };
+        let x = content.x + x as u16;
+        let width = (width as u16).min(content.right().saturating_sub(x));
+        app.hits.form_cells.push((Rect::new(x, content.y + y as u16, width, 1), index, option));
+    }
+    f.render_widget(Paragraph::new(column.lines).style(theme::base()).scroll((scroll, 0)), content);
+    let footer = Rect { y: inner.y + inner.height.saturating_sub(footer_height),
+        height: inner.height.min(footer_height), ..inner };
+    f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
+    let legend_hits = hints::legend_hits(context, app, legend_width, 3, (footer.x, footer.y));
+    app.hits.legend.extend(legend_hits);
 }

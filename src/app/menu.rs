@@ -50,7 +50,7 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
             actions
         }
         MenuKind::Map => vec![
-            GraphOpen, GraphNext, GraphPrev, GraphUnpin, GraphScope, GraphFit, GraphZoomIn, GraphZoomOut,
+            GraphOpen, GraphNext, GraphPrev, GraphUnpin, GraphScope, GraphFit, GraphPhysics, GraphZoomIn, GraphZoomOut,
             Comment, Refresh, OpenBrowser,
         ],
         MenuKind::Board => vec![BoardOpen, BoardExpand, BoardFilter, BoardClearFilter, CloseBoard],
