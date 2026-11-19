@@ -99,8 +99,7 @@ fn map_draws_edges_arrows_labels_and_hubs() {
     use crate::theme::{amber, green, muted, pr_ref, red};
     let buf = draw_buffer(&mut app);
     let color = |id: u64| {
-        let index = app.map.graph.index_of(id).unwrap();
-        let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == index).unwrap();
+        let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == id).unwrap();
         buf[(rect.x, rect.y)].fg
     };
     assert_eq!(color(7), red(), "blocked by the open #11");
@@ -108,7 +107,7 @@ fn map_draws_edges_arrows_labels_and_hubs() {
     assert_eq!(color(12), muted(), "closed blocker reads dim");
     assert_eq!(color(9), pr_ref());
     assert_eq!(color(crate::model::hub_id("Ship it")), amber());
-    let selected = app.hits.map_nodes.iter().find(|(_, i)| Some(*i) == app.map.selected_index()).unwrap().0;
+    let selected = app.hits.map_nodes.iter().find(|(_, i)| Some(*i) == app.map.selected).unwrap().0;
     assert!(buf[(selected.x, selected.y)].modifier.contains(ratatui::style::Modifier::BOLD), "selection is bold");
     assert_eq!(buf[(selected.x - 1, selected.y)].symbol(), "▌", "selection carries the marker");
 }
@@ -151,8 +150,7 @@ fn an_unstored_issue_says_so() {
 
 /// Screen cell at the middle of node `id`'s label.
 fn node_cell(app: &App, id: u64) -> (u16, u16) {
-    let index = app.map.graph.index_of(id).unwrap();
-    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == index).unwrap();
+    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == id).unwrap();
     (rect.x + rect.width / 2, rect.y)
 }
 
@@ -358,8 +356,7 @@ fn card_rows(app: &mut App) -> String {
 
 /// Screen cell of some drawn cell of the edge from `src` to `dst`.
 fn edge_cell(app: &App, src: u64, dst: u64) -> (u16, u16) {
-    let edge = app.map.graph.edge_between(src, dst).unwrap();
-    app.hits.map_edges.iter().rev().find(|(_, e)| *e == edge).map(|(cell, _)| *cell).unwrap()
+    app.hits.map_edges.drawn().find(|(_, e)| *e == (src, dst)).map(|(cell, _)| cell).unwrap()
 }
 
 #[test]
@@ -426,7 +423,7 @@ fn edge_hits_skip_labels_and_a_click_on_an_edge_shows_its_card() {
     let mut app = map_app();
     pin_layout(&mut app);
     draw_buffer(&mut app);
-    for &((x, y), _) in &app.hits.map_edges {
+    for ((x, y), _) in app.hits.map_edges.drawn() {
         assert!(app.hits.map_nodes.iter().all(|(rect, _)| !rect.contains((x, y).into())), "labels win at {x},{y}");
     }
     let (x, y) = edge_cell(&app, 11, 7);
@@ -813,8 +810,7 @@ fn picking_a_strip_row_selects_and_centers_its_node_and_lights_its_chain() {
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), strip.x + 3, strip.y + at));
     assert_eq!(app.map.selected, Some(7));
     let buf = draw_buffer(&mut app);
-    let index = app.map.graph.index_of(11).unwrap();
-    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == index).copied().unwrap();
+    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == 11).copied().unwrap();
     assert!(buf[(rect.x, rect.y)].modifier.contains(ratatui::style::Modifier::UNDERLINED), "#11 is on #7's chain");
 }
 
@@ -834,4 +830,67 @@ fn the_strip_and_the_card_share_the_map_and_the_toolbar_toggles_the_strip() {
     assert_eq!((strip.right(), map.right()), (map.x, card.x), "strip, map, card from left to right");
     let tabs = tab_line(&mut app);
     assert!(tabs.contains("B \u{f0cb} ranks"), "{tabs}");
+}
+
+#[test]
+fn the_chain_and_id_caches_stay_valid_across_selection_and_rebuild() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    let at = |app: &App, ids: &[u64]| -> std::collections::HashSet<usize> {
+        ids.iter().map(|&id| app.map.graph.index_of(id).unwrap()).collect()
+    };
+    app.map.selected = Some(7);
+    app.map.refresh_chain();
+    assert_eq!(app.map.chain(), Some(&at(&app, &[11, 12])));
+    app.map.selected = Some(8);
+    app.map.refresh_chain();
+    assert_eq!(app.map.chain(), Some(&at(&app, &[7, 11, 12])), "a new selection recomputes");
+    app.map.selected = None;
+    app.map.refresh_chain();
+    assert_eq!(app.map.chain(), None);
+    // A rebuild recomputes for the same selection.
+    app.map.selected = Some(7);
+    app.map.refresh_chain();
+    app.map.filter.blocks = false;
+    app.settle_map();
+    app.map.refresh_chain();
+    assert_eq!(app.map.graph.index_of(12), None, "the blockers left the graph");
+    assert_eq!(app.map.chain(), Some(&std::collections::HashSet::new()), "a rebuild recomputes");
+    for (i, node) in app.map.graph.nodes.iter().enumerate() {
+        assert_eq!(app.map.graph.index_of(node.id), Some(i));
+    }
+    assert_eq!(app.map.item(7).map(|item| item.title.as_str()), Some("Center issue"));
+    assert!(app.map.item(999).is_none());
+}
+
+#[test]
+fn the_edge_hit_grid_finds_the_topmost_edge_in_one_lookup() {
+    let mut grid = crate::app::EdgeGrid::default();
+    assert_eq!(grid.at(3, 4), None);
+    grid.reset(ratatui::layout::Rect::new(2, 3, 5, 4));
+    grid.set(3, 4, 1, 2);
+    grid.set(3, 4, 5, 6);
+    grid.set(6, 6, 7, 8);
+    grid.set(7, 3, 9, 9);
+    grid.set(1, 3, 9, 9);
+    assert_eq!(grid.at(3, 4), Some((5, 6)), "the later draw wins");
+    assert_eq!(grid.at(6, 6), Some((7, 8)));
+    assert_eq!((grid.at(7, 3), grid.at(1, 3), grid.at(4, 4)), (None, None, None), "outside or empty");
+    assert_eq!(grid.drawn().count(), 2);
+    grid.clear();
+    assert_eq!(grid.at(3, 4), None);
+}
+
+#[test]
+fn a_press_on_a_node_a_rebuild_dropped_starts_a_pan() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    let (x, y) = node_cell(&app, 12);
+    app.map.filter.blocks = false;
+    app.settle_map();
+    app.map.selected = None;
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(app.map.selected, None);
+    assert!(format!("{:?}", app.map.drag).starts_with("Some(Pan"), "{:?}", app.map.drag);
 }

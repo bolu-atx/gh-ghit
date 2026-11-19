@@ -93,7 +93,7 @@ fn item_card(f: &mut ratatui::Frame, area: Rect, app: &App, index: usize) {
     let room = width.saturating_sub(KEY_W);
     let plain = |text: String| Span::styled(model::slug(&text, room), Style::new().fg(paper()));
     let detail = app.map.detail.as_ref().filter(|d| Some(d.number) == node.number);
-    let item = app.map.items.iter().find(|item| Some(item.number) == node.number);
+    let item = node.number.and_then(|n| app.map.item(n));
     let milestone = item.and_then(|item| item.milestone.clone()).unwrap_or("–".to_string());
     lines.push(field("milestone", plain(milestone)));
     let mut body = None;
@@ -207,7 +207,7 @@ fn edge_card(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
 /// Kind, state and blocked or ready, as in "issue · open · blocked".
 fn node_words(app: &App, node: &MapNode) -> String {
-    let item = node.number.and_then(|n| app.map.items.iter().find(|item| item.number == n));
+    let item = node.number.and_then(|n| app.map.item(n));
     let Some(item) = item else {
         return node.state.word().to_string();
     };

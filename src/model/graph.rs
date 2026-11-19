@@ -176,9 +176,16 @@ pub struct MapGraph {
     /// Every link kind each edge carries, in `LinkKind` order. Empty for
     /// a hub edge.
     pub kinds: Vec<Vec<LinkKind>>,
+    /// Layout id to node index, built with the graph.
+    index: HashMap<u64, usize>,
 }
 
 impl MapGraph {
+    pub fn new(nodes: Vec<MapNode>, edges: Vec<(usize, usize, EdgeStyle)>, kinds: Vec<Vec<LinkKind>>) -> Self {
+        let index = nodes.iter().enumerate().map(|(i, node)| (node.id, i)).collect();
+        MapGraph { nodes, edges, kinds, index }
+    }
+
     /// Layout ids in node order.
     pub fn ids(&self) -> Vec<u64> {
         self.nodes.iter().map(|node| node.id).collect()
@@ -186,7 +193,7 @@ impl MapGraph {
 
     /// Index of the node with layout id `id`.
     pub fn index_of(&self, id: u64) -> Option<usize> {
-        self.nodes.iter().position(|node| node.id == id)
+        self.index.get(&id).copied()
     }
 
     /// Indexes of the edges that touch node `index`, in edge order.
@@ -331,7 +338,7 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filt
             }
         }
     }
-    MapGraph { nodes, edges, kinds }
+    MapGraph::new(nodes, edges, kinds)
 }
 
 /// Numbers linked to `center` through any chain of links, either way.

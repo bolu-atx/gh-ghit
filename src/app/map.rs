@@ -3,6 +3,7 @@
 //! One layout lives for the whole session, so moving between issues of
 //! one component keeps every surviving node where it was.
 
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
@@ -60,6 +61,55 @@ pub(crate) enum CardHit {
     End(u64),
 }
 
+/// The map's edge cells as last drawn, one slot per cell of the map area.
+/// A click finds its edge in O(1). Later draws overwrite earlier ones, so
+/// the topmost edge wins. Edges are named by the layout ids of their ends.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct EdgeGrid {
+    area: Rect,
+    cells: Vec<Option<(u64, u64)>>,
+}
+
+impl EdgeGrid {
+    /// Empty the grid and size it to `area`.
+    pub(crate) fn reset(&mut self, area: Rect) {
+        self.area = area;
+        self.cells.clear();
+        self.cells.resize(usize::from(area.width) * usize::from(area.height), None);
+    }
+
+    /// Empty the grid and size it to nothing.
+    pub(crate) fn clear(&mut self) {
+        self.reset(Rect::default());
+    }
+
+    fn slot(&self, col: u16, row: u16) -> Option<usize> {
+        let (x, y) = (col.checked_sub(self.area.x)?, row.checked_sub(self.area.y)?);
+        (x < self.area.width && y < self.area.height).then(|| usize::from(y) * usize::from(self.area.width) + usize::from(x))
+    }
+
+    /// Record that the edge from layout id `src` to `dst` covers screen cell `(col, row)`.
+    pub(crate) fn set(&mut self, col: u16, row: u16, src: u64, dst: u64) {
+        if let Some(slot) = self.slot(col, row) {
+            self.cells[slot] = Some((src, dst));
+        }
+    }
+
+    /// The edge drawn at screen cell `(col, row)`.
+    pub(crate) fn at(&self, col: u16, row: u16) -> Option<(u64, u64)> {
+        self.cells[self.slot(col, row)?]
+    }
+
+    /// Every drawn cell with its edge.
+    #[cfg(test)]
+    pub(crate) fn drawn(&self) -> impl Iterator<Item = ((u16, u16), (u64, u64))> + '_ {
+        self.cells.iter().enumerate().filter_map(|(i, edge)| {
+            let w = usize::from(self.area.width);
+            Some(((self.area.x + (i % w) as u16, self.area.y + (i / w) as u16), (*edge)?))
+        })
+    }
+}
+
 /// The stored row and body of the item a node card shows. Read once per
 /// selection and store change, never per frame.
 pub(crate) struct CardDetail {
@@ -91,6 +141,13 @@ pub(crate) struct MapView {
     pub(crate) follow: bool,
     /// Layout id of the selected node.
     pub(crate) selected: Option<u64>,
+    /// Bumped when `graph` is rebuilt; keys `chain`.
+    generation: u64,
+    /// Blockers of the selected node, with the graph generation and the
+    /// selection they were computed for. Recomputed when either differs.
+    chain: Option<(u64, u64, HashSet<usize>)>,
+    /// Item number to its place in `items`.
+    item_index: HashMap<u64, usize>,
     pub(crate) drag: Option<MapDrag>,
     pub(crate) card: Option<MapCard>,
     pub(crate) detail: Option<CardDetail>,
@@ -123,6 +180,9 @@ impl Default for MapView {
             camera: Camera::default(),
             follow: true,
             selected: None,
+            generation: 0,
+            chain: None,
+            item_index: HashMap::new(),
             drag: None,
             card: None,
             detail: None,
@@ -144,6 +204,27 @@ impl MapView {
     /// Index of the selected node in `graph`.
     pub(crate) fn selected_index(&self) -> Option<usize> {
         self.graph.index_of(self.selected?)
+    }
+
+    /// The stored item with number `number`.
+    pub(crate) fn item(&self, number: u64) -> Option<&MapItem> {
+        self.items.get(*self.item_index.get(&number)?)
+    }
+
+    /// Bring the cached blocker chain of the selected node up to date.
+    /// Call before `chain`.
+    pub(crate) fn refresh_chain(&mut self) {
+        let Some(id) = self.selected else { return self.chain = None };
+        if matches!(&self.chain, Some((gen, sel, _)) if (*gen, *sel) == (self.generation, id)) {
+            return;
+        }
+        let blockers = self.graph.index_of(id).map(|i| self.graph.blockers_of(i)).unwrap_or_default();
+        self.chain = Some((self.generation, id, blockers));
+    }
+
+    /// Blockers of the selected node, as of the last `refresh_chain`.
+    pub(crate) fn chain(&self) -> Option<&HashSet<usize>> {
+        self.chain.as_ref().map(|(_, _, set)| set)
     }
 
     /// Nodes that pick and open: items, not hubs.
@@ -197,6 +278,7 @@ impl App {
         if self.map.loaded && items == self.map.items && links == self.map.links {
             return;
         }
+        self.map.item_index = items.iter().enumerate().map(|(i, item)| (item.number, i)).collect();
         self.map.items = items;
         self.map.links = links;
         self.map.loaded = true;
@@ -322,6 +404,7 @@ impl App {
         let new_center = center.is_some() && map.center != center;
         map.center = center;
         map.graph = model::build_map(&map.items, &map.links, center, &map.filter);
+        map.generation += 1;
         map.layout.rebuild(&map.graph.ids(), &map.graph.edges);
         map.ranking = model::rank(&map.graph);
         map.built = Some(map.filter.clone());
@@ -484,28 +567,24 @@ impl App {
         self.map.wake();
     }
 
-    /// Left press on the map at view cell `(col, row)`: on node `node` it
-    /// selects and grabs it, elsewhere (on edge `edge` or empty space) it
-    /// starts a pan.
+    /// Left press on the map at view cell `(col, row)`: on the node with
+    /// layout id `node` it selects and grabs it, elsewhere (on the edge
+    /// with end ids `edge` or empty space) it starts a pan.
     pub(crate) fn map_press(
         &mut self,
-        node: Option<usize>,
-        edge: Option<usize>,
+        node: Option<u64>,
+        edge: Option<(u64, u64)>,
         col: u16,
         row: u16,
     ) {
+        let node = node.filter(|&id| self.map.graph.index_of(id).is_some());
         self.map.drag = Some(match node {
-            Some(index) => {
-                let id = self.map.graph.nodes[index].id;
+            Some(id) => {
                 let shown = self.map.selected == Some(id) && self.map.card == Some(MapCard::Node);
                 self.map.selected = Some(id);
                 MapDrag::Node { id, moved: false, shown }
             }
-            None => {
-                let graph = &self.map.graph;
-                let ends = |e: usize| (graph.nodes[graph.edges[e].0].id, graph.nodes[graph.edges[e].1].id);
-                MapDrag::Pan { col, row, edge: edge.map(ends), moved: false }
-            }
+            None => MapDrag::Pan { col, row, edge, moved: false },
         });
     }
 

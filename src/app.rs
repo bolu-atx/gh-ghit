@@ -22,7 +22,7 @@ mod map;
 mod map_filter;
 mod map_physics;
 mod map_rank;
-pub(crate) use map::{CardHit, MapCard, MapView};
+pub(crate) use map::{CardHit, EdgeGrid, MapCard, MapView};
 pub(crate) use map_filter::FilterRow;
 #[cfg(test)]
 pub(crate) use map::CardDetail;
@@ -228,11 +228,11 @@ pub(crate) struct HitAreas {
     pub(crate) bar_hints: Vec<(Rect, crate::keymap::Action)>,
     /// Dependency map view rect; empty while the map is not drawn.
     pub(crate) map_area: Rect,
-    /// Map node labels as drawn, topmost first: rect plus node index.
-    pub(crate) map_nodes: Vec<(Rect, usize)>,
-    /// Map edge cells as drawn, in draw order: screen cell plus edge index.
-    /// Node labels win over them.
-    pub(crate) map_edges: Vec<((u16, u16), usize)>,
+    /// Map node labels as drawn, topmost first: rect plus layout id.
+    pub(crate) map_nodes: Vec<(Rect, u64)>,
+    /// Map edge cells as drawn, by layout ids of the ends. Node labels
+    /// win over them.
+    pub(crate) map_edges: crate::app::EdgeGrid,
     /// The map card's rect; empty while no card shows.
     pub(crate) map_card: Rect,
     /// Clickable parts of the map card.
