@@ -339,7 +339,7 @@ fn stored_detail(app: &mut App) {
         window_at: None,
     };
     let body = "Split the queue in two.\n\nThe current issue goes first; the rest wait their turn.".to_string();
-    app.map.detail = Some(crate::app::CardDetail { number: 7, version: app.map.version, row: Some(row), body: Some(body) });
+    app.map.detail = Some(crate::app::CardDetail { number: 7, stamp: None, row: Some(row), body: Some(body) });
 }
 
 /// Rows of the card as text.

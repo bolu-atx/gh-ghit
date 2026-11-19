@@ -64,8 +64,8 @@ pub(crate) enum CardHit {
 /// selection and store change, never per frame.
 pub(crate) struct CardDetail {
     pub(crate) number: u64,
-    /// Store change counter at the read.
-    pub(crate) version: Option<i64>,
+    /// Stamp of the item's row and detail at the read.
+    pub(crate) stamp: Option<String>,
     pub(crate) row: Option<github::Row>,
     pub(crate) body: Option<String>,
 }
@@ -75,7 +75,7 @@ pub(crate) struct MapView {
     pub(crate) links: Vec<MapLink>,
     /// True once the store was read.
     pub(crate) loaded: bool,
-    /// Store change counter at the last read.
+    /// Item generation at the last read.
     pub(crate) version: Option<i64>,
     pub(crate) scope: MapScope,
     pub(crate) graph: MapGraph,
@@ -198,12 +198,10 @@ impl App {
             return false;
         }
         if let Some(link) = self.sections.link.as_ref() {
-            let version = link.data_version();
-            if !self.map.loaded || version != self.map.version {
-                self.map.version = version;
-                if let Some((items, links)) = link.map_data() {
-                    self.set_map_data(items, links);
-                }
+            let seen = if self.map.loaded { self.map.version } else { None };
+            if let Some((generation, items, links)) = link.map_data(seen) {
+                self.map.version = Some(generation);
+                self.set_map_data(items, links);
             }
         }
         let mut changed = self.rebuild_map();
@@ -330,8 +328,8 @@ impl App {
     /// the store changed. True when a new read landed.
     fn read_card_detail(&mut self) -> bool {
         let Some(number) = self.map.card_number() else { return false };
-        let version = self.map.version;
-        if self.map.detail.as_ref().is_some_and(|d| d.number == number && d.version == version) {
+        let stamp = self.sections.link.as_ref().and_then(|link| link.card_stamp(number));
+        if self.map.detail.as_ref().is_some_and(|d| d.number == number && d.stamp == stamp) {
             return false;
         }
         let read = self.sections.link.as_ref().and_then(|link| link.item_card(number));
@@ -339,7 +337,7 @@ impl App {
             Some((row, body)) => (Some(row), body),
             None => (None, None),
         };
-        self.map.detail = Some(CardDetail { number, version, row, body });
+        self.map.detail = Some(CardDetail { number, stamp, row, body });
         true
     }
 

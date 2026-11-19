@@ -487,9 +487,16 @@ impl StoreLink {
         self.store.rows().ok()
     }
 
-    /// Every stored item and link, for the dependency map. `None` when the
-    /// store fails to read.
-    pub fn map_data(&self) -> Option<(Vec<model::MapItem>, Vec<model::MapLink>)> {
+    /// Every stored item and link, for the dependency map, with the item
+    /// generation they were read at. `None` when `seen` is that generation
+    /// (one cheap query) or the store fails to read; a failure leaves the
+    /// caller's `seen` alone, so the next call retries.
+    pub fn map_data(&self, seen: Option<i64>) -> Option<(i64, Vec<model::MapItem>, Vec<model::MapLink>)> {
+        // Read the generation first: a write during the read only costs one more reread.
+        let generation = self.store.items_generation().ok()?;
+        if seen == Some(generation) {
+            return None;
+        }
         let items = self.store.map_items().ok()?;
         let links = self.store.edges().ok()?.into_iter().map(|edge| model::MapLink {
             src: edge.src,
@@ -500,7 +507,7 @@ impl StoreLink {
                 store::EdgeKind::Closes => model::LinkKind::Closes,
             },
         }).collect();
-        Some((items, links))
+        Some((generation, items, links))
     }
 
     /// The stored row of one item and the body of its stored detail, of
@@ -511,10 +518,9 @@ impl StoreLink {
         Some((row, body.map(|(issue, _)| issue.body)))
     }
 
-    /// Store change counter: moves when any other connection commits, so
-    /// the map rereads only after a write.
-    pub fn data_version(&self) -> Option<i64> {
-        self.store.data_version().ok()
+    /// Stamp of the row and stored detail a map card shows for `number`.
+    pub fn card_stamp(&self, number: u64) -> Option<String> {
+        self.store.card_stamp(number)
     }
 
     /// Store GitHub search hits (newer-only, statuses kept) and return the
@@ -828,6 +834,43 @@ mod tests {
         row.issue.created_at = at.clone();
         row.issue.updated_at = at;
         row
+    }
+
+    /// The map rereads on a row or search write, not on a lease renewal,
+    /// and a failed read leaves its generation unseen so it retries.
+    #[test]
+    fn map_data_rereads_only_after_item_writes_and_retries_failures() {
+        with_temp_data(|| {
+            let repo = "o/r";
+            let mut map = StoreLink::open(repo).expect("store opens");
+            let mut other = StoreLink::open(repo).expect("store opens");
+            let first = map.map_data(None).expect("the first read loads");
+            let seen = Some(first.0);
+            assert!(map.map_data(seen).is_none(), "an unchanged store is not reread");
+
+            other.claim(false, chrono::Utc::now().timestamp() + 1000);
+            assert!(map.map_data(seen).is_none(), "a lease renewal is not a data change");
+
+            save_rows(repo, "t1", &[row(1, true, "OPEN", None)]);
+            let (generation, items, _) = map.map_data(seen).expect("a row write rereads");
+            assert_eq!(items.len(), 1);
+            let seen = Some(generation);
+            assert!(map.map_data(seen).is_none());
+
+            map.save_search(vec![row(2, false, "OPEN", None)]);
+            let (generation, items, _) = map.map_data(seen).expect("a search write on the map's own connection rereads");
+            assert_eq!(items.len(), 2);
+            let seen = Some(generation);
+
+            let file = store::path(repo).unwrap();
+            let raw = rusqlite::Connection::open(&file).unwrap();
+            raw.execute_batch("ALTER TABLE edges RENAME TO edges_off").unwrap();
+            save_rows(repo, "t2", &[row(3, false, "OPEN", None)]);
+            raw.execute_batch("UPDATE meta SET value = value + 1 WHERE key = 'items_gen'").unwrap();
+            assert!(map.map_data(seen).is_none(), "a failed read returns nothing");
+            raw.execute_batch("ALTER TABLE edges_off RENAME TO edges").unwrap();
+            assert!(map.map_data(seen).is_some(), "the next call retries the same generation");
+        })
     }
 
     #[test]
