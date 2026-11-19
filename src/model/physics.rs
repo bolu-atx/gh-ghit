@@ -48,6 +48,7 @@ impl Growth {
 
 /// Every tunable of the simulation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Physics {
     /// Pair repulsion strength: force is `repulsion * r / (r^2 + soft^2)^1.5`.
     pub repulsion: f64,
@@ -84,6 +85,128 @@ impl Default for Physics {
             growth_strength: 0.3,
             damping: 0.6,
             max_speed: 3.0,
+        }
+    }
+}
+
+/// A parameter the physics dialog tunes live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Param {
+    Repulsion,
+    SpringLength,
+    SpringStrength,
+    Gravity,
+    Growth,
+    GrowthStrength,
+    Damping,
+}
+
+impl Param {
+    /// Dialog row order.
+    pub const ALL: [Param; 7] = [
+        Param::Repulsion,
+        Param::SpringLength,
+        Param::SpringStrength,
+        Param::Gravity,
+        Param::Growth,
+        Param::GrowthStrength,
+        Param::Damping,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Param::Repulsion => "repulsion",
+            Param::SpringLength => "spring length",
+            Param::SpringStrength => "spring strength",
+            Param::Gravity => "gravity",
+            Param::Growth => "growth direction",
+            Param::GrowthStrength => "growth strength",
+            Param::Damping => "damping",
+        }
+    }
+
+    /// Step size and inclusive range of a numeric parameter. Growth
+    /// direction is a cycle and has none.
+    fn scale(self) -> Option<(f64, f64, f64)> {
+        match self {
+            Param::Repulsion => Some((10.0, 0.0, 300.0)),
+            Param::SpringLength => Some((1.0, 1.0, 30.0)),
+            Param::SpringStrength => Some((0.01, 0.0, 0.5)),
+            Param::Gravity => Some((0.01, 0.0, 0.2)),
+            Param::Growth => None,
+            Param::GrowthStrength => Some((0.05, 0.0, 2.0)),
+            Param::Damping => Some((0.05, 0.1, 0.95)),
+        }
+    }
+}
+
+impl Growth {
+    const CYCLE: [Growth; 5] = [Growth::Off, Growth::Left, Growth::Up, Growth::Right, Growth::Down];
+
+    fn label(self) -> &'static str {
+        match self {
+            Growth::Off => "off",
+            Growth::Left => "left",
+            Growth::Up => "up",
+            Growth::Right => "right",
+            Growth::Down => "down",
+        }
+    }
+}
+
+impl Physics {
+    fn slot(&mut self, param: Param) -> Option<&mut f64> {
+        match param {
+            Param::Repulsion => Some(&mut self.repulsion),
+            Param::SpringLength => Some(&mut self.spring_length),
+            Param::SpringStrength => Some(&mut self.spring_strength),
+            Param::Gravity => Some(&mut self.gravity),
+            Param::Growth => None,
+            Param::GrowthStrength => Some(&mut self.growth_strength),
+            Param::Damping => Some(&mut self.damping),
+        }
+    }
+
+    /// Move `param` by `steps` of its step size, clamped to its range
+    /// (growth direction wraps around instead). True when the value changed.
+    pub fn nudge(&mut self, param: Param, steps: i32) -> bool {
+        let before = self.clone();
+        match param.scale() {
+            Some((step, min, max)) => {
+                if let Some(value) = self.slot(param) {
+                    let moved = ((*value / step).round() + f64::from(steps)) * step;
+                    *value = moved.clamp(min, max);
+                }
+            }
+            None => {
+                let at = Growth::CYCLE.iter().position(|g| *g == self.growth).unwrap_or(0) as i32;
+                self.growth = Growth::CYCLE[(at + steps).rem_euclid(Growth::CYCLE.len() as i32) as usize];
+            }
+        }
+        *self != before
+    }
+
+    /// Pull every parameter into its range, as a hand-edited file may leave it.
+    pub fn sanitize(&mut self) {
+        for param in Param::ALL {
+            if let Some((_, min, max)) = param.scale() {
+                if let Some(value) = self.slot(param) {
+                    *value = if value.is_finite() { value.clamp(min, max) } else { min };
+                }
+            }
+        }
+    }
+
+    /// The value of `param` as the dialog shows it.
+    pub fn show(&self, param: Param) -> String {
+        match param {
+            Param::Repulsion => format!("{:.0}", self.repulsion),
+            Param::SpringLength => format!("{:.0}", self.spring_length),
+            Param::SpringStrength => format!("{:.2}", self.spring_strength),
+            Param::Gravity => format!("{:.2}", self.gravity),
+            Param::Growth => self.growth.label().to_string(),
+            Param::GrowthStrength => format!("{:.2}", self.growth_strength),
+            Param::Damping => format!("{:.2}", self.damping),
         }
     }
 }

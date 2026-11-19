@@ -517,3 +517,150 @@ fn a_following_camera_fits_the_area_the_map_drew_in_even_after_a_card_docks() {
     assert!(app.hits.map_area.width < wide, "the card takes room from the map");
     assert_eq!(app.map.camera, fit(&app), "the camera fits the narrower map in the same frame");
 }
+
+fn physics_app() -> App {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('P')));
+    app
+}
+
+/// Rows of the open physics popup as text.
+fn popup_rows(app: &mut App) -> Vec<String> {
+    let buf = draw_buffer(app);
+    let popup = app.hits.form_popup;
+    (popup.y..popup.bottom())
+        .map(|y| (popup.x..popup.right()).map(|x| buf[(x, y)].symbol()).collect::<String>().trim_end().to_string())
+        .collect()
+}
+
+#[test]
+fn physics_dialog_draws_one_stepper_row_per_parameter() {
+    let mut app = physics_app();
+    assert!(app.physics_focus().is_some(), "P opens the dialog on the map");
+    let rows = popup_rows(&mut app);
+    let expected = [
+        "│ repulsion         ▌   −   60    +",
+        "│ spring length         −    6    +",
+        "│ spring strength       −  0.08   +",
+        "│ gravity               −  0.03   +",
+        "│ growth direction      −  right  +",
+        "│ growth strength       −  0.30   +",
+        "│ damping               −  0.60   +",
+    ];
+    for want in expected {
+        assert!(rows.iter().any(|row| row.starts_with(want)), "missing `{want}` in:\n{}", rows.join("\n"));
+    }
+    let footer = rows.join("\n");
+    for hint in ["esc close", "h lower value", "l raise value", "r reset to defaults"] {
+        assert!(footer.contains(hint), "legend lacks `{hint}`:\n{footer}");
+    }
+}
+
+#[test]
+fn physics_keys_step_the_focused_row_live_without_moving_nodes() {
+    let mut app = physics_app();
+    let before: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(app.map.layout.physics.repulsion, 70.0);
+    handle_key(&mut app, key(KeyCode::Right));
+    assert_eq!(app.map.layout.physics.repulsion, 80.0);
+    handle_key(&mut app, key(KeyCode::Char('h')));
+    handle_key(&mut app, key(KeyCode::Left));
+    assert_eq!(app.map.layout.physics.repulsion, 60.0);
+    // j and k move the focus; the focused row takes the next step.
+    for _ in 0..4 {
+        handle_key(&mut app, key(KeyCode::Char('j')));
+    }
+    assert_eq!(app.physics_focus(), Some(4));
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(app.map.layout.physics.growth, crate::model::physics::Growth::Down);
+    handle_key(&mut app, key(KeyCode::Char('k')));
+    assert_eq!(app.physics_focus(), Some(3));
+    let after: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+    assert_eq!(before, after, "a change never moves a node by itself");
+    assert!(app.map.moving(), "a change wakes the simulation");
+}
+
+#[test]
+fn a_change_wakes_a_settled_layout() {
+    let mut app = map_app();
+    app.settle_map();
+    assert!(!app.map.moving());
+    handle_key(&mut app, key(KeyCode::Char('P')));
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert!(app.map.moving());
+}
+
+#[test]
+fn physics_mouse_steps_focuses_and_dismisses() {
+    let mut app = physics_app();
+    popup_rows(&mut app);
+    let cell = |app: &App, row: usize, option: usize| {
+        app.hits.form_cells.iter().find(|(_, r, o)| *r == row && *o == Some(option)).map(|(rect, _, _)| *rect).unwrap()
+    };
+    let raise = cell(&app, 1, 2);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), raise.x, raise.y));
+    assert_eq!(app.map.layout.physics.spring_length, 7.0, "+ raises its own row");
+    assert_eq!(app.physics_focus(), Some(1), "a click focuses the row it hits");
+    popup_rows(&mut app);
+    let lower = cell(&app, 6, 0);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), lower.x, lower.y));
+    assert_eq!(app.map.layout.physics.damping, 0.55, "− lowers its own row");
+    popup_rows(&mut app);
+    let value = cell(&app, 0, 1);
+    handle_mouse(&mut app, click(MouseEventKind::ScrollUp, value.x, value.y));
+    assert_eq!(app.map.layout.physics.repulsion, 70.0, "the wheel raises the row under it");
+    handle_mouse(&mut app, click(MouseEventKind::ScrollDown, value.x, value.y));
+    handle_mouse(&mut app, click(MouseEventKind::ScrollDown, value.x, value.y));
+    assert_eq!(app.map.layout.physics.repulsion, 50.0, "and the wheel down lowers it");
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    assert!(app.physics_focus().is_none(), "a click outside closes the dialog");
+}
+
+#[test]
+fn physics_reset_restores_defaults_by_key_and_by_legend_click() {
+    use crate::model::physics::Physics;
+    let mut app = physics_app();
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_ne!(app.map.layout.physics, Physics::default());
+    handle_key(&mut app, key(KeyCode::Char('r')));
+    assert_eq!(app.map.layout.physics, Physics::default());
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    popup_rows(&mut app);
+    let (rect, _) = app.hits.legend.iter().find(|(_, action)| *action == crate::keymap::Action::PhysicsReset).copied().unwrap();
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y));
+    assert_eq!(app.map.layout.physics, Physics::default());
+}
+
+#[test]
+fn physics_changes_and_reset_are_saved() {
+    use crate::model::physics::Physics;
+    let _guard = crate::cache::test_env_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let saved = std::env::var("XDG_DATA_HOME").ok();
+    std::env::set_var("XDG_DATA_HOME", dir.path());
+    let mut app = physics_app();
+    app.prefs_loaded = true;
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(crate::github::load_physics().repulsion, 70.0);
+    handle_key(&mut app, key(KeyCode::Char('r')));
+    assert_eq!(crate::github::load_physics(), Physics::default());
+    match saved {
+        Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+        None => std::env::remove_var("XDG_DATA_HOME"),
+    }
+}
+
+#[test]
+fn the_toolbar_button_opens_the_physics_dialog() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    let (rect, _, _) = app.hits.controls.iter().find(|(_, action, _)| *action == crate::keymap::Action::GraphPhysics).copied()
+        .expect("a physics button on the map toolbar");
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y));
+    assert!(app.physics_focus().is_some());
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert!(app.physics_focus().is_none(), "Esc closes it");
+}

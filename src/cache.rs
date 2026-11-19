@@ -141,6 +141,29 @@ pub fn save_theme(name: &str) {
     let _ = std::fs::write(theme_path(), format!("{name}\n"));
 }
 
+fn physics_path() -> PathBuf {
+    base_dir().join("map-physics.json")
+}
+
+/// Last-tuned map physics. A missing or garbled file means the defaults;
+/// out-of-range values are pulled into range.
+pub fn load_physics() -> crate::model::physics::Physics {
+    let mut physics: crate::model::physics::Physics = std::fs::read_to_string(physics_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    physics.sanitize();
+    physics
+}
+
+pub fn save_physics(physics: &crate::model::physics::Physics) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let _ = std::fs::write(physics_path(), serde_json::to_string(physics).unwrap_or_default());
+}
+
 fn prefs_path() -> PathBuf {
     base_dir().join("prefs.json")
 }
@@ -401,6 +424,27 @@ mod tests {
         match saved {
             Some(v) => std::env::set_var("GH_HOST", v),
             None => std::env::remove_var("GH_HOST"),
+        }
+    }
+
+    #[test]
+    fn physics_round_trip_then_missing_and_garbage_load_defaults() {
+        use crate::model::physics::{Growth, Physics};
+        let _guard = test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        assert_eq!(load_physics(), Physics::default());
+        let tuned = Physics { repulsion: 120.0, growth: Growth::Down, damping: 0.8, ..Physics::default() };
+        save_physics(&tuned);
+        assert_eq!(load_physics(), tuned);
+        std::fs::write(physics_path(), r#"{"repulsion": 99999}"#).unwrap();
+        assert_eq!(load_physics().repulsion, 300.0, "a wild value is clamped, other fields default");
+        std::fs::write(physics_path(), "not json").unwrap();
+        assert_eq!(load_physics(), Physics::default());
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
         }
     }
 

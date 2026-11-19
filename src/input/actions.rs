@@ -131,6 +131,13 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::GraphNextEdge => app.map_step_edge(1),
         Action::GraphPrevEdge => app.map_step_edge(-1),
         Action::GraphCloseCard => app.map_close_card(),
+        Action::GraphPhysics => app.open_physics(),
+        Action::ClosePhysics => { app.close(Slot::Physics); }
+        Action::PhysicsDown => app.physics_step(1),
+        Action::PhysicsUp => app.physics_step(-1),
+        Action::PhysicsLower => app.physics_nudge(-1),
+        Action::PhysicsRaise => app.physics_nudge(1),
+        Action::PhysicsReset => app.physics_reset(),
 
         Action::CloseHelp => { app.close(Slot::Shortcuts); }
         Action::HelpDown => app.help_scroll = app.help_scroll.saturating_add(1),

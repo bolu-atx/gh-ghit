@@ -1,6 +1,6 @@
 //! Tests for model::physics.
 
-use super::physics::{EdgeStyle, Growth, Layout, Physics};
+use super::physics::{EdgeStyle, Growth, Layout, Param, Physics};
 
 fn run(l: &mut Layout, steps: usize) {
     for _ in 0..steps {
@@ -123,4 +123,45 @@ fn three_hundred_nodes_stay_finite() {
     l.rebuild(&ids, &edges);
     run(&mut l, 50);
     assert!(l.bodies().iter().all(|b| b.x.is_finite() && b.y.is_finite()));
+}
+
+#[test]
+fn nudge_steps_and_clamps_every_parameter() {
+    let mut p = Physics::default();
+    assert!(p.nudge(Param::Repulsion, 1));
+    assert_eq!(p.repulsion, 70.0);
+    assert!(p.nudge(Param::Gravity, 1));
+    assert_eq!(p.show(Param::Gravity), "0.04");
+    assert!(p.nudge(Param::Damping, -1));
+    assert_eq!(p.show(Param::Damping), "0.55");
+    // The ends hold: a step past them changes nothing.
+    assert!(p.nudge(Param::SpringLength, -100));
+    assert_eq!(p.spring_length, 1.0);
+    assert!(!p.nudge(Param::SpringLength, -1));
+    assert!(p.nudge(Param::GrowthStrength, 1000));
+    assert_eq!(p.growth_strength, 2.0);
+    assert!(!p.nudge(Param::GrowthStrength, 1));
+    assert!(p.nudge(Param::SpringStrength, 1000));
+    assert_eq!(p.spring_strength, 0.5);
+}
+
+#[test]
+fn growth_direction_cycles_through_all_five() {
+    let mut p = Physics::default();
+    assert_eq!(p.growth, Growth::Right);
+    p.nudge(Param::Growth, 1);
+    assert_eq!(p.growth, Growth::Down);
+    p.nudge(Param::Growth, 1);
+    assert_eq!(p.growth, Growth::Off);
+    p.nudge(Param::Growth, -1);
+    assert_eq!(p.growth, Growth::Down);
+    p.nudge(Param::Growth, -1);
+    assert_eq!(p.growth, Growth::Right);
+}
+
+#[test]
+fn sanitize_pulls_wild_values_into_range() {
+    let mut p = Physics { repulsion: 1e9, damping: -3.0, gravity: f64::NAN, ..Physics::default() };
+    p.sanitize();
+    assert_eq!((p.repulsion, p.damping, p.gravity), (300.0, 0.1, 0.0));
 }

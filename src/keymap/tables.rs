@@ -172,6 +172,23 @@ const GRAPH: &[Binding] = &[
     key(ch('W'), Action::GraphMoveUp, "Move node up", "Arrange", DRAG),
     key(ch('D'), Action::GraphMoveRight, "Move node right", "Arrange", DRAG),
     key(ch('x'), Action::GraphUnpin, "Unpin node", "Arrange", MENU).hint(5),
+    key(ch('P'), Action::GraphPhysics, "Tune physics", "View", TITLE).hint(8),
+];
+
+const PHYSICS: &[Binding] = &[
+    key(KeyCode::Esc, Action::Back, "Close", "Dialog", OUTSIDE).hint(1),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Dialog", ALIAS),
+    key(ch('P'), Action::ClosePhysics, "Close", "Dialog", ALIAS),
+    key(ch('q'), Action::ClosePhysics, "Close", "Dialog", ALIAS),
+    key(ch('j'), Action::PhysicsDown, "Next row", "Move", Gesture::Click).hint(2),
+    key(ch('k'), Action::PhysicsUp, "Previous row", "Move", Gesture::Click).hint(3),
+    key(KeyCode::Down, Action::PhysicsDown, "Next row", "Move", ALIAS),
+    key(KeyCode::Up, Action::PhysicsUp, "Previous row", "Move", ALIAS),
+    key(ch('h'), Action::PhysicsLower, "Lower value", "Value", Gesture::Click).hint(4),
+    key(ch('l'), Action::PhysicsRaise, "Raise value", "Value", Gesture::Click).hint(5),
+    key(KeyCode::Left, Action::PhysicsLower, "Lower value", "Value", Gesture::Wheel),
+    key(KeyCode::Right, Action::PhysicsRaise, "Raise value", "Value", Gesture::Wheel),
+    key(ch('r'), Action::PhysicsReset, "Reset to defaults", "Value", HINT).hint(6),
 ];
 
 const MENU_KEYS: &[Binding] = &[
@@ -376,6 +393,7 @@ pub(super) fn tables(context: Context) -> &'static [&'static [Binding]] {
         Context::Dialog(Dialog::Menu) => &[MENU_KEYS],
         Context::Dialog(Dialog::Finder) => &[FINDER],
         Context::Dialog(Dialog::Format) => &[FORMAT],
+        Context::Dialog(Dialog::Physics) => &[PHYSICS],
         Context::Dialog(Dialog::Board) => &[BOARD],
         Context::Dialog(Dialog::BoardFilter) => &[BOARD_FILTER],
         Context::Input(TextInput::Bar) => &[BAR],

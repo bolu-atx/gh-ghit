@@ -571,6 +571,9 @@ pub use crate::cache::Key;
 /// Format-dialog prefs, re-exported so UI layers never touch `cache`.
 pub use crate::cache::{SavedBoardFilter, SavedQuery, SavedSidebarFilter, load_prefs, prefs_owner_key, prefs_repo_key, save_prefs};
 
+/// Map physics prefs, re-exported so UI layers never touch `cache`.
+pub use crate::cache::{load_physics, save_physics};
+
 /// Drop the named entries. `refresh_current` routes through here so UI
 /// layers never touch `cache` directly.
 pub fn invalidate(keys: &[Key]) {

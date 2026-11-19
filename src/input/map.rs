@@ -66,3 +66,39 @@ pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
     }
     true
 }
+
+/// Mouse path while the physics dialog is open. A press on a `−` or `+`
+/// steps that row, a press elsewhere on a row focuses it, the wheel over
+/// a row raises or lowers it, and a press outside the popup closes it.
+pub(super) fn handle_physics_mouse(app: &mut App, m: MouseEvent) {
+    if menu::legend_click(app, &m) {
+        return;
+    }
+    let cell = hit(&app.hits.form_cells, m.column, m.row);
+    match m.kind {
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            if !in_rect(app.hits.form_popup, m.column, m.row) {
+                return;
+            }
+            if let Some((_, row, _)) = cell {
+                app.set_physics_focus(row);
+            }
+            app.physics_nudge(if m.kind == MouseEventKind::ScrollUp { 1 } else { -1 });
+        }
+        MouseEventKind::Down(MouseButton::Left) => match cell {
+            Some((_, row, option)) => {
+                app.set_physics_focus(row);
+                match option {
+                    Some(0) => app.physics_nudge(-1),
+                    Some(2) => app.physics_nudge(1),
+                    _ => {}
+                }
+            }
+            None if !in_rect(app.hits.form_popup, m.column, m.row) => {
+                app.close(crate::app::Slot::Physics);
+            }
+            None => {}
+        },
+        _ => {}
+    }
+}

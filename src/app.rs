@@ -19,6 +19,7 @@ mod finder;
 mod format;
 mod issue;
 mod map;
+mod map_physics;
 pub(crate) use map::{CardHit, MapCard, MapView};
 #[cfg(test)]
 pub(crate) use map::CardDetail;

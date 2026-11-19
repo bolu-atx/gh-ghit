@@ -142,7 +142,7 @@ impl MapView {
         self.wake > 0 || !self.layout.settled()
     }
 
-    fn wake(&mut self) {
+    pub(super) fn wake(&mut self) {
         self.wake = WAKE_STEPS;
     }
 

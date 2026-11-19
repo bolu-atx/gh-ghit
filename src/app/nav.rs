@@ -375,6 +375,7 @@ impl App {
             Layer::Dialog(Dialog::Menu) => { self.close(Slot::Menu); }
             Layer::Dialog(Dialog::Finder) => { self.close(Slot::Finder); }
             Layer::Dialog(Dialog::Format) => { self.close(Slot::Format); }
+            Layer::Dialog(Dialog::Physics) => { self.close(Slot::Physics); }
             Layer::Dialog(Dialog::BoardFilter) => {
                 self.close(crate::app::Slot::Format);
                 self.board.filter_focus = 0;

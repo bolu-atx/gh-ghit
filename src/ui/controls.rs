@@ -94,6 +94,7 @@ fn tools(app: &App) -> Vec<Tool> {
         };
         tools.push(Tool { icon: theme::TOOL_SCOPE, label, action: Action::GraphScope });
         tools.push(Tool { icon: theme::TOOL_FIT, label: "fit", action: Action::GraphFit });
+        tools.push(Tool { icon: theme::TOOL_PHYSICS, label: "physics", action: Action::GraphPhysics });
     }
     tools.push(Tool { icon: theme::TOOL_COMMENT, label: "comment", action: Action::Comment });
     match data.state.as_str() {
