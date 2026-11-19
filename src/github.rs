@@ -189,6 +189,7 @@ fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row 
         issue.checks = issue.checks.or(old.issue.checks);
         issue.parent = old.issue.parent;
         issue.sub_summary = old.issue.sub_summary;
+        issue.links = old.issue.links.clone();
         if statuses.is_empty() {
             statuses = old.statuses.clone();
         }
@@ -277,8 +278,8 @@ fn overlay(stored: Vec<api::Row>, fetched: &[api::Row]) -> Vec<api::Row> {
 }
 
 /// REST rows lack the CI rollup, project status and sub-issue parent:
-/// each fetched row keeps its stored row's `checks`, `statuses`, `parent`
-/// and, when REST sends none, `sub_summary`. The status pass refreshes them.
+/// each fetched row keeps its stored row's `checks`, `statuses`, `parent`,
+/// `links` and, when REST sends none, `sub_summary`. The status pass refreshes them.
 fn keep_stored_fields(stored: &[api::Row], fetched: &mut [api::Row]) {
     let old: std::collections::HashMap<u64, &api::Row> = stored.iter().map(|r| (r.issue.number, r)).collect();
     for row in fetched {
@@ -286,6 +287,7 @@ fn keep_stored_fields(stored: &[api::Row], fetched: &mut [api::Row]) {
             row.issue.checks = prev.issue.checks;
             row.statuses = prev.statuses.clone();
             row.issue.parent = prev.issue.parent;
+            row.issue.links = prev.issue.links.clone();
             row.issue.sub_summary = row.issue.sub_summary.or(prev.issue.sub_summary);
         }
     }

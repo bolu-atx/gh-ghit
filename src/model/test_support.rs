@@ -21,6 +21,7 @@ pub(super) fn sample_issue() -> IssueData {
         milestone: None,
         parent: None,
         sub_summary: None,
+            links: Default::default(),
         is_pr: false,
     }
 }

@@ -188,6 +188,19 @@ pub struct IssueData {
     /// without the field still parse.
     #[serde(default)]
     pub sub_summary: Option<SubSummary>,
+    /// Blocking and closing links into this issue, from the GraphQL
+    /// listing; the store records them as edges.
+    #[serde(default)]
+    pub links: IssueLinks,
+}
+
+/// Links that point at an issue and show on its own row.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueLinks {
+    /// Issues that block this one.
+    pub blocked_by: Vec<u64>,
+    /// Pull requests that close this issue.
+    pub closed_by: Vec<u64>,
 }
 
 pub fn slug(title: &str, width: usize) -> String {

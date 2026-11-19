@@ -11,8 +11,9 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::api::Row;
 use crate::cache;
+use crate::model::IssueData;
 
-const SCHEMA_VERSION: &str = "4";
+const SCHEMA_VERSION: &str = "5";
 
 /// How long a write waits for another process's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -54,6 +55,13 @@ CREATE TABLE backfill (
     fetched INTEGER NOT NULL DEFAULT 0,
     total INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE edges (
+    src INTEGER NOT NULL,
+    dst INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    PRIMARY KEY (dst, src, kind)
+);
+CREATE INDEX edges_src ON edges (src);
 ";
 
 /// The sync lease and the last sync start, one row per repo store.
@@ -80,6 +88,41 @@ pub struct Candidate {
     pub title: String,
     pub author: String,
     pub labels: Vec<String>,
+}
+
+/// What a link between two items means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeKind {
+    /// `src` blocks `dst`.
+    Blocks,
+    /// `src` is the parent of `dst`.
+    Parent,
+    /// The pull request `src` closes the issue `dst`.
+    Closes,
+}
+
+impl EdgeKind {
+    fn name(self) -> &'static str {
+        match self {
+            EdgeKind::Blocks => "blocks",
+            EdgeKind::Parent => "parent",
+            EdgeKind::Closes => "closes",
+        }
+    }
+
+    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
+    fn from_name(name: &str) -> Option<Self> {
+        [EdgeKind::Blocks, EdgeKind::Parent, EdgeKind::Closes].into_iter().find(|kind| kind.name() == name)
+    }
+}
+
+/// One link between two stored item numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
+pub struct Edge {
+    pub src: u64,
+    pub dst: u64,
+    pub kind: EdgeKind,
 }
 
 /// One open repo store.
@@ -186,6 +229,43 @@ impl Store {
         tx.commit().map_err(fail)
     }
 
+    /// Every stored link between items.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
+    pub fn edges(&self) -> Result<Vec<Edge>, String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let mut stmt = self.conn.prepare("SELECT src, dst, kind FROM edges ORDER BY dst, src, kind").map_err(fail)?;
+        let edges = stmt.query_map([], read_edge).map_err(fail)?;
+        Ok(edges.collect::<Result<Vec<_>, _>>().map_err(fail)?.into_iter().flatten().collect())
+    }
+
+    /// The links of the connected component that holds `number`, walking
+    /// links in both directions. Empty when `number` has no links.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
+    pub fn component_edges(&self, number: u64) -> Result<Vec<Edge>, String> {
+        let mut seen = std::collections::HashSet::from([number]);
+        let mut queue = vec![number];
+        while let Some(node) = queue.pop() {
+            for edge in self.edges_touching(node)? {
+                for next in [edge.src, edge.dst] {
+                    if seen.insert(next) {
+                        queue.push(next);
+                    }
+                }
+            }
+        }
+        let mut edges: Vec<Edge> = self.edges()?.into_iter().filter(|edge| seen.contains(&edge.src)).collect();
+        edges.sort_by_key(|edge| (edge.dst, edge.src));
+        Ok(edges)
+    }
+
+    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
+    fn edges_touching(&self, number: u64) -> Result<Vec<Edge>, String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let mut stmt = self.conn.prepare("SELECT src, dst, kind FROM edges WHERE src = ?1 OR dst = ?1").map_err(fail)?;
+        let edges = stmt.query_map([number as i64], read_edge).map_err(fail)?;
+        Ok(edges.collect::<Result<Vec<_>, _>>().map_err(fail)?.into_iter().flatten().collect())
+    }
+
     /// Every stored item as a finder candidate, most recently updated first.
     pub fn finder_candidates(&self) -> Result<Vec<Candidate>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
@@ -257,6 +337,14 @@ impl Store {
     }
 }
 
+/// An edge row; `None` for a kind this build does not know.
+#[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
+fn read_edge(row: &rusqlite::Row) -> rusqlite::Result<Option<Edge>> {
+    let kind: String = row.get(2)?;
+    let (src, dst) = (row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64);
+    Ok(EdgeKind::from_name(&kind).map(|kind| Edge { src, dst, kind }))
+}
+
 /// Upsert `rows` inside `tx` with the given upsert statement.
 fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<(), String> {
     let fail = |e: rusqlite::Error| format!("store: {e}");
@@ -265,7 +353,7 @@ fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<()
         let issue = &row.issue;
         let names = |list: Vec<&str>| serde_json::to_string(&list).unwrap_or_default();
         let merged_at = (issue.is_pr && issue.state == "MERGED").then(|| row.window_at.clone()).flatten();
-        upsert
+        let written = upsert
             .execute(params![
                 issue.number as i64,
                 if issue.is_pr { "pr" } else { "issue" },
@@ -284,6 +372,26 @@ fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<()
                 serde_json::to_string(row).map_err(|e| format!("store: {e}"))?,
             ])
             .map_err(fail)?;
+        // A newer-only upsert may leave the stored row alone; its edges stay too.
+        if written > 0 {
+            replace_edges(tx, issue).map_err(fail)?;
+        }
+    }
+    Ok(())
+}
+
+/// Replace every edge into `issue` with the links its row carries.
+fn replace_edges(tx: &rusqlite::Transaction, issue: &IssueData) -> rusqlite::Result<()> {
+    tx.execute("DELETE FROM edges WHERE dst = ?1", [issue.number as i64])?;
+    let links = issue.parent.map(|parent| (parent, EdgeKind::Parent))
+        .into_iter()
+        .chain(issue.links.blocked_by.iter().map(|&blocker| (blocker, EdgeKind::Blocks)))
+        .chain(issue.links.closed_by.iter().map(|&pr| (pr, EdgeKind::Closes)));
+    for (src, kind) in links {
+        tx.execute(
+            "INSERT OR IGNORE INTO edges (src, dst, kind) VALUES (?1, ?2, ?3)",
+            params![src as i64, issue.number as i64, kind.name()],
+        )?;
     }
     Ok(())
 }
@@ -376,6 +484,7 @@ impl Store {
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
         tx.execute("DELETE FROM items WHERE number = ?1", [number as i64]).map_err(fail)?;
         tx.execute("DELETE FROM details WHERE number = ?1", [number as i64]).map_err(fail)?;
+        tx.execute("DELETE FROM edges WHERE dst = ?1", [number as i64]).map_err(fail)?;
         tx.commit().map_err(fail)
     }
 }
@@ -768,5 +877,90 @@ mod tests {
         drop(store);
         let store = open_at(&path).unwrap();
         assert!(!store.backfill_conn("prs_open").done);
+    }
+    fn linked(number: u64, parent: Option<u64>, blocked_by: &[u64], closed_by: &[u64]) -> Row {
+        let mut r = row(number, "OPEN");
+        r.issue.parent = parent;
+        r.issue.links = crate::model::IssueLinks { blocked_by: blocked_by.to_vec(), closed_by: closed_by.to_vec() };
+        r
+    }
+
+    fn edge(src: u64, dst: u64, kind: EdgeKind) -> Edge {
+        Edge { src, dst, kind }
+    }
+
+    #[test]
+    fn edges_come_from_the_parsed_issue_row() {
+        let node = serde_json::json!({
+            "number": 7, "title": "t", "state": "OPEN", "createdAt": "c", "updatedAt": "u",
+            "parent": {"number": 3},
+            "blockedBy": {"nodes": [{"number": 4}]},
+            "closedByPullRequestsReferences": {"nodes": [{"number": 9}]}
+        });
+        let parsed = crate::api::parse_node(&node, false, None).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("e.sqlite")).unwrap();
+        store.write("s1", &[parsed]).unwrap();
+        assert_eq!(
+            store.edges().unwrap(),
+            [edge(3, 7, EdgeKind::Parent), edge(4, 7, EdgeKind::Blocks), edge(9, 7, EdgeKind::Closes)]
+        );
+    }
+
+    #[test]
+    fn rewriting_an_issue_replaces_its_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("e.sqlite")).unwrap();
+        let mut first = linked(7, None, &[4, 5], &[]);
+        first.issue.updated_at = "t1".into();
+        store.write("s1", &[first, linked(8, None, &[4], &[])]).unwrap();
+        let mut second = linked(7, None, &[5], &[]);
+        second.issue.updated_at = "t2".into();
+        store.write("s2", &[second]).unwrap();
+        assert_eq!(store.edges().unwrap(), [edge(5, 7, EdgeKind::Blocks), edge(4, 8, EdgeKind::Blocks)]);
+
+        // A backfill page that is not newer leaves row and edges alone.
+        let mut stale = linked(7, None, &[], &[]);
+        stale.issue.updated_at = "t1".into();
+        store.backfill_save("c", None, &[stale], None, true, 1).unwrap();
+        assert_eq!(store.edges().unwrap().len(), 2);
+
+        // A newer backfill page replaces them.
+        let mut newer = linked(7, Some(1), &[], &[]);
+        newer.issue.updated_at = "t3".into();
+        store.backfill_save("d", None, &[newer], None, true, 1).unwrap();
+        assert_eq!(store.edges().unwrap(), [edge(1, 7, EdgeKind::Parent), edge(4, 8, EdgeKind::Blocks)]);
+
+        store.drop_item(8).unwrap();
+        assert_eq!(store.edges().unwrap(), [edge(1, 7, EdgeKind::Parent)]);
+    }
+
+    #[test]
+    fn component_follows_edges_both_ways_and_stops_at_its_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("e.sqlite")).unwrap();
+        // 1 -> 2 -> 3 and 4 -> 3 (a fork joins at 3); 10 -> 11 is apart.
+        store
+            .write("s1", &[linked(2, None, &[1], &[]), linked(3, None, &[2, 4], &[]), linked(11, None, &[10], &[])])
+            .unwrap();
+        let expected = [edge(1, 2, EdgeKind::Blocks), edge(2, 3, EdgeKind::Blocks), edge(4, 3, EdgeKind::Blocks)];
+        for start in [1, 2, 3, 4] {
+            assert_eq!(store.component_edges(start).unwrap(), expected, "from {start}");
+        }
+        assert_eq!(store.component_edges(10).unwrap(), [edge(10, 11, EdgeKind::Blocks)]);
+        assert!(store.component_edges(99).unwrap().is_empty());
+        assert_eq!(store.edges().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn schema_bump_drops_stored_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("e.sqlite");
+        let mut store = open_at(&file).unwrap();
+        store.write("s1", &[linked(2, None, &[1], &[])]).unwrap();
+        store.conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'", []).unwrap();
+        drop(store);
+        let store = open_at(&file).unwrap();
+        assert!(store.edges().unwrap().is_empty());
     }
 }
