@@ -39,11 +39,16 @@ fn cache_path(name: &str) -> PathBuf {
 }
 
 pub fn cache_get<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
+    cache_get_within(name, CACHE_TTL_SECS)
+}
+
+/// `cache_get` with its own age limit in seconds instead of the TTL.
+pub fn cache_get_within<T: serde::de::DeserializeOwned>(name: &str, max_age_secs: u64) -> Option<T> {
     let raw = std::fs::read_to_string(cache_path(name)).ok()?;
     let payload: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let fetched = payload.get("fetched_at")?.as_u64()?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-    if now.saturating_sub(fetched) >= CACHE_TTL_SECS {
+    if now.saturating_sub(fetched) >= max_age_secs {
         return None;
     }
     serde_json::from_value(payload.get("data")?.clone()).ok()
