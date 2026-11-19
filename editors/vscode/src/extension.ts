@@ -72,6 +72,7 @@ async function install(ctx: vscode.ExtensionContext): Promise<string | undefined
         if (process.platform === "darwin") {
           cp.spawnSync("xattr", ["-d", "com.apple.quarantine", dest], { stdio: "ignore" });
         }
+        await ctx.globalState.update("binTag", rel.tag_name);
         vscode.window.showInformationMessage(`Installed ghit ${rel.tag_name}.`);
         return dest;
       }
@@ -79,6 +80,28 @@ async function install(ctx: vscode.ExtensionContext): Promise<string | undefined
   } catch (e) {
     vscode.window.showErrorMessage(`ghit install failed: ${(e as Error).message}`);
     return undefined;
+  }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Offer an update for the downloaded binary, at most once a day.
+// A configured path or a ghit on PATH is the user's own; never touch it.
+async function checkUpdate(ctx: vscode.ExtensionContext) {
+  if (vscode.workspace.getConfiguration("ghit").get<string>("path") || pathOnPath() || !downloaded(ctx)) return;
+  if (Date.now() - ctx.globalState.get<number>("lastUpdateCheck", 0) < DAY_MS) return;
+  try {
+    const rel = await getJson(`https://api.github.com/repos/${REPO}/releases/latest`);
+    await ctx.globalState.update("lastUpdateCheck", Date.now());
+    const have = ctx.globalState.get<string>("binTag");
+    if (rel.tag_name === have) return;
+    const pick = await vscode.window.showInformationMessage(
+      `ghit ${rel.tag_name} is available${have ? ` (you have ${have})` : ""}.`,
+      "Update"
+    );
+    if (pick) await install(ctx);
+  } catch {
+    // offline or rate-limited: try again at the next start
   }
 }
 
@@ -131,6 +154,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   item.command = "ghit.open";
   item.show();
   ctx.subscriptions.push(item);
+
+  void checkUpdate(ctx);
 
   if (!onPath("gh") && !ctx.globalState.get<boolean>("ghWarned")) {
     ctx.globalState.update("ghWarned", true);
