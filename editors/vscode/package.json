@@ -1,0 +1,49 @@
+{
+  "name": "ghit-vscode",
+  "displayName": "ghit",
+  "description": "Open the ghit GitHub issues and PRs terminal UI inside VS Code.",
+  "publisher": "bolu-atx",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/bolu-atx/gh-ghit.git", "directory": "editors/vscode" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished", "onCommand:ghit.open", "onCommand:ghit.install"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "ghit.open", "title": "ghit: Open" },
+      { "command": "ghit.install", "title": "ghit: Install / Update Binary" }
+    ],
+    "keybindings": [
+      { "command": "ghit.open", "key": "ctrl+alt+g", "mac": "cmd+alt+g" }
+    ],
+    "configuration": {
+      "title": "ghit",
+      "properties": {
+        "ghit.location": {
+          "type": "string",
+          "enum": ["panel", "editor"],
+          "default": "panel",
+          "description": "Where to open the ghit terminal."
+        },
+        "ghit.path": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the ghit binary. Empty means PATH, then the downloaded copy."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "test": "npm run compile && node out/assets.test.js",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}
