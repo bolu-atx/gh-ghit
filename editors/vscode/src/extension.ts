@@ -91,11 +91,22 @@ async function resolve(ctx: vscode.ExtensionContext): Promise<string | undefined
   return pick ? install(ctx) : undefined;
 }
 
+function projectDir(): string | undefined {
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  const folder = (uri && vscode.workspace.getWorkspaceFolder(uri)) ?? vscode.workspace.workspaceFolders?.[0];
+  return folder?.uri.fsPath;
+}
+
 async function open(ctx: vscode.ExtensionContext) {
+  const cwd = projectDir();
   const existing = vscode.window.terminals.find((t) => t.name === TERMINAL_NAME && t.exitStatus === undefined);
   if (existing) {
-    existing.show();
-    return;
+    const opts = existing.creationOptions as vscode.TerminalOptions;
+    if (opts.cwd === cwd) {
+      existing.show();
+      return;
+    }
+    existing.dispose();
   }
   const bin = await resolve(ctx);
   if (!bin) return;
@@ -103,7 +114,7 @@ async function open(ctx: vscode.ExtensionContext) {
   const term = vscode.window.createTerminal({
     name: TERMINAL_NAME,
     shellPath: bin,
-    cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    cwd,
     location: editor ? vscode.TerminalLocation.Editor : vscode.TerminalLocation.Panel,
   });
   term.show();
