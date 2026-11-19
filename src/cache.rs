@@ -142,7 +142,7 @@ fn prefs_path() -> PathBuf {
 }
 
 fn default_backfill_months() -> u32 {
-    12
+    0
 }
 
 fn default_window() -> u64 {
@@ -393,6 +393,7 @@ mod tests {
         // Missing file loads defaults.
         let fresh = load_prefs();
         assert_eq!(fresh.merged_window_hours, 24);
+        assert_eq!(fresh.backfill_months, 0, "the backfill reaches all history by default");
         assert!(fresh.show_open_prs && fresh.show_merged_prs);
         assert!(fresh.show_open_issues && fresh.show_closed_issues);
         assert_eq!(fresh.board_cards, crate::model::CardFields::default());

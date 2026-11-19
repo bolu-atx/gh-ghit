@@ -163,10 +163,46 @@ fn stored_bundle(repo: &str, number: u64) -> Option<IssueBundle> {
     Some((data, store.item_statuses(number).unwrap_or(statuses)))
 }
 
-/// Store a fetched issue bundle at its own `updated_at`. Best effort.
-/// Blocking.
+/// The sidebar row of a fetched bundle. Fields the bundle cannot carry
+/// (CI rollup, sub-issue parent and summary, merge time) and an empty
+/// status lookup come from `stored`, so a partial fetch never blanks a
+/// good synced row. The merge time falls back to `updated_at`.
+fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row {
+    let (data, statuses) = bundle;
+    let mut issue = data.clone();
+    issue.body.clear();
+    issue.comments.clear();
+    issue.review_threads.clear();
+    issue.paired.clear();
+    let detail = model::BoardDetail {
+        created: data.created_at.get(..10).unwrap_or("").to_owned(),
+        updated: data.updated_at.get(..10).unwrap_or("").to_owned(),
+        comments: data.comments.len(),
+    };
+    let window_at = match (data.is_pr, data.state.as_str()) {
+        (true, "MERGED") => Some(stored.and_then(|r| r.window_at.clone()).unwrap_or_else(|| data.updated_at.clone())),
+        (false, "CLOSED") => Some(data.updated_at.clone()),
+        _ => None,
+    };
+    let mut statuses = statuses.clone();
+    if let Some(old) = stored {
+        issue.checks = issue.checks.or(old.issue.checks);
+        issue.parent = old.issue.parent;
+        issue.sub_summary = old.issue.sub_summary;
+        if statuses.is_empty() {
+            statuses = old.statuses.clone();
+        }
+    }
+    api::Row { issue, statuses, detail, complete: false, window_at }
+}
+
+/// Store a fetched issue bundle at its own `updated_at`, and its row
+/// into `items` newer-only so the item joins the local copy. Best
+/// effort. Blocking.
 fn save_bundle(repo: &str, number: u64, bundle: &IssueBundle) {
-    if let Ok(store) = store::open(repo) {
+    if let Ok(mut store) = store::open(repo) {
+        let row = row_from_bundle(bundle, store.row(number).as_ref());
+        let _ = store.upsert_rows_newer(&[row]);
         let _ = store.put_detail(store::Detail::Issue, number, &bundle.0.updated_at, bundle);
     }
 }
@@ -931,6 +967,82 @@ mod tests {
         }
         assert_eq!(got.body, "stored body");
         assert_eq!(statuses, vec![("Board".to_string(), Some("Todo".to_string()))], "statuses come from the sync");
+    }
+
+    /// Run `f` with an isolated data dir and a token (HTTP panics in tests).
+    fn with_store_env<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = cache::test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved = (std::env::var("XDG_DATA_HOME").ok(), std::env::var("GH_TOKEN").ok());
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        std::env::set_var("GH_TOKEN", "test");
+        let out = f();
+        for (key, value) in [("XDG_DATA_HOME", saved.0), ("GH_TOKEN", saved.1)] {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        out
+    }
+
+    fn fetched(number: u64, is_pr: bool, state: &str, updated: &str) -> IssueBundle {
+        let data = IssueData {
+            number, is_pr, state: state.to_string(), title: format!("t{number}"), body: "b".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(), updated_at: updated.to_string(), ..Default::default()
+        };
+        (data, vec![])
+    }
+
+    /// An opened item no sync listed joins `items`; its second open and
+    /// its diff and graph then use the store.
+    #[test]
+    fn an_opened_unlisted_item_joins_the_store() {
+        with_store_env(|| {
+            let bundle = fetched(7, true, "MERGED", "2026-02-01T00:00:00Z");
+            save_bundle("o/r", 7, &bundle);
+            let row = store::open("o/r").unwrap().row(7).expect("row stored");
+            assert_eq!(row.issue.state, "MERGED");
+            assert_eq!(row.issue.body, "", "rows carry no body");
+            assert_eq!(row.window_at.as_deref(), Some("2026-02-01T00:00:00Z"));
+            let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            let (got, _) = runtime.block_on(fetch_number("o/r", 7, false, None)).unwrap();
+            assert_eq!(got.body, "b", "second open makes zero requests");
+            save_detail("o/r", store::Detail::Diff, 7, &vec![1u8]);
+            save_detail("o/r", store::Detail::Graph, 7, &vec![2u8]);
+            assert_eq!(stored_detail::<Vec<u8>>("o/r", store::Detail::Diff, 7), Some(vec![1]));
+            assert_eq!(stored_detail::<Vec<u8>>("o/r", store::Detail::Graph, 7), Some(vec![2]));
+        });
+    }
+
+    #[test]
+    fn an_older_fetched_row_does_not_overwrite() {
+        with_store_env(|| {
+            let mut listed = row(5, false, "OPEN", None);
+            listed.issue.updated_at = "2026-03-01T00:00:00Z".to_string();
+            save_rows("o/r", "s", &[listed]);
+            save_bundle("o/r", 5, &fetched(5, false, "CLOSED", "2026-02-01T00:00:00Z"));
+            assert_eq!(store::open("o/r").unwrap().row(5).unwrap().issue.state, "OPEN");
+        });
+    }
+
+    /// A fetched row without CI, statuses, parent or summary keeps the
+    /// stored row's.
+    #[test]
+    fn a_fetched_row_keeps_stored_checks_and_statuses() {
+        with_store_env(|| {
+            let mut listed = row(5, true, "OPEN", None);
+            listed.issue.updated_at = "2026-02-01T00:00:00Z".to_string();
+            listed.issue.checks = Some(model::CheckState::Pass);
+            listed.issue.parent = Some(2);
+            save_rows("o/r", "s", &[listed]);
+            save_bundle("o/r", 5, &fetched(5, true, "OPEN", "2026-03-01T00:00:00Z"));
+            let got = store::open("o/r").unwrap().row(5).unwrap();
+            assert_eq!(got.issue.updated_at, "2026-03-01T00:00:00Z", "the newer fetch landed");
+            assert_eq!(got.issue.checks, Some(model::CheckState::Pass));
+            assert_eq!(got.issue.parent, Some(2));
+            assert_eq!(got.statuses, vec![("Board".to_string(), Some("Todo".to_string()))]);
+        });
     }
 
     #[test]
