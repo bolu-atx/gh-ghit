@@ -102,13 +102,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      # The extension version tracks the release tag (preflight checked
-      # it equals Cargo.toml), so Marketplace uploads always increase.
+      # The extension takes the release tag's version (no independent
+      # versioning); the version in package.json is a placeholder.
       - name: Package .vsix
         shell: bash
         working-directory: editors/vscode
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          version="$(grep '^version' ../../Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          version="${TAG#v}"
           mkdir -p ../../dist
           npm ci
           npm version "$version" --no-git-tag-version --allow-same-version
