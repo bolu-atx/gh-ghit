@@ -5,14 +5,11 @@ use super::sidebar::{FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFR
 use super::test_support::{issue, restore_xdg, sidebar_app, temp_xdg};
 use crate::model::BoardData;
 
-fn sections_cache() -> String {
-    github::Key::Sections { repo: "o/r".to_string(), hours: 24, show: [true; 4] }.name()
-}
-
-/// Persist rows in the sections payload shape (rows plus fetch start).
-fn put_sections(rows: Vec<crate::github::Row>) {
-    let payload = serde_json::json!({"started_at": chrono::Utc::now().to_rfc3339(), "rows": rows});
-    crate::cache::cache_put(&sections_cache(), &payload);
+/// Store rows as a fresh 24h, all-lists sync that started `age_secs` ago.
+fn put_sections(rows: Vec<crate::github::Row>, age_secs: i64) {
+    let started = chrono::Utc::now() - chrono::TimeDelta::seconds(age_secs);
+    let sync = crate::store::Sync { started_at: started.to_rfc3339(), hours: 24, show: [true; 4] };
+    crate::store::open("o/r").unwrap().write(&sync, &rows, &[]).unwrap();
 }
 
 fn cached_row(number: u64, complete: bool) -> crate::github::Row {
@@ -45,7 +42,7 @@ fn add_recent(app: &mut App, n: u64, updated: &str, labels: &[&str], milestone: 
 #[test]
 fn startup_hydrates_sidebar_from_sections_cache() {
     let (_guard, _dir, saved) = temp_xdg();
-    put_sections(vec![cached_row(7, false), cached_row(9, true)]);
+    put_sections(vec![cached_row(7, false), cached_row(9, true)], 0);
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.hydrate_cached_sections();
@@ -60,7 +57,7 @@ fn startup_hydrates_sidebar_from_sections_cache() {
 #[test]
 fn startup_hydration_leaves_present_rows_alone() {
     let (_guard, _dir, saved) = temp_xdg();
-    put_sections(vec![cached_row(7, false), cached_row(9, false)]);
+    put_sections(vec![cached_row(7, false), cached_row(9, false)], 0);
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     let mut kept = issue(7, "2026-01-05T00:00:00Z");
@@ -75,34 +72,14 @@ fn startup_hydration_leaves_present_rows_alone() {
 
 #[test]
 fn startup_hydration_ignores_missing_and_expired_cache() {
-    let (_guard, dir, saved) = temp_xdg();
-    let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
-    app.hydrate_cached_sections();
-    assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "no cache means no rows");
-    put_sections(vec![cached_row(7, false)]);
-    let path = dir.path().join("ghit").join("cache").join(format!("{}.json", sections_cache()));
-    let mut payload: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    payload["fetched_at"] = serde_json::json!(now - crate::api::DELTA_MAX_AGE_SECS as u64 - 1);
-    std::fs::write(&path, serde_json::to_string(&payload).unwrap()).unwrap();
-    app.hydrate_cached_sections();
-    assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "expired cache reads as a miss");
-    restore_xdg(saved);
-}
-
-#[test]
-fn startup_hydration_treats_the_old_payload_shape_as_a_miss() {
     let (_guard, _dir, saved) = temp_xdg();
-    crate::cache::cache_put(&sections_cache(), &vec![cached_row(7, false)]);
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.hydrate_cached_sections();
-    assert!(app.nav.recent.is_empty(), "a bare row list without a fetch start is a miss");
+    assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "no store means no rows");
+    put_sections(vec![cached_row(7, false)], 3601);
+    app.hydrate_cached_sections();
+    assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "a sync over an hour old reads as a miss");
     restore_xdg(saved);
 }
 
