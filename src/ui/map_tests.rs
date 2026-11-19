@@ -749,3 +749,89 @@ fn opening_a_pr_from_the_map_keeps_the_map_for_the_map_key() {
     assert_eq!((back.x, back.y, back.pinned), (eleven.x, eleven.y, eleven.pinned), "pins survive");
     assert!(map_rows(&mut app).join("\n").contains("whole repo"));
 }
+
+/// Rows of the ranking strip as text.
+fn strip_rows(app: &mut App) -> Vec<String> {
+    let buf = draw_buffer(app);
+    let area = app.hits.map_strip;
+    (area.y..area.bottom())
+        .map(|y| (area.x..area.right()).map(|x| buf[(x, y)].symbol()).collect::<String>().trim_end().to_string())
+        .collect()
+}
+
+#[test]
+fn the_ranking_strip_lists_ready_work_bottlenecks_and_critical_paths() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    let full = snapshot(&mut app);
+    assert_eq!(app.hits.map_strip, ratatui::layout::Rect::default(), "the strip starts hidden");
+    let width = app.hits.map_area.width;
+    handle_key(&mut app, key(KeyCode::Char('B')));
+    let rows = strip_rows(&mut app);
+    let expected = [
+        "┌ ranks ─────────────────────┐",
+        "│ Ready                      │",
+        "│  #11 Open blocker          │",
+        "│                            │",
+        "│ Bottlenecks                │",
+        "│  #11 unblocks 2 Open bloc… │",
+        "│ ▌#7 unblocks 1 Center iss… │",
+        "│                            │",
+        "│ Critical path              │",
+        "│ Ship it                    │",
+        "│  #7 → #8                   │",
+    ];
+    assert_eq!(rows[..expected.len()].join("\n"), expected.join("\n"));
+    assert_eq!(app.hits.map_strip.x + app.hits.map_strip.width, app.hits.map_area.x, "the map sits right of the strip");
+    assert_eq!(app.hits.map_area.width, width - app.hits.map_strip.width);
+    handle_key(&mut app, key(KeyCode::Char('B')));
+    assert_eq!(snapshot(&mut app), full, "hiding the strip gives the whole map back");
+}
+
+#[test]
+fn picking_a_strip_row_selects_and_centers_its_node_and_lights_its_chain() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('J')));
+    assert_eq!(app.map.selected, Some(7), "J does nothing while the strip is hidden");
+    handle_key(&mut app, key(KeyCode::Char('B')));
+    draw_buffer(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('J')));
+    assert_eq!(app.map.selected, Some(11), "from #7 in the bottlenecks, J wraps to the top: ready #11");
+    let eleven = app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()].clone();
+    assert_eq!((app.map.camera.x, app.map.camera.y), (eleven.x, eleven.y), "the view centers on it");
+    assert!(!app.map.follow);
+    handle_key(&mut app, key(KeyCode::Char('J')));
+    assert_eq!((app.map.selected, app.map.strip_cursor()), (Some(11), Some(1)), "#11 again, as a bottleneck");
+    handle_key(&mut app, key(KeyCode::Char('K')));
+    assert_eq!(app.map.strip_cursor(), Some(0));
+
+    // A click on the #7 bottleneck row picks it; its blocker #11 lights.
+    let rows = strip_rows(&mut app);
+    let at = rows.iter().position(|row| row.contains("#7 unblocks")).unwrap() as u16;
+    let strip = app.hits.map_strip;
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), strip.x + 3, strip.y + at));
+    assert_eq!(app.map.selected, Some(7));
+    let buf = draw_buffer(&mut app);
+    let index = app.map.graph.index_of(11).unwrap();
+    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == index).copied().unwrap();
+    assert!(buf[(rect.x, rect.y)].modifier.contains(ratatui::style::Modifier::UNDERLINED), "#11 is on #7's chain");
+}
+
+#[test]
+fn the_strip_and_the_card_share_the_map_and_the_toolbar_toggles_the_strip() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    let (rect, _, _) = app.hits.controls.iter().find(|(_, action, _)| *action == crate::keymap::Action::GraphStrip).copied()
+        .expect("a ranks button on the map toolbar");
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y));
+    assert!(app.map.strip, "the button shows the strip");
+    handle_key(&mut app, key(KeyCode::Char('i')));
+    draw_buffer(&mut app);
+    let (strip, map, card) = (app.hits.map_strip, app.hits.map_area, app.hits.map_card);
+    assert!(strip.width > 0 && card.width > 0, "both show");
+    assert_eq!((strip.right(), map.right()), (map.x, card.x), "strip, map, card from left to right");
+    let tabs = tab_line(&mut app);
+    assert!(tabs.contains("B \u{f0cb} ranks"), "{tabs}");
+}

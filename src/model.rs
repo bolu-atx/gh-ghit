@@ -7,6 +7,7 @@ mod graph;
 mod issue;
 mod links;
 pub mod physics;
+mod rank;
 mod sidebar;
 mod text;
 
@@ -23,6 +24,8 @@ mod links_tests;
 #[cfg(test)]
 mod physics_tests;
 #[cfg(test)]
+mod rank_tests;
+#[cfg(test)]
 mod sidebar_tests;
 #[cfg(test)]
 mod text_tests;
@@ -36,6 +39,7 @@ pub use diff::{CONTEXT_STEPS, DiffFile, DiffKind, SplitRow, diff_lines, diff_sum
 pub use graph::{LinkKind, MapGraph, MapItem, MapLink, MapNode, MapScope, NodeState, build_map};
 #[cfg(test)]
 pub use graph::hub_id;
+pub use rank::{Ranking, rank};
 pub use issue::{merge_comment_pages, paired_refs, parse_check_state, parse_review_threads, thread_reply_comment_id};
 pub use links::{LinkTarget, link_ranges, linkify, links_in_line, nearest_link, referenced_numbers};
 pub use sidebar::{GroupBy, LazyChildren, SideRow, sidebar_lines};

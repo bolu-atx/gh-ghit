@@ -11,7 +11,7 @@ use crate::app::{App, Tab};
 use crate::core::map::{Camera, ZOOM_STEP};
 use crate::github;
 use crate::model::physics::{Layout, Physics};
-use crate::model::{self, MapGraph, MapItem, MapLink, MapScope};
+use crate::model::{self, MapGraph, MapItem, MapLink, MapScope, Ranking};
 
 /// Most layout steps per frame while the map moves: a few, so the motion
 /// reads as animation.
@@ -94,6 +94,12 @@ pub(crate) struct MapView {
     pub(crate) drag: Option<MapDrag>,
     pub(crate) card: Option<MapCard>,
     pub(crate) detail: Option<CardDetail>,
+    /// Ready work, bottlenecks and critical paths of `graph`.
+    pub(crate) ranking: Ranking,
+    /// The ranking strip shows at the left of the map.
+    pub(crate) strip: bool,
+    /// Row of the strip last picked, by keys or a click.
+    pub(crate) strip_row: Option<usize>,
     /// The next frame brings the card's subject into view.
     reveal: bool,
     /// Map area the camera last fit for.
@@ -120,6 +126,9 @@ impl Default for MapView {
             drag: None,
             card: None,
             detail: None,
+            ranking: Ranking::default(),
+            strip: false,
+            strip_row: None,
             reveal: false,
             view: Rect::default(),
             wake: 0,
@@ -314,6 +323,7 @@ impl App {
         map.center = center;
         map.graph = model::build_map(&map.items, &map.links, center, map.scope);
         map.layout.rebuild(&map.graph.ids(), &map.graph.edges);
+        map.ranking = model::rank(&map.graph);
         map.built = Some(map.scope);
         if new_center || map.selected_index().is_none() {
             map.selected = center.filter(|n| map.graph.index_of(*n).is_some());

@@ -54,7 +54,7 @@ actions! {
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen, GraphPanLeft, GraphPanRight, GraphPanUp,
     GraphPanDown, GraphMoveLeft, GraphMoveRight, GraphMoveUp, GraphMoveDown, GraphZoomIn, GraphZoomOut,
     GraphFit, GraphUnpin, GraphScope, GraphCard, GraphNextEdge, GraphPrevEdge, GraphCloseCard,
-    GraphPhysics,
+    GraphPhysics, GraphStrip, GraphStripNext, GraphStripPrev,
     // Map physics dialog.
     ClosePhysics, PhysicsDown, PhysicsUp, PhysicsLower, PhysicsRaise, PhysicsReset,
     // Shortcuts, confirm, compose.
@@ -520,6 +520,11 @@ fn side_pane(app: &App) -> bool {
 /// A card shows on the map, so `Esc` closes it first.
 fn map_card_open(app: &App) -> bool {
     app.map.card.is_some()
+}
+
+/// The ranking strip shows on the map, so its row keys act.
+fn map_strip_open(app: &App) -> bool {
+    app.map.strip
 }
 
 fn undo_live(app: &App) -> bool {

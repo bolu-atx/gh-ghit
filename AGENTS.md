@@ -55,7 +55,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/core/map.rs` | Dependency map geometry: the camera (world to cell and back, fit, label detail per zoom) and line rasterizing |
 | `src/core/layout.rs` | Layout math: side column widths (`columns`), `MIN_MAIN_WIDTH`, `MAX_DIFF_FILES` |
 | `src/core/wrap.rs` | Soft wrap of a draft into visual rows; cursor to (row, col) and click to char index |
-| `src/model.rs` + `src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` (dependency map nodes and edges), `physics` (force layout) |
+| `src/model.rs` + `src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` (dependency map nodes and edges), `rank` (ready work, bottlenecks, critical paths), `physics` (force layout) |
 | `src/github.rs` | Data-access facade over `api`/`cache`/`store`; UI layers never import those directly |
 | `src/api.rs` + `src/api/{client,sections,sub_issues,board}.rs` | Token-backed GraphQL/REST calls |
 | `src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
