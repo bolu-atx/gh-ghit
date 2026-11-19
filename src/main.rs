@@ -20,6 +20,7 @@ mod github;
 mod input;
 mod keymap;
 mod model;
+mod store;
 mod theme;
 mod ui;
 

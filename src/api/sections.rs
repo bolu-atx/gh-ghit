@@ -364,7 +364,7 @@ const DELTA_OVERLAP: chrono::TimeDelta = chrono::TimeDelta::minutes(2);
 
 /// A cached payload whose fetch start is older than this takes the full
 /// walk instead of the change-only search.
-pub const DELTA_MAX_AGE_SECS: i64 = 3600;
+const DELTA_MAX_AGE_SECS: i64 = 3600;
 
 /// Delta vs full: the cached fetch start to search from, or `None` for the
 /// full walk (forced, no cache, missing or bad timestamp, or too old).
@@ -460,6 +460,20 @@ fn listed_section(row: &Row) -> Option<usize> {
     }
 }
 
+/// True when a shown list holds `row` and its window anchor, if any, is
+/// inside the window.
+fn shown(row: &Row, now: chrono::DateTime<chrono::Utc>, hours: u64, show: [bool; 4]) -> bool {
+    listed_section(row).is_some_and(|i| show[i])
+        && row.window_at.as_deref().is_none_or(|at| within_window(Some(at), now, hours))
+}
+
+/// Sidebar view of stored rows: the shown ones, regrouped by list in
+/// stored order, up to the row cap.
+pub fn visible_rows(rows: Vec<Row>, now: chrono::DateTime<chrono::Utc>, hours: u64, show: [bool; 4]) -> Vec<Row> {
+    let rows = rows.into_iter().filter(|r| shown(r, now, hours, show)).collect();
+    merge_rows(Vec::new(), rows, now, hours)
+}
+
 /// Merge change-only rows into the last cached payload. A changed row
 /// that stays in its list replaces the cached one in place; a new row, or
 /// one that moved list, goes in as fresh. A changed row that is now
@@ -474,8 +488,7 @@ pub fn merge_delta(
     let touched: HashSet<u64> = delta.iter().map(|r| r.issue.number).collect();
     let order: Vec<u64> = delta.iter().map(|r| r.issue.number).collect();
     let mut changed: std::collections::HashMap<u64, Row> = delta.into_iter()
-        .filter(|r| listed_section(r).is_some_and(|i| show[i]))
-        .filter(|r| r.window_at.as_deref().is_none_or(|at| within_window(Some(at), now, hours)))
+        .filter(|r| shown(r, now, hours, show))
         .map(|r| (r.issue.number, r))
         .collect();
     let mut kept = Vec::with_capacity(cached.len());

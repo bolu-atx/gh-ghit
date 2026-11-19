@@ -10,8 +10,8 @@ pub use client::{
 pub use board::fetch_board;
 pub use graph::{graph, sub_issues};
 pub use sections::{
-    apply_statuses, changed_rows, delta_since, fetch_statuses, merge_delta, merge_rows, sections, status_targets,
-    DELTA_MAX_AGE_SECS, MAX_SECTION_ROWS,
+    apply_statuses, changed_rows, delta_since, fetch_statuses, merge_delta, merge_rows, sections, status_targets, visible_rows,
+    MAX_SECTION_ROWS,
 };
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};

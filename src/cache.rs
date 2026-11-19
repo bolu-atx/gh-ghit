@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CACHE_TTL_SECS: u64 = 1800; // 30 minutes
 
-fn base_dir() -> PathBuf {
+pub(crate) fn base_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         PathBuf::from(xdg).join("ghit")
     } else if let Ok(home) = std::env::var("HOME") {
@@ -18,7 +18,7 @@ fn base_dir() -> PathBuf {
 /// Creates `dir` and keeps the data root owner-only (0700 on Unix).
 /// The cache holds issue bodies from private repos, so other local
 /// users must not read it. Returns false when the directory can't be made.
-fn ensure_private_dir(dir: &std::path::Path) -> bool {
+pub(crate) fn ensure_private_dir(dir: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -67,7 +67,7 @@ pub fn cache_put<T: serde::Serialize>(name: &str, data: &T) {
     let _ = std::fs::write(p, serde_json::to_string(&payload).unwrap_or_default());
 }
 
-fn host() -> String {
+pub(crate) fn host() -> String {
     std::env::var("GH_HOST")
         .unwrap_or_else(|_| "github.com".to_owned())
         .to_lowercase()
@@ -99,7 +99,6 @@ pub enum Key {
     Comments { repo: String, number: u64 },
     Diff { repo: String, number: u64 },
     Graph { repo: String, number: u64 },
-    Sections { repo: String, hours: u64, show: [bool; 4] },
     Board { owner: String },
     Labels { repo: String },
     Milestones { repo: String },
@@ -114,10 +113,6 @@ impl Key {
             Key::Comments { repo, number } => format!("comments-{h}-{}-{number}", slug(repo)),
             Key::Diff { repo, number } => format!("diff-{h}-{}-{number}", slug(repo)),
             Key::Graph { repo, number } => format!("graph-{h}-{}-{number}", slug(repo)),
-            Key::Sections { repo, hours, show } => {
-                let mask: String = show.iter().map(|s| if *s { '1' } else { '0' }).collect();
-                format!("sections-{h}-{}-{hours}-{mask}", slug(repo))
-            }
             Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
             Key::Labels { repo } => format!("labels-{h}-{}", slug(repo)),
             Key::Milestones { repo } => format!("milestones-{h}-{}", slug(repo)),
@@ -350,7 +345,6 @@ mod tests {
                 Key::Comments { repo: repo.to_string(), number: 7 }.name(),
                 Key::Diff { repo: repo.to_string(), number: 7 }.name(),
                 Key::Graph { repo: repo.to_string(), number: 7 }.name(),
-                Key::Sections { repo: repo.to_string(), hours: 24, show: [true; 4] }.name(),
                 Key::Board { owner: "octo".to_string() }.name(),
                 Key::Labels { repo: repo.to_string() }.name(),
                 Key::Milestones { repo: repo.to_string() }.name(),
