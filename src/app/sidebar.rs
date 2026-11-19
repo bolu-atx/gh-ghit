@@ -27,10 +27,12 @@ pub(crate) struct SectionFeed {
     pub(crate) auto_refresh: bool,
     /// The next spawned fetch runs the change probe first.
     pub(crate) probe: bool,
-    /// The next spawned fetch walks every list instead of the change-only
-    /// search.
-    pub(crate) full: bool,
-    /// When the last full section fetch landed.
+    /// How the next spawned fetch runs: change-only, with a status
+    /// refresh, or a full walk of every list.
+    pub(crate) refresh: github::Refresh,
+    /// When the last status refresh or full walk started.
+    pub(crate) last_status: Instant,
+    /// When the last full walk started.
     pub(crate) last_full: Instant,
     /// Section page progress: rows fetched vs the row cap, while pages
     /// remain. Cleared when the terminal result lands.
@@ -47,7 +49,8 @@ impl SectionFeed {
     pub(crate) fn new() -> Self {
         Self { rx: None, last_fetch: Instant::now(),
             auto_refresh_interval: auto_refresh_interval_default(),
-            auto_refresh: false, probe: false, full: false, last_full: Instant::now(),
+            auto_refresh: false, probe: false, refresh: github::Refresh::Delta,
+            last_status: Instant::now(), last_full: Instant::now(),
             progress: None, replace: false, merged_window_hours: 24,
             cap_notified: false }
     }
@@ -139,10 +142,26 @@ pub(crate) struct LabelsPane {
 
 pub(super) const RECENT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub(super) const RECENT_REFRESH_MAX_INTERVAL: Duration = Duration::from_secs(60);
-/// Auto-refreshes inside this span since the last full fetch run the
-/// free change probe first; past it a full fetch runs anyway, so CI and
-/// project-status changes (which leave `updated_at` alone) still land.
-pub(super) const FULL_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+/// CI and project-status changes leave `updated_at` alone, so neither the
+/// probe nor the change-only search sees them. Past this span since the
+/// last status refresh, an auto-refresh re-reads the status of the open
+/// rows, probe or no probe.
+pub(super) const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+/// Backstop: past this span since the last full walk, an auto-refresh
+/// walks every list so rows the change-only search missed converge.
+pub(super) const FULL_REFRESH_INTERVAL: Duration = Duration::from_secs(1800);
+
+/// Which refresh an auto-refresh runs, given the time since the last
+/// status refresh and since the last full walk.
+pub(super) fn refresh_plan(since_status: Duration, since_full: Duration) -> github::Refresh {
+    if since_full >= FULL_REFRESH_INTERVAL {
+        github::Refresh::Full
+    } else if since_status >= STATUS_REFRESH_INTERVAL {
+        github::Refresh::Status
+    } else {
+        github::Refresh::Delta
+    }
+}
 
 /// Auto-refresh cadence, overridable for deterministic runs: the e2e
 /// harness stretches it past any scenario lifetime so each scenario
@@ -204,12 +223,15 @@ impl App {
         let hours = self.sections.merged_window_hours;
         let show = self.show_mask();
         let probe = std::mem::take(&mut self.sections.probe);
-        let full = std::mem::take(&mut self.sections.full);
+        let refresh = std::mem::take(&mut self.sections.refresh);
+        let now = Instant::now();
+        if refresh != github::Refresh::Delta { self.sections.last_status = now; }
+        if refresh == github::Refresh::Full { self.sections.last_full = now; }
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         self.enqueue(core::Kind::Sections, None, async move {
             if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, show, full, Some(tx.clone())).await;
+            let result = github::fetch_recent_sections(&repo, hours, show, refresh, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });
     }
@@ -245,16 +267,18 @@ impl App {
         {
             return;
         }
-        self.sections.probe = now.duration_since(self.sections.last_full) < FULL_REFRESH_INTERVAL;
-        self.sections.full = !self.sections.probe;
-        if self.sidebar.query_active.trim().is_empty() {
+        let search = !self.sidebar.query_active.trim().is_empty();
+        if !search {
+            self.sections.refresh = refresh_plan(
+                now.duration_since(self.sections.last_status),
+                now.duration_since(self.sections.last_full),
+            );
+            self.sections.probe = self.sections.refresh == github::Refresh::Delta;
             self.merge_recent_sections();
         } else {
             // Periodic refresh: no "searching" toast on every pass.
             self.search_fetch(self.sidebar.query_active.clone());
         }
-        self.sections.probe = false;
-        self.sections.full = false;
         if self.sections.rx.is_some() {
             self.sections.auto_refresh = true;
         }

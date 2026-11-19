@@ -323,7 +323,7 @@ impl App {
     /// re-walks every list (idempotent through the contains checks in polling).
     pub(crate) fn refresh_listing(&mut self) {
         if self.sidebar.query_active.trim().is_empty() {
-            self.sections.full = true;
+            self.sections.refresh = github::Refresh::Full;
             self.merge_recent_sections();
         } else {
             let q = self.sidebar.query_active.clone();
