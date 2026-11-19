@@ -79,7 +79,7 @@ use ratatui::layout::Rect;
 use crate::core::{self, Layer, Pane};
 use crate::{github, model};
 use poll::poll_bootstrap;
-pub(crate) use diff::{poll_review_submit, poll_diffs, poll_sub_issues};
+pub(crate) use diff::{poll_review_submit, poll_diffs, poll_head_files, poll_sub_issues};
 pub(crate) use board::{board_open, board_columns, board_move, board_selected_number, poll_board};
 pub(crate) use compose::{poll_compose, run_compose_editor};
 pub(crate) use confirm::{poll_auth, poll_set_state, auth_failure, run_reauth};
@@ -509,6 +509,8 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= app.drive_backfill(Instant::now());
     landed |= poll_issues(app);
     landed |= poll_diffs(app);
+    landed |= poll_head_files(app);
+    landed |= app.sync_diff();
     landed |= poll_sub_issues(app);
     landed |= poll_board(app);
     landed |= poll_details(app);

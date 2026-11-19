@@ -45,7 +45,7 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
                 actions.push(SubmitReview);
             }
             if app.visual_diff() {
-                actions.extend([DiffPrevFile, DiffNextFile, DiffSplit, DiffToggleFile, DiffExpandAll]);
+                actions.extend([DiffPrevFile, DiffNextFile, DiffSplit, DiffToggleFile, DiffExpandAll, DiffContext]);
             }
             actions
         }

@@ -108,6 +108,7 @@ fn diff_tab_folds_files_by_default() {
         DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
     ]);
     app.set_tab(Tab::Visual);
+    app.nav.pane = crate::core::Pane::Main;
     let text = frame_text(&mut app);
     assert!(text.contains("Diff View"), "{text}");
     assert!(!text.contains("Graph"), "{text}");
@@ -165,6 +166,7 @@ fn arrows_walk_diff_lines() {
         DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 2, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
     ]);
     app.set_tab(Tab::Visual);
+    app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
     // The cursor anchors to the first header without expanding it.
     let h0 = app.diff.headers[0];
@@ -210,6 +212,7 @@ fn shift_jk_jumps_between_diff_files() {
     ]);
     app.diff.expanded_files.insert((9, "src/a.rs".into()));
     app.set_tab(Tab::Visual);
+    app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
     assert_eq!(app.diff.cursor, 0);
     let top = app.nav.scroll;
@@ -252,6 +255,7 @@ fn diff_active_line_highlights_and_yanks() {
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.set_tab(Tab::Visual);
+    app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
     // Unfold, then step onto the deletion line.
     handle_key(&mut app, key(KeyCode::Char(' ')));
@@ -436,6 +440,7 @@ fn expand_app() -> App {
         DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
         DiffFile { filename: "src/c.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+see".into() },
     ]);
+    app.nav.pane = crate::core::Pane::Main;
     app
 }
 
@@ -483,4 +488,76 @@ fn expand_all_keeps_the_cursor_file_in_view() {
     let line = app.diff.line.and_then(|abs| app.hits.body_rows.get(abs - app.hits.body_base as usize));
     assert_eq!(app.diff.cursor, app.diff_file_at_cursor().unwrap(), "line sits in the cursor file");
     assert!(line.is_some_and(|l| l.contains("src/")), "line on the file header: {line:?}");
+}
+
+#[test]
+fn diff_keys_yield_to_a_focused_side_pane() {
+    let mut app = expand_app();
+    let _ = frame_text(&mut app);
+    app.nav.pane = crate::core::Pane::Issues;
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_ne!(app.nav.current, Some(9), "j walks the sidebar, not the diff");
+}
+
+#[test]
+fn expand_all_mode_is_sticky_across_prs() {
+    use crate::model::DiffFile;
+    let mut app = expand_app();
+    let _ = frame_text(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('a')));
+    app.issues.data.insert(10, diff_pr(10));
+    app.show_issue(10);
+    app.diff.pending.remove(&10);
+    app.diff.files.insert(10, vec![
+        DiffFile { filename: "x.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+x".into() },
+    ]);
+    app.set_tab(Tab::Visual);
+    assert!(app.sync_diff());
+    assert!(app.diff.expanded_files.contains(&(10, "x.rs".to_string())), "the next PR opens expanded");
+    // A file folded by hand stays folded: the mode applies once per view.
+    app.diff.expanded_files.clear();
+    assert!(!app.sync_diff());
+    assert!(app.diff.expanded_files.is_empty());
+    // Folding all here folds PR 9 on its next view too.
+    app.diff.expanded_files.insert((10, "x.rs".to_string()));
+    app.diff.expanded_files.insert((9, "src/a.rs".to_string()));
+    app.nav.pane = crate::core::Pane::Main;
+    handle_key(&mut app, key(KeyCode::Char('a')));
+    app.show_issue(9);
+    app.set_tab(Tab::Visual);
+    app.sync_diff();
+    assert!(app.diff.expanded_files.is_empty());
+}
+
+#[test]
+fn context_toggle_widens_open_files_from_the_head_side() {
+    use crate::model::DiffFile;
+    let mut app = expand_app();
+    let raw = vec![DiffFile {
+        filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1,
+        patch: "@@ -4,7 +4,7 @@\n l4\n l5\n l6\n-old\n+new\n l8\n l9\n l10".into(),
+    }];
+    app.diff.raw.insert(9, raw.clone());
+    app.diff.files.insert(9, raw);
+    app.diff.expanded_files.insert((9, "src/a.rs".to_string()));
+    let _ = frame_text(&mut app);
+    // 3 lines is what GitHub sent: no fetch.
+    app.sync_diff();
+    assert!(app.diff.heads_pending.is_empty());
+    handle_key(&mut app, key(KeyCode::Char('x')));
+    assert_eq!(app.message, "diff context: 5 lines");
+    app.sync_diff();
+    assert!(app.diff.heads_pending.contains(&(9, "src/a.rs".to_string())));
+    let head: String = (1..=20).map(|i| if i == 7 { "new\n".to_string() } else { format!("l{i}\n") }).collect();
+    app.diff.heads_tx.send((9, vec!["src/a.rs".into()], Ok(vec![("src/a.rs".into(), Ok(head))]))).unwrap();
+    assert!(crate::app::poll_head_files(&mut app));
+    let patch = &app.diff.files[&9][0].patch;
+    assert!(patch.starts_with("@@ -2,11 +2,11 @@\n l2\n"), "{patch}");
+    let text = frame_text(&mut app);
+    assert!(text.contains("l12"), "{text}");
+    // Back around to 3 restores the raw patch.
+    for _ in 0..4 {
+        handle_key(&mut app, key(KeyCode::Char('x')));
+    }
+    assert_eq!(app.diff.files[&9][0].patch, app.diff.raw[&9][0].patch);
 }

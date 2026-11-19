@@ -302,3 +302,82 @@ pub fn split_rows(patch: &str) -> Vec<SplitRow> {
     }
     rows
 }
+
+/// Context lines each `x` press steps through. GitHub patches carry 3,
+/// so the first step needs no file contents; `usize::MAX` shows all.
+pub const CONTEXT_STEPS: [usize; 5] = [3, 5, 25, 100, usize::MAX];
+
+/// Rebuild `patch` with `ctx` unchanged lines around each change, read
+/// from `new_lines` (the head file). Hunks whose windows touch merge.
+/// Hunk text is kept as is; only context rows are added. A patch that
+/// does not parse comes back unchanged.
+pub fn widen_patch(patch: &str, new_lines: &[String], ctx: usize) -> String {
+    struct Core { old: u64, new: u64, rows: Vec<String>, new_len: u64 }
+    fn starts(header: &str) -> Option<(u64, u64)> {
+        let mut parts = header.split_whitespace().skip(1);
+        let num = |p: Option<&str>, m: char| p?.strip_prefix(m)?.split(',').next()?.parse::<u64>().ok();
+        Some((num(parts.next(), '-')?, num(parts.next(), '+')?))
+    }
+    let is_ctx = |r: &str| r.starts_with(' ') || r.is_empty();
+    let mut cores: Vec<Core> = vec![];
+    let mut hunk: Option<((u64, u64), Vec<String>)> = None;
+    let flush = |h: Option<((u64, u64), Vec<String>)>, cores: &mut Vec<Core>| {
+        let Some(((old, new), rows)) = h else { return };
+        let lead = rows.iter().take_while(|r| is_ctx(r)).count();
+        let trail = rows[lead..].iter().rev().take_while(|r| is_ctx(r)).count();
+        let core: Vec<String> = rows[lead..rows.len() - trail].to_vec();
+        let new_len = core.iter().filter(|r| !r.starts_with('-') && !r.starts_with('\\')).count() as u64;
+        cores.push(Core { old: old + lead as u64, new: new + lead as u64, rows: core, new_len });
+    };
+    for row in patch.lines() {
+        if row.starts_with("@@") {
+            flush(hunk.take(), &mut cores);
+            let Some(s) = starts(row) else { return patch.to_string() };
+            hunk = Some((s, vec![]));
+        } else if let Some((_, rows)) = hunk.as_mut() {
+            rows.push(row.to_string());
+        } else {
+            return patch.to_string();
+        }
+    }
+    flush(hunk, &mut cores);
+    if cores.is_empty() {
+        return patch.to_string();
+    }
+    let total = new_lines.len() as u64;
+    // A new-side line `n` (1-based) as a context row.
+    let line = |n: u64| format!(" {}", new_lines.get(n as usize - 1).map_or("", |s| s.as_str()));
+    let ctx = ctx as u64;
+    let mut out: Vec<String> = vec![];
+    let mut i = 0;
+    while i < cores.len() {
+        // Pure insert at line 0 (`+0`) has new 0; the window starts at 1.
+        let first_new = cores[i].new.max(1);
+        let lo = first_new.saturating_sub(ctx).max(1).min(first_new);
+        let old_lo = cores[i].old.saturating_sub(first_new - lo);
+        let mut rows: Vec<String> = (lo..first_new).map(line).collect();
+        let mut j = i;
+        loop {
+            let c = &cores[j];
+            rows.extend(c.rows.iter().cloned());
+            let end = c.new + c.new_len; // first new line after this core
+            let hi = end.saturating_add(ctx).min(total + 1);
+            match cores.get(j + 1) {
+                Some(next) if next.new.max(1) <= hi.saturating_add(ctx) => {
+                    rows.extend((end.max(1)..next.new.max(1)).map(line));
+                    j += 1;
+                }
+                _ => {
+                    rows.extend((end.max(1)..hi).map(line));
+                    break;
+                }
+            }
+        }
+        let old_len = rows.iter().filter(|r| !r.starts_with('+') && !r.starts_with('\\')).count();
+        let new_len = rows.iter().filter(|r| !r.starts_with('-') && !r.starts_with('\\')).count();
+        out.push(format!("@@ -{old_lo},{old_len} +{lo},{new_len} @@"));
+        out.extend(rows);
+        i = j + 1;
+    }
+    out.join("\n")
+}

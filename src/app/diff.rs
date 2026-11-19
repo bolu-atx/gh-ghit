@@ -41,16 +41,39 @@ pub(crate) struct DiffView {
     pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) split: bool,
+    /// Expand-all mode, sticky across PRs once `a` set it: `Some(true)`
+    /// opens every small file of each PR on first view, `Some(false)`
+    /// folds them. `None` until the first press.
+    pub(crate) expand_all: Option<bool>,
+    /// PRs that already took the current expand-all mode. Cleared on
+    /// each press so other PRs pick the new mode up on their next view.
+    pub(crate) synced: HashSet<u64>,
+    /// Index into `model::CONTEXT_STEPS`: context lines around changes.
+    pub(crate) context: usize,
+    /// Patches as GitHub sent them; `files` holds them widened to `context`.
+    pub(crate) raw: HashMap<u64, Vec<model::DiffFile>>,
+    /// Head-side file lines per (PR, filename), for widening. `None`
+    /// marks a failed fetch, so it is not retried this session.
+    pub(crate) heads: HashMap<(u64, String), Option<Vec<String>>>,
+    pub(crate) heads_pending: HashSet<(u64, String)>,
+    pub(crate) heads_tx: std::sync::mpsc::Sender<HeadFiles>,
+    pub(crate) heads_rx: std::sync::mpsc::Receiver<HeadFiles>,
 }
+
+/// One head-files fetch result: the PR, the names asked for, and the bodies.
+pub(crate) type HeadFiles = (u64, Vec<String>, Result<Vec<(String, Result<String, String>)>, String>);
 
 impl DiffView {
     pub(crate) fn new(
         tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
         rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
     ) -> Self {
+        let (heads_tx, heads_rx) = std::sync::mpsc::channel();
         Self { files: HashMap::new(), cursor: 0, line: None, touched: false,
             row_files: vec![], expanded_files: HashSet::new(), expanded_rows: HashSet::new(),
-            headers: vec![], pending_jump: None, pending: HashSet::new(), tx, rx, split: false }
+            headers: vec![], pending_jump: None, pending: HashSet::new(), tx, rx, split: false,
+            expand_all: None, synced: HashSet::new(), context: 0, raw: HashMap::new(),
+            heads: HashMap::new(), heads_pending: HashSet::new(), heads_tx, heads_rx }
     }
 }
 
@@ -129,6 +152,9 @@ impl App {
         self.nav.pane = Pane::Main;
         let fi = self.diff_file_at_cursor().unwrap_or(self.diff.cursor).min(count - 1);
         let expand = self.diff_will_expand();
+        self.diff.expand_all = Some(expand);
+        self.diff.synced.clear();
+        self.diff.synced.insert(n);
         let msg = if expand {
             let names: Vec<String> = self.small_files(n).iter().map(|f| f.filename.clone()).collect();
             let large = count - names.len();
@@ -243,6 +269,96 @@ impl App {
         }
     }
 
+    /// Step the context lines around each change through
+    /// `model::CONTEXT_STEPS`, wrapping back to 3. Steps past 3 fetch the
+    /// head side of open files (`sync_diff`) and widen once they land.
+    pub(crate) fn cycle_diff_context(&mut self) {
+        self.diff.context = (self.diff.context + 1) % model::CONTEXT_STEPS.len();
+        let numbers: Vec<u64> = self.diff.raw.keys().copied().collect();
+        for n in numbers {
+            self.rewiden(n);
+        }
+        self.diff.line = None;
+        self.diff.touched = false;
+        self.notify(format!("diff context: {}", self.diff_context_label()));
+    }
+
+    /// The context step as shown: a line count, or `all`.
+    pub(crate) fn diff_context_label(&self) -> &'static str {
+        ["3 lines", "5 lines", "25 lines", "100 lines", "all lines"][self.diff.context]
+    }
+
+    /// Rebuild PR `n`'s shown patches from its raw ones at the current
+    /// context. Files without a fetched head side keep the raw patch.
+    fn rewiden(&mut self, n: u64) {
+        let Some(raw) = self.diff.raw.get(&n) else { return };
+        let ctx = model::CONTEXT_STEPS[self.diff.context];
+        let files = raw.iter().map(|f| {
+            let mut f = f.clone();
+            if ctx > model::CONTEXT_STEPS[0] {
+                if let Some(Some(lines)) = self.diff.heads.get(&(n, f.filename.clone())) {
+                    f.patch = model::widen_patch(&f.patch, lines, ctx);
+                }
+            }
+            f
+        }).collect();
+        self.diff.files.insert(n, files);
+    }
+
+    /// Bring the open PR's Diff tab in line with the sticky modes: apply
+    /// the expand-all mode on its first view since the last press, and
+    /// fetch the head side of open files when context exceeds 3. True
+    /// when visible state changed.
+    pub(crate) fn sync_diff(&mut self) -> bool {
+        if !self.visual_diff() {
+            return false;
+        }
+        let Some(n) = self.nav.current else { return false };
+        if !self.diff.files.contains_key(&n) {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(expand) = self.diff.expand_all {
+            if self.diff.synced.insert(n) {
+                if expand {
+                    let names: Vec<String> = self.small_files(n).iter().map(|f| f.filename.clone()).collect();
+                    self.diff.expanded_files.extend(names.into_iter().map(|name| (n, name)));
+                } else {
+                    self.diff.expanded_files.retain(|(i, _)| *i != n);
+                }
+                changed = true;
+            }
+        }
+        if self.diff.context > 0 {
+            let want: Vec<String> = self.diff.raw.get(&n).into_iter().flatten()
+                .take(crate::core::MAX_DIFF_FILES)
+                .filter(|f| f.has_patch() && f.status != "removed")
+                .map(|f| f.filename.clone())
+                .filter(|name| {
+                    let key = (n, name.clone());
+                    self.diff.expanded_files.contains(&key)
+                        && !self.diff.heads.contains_key(&key)
+                        && !self.diff.heads_pending.contains(&key)
+                })
+                .collect();
+            if !want.is_empty() {
+                self.load_head_files(n, want);
+            }
+        }
+        changed
+    }
+
+    /// Queue one fetch of the head side of `names` in PR `n`.
+    fn load_head_files(&mut self, n: u64, names: Vec<String>) {
+        self.diff.heads_pending.extend(names.iter().map(|name| (n, name.clone())));
+        let tx = self.diff.heads_tx.clone();
+        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        self.enqueue(core::Kind::Diff, Some(n), async move {
+            let result = github::fetch_head_files(&repo, n, names.clone()).await;
+            let _ = tx.send((n, names, result));
+        });
+    }
+
     /// Flip the Diff tab between unified and side-by-side rendering,
     /// back at the top so the new layout starts visible.
     pub(crate) fn toggle_diff_split(&mut self) {
@@ -351,10 +467,41 @@ pub(crate) fn poll_diffs(app: &mut App) -> bool {
         app.diff.pending.remove(&number);
         match result {
             Ok(files) => {
+                // A refetch may move the head: drop its old file bodies.
+                app.diff.heads.retain(|(i, _), _| *i != number);
+                app.diff.raw.insert(number, files.clone());
                 app.diff.files.insert(number, files);
             }
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }
+    }
+    landed
+}
+
+/// Land head-side file bodies and re-widen their PR.
+pub(crate) fn poll_head_files(app: &mut App) -> bool {
+    let ready: Vec<HeadFiles> = app.diff.heads_rx.try_iter().collect();
+    let landed = !ready.is_empty();
+    for (n, names, result) in ready {
+        for name in &names {
+            app.diff.heads_pending.remove(&(n, name.clone()));
+        }
+        match result {
+            Ok(bodies) => {
+                for (name, body) in bodies {
+                    let lines = body.ok().map(|b| b.lines().map(str::to_owned).collect());
+                    app.diff.heads.insert((n, name), lines);
+                }
+            }
+            Err(e) => {
+                for name in names {
+                    app.diff.heads.insert((n, name), None);
+                }
+                auth_failure(app, &e);
+                app.notify(e);
+            }
+        }
+        app.rewiden(n);
     }
     landed
 }

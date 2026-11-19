@@ -50,7 +50,7 @@ actions! {
     TreeExpand, TreeCollapse, TreeToggle, TreeFoldAll, CycleSort, ReverseSort, Evict,
     OpenRef, ToggleLabel, ClearLabels, OpenHistoryRow, OpenRow,
     // Main sub-modes.
-    DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile, DiffExpandAll,
+    DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile, DiffExpandAll, DiffContext,
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen, GraphPanLeft, GraphPanRight, GraphPanUp,
     GraphPanDown, GraphMoveLeft, GraphMoveRight, GraphMoveUp, GraphMoveDown, GraphZoomIn, GraphZoomOut,
     GraphFit, GraphUnpin, GraphScope, GraphCard, GraphNextEdge, GraphPrevEdge, GraphCloseCard,
@@ -369,7 +369,7 @@ pub(crate) fn base_contexts(app: &App) -> Vec<Context> {
         chain.push(Context::Main(MainMode::Graph));
     }
     chain.push(Context::Pane(app.nav.pane));
-    if app.visual_diff() {
+    if app.visual_diff() && app.nav.pane == Pane::Main {
         chain.push(Context::Main(MainMode::Diff));
     } else if app.nav.pane == Pane::Main && !graph_focused(app) {
         chain.push(Context::Main(MainMode::Details));
