@@ -115,6 +115,10 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         super::map::handle_physics_mouse(app, m);
         return;
     }
+    if open(Dialog::MapFilter) {
+        super::map::handle_map_filter_mouse(app, m);
+        return;
+    }
     if open(Dialog::Format) || open(Dialog::BoardFilter) {
         handle_form_mouse(app, m);
         return;

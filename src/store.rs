@@ -238,15 +238,19 @@ impl Store {
     /// Every stored item, as the dependency map needs it.
     pub fn map_items(&self) -> Result<Vec<MapItem>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
-        let mut stmt = self.conn.prepare("SELECT number, kind, state, title, milestone FROM items ORDER BY number").map_err(fail)?;
+        let mut stmt = self.conn
+            .prepare("SELECT number, kind, state, title, milestone, labels FROM items ORDER BY number")
+            .map_err(fail)?;
         let items = stmt
             .query_map([], |r| {
+                let labels: String = r.get(5)?;
                 Ok(MapItem {
                     number: r.get::<_, i64>(0)? as u64,
                     is_pr: r.get::<_, String>(1)? == "pr",
                     state: r.get(2)?,
                     title: r.get(3)?,
                     milestone: r.get(4)?,
+                    labels: serde_json::from_str(&labels).unwrap_or_default(),
                 })
             })
             .map_err(fail)?;
@@ -1004,18 +1008,20 @@ mod tests {
     }
 
     #[test]
-    fn map_items_carry_kind_state_title_and_milestone() {
+    fn map_items_carry_kind_state_title_milestone_and_labels() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("m.sqlite")).unwrap();
         let mut pr = row(4, "MERGED");
         pr.issue.is_pr = true;
         pr.issue.milestone = Some("v1".to_string());
+        pr.issue.labels = vec![crate::model::Label { name: "bug".into() }, crate::model::Label { name: "perf".into() }];
         store.write("s1", &[row(3, "OPEN"), pr]).unwrap();
         let mut items = store.map_items().unwrap();
         items.sort_by_key(|item| item.number);
         assert_eq!(items.len(), 2);
         assert_eq!((items[0].number, items[0].is_pr, &*items[0].state, items[0].milestone.as_deref()), (3, false, "OPEN", None));
         assert_eq!((items[1].is_pr, &*items[1].state, items[1].milestone.as_deref()), (true, "MERGED", Some("v1")));
+        assert_eq!((items[0].labels.len(), items[1].labels.clone()), (0, vec!["bug".to_string(), "perf".to_string()]));
     }
 
     #[test]

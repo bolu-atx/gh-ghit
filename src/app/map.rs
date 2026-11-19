@@ -11,7 +11,7 @@ use crate::app::{App, Tab};
 use crate::core::map::{Camera, ZOOM_STEP};
 use crate::github;
 use crate::model::physics::{Layout, Physics};
-use crate::model::{self, MapGraph, MapItem, MapLink, MapScope, Ranking};
+use crate::model::{self, MapFilter, MapGraph, MapItem, MapLink, MapScope, Ranking};
 
 /// Most layout steps per frame while the map moves: a few, so the motion
 /// reads as animation.
@@ -77,10 +77,10 @@ pub(crate) struct MapView {
     pub(crate) loaded: bool,
     /// Item generation at the last read.
     pub(crate) version: Option<i64>,
-    pub(crate) scope: MapScope,
+    pub(crate) filter: MapFilter,
     pub(crate) graph: MapGraph,
-    /// Scope `graph` was built for; `None` forces a rebuild.
-    built: Option<MapScope>,
+    /// Filter `graph` was built for; `None` forces a rebuild.
+    built: Option<MapFilter>,
     /// Center of the last build: the open item in component scope, none
     /// in repo scope or with no item open. A data reread keeps the
     /// selection; a new center takes it.
@@ -115,7 +115,7 @@ impl Default for MapView {
             links: vec![],
             loaded: false,
             version: None,
-            scope: MapScope::default(),
+            filter: MapFilter::default(),
             graph: MapGraph::default(),
             built: None,
             center: None,
@@ -204,7 +204,7 @@ impl App {
     }
 
     /// Per-frame map work while the Map tab shows: reread the store after
-    /// a write, rebuild on a new center or scope, then step the layout a
+    /// a write, rebuild on a new center or filter, then step the layout a
     /// few times within the frame budget while it moves. True when the map
     /// changed on screen.
     pub(crate) fn map_tick(&mut self) -> bool {
@@ -308,23 +308,23 @@ impl App {
         steps
     }
 
-    /// Rebuild the graph when the center or scope moved. A new center
-    /// takes the selection.
+    /// Rebuild the graph when the center or the filter moved. A new
+    /// center takes the selection.
     fn rebuild_map(&mut self) -> bool {
-        let center = match self.map.scope {
+        let center = match self.map.filter.scope {
             MapScope::Component => self.nav.current,
             MapScope::Repo => None,
         };
-        if self.map.built == Some(self.map.scope) && self.map.center == center {
+        if self.map.built.as_ref() == Some(&self.map.filter) && self.map.center == center {
             return false;
         }
         let map = &mut self.map;
         let new_center = center.is_some() && map.center != center;
         map.center = center;
-        map.graph = model::build_map(&map.items, &map.links, center, map.scope);
+        map.graph = model::build_map(&map.items, &map.links, center, &map.filter);
         map.layout.rebuild(&map.graph.ids(), &map.graph.edges);
         map.ranking = model::rank(&map.graph);
-        map.built = Some(map.scope);
+        map.built = Some(map.filter.clone());
         if new_center || map.selected_index().is_none() {
             map.selected = center.filter(|n| map.graph.index_of(*n).is_some());
         }
@@ -436,14 +436,16 @@ impl App {
         self.map.follow = true;
     }
 
-    /// Flip between the open item's component and the whole repo.
+    /// Flip between the open item's component and the whole repo. The
+    /// scope is part of the saved map filter.
     pub(crate) fn map_toggle_scope(&mut self) {
-        self.map.scope = match self.map.scope {
+        self.map.filter.scope = match self.map.filter.scope {
             MapScope::Component => MapScope::Repo,
             MapScope::Repo => MapScope::Component,
         };
         self.map.follow = true;
-        self.notify(match (self.map.scope, self.nav.current) {
+        self.persist_prefs();
+        self.notify(match (self.map.filter.scope, self.nav.current) {
             (MapScope::Component, Some(_)) => "map: linked items".to_string(),
             (MapScope::Component, None) => "map: linked items once an item opens".to_string(),
             (MapScope::Repo, _) => "map: whole repo".to_string(),

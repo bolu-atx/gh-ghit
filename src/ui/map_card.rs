@@ -175,7 +175,7 @@ fn edge_card(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let Some(edge) = app.map.card_edge() else { return };
     let graph = &app.map.graph;
     let width = area.width as usize;
-    let relation = graph.relation(edge, &app.map.links);
+    let relation = graph.relation(edge);
     let head = Span::styled(model::slug(&relation, width), Style::new().fg(teal()).bold());
     f.render_widget(Paragraph::new(head), Rect { height: 1.min(area.height), ..area });
     let (a, b, _) = graph.edges[edge];

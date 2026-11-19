@@ -96,6 +96,7 @@ fn graph() -> App {
         state: "OPEN".to_string(),
         title: format!("Node {number}"),
         milestone: None,
+        labels: vec![],
     };
     let link = |src: u64, dst: u64| MapLink { src, dst, kind: LinkKind::Blocks };
     app.set_map_data(vec![item(7), item(8), item(11)], vec![link(7, 8), link(11, 7)]);
@@ -336,10 +337,11 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
             app.board.expanded, app.board.filter_focus)),
         ("board-filter", format!("{:?}/{}", app.board.filter, sorted(&app.board.milestone_draft.iter().cloned().collect()))),
         ("diff", format!("{:?}/{}/{}/{}", app.diff.line, app.diff.touched, app.diff.split, sorted(&app.diff.expanded_rows))),
-        ("graph", format!("{:?}/{:?}/{}/{}", app.map.selected, app.map.scope, app.map.follow,
+        ("graph", format!("{:?}/{:?}/{}/{}", app.map.selected, app.map.filter.scope, app.map.follow,
             app.map.layout.bodies().iter().filter(|body| body.pinned).count())),
         ("camera", format!("{:.2}/{:.2}/{:.2}", app.map.camera.x, app.map.camera.y, app.map.camera.zoom)),
         ("card", format!("{:?}", app.map.card)),
+        ("map-filter", format!("{:?}", app.map_filter_focus())),
         ("pending", format!("{:?}", app.pending_prefix)),
         ("undo", app.undo.is_some().to_string()),
         ("reauth", app.auth.reauth_requested.to_string()),

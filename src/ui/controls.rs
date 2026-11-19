@@ -89,6 +89,8 @@ fn tools(app: &App) -> Vec<Tool> {
     if app.map_shown() {
         let label = if app.map.center().is_some() { "linked" } else { "repo" };
         tools.push(Tool { icon: theme::TOOL_SCOPE, label, action: Action::GraphScope });
+        // On the map, `OpenFormat` opens the map filter.
+        tools.push(Tool { icon: theme::TOOL_FILTER, label: "filter", action: Action::OpenFormat });
         tools.push(Tool { icon: theme::TOOL_FIT, label: "fit", action: Action::GraphFit });
         tools.push(Tool { icon: theme::TOOL_PHYSICS, label: "physics", action: Action::GraphPhysics });
         tools.push(Tool { icon: theme::TOOL_RANK, label: "ranks", action: Action::GraphStrip });

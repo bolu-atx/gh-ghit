@@ -10,8 +10,9 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use super::hit::{hit, in_rect};
 use super::menu;
-use crate::app::{App, Focus, MenuKind};
+use crate::app::{App, FilterRow, Focus, MenuKind};
 use crate::core::Pane;
+use crate::model::MapScope;
 
 /// Route `m` to the map. True when the map took it.
 pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
@@ -107,6 +108,37 @@ pub(super) fn handle_physics_mouse(app: &mut App, m: MouseEvent) {
             }
             None if !in_rect(app.hits.form_popup, m.column, m.row) => {
                 app.close(crate::app::Slot::Physics);
+            }
+            None => {}
+        },
+        _ => {}
+    }
+}
+
+/// Mouse path while the map filter dialog is open. A press on a chip
+/// focuses and flips it, a press on a scope option shows that scope, the
+/// wheel over the popup moves the focus, and a press outside closes it.
+pub(super) fn handle_map_filter_mouse(app: &mut App, m: MouseEvent) {
+    if menu::legend_click(app, &m) {
+        return;
+    }
+    let inside = in_rect(app.hits.form_popup, m.column, m.row);
+    match m.kind {
+        MouseEventKind::ScrollUp if inside => app.map_filter_step(-1),
+        MouseEventKind::ScrollDown if inside => app.map_filter_step(1),
+        MouseEventKind::Down(MouseButton::Left) => match hit(&app.hits.form_cells, m.column, m.row)
+        {
+            Some((_, row, option)) => {
+                app.set_map_filter_focus(row);
+                match (app.map_filter_rows().into_iter().nth(row), option) {
+                    (Some(FilterRow::Scope), Some(0)) => app.map_filter_scope(MapScope::Component),
+                    (Some(FilterRow::Scope), Some(_)) => app.map_filter_scope(MapScope::Repo),
+                    (Some(row), _) => app.map_filter_flip(row),
+                    (None, _) => {}
+                }
+            }
+            None if !inside => {
+                app.close(crate::app::Slot::MapFilter);
             }
             None => {}
         },

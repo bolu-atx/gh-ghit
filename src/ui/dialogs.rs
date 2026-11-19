@@ -533,3 +533,88 @@ pub(super) fn render_physics(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     let legend_hits = hints::legend_hits(context, app, legend_width, 3, (footer.x, footer.y));
     app.hits.legend.extend(legend_hits);
 }
+
+/// The map filter dialog: the scope, show and link switches, then
+/// milestone and label chips, over the map. Like the physics dialog it
+/// shares `form_popup` and `form_cells` with the Format dialog.
+pub(super) fn render_map_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    use crate::app::FilterRow;
+    use crate::model::{LinkKind, MapScope};
+    app.hits.form_popup = Rect::default();
+    app.hits.form_cells.clear();
+    let focus = app.map_filter_focus().unwrap_or(0);
+    let filter = app.map.filter.clone();
+    let column_width = sized_popup(area, 60, 1).width.saturating_sub(4) as usize;
+    let mut column = FormatColumn::new(column_width, focus);
+    column.gutter(&["scope", "show", "links", "milestones", "labels"]);
+    let (mut show, mut links, mut milestones, mut labels) = (vec![], vec![], vec![], vec![]);
+    for (index, row) in app.map_filter_rows().into_iter().enumerate() {
+        match row {
+            FilterRow::Scope => column.choice(index, Some("scope"), &[
+                (filter.scope == MapScope::Component, "linked"),
+                (filter.scope == MapScope::Repo, "whole repo"),
+            ]),
+            FilterRow::Closed => show.push((index, filter.closed, "closed items".to_string())),
+            FilterRow::Prs => show.push((index, filter.prs, "PRs".to_string())),
+            FilterRow::Hubs => show.push((index, filter.hubs, "milestone hubs".to_string())),
+            FilterRow::Link(kind) => {
+                let name = match kind {
+                    LinkKind::Blocks => "blocks",
+                    LinkKind::Parent => "parent",
+                    LinkKind::Closes => "closes",
+                };
+                links.push((index, filter.draws(kind), name.to_string()));
+            }
+            FilterRow::Milestone(title) => {
+                milestones.push((index, filter.milestones.contains(&title), title));
+            }
+            FilterRow::Label(name) => labels.push((index, filter.labels.contains(&name), name)),
+        }
+    }
+    column.chips(Some("show"), show);
+    column.chips(Some("links"), links);
+    if milestones.is_empty() {
+        column.empty("milestones", "No milestones in the local copy");
+    } else {
+        column.chips(Some("milestones"), milestones);
+    }
+    if labels.is_empty() {
+        column.empty("labels", "No labels in the local copy");
+    } else {
+        column.chips(Some("labels"), labels);
+    }
+    column.hint("Closed blockers of open items always show. Chips keep only matching items. \
+        The open item always shows.");
+    let context = Context::Dialog(Dialog::MapFilter);
+    let legend_width = sized_popup(area, 60, 1).width.saturating_sub(4);
+    let footer_lines = hints::legend(context, app, legend_width, 3);
+    let footer_height = footer_lines.len().max(1) as u16;
+    let popup = sized_popup(area, 60, column.lines.len() + 3 + footer_height as usize);
+    f.render_widget(Clear, popup);
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
+        .title(Line::from(vec![
+            Span::styled(format!(" {} Filter ", theme::TOOL_FILTER),
+                Style::new().bg(theme::ink()).fg(theme::amber()).bold()),
+            Span::styled("map ", Style::new().bg(theme::ink()).fg(theme::muted())),
+        ]));
+    let framed = block.inner(popup);
+    f.render_widget(block, popup);
+    let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+    let content = Rect { height: inner.height.saturating_sub(1 + footer_height), ..inner };
+    let scroll = scroll_to(content, column.focus_line.unwrap_or(0), false);
+    app.hits.form_popup = popup;
+    for &(line, x, width, index, option) in &column.cells {
+        let Some(y) = line.checked_sub(scroll as usize).filter(|y| *y < content.height as usize)
+        else { continue };
+        let x = content.x + x as u16;
+        let width = (width as u16).min(content.right().saturating_sub(x));
+        app.hits.form_cells.push((Rect::new(x, content.y + y as u16, width, 1), index, option));
+    }
+    f.render_widget(Paragraph::new(column.lines).style(theme::base()).scroll((scroll, 0)), content);
+    let footer = Rect { y: inner.y + inner.height.saturating_sub(footer_height),
+        height: inner.height.min(footer_height), ..inner };
+    f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
+    let legend_hits = hints::legend_hits(context, app, legend_width, 3, (footer.x, footer.y));
+    app.hits.legend.extend(legend_hits);
+}

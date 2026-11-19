@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 
 pub use board::{BoardData, BoardDetail, BoardItem, CardFields, RowFields, board_columns, board_milestones, card_assignee, card_footer_labels, card_footer_right, card_meta};
 pub use diff::{CONTEXT_STEPS, DiffFile, DiffKind, SplitRow, diff_lines, diff_summary, header_file_index, line_target_at_cursor, patch_line_numbers, split_rows, strip_diff_gutter, thread_at_cursor, thread_patch_row, widen_patch};
-pub use graph::{LinkKind, MapGraph, MapItem, MapLink, MapNode, MapScope, NodeState, build_map};
+pub use graph::{LinkKind, MapFilter, MapGraph, MapItem, MapLink, MapNode, MapScope, NodeState, build_map};
 #[cfg(test)]
 pub use graph::hub_id;
 pub use rank::{Ranking, rank};

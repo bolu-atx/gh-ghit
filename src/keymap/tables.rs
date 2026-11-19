@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 
 use super::{
     Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, query_live, side_pane,
-    sub_issue_tree, undo_live, map_card_open, map_strip_open,
+    sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
 };
 use crate::core::{Dialog, Pane, TextInput};
 
@@ -58,7 +58,8 @@ const GLOBAL: &[Binding] = &[
     key(ch('p'), Action::OpenFinder, "Go to issue or PR", "Open", MENU).ctrl(),
     key(ch('c'), Action::Comment, "Comment", "Open", HINT).hint(6),
     key(ch('C'), Action::CloseItem, "Close or reopen", "Open", TITLE).hint_if(12, main_pane),
-    key(ch('f'), Action::OpenFormat, "Format and filter", "Open", TITLE),
+    // On the focused map, `f` opens the map filter instead (`input::actions`).
+    key(ch('f'), Action::OpenFormat, "Format and filter", "Open", TITLE).hint_if(4, graph_focused),
     key(ch('F'), Action::QuerySearch, "Edit query", "Open", MENU),
     key(ch('j'), Action::MoveDown, "Select next", "Move", Gesture::Wheel).hint_if(2, side_pane),
     key(ch('k'), Action::MoveUp, "Select previous", "Move", Gesture::Wheel).hint_if(3, side_pane),
@@ -195,6 +196,25 @@ const PHYSICS: &[Binding] = &[
     key(KeyCode::Left, Action::PhysicsLower, "Lower value", "Value", Gesture::Wheel),
     key(KeyCode::Right, Action::PhysicsRaise, "Raise value", "Value", Gesture::Wheel),
     key(ch('r'), Action::PhysicsReset, "Reset to defaults", "Value", HINT).hint(6),
+];
+
+const MAP_FILTER: &[Binding] = &[
+    key(KeyCode::Esc, Action::Back, "Close", "Dialog", OUTSIDE).hint(1),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Dialog", ALIAS),
+    key(ch('f'), Action::CloseMapFilter, "Close", "Dialog", ALIAS),
+    key(ch('q'), Action::CloseMapFilter, "Close", "Dialog", ALIAS),
+    key(ch('j'), Action::MapFilterDown, "Next row", "Move", Gesture::Wheel).hint(2),
+    key(ch('k'), Action::MapFilterUp, "Previous row", "Move", Gesture::Wheel).hint(3),
+    key(KeyCode::Down, Action::MapFilterDown, "Next row", "Move", ALIAS),
+    key(KeyCode::Up, Action::MapFilterUp, "Previous row", "Move", ALIAS),
+    key(ch(' '), Action::MapFilterToggle, "Toggle row", "Show", Gesture::Click).hint(4),
+    key(KeyCode::Enter, Action::MapFilterToggle, "Toggle row", "Show", ALIAS),
+    key(ch('s'), Action::MapFilterScope, "Linked items or whole repo", "Show", Gesture::Click)
+        .hint(5),
+    key(ch('c'), Action::MapFilterClosed, "Toggle closed items", "Show", Gesture::Click).hint(6),
+    key(ch('p'), Action::MapFilterPrs, "Toggle PRs", "Show", Gesture::Click).hint(7),
+    key(ch('m'), Action::MapFilterHubs, "Toggle milestone hubs", "Show", Gesture::Click).hint(8),
+    key(ch('r'), Action::MapFilterReset, "Reset filter", "Show", HINT).hint(9),
 ];
 
 const MENU_KEYS: &[Binding] = &[
@@ -400,6 +420,7 @@ pub(super) fn tables(context: Context) -> &'static [&'static [Binding]] {
         Context::Dialog(Dialog::Finder) => &[FINDER],
         Context::Dialog(Dialog::Format) => &[FORMAT],
         Context::Dialog(Dialog::Physics) => &[PHYSICS],
+        Context::Dialog(Dialog::MapFilter) => &[MAP_FILTER],
         Context::Dialog(Dialog::Board) => &[BOARD],
         Context::Dialog(Dialog::BoardFilter) => &[BOARD_FILTER],
         Context::Input(TextInput::Bar) => &[BAR],
