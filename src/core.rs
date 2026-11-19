@@ -152,6 +152,30 @@ pub fn window_label(hours: u64) -> String {
     }
 }
 
+/// Sidebar loading body: what the pending fetch covers, from the open/done
+/// toggles, the window, and the active query. `pr` picks "merged" over
+/// "closed". Zero hours is all time.
+pub fn pane_loading_label(pr: bool, show_open: bool, show_done: bool, hours: u64, query: &str) -> String {
+    let noun = if pr { "pull requests" } else { "issues" };
+    let query = query.trim();
+    if !query.is_empty() {
+        return format!("Loading {noun} for \u{201c}{query}\u{201d}\u{2026}");
+    }
+    let done = if pr { "merged" } else { "closed" };
+    let span = match hours {
+        0 => format!("all {done}"),
+        168 => format!("last 7d {done}"),
+        h => format!("last {h}h {done}"),
+    };
+    let scope = match (show_open, show_done) {
+        (true, true) => format!("open + {span} "),
+        (true, false) => "open ".to_string(),
+        (false, true) => format!("{span} "),
+        (false, false) => String::new(),
+    };
+    format!("Loading {scope}{noun}\u{2026}")
+}
+
 /// `updated:>=` token for a recency window. Zero hours is all time and
 /// owns no token. Dates clamp to a decade back so absurd prefs never
 /// overflow the date arithmetic.
@@ -782,6 +806,17 @@ mod tests {
         assert_eq!(window_label(24), "open + merged ≤24h");
         assert_eq!(window_label(168), "open + merged ≤7d");
         assert_eq!(window_label(0), "open + merged all time");
+    }
+
+    #[test]
+    fn pane_loading_label_names_the_fetch_scope() {
+        assert_eq!(pane_loading_label(false, true, true, 24, ""), "Loading open + last 24h closed issues…");
+        assert_eq!(pane_loading_label(true, true, true, 168, ""), "Loading open + last 7d merged pull requests…");
+        assert_eq!(pane_loading_label(true, true, true, 0, ""), "Loading open + all merged pull requests…");
+        assert_eq!(pane_loading_label(false, true, false, 24, ""), "Loading open issues…");
+        assert_eq!(pane_loading_label(false, false, true, 1, ""), "Loading last 1h closed issues…");
+        assert_eq!(pane_loading_label(false, false, false, 24, ""), "Loading issues…");
+        assert_eq!(pane_loading_label(true, true, true, 24, " is:draft "), "Loading pull requests for “is:draft”…");
     }
 
     #[test]

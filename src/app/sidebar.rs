@@ -295,6 +295,17 @@ impl App {
         });
     }
 
+    /// Sidebar loading body for one pane: the scope the fetch covers.
+    pub(crate) fn pane_loading_label(&self, want_pr: bool) -> String {
+        let (open, done) = if want_pr {
+            (self.sidebar.show_open_prs, self.sidebar.show_merged_prs)
+        } else {
+            (self.sidebar.show_open_issues, self.sidebar.show_closed_issues)
+        };
+        core::pane_loading_label(want_pr, open, done, self.sections.merged_window_hours,
+            &self.sidebar.query_active)
+    }
+
     pub(crate) fn window_label(&self) -> String {
         core::window_label(self.sections.merged_window_hours)
     }
