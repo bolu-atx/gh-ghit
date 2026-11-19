@@ -133,6 +133,9 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::GraphPrevEdge => app.map_step_edge(-1),
         Action::GraphCloseCard => app.map_close_card(),
         Action::GraphPhysics => app.open_physics(),
+        Action::GraphStrip => app.map_toggle_strip(),
+        Action::GraphStripNext => app.map_strip_step(1),
+        Action::GraphStripPrev => app.map_strip_step(-1),
         Action::ClosePhysics => { app.close(Slot::Physics); }
         Action::PhysicsDown => app.physics_step(1),
         Action::PhysicsUp => app.physics_step(-1),

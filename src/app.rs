@@ -20,6 +20,7 @@ mod format;
 mod issue;
 mod map;
 mod map_physics;
+mod map_rank;
 pub(crate) use map::{CardHit, MapCard, MapView};
 #[cfg(test)]
 pub(crate) use map::CardDetail;
@@ -234,6 +235,10 @@ pub(crate) struct HitAreas {
     pub(crate) map_card: Rect,
     /// Clickable parts of the map card.
     pub(crate) map_card_hits: Vec<(Rect, CardHit)>,
+    /// The ranking strip's rect; empty while it is hidden.
+    pub(crate) map_strip: Rect,
+    /// Ranking strip rows as drawn: rect plus strip row.
+    pub(crate) map_strip_rows: Vec<(Rect, usize)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).

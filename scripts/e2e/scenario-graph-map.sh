@@ -108,6 +108,25 @@ e2e_wait "−  right  +" 10 || fail "r did not reset the growth direction"
 e2e_key Escape
 sleep 1
 e2e_pane | grep -qF "growth direction" && fail "Esc left the physics dialog open"
+# Ranking strip: B shows it, a click on its first ready row selects
+# that node, and B hides it again.
+e2e_key B
+e2e_wait "┌ ranks " 10 || fail "B did not show the ranking strip"
+e2e_pane | grep -qF "Bottlenecks" || fail "the strip lacks bottlenecks"
+read -r rrow rcol < <(cell_of "│ Ready")
+[ -n "${rrow:-}" ] || fail "no Ready section in the strip"
+pick="$(e2e_pane | sed -n "$((rrow + 1))p" | python3 -c '
+import re, sys
+m = re.search(r"#[0-9]+", sys.stdin.read()[int(sys.argv[1]):])
+print(m.group(0) if m else "")
+' "$rcol")"
+[ -n "$pick" ] || fail "no ready row under the Ready heading"
+mouse down-left "$((rrow + 1))" "$((rcol + 2))"
+mouse up-left "$((rrow + 1))" "$((rcol + 2))"
+e2e_wait "▌$pick " 10 || fail "a click on ready $pick did not select it"
+e2e_key B
+sleep 1
+e2e_pane | grep -qF "┌ ranks " && fail "B left the strip open"
 # The map is a view of its own: Enter opens the selected node on its
 # Details tab, then a click on the Map tab and the 3 key bring it back.
 e2e_key Enter

@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 
 use super::{
     Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, query_live, side_pane,
-    sub_issue_tree, undo_live, map_card_open,
+    sub_issue_tree, undo_live, map_card_open, map_strip_open,
 };
 use crate::core::{Dialog, Pane, TextInput};
 
@@ -174,6 +174,11 @@ const GRAPH: &[Binding] = &[
     key(ch('D'), Action::GraphMoveRight, "Move node right", "Arrange", DRAG),
     key(ch('x'), Action::GraphUnpin, "Unpin node", "Arrange", MENU).hint(5),
     key(ch('P'), Action::GraphPhysics, "Tune physics", "View", TITLE).hint(8),
+    key(ch('B'), Action::GraphStrip, "Show or hide ready work and bottlenecks", "Rank", TITLE).hint(9),
+    key(ch('J'), Action::GraphStripNext, "Next ranked item", "Rank", Gesture::Click)
+        .when(map_strip_open).hint(10),
+    key(ch('K'), Action::GraphStripPrev, "Previous ranked item", "Rank", Gesture::Click)
+        .when(map_strip_open),
 ];
 
 const PHYSICS: &[Binding] = &[

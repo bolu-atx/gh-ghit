@@ -2,8 +2,9 @@
 //! drag it to move and pin it, drag empty space to pan, release on a
 //! node to show its card and press it again to open it, click an edge
 //! for its card, click the card's buttons, wheel to zoom, right-click
-//! for the map menu. Hit tests read the label rects, edge cells and card
-//! parts `ui` recorded this frame; labels win over edges.
+//! for the map menu, click a ranking strip row to pick it. Hit tests read
+//! the label rects, edge cells, card parts and strip rows `ui` recorded
+//! this frame; labels win over edges.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
@@ -25,6 +26,16 @@ pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
             app.nav.pane = Pane::Main;
             if let Some((_, part)) = hit(&app.hits.map_card_hits, m.column, m.row) {
                 app.map_card_click(part);
+            }
+        }
+        return true;
+    }
+    if app.map.drag.is_none() && in_rect(app.hits.map_strip, m.column, m.row) {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+            app.nav.focus = Focus::Main;
+            app.nav.pane = Pane::Main;
+            if let Some((_, row)) = hit(&app.hits.map_strip_rows, m.column, m.row) {
+                app.map_strip_pick(row);
             }
         }
         return true;

@@ -2,8 +2,8 @@
 //! with arrowheads at the blocked end; labels draw on top, the selected
 //! node and its blocker chain last so they win overlaps. Every label rect
 //! lands in `app.hits.map_nodes` and every edge cell in `app.hits.map_edges`
-//! for the mouse. An open card docks at the right and the map takes the
-//! rest.
+//! for the mouse. An open card docks at the right, the ranking strip at
+//! the left, and the map takes the rest.
 
 use std::collections::HashSet;
 
@@ -41,11 +41,21 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.map_edges.clear();
     app.hits.map_card = Rect::default();
     app.hits.map_card_hits.clear();
+    app.hits.map_strip = Rect::default();
+    app.hits.map_strip_rows.clear();
     let area = if app.map.card.is_some() && !app.map.graph.nodes.is_empty() {
         let width = (area.width * 2 / 5).clamp(CARD_MIN, CARD_MAX).min(area.width);
         let [map, card] = Layout::horizontal([Constraint::Min(0), Constraint::Length(width)])
             .areas(area);
         super::map_card::render_map_card(f, card, app);
+        map
+    } else {
+        area
+    };
+    let strip_w = (area.width / 3).min(super::map_strip::STRIP_MAX);
+    let area = if app.map.strip && !app.map.graph.nodes.is_empty() && strip_w >= super::map_strip::STRIP_MIN {
+        let [strip, map] = Layout::horizontal([Constraint::Length(strip_w), Constraint::Min(0)]).areas(area);
+        super::map_strip::render_map_strip(f, strip, app);
         map
     } else {
         area
