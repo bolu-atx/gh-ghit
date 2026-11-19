@@ -147,8 +147,8 @@ const DIFF: &[Binding] = &[
 ];
 
 const GRAPH: &[Binding] = &[
-    key(ch('n'), Action::GraphNext, "Next node", "Select", Gesture::Click).hint(1),
-    key(ch('N'), Action::GraphPrev, "Previous node", "Select", Gesture::Click),
+    key(ch('.'), Action::GraphNext, "Next node", "Select", Gesture::Click).hint(1),
+    key(ch(','), Action::GraphPrev, "Previous node", "Select", Gesture::Click),
     key(KeyCode::Enter, Action::GraphOpen, "Open node", "Select", Gesture::SecondClick).hint(2),
     key(ch('h'), Action::GraphPanLeft, "Pan left", "View", DRAG),
     key(ch('j'), Action::GraphPanDown, "Pan down", "View", DRAG),
@@ -163,10 +163,10 @@ const GRAPH: &[Binding] = &[
     key(ch('-'), Action::GraphZoomOut, "Zoom out", "View", Gesture::Wheel),
     key(ch('0'), Action::GraphFit, "Fit to view", "View", TITLE).hint(4),
     key(ch('s'), Action::GraphScope, "Linked items or whole repo", "View", TITLE).hint(3),
-    key(ch('H'), Action::GraphMoveLeft, "Move node left", "Arrange", DRAG),
-    key(ch('J'), Action::GraphMoveDown, "Move node down", "Arrange", DRAG),
-    key(ch('K'), Action::GraphMoveUp, "Move node up", "Arrange", DRAG),
-    key(ch('L'), Action::GraphMoveRight, "Move node right", "Arrange", DRAG),
+    key(ch('A'), Action::GraphMoveLeft, "Move node left", "Arrange", DRAG),
+    key(ch('S'), Action::GraphMoveDown, "Move node down", "Arrange", DRAG),
+    key(ch('W'), Action::GraphMoveUp, "Move node up", "Arrange", DRAG),
+    key(ch('D'), Action::GraphMoveRight, "Move node right", "Arrange", DRAG),
     key(ch('x'), Action::GraphUnpin, "Unpin node", "Arrange", MENU).hint(5),
 ];
 

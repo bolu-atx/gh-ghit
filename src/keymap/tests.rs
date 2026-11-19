@@ -429,3 +429,22 @@ fn finder_has_key_mouse_and_hint() {
     assert!(bindings(finder).any(|b| b.action == Action::FinderDown && b.mouse == Gesture::Wheel));
     assert!(bindings(finder).any(|b| b.action == Action::Back && b.mouse == Gesture::Outside));
 }
+
+/// The map keeps every global and Main key. Only the keys the old graph
+/// already took (h j k l and the arrows) pan the map instead.
+#[test]
+fn map_keys_never_shadow_global_or_main_keys() {
+    let kept = [ch_code('h'), ch_code('j'), ch_code('k'), ch_code('l'), KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down];
+    let below: Vec<&Binding> = bindings(Context::Global).chain(bindings(Context::Pane(Pane::Main))).collect();
+    for map in bindings(Context::Main(MainMode::Graph)) {
+        if kept.contains(&map.key) {
+            continue;
+        }
+        let clash = below.iter().find(|b| b.key == map.key && b.prefix == map.prefix && b.mods == map.mods);
+        assert!(clash.is_none(), "map key {} shadows {:?}", map.key_name(), clash.map(|b| b.action));
+    }
+}
+
+fn ch_code(c: char) -> KeyCode {
+    KeyCode::Char(c)
+}

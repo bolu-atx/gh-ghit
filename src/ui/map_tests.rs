@@ -217,11 +217,11 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     let mut app = map_app();
     pin_layout(&mut app);
     draw_buffer(&mut app);
-    handle_key(&mut app, key(KeyCode::Char('n')));
-    assert_eq!(app.map.selected, Some(8), "n steps by number");
-    handle_key(&mut app, key(KeyCode::Char('N')));
-    handle_key(&mut app, key(KeyCode::Char('N')));
-    assert_eq!(app.map.selected, Some(12), "N wraps back");
+    handle_key(&mut app, key(KeyCode::Char('.')));
+    assert_eq!(app.map.selected, Some(8), ". steps by number");
+    handle_key(&mut app, key(KeyCode::Char(',')));
+    handle_key(&mut app, key(KeyCode::Char(',')));
+    assert_eq!(app.map.selected, Some(12), ", wraps back");
     let camera = app.map.camera;
     handle_key(&mut app, key(KeyCode::Char('l')));
     assert!(app.map.camera.x > camera.x, "l pans right");
@@ -232,7 +232,7 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     let twelve = app.map.graph.index_of(12).unwrap();
     app.map.layout.unpin(twelve);
     let before = app.map.layout.bodies()[twelve].x;
-    handle_key(&mut app, key(KeyCode::Char('L')));
+    handle_key(&mut app, key(KeyCode::Char('D')));
     assert!(app.map.layout.bodies()[twelve].x > before && app.map.layout.bodies()[twelve].pinned);
     assert!(!app.map.follow, "a nudge stops the fit, so the view holds still");
     handle_key(&mut app, key(KeyCode::Char('s')));

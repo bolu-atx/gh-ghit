@@ -66,8 +66,9 @@ A window refresh can remove vanished background rows that were not opened or pin
 The Visual tab shows a PR diff with line numbers, or for an issue a dependency map drawn from the local copy:
 issues and PRs linked by blocks, parent and closes links, pulled together by milestone hubs.
 It shows the open issue's linked items, or the whole repo (`s`); closed items hide unless they block an open one.
-Drag a node to pin it, drag empty space or press `h` `j` `k` `l` to pan, wheel or `+` / `-` to zoom, `0` to fit,
-`n` / `N` to step nodes, `Enter` or a second click to open one, `x` to unpin, and right-click for its menu.
+Drag a node to pin it or press `W` `A` `S` `D` to move the selected one, drag empty space or press `h` `j` `k` `l` to pan,
+wheel or `+` / `-` to zoom, `0` to fit, `.` / `,` to step nodes, `Enter` or a second click to open one, `x` to unpin,
+and right-click for its menu. Every other key keeps its global meaning on the map.
 `scripts/graph-demo.sh` opens a dense offline demo repo to try it.
 In a diff, `c` starts a line comment or replies to the review thread under the cursor.
 Use `Ctrl+S` to submit a pending review.
