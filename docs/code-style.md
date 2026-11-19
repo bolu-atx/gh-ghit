@@ -22,7 +22,7 @@ What good code looks like here:
 ## Shape of the code
 
 - Small functions with one job: fetch over HTTPS behind the `github.rs`
-  facade (`api.rs` + `api/{client,sections,graph,board}.rs`/`cache.rs`),
+  facade (`api.rs` + `api/{client,sections,sub_issues,board}.rs`/`cache.rs`),
   pure domain transforms in `model.rs`,
   pure business rules in `core.rs`, state and the event loop in `app.rs`,
   input mapping in `input.rs`, rendering as `render_*` functions in `ui.rs`.

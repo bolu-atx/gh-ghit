@@ -1,4 +1,4 @@
-//! Main pane: header, issue body, graph and wrapping helpers.
+//! Main pane: header, issue body, the Graph tab's map and wrapping helpers.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -63,42 +63,6 @@ pub(super) fn header_lines(d: &IssueData, statuses: &[(String, Option<String>)])
         lines.push(Line::from(current));
     }
     lines
-}
-
-/// Graph tab body: the dependency star around the current issue, center
-/// first then one section per relation. The cursor row carries the amber
-/// marker; nodes that block nothing render gray/dim.
-pub(super) fn graph_text(app: &App, d: &IssueData, height: usize) -> ratatui::text::Text<'static> {
-    use crate::theme::{ink, muted};
-    let dim = || Style::new().bg(ink()).fg(muted());
-    let Some(data) = app.graph.data.get(&d.number) else {
-        if app.graph.pending.contains(&d.number) {
-            return ratatui::text::Text::from(loading_body("Fetching graph…", app.tick, height));
-        }
-        return ratatui::text::Text::from(Line::from(Span::styled("No graph loaded yet.", dim())));
-    };
-    let order = model::graph_order(data);
-    let mut lines = vec![Line::from(Span::styled(format!("{} related", order.len().saturating_sub(1)), dim()))];
-    for (position, index) in order.iter().take(8).enumerate() {
-        let node = &data.nodes[*index];
-        if position > 0 {
-            if let Some((kind, _)) = model::graph_sections(data).iter().find(|(_, group)| group.contains(index)) {
-                lines.push(Line::from(Span::styled(format!("  {}", model::graph_edge_label(*kind)), dim())));
-            }
-        }
-        let label = format!("#{} {}", node.number, model::slug(&node.title, 40));
-        let width = label.chars().count() + 2;
-        let prefix = if position == 0 { "  " } else { "  └─" };
-        let marker = if app.graph.cursor == position { "█ " } else { "  " };
-        let color = crate::theme::state_color(&node.state);
-        lines.push(Line::from(Span::styled(format!("{prefix}╭{}╮", "─".repeat(width)), dim())));
-        lines.push(Line::from(vec![Span::styled(format!("{prefix}│"), dim()), Span::styled(format!("{marker}{label}"), Style::new().bg(ink()).fg(color).bold()), Span::styled("│", dim())]));
-        lines.push(Line::from(Span::styled(format!("{prefix}╰{}╯", "─".repeat(width)), dim())));
-    }
-    if order.len() > 8 { lines.push(Line::from(Span::styled(format!("+{} more", order.len() - 8), dim()))); }
-    if data.truncated { lines.push(Line::from(Span::styled("More nodes omitted by data cap", dim()))); }
-    if data.from_references { lines.push(Line::from(Span::styled("refs-derived (blocking fields unavailable)", dim()))); }
-    ratatui::text::Text::from(lines)
 }
 
 /// Greedy word-wrap of styled lines to `width` cells. Words longer than
@@ -351,6 +315,18 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.header_area = hgutter[1];
     f.render_widget(Paragraph::new(header).style(base()), hgutter[1]);
 
+    // Breathing room: text never touches the column edges.
+    let gutter = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
+        .split(rows[4]);
+    app.hits.body_area = gutter[1];
+    if app.visual_graph() {
+        app.hits.body_total = 0;
+        super::map::render_map(f, gutter[1], app);
+        return;
+    }
+
     let markdown;
     let mut aux = SearchAux::default();
     let mut text = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
@@ -363,7 +339,8 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             }
             Tab::Visual => match model::visual_content(d.is_pr) {
                 model::VisualContent::Diff => diff_text_aux(app, d, (rows[4].width as usize).saturating_sub(5), &mut aux),
-                model::VisualContent::Graph => graph_text(app, d, usize::from(rows[4].height)),
+                // The map draws itself above and returns early.
+                model::VisualContent::Graph => ratatui::text::Text::default(),
             },
         },
         None if app.pane_loading().main => {
@@ -379,13 +356,9 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             crate::theme::render_markdown(&markdown)
         }
     };
-    // Clickable refs and URLs read as links in the body and the graph.
-    if app.nav.tab == Tab::Details || app.visual_graph() {
-        // Kind comes from loaded issue data, then the current graph's nodes.
-        let graph = app.nav.current.and_then(|n| app.graph.data.get(&n));
-        let is_pr = |n: u64| {
-            app.issues.data.get(&n).map(|d| d.is_pr).or_else(|| graph?.nodes.iter().find(|g| g.number == n).map(|g| g.is_pr))
-        };
+    // Clickable refs and URLs read as links in the body.
+    if app.nav.tab == Tab::Details {
+        let is_pr = |n: u64| app.issues.data.get(&n).map(|d| d.is_pr);
         style_links(&mut text.lines, app.repo_key().as_deref(), is_pr);
     }
     // A refs-row selection lights up the mentioning line instead of opening
@@ -401,12 +374,6 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .style(base())
         .wrap(Wrap { trim: false })
         .scroll((app.nav.scroll, 0));
-    // Breathing room: text never touches the column edges.
-    let gutter = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
-        .split(rows[4]);
-    app.hits.body_area = gutter[1];
     f.render_widget(pane, gutter[1]);
 
 }

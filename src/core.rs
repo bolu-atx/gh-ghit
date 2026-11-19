@@ -8,6 +8,7 @@
 mod focus;
 mod fuzzy;
 mod layout;
+pub(crate) mod map;
 mod query;
 mod search;
 mod tree;
@@ -78,23 +79,6 @@ pub fn parse_bar(text: &str) -> BarCommand {
         }
         _ => BarCommand::Hint,
     }
-}
-
-/// Graph cursor step over the flat node order (center first, then
-/// sections), clamped at the ends. `None` when the graph is empty; an
-/// out-of-range cursor clamps into the fresh order.
-pub fn graph_select(count: usize, current: Option<usize>, delta: isize) -> Option<usize> {
-    if count == 0 {
-        return None;
-    }
-    let last = count - 1;
-    let next = match current {
-        Some(pos) => (pos as isize + delta).clamp(0, last as isize) as usize,
-        None => {
-            if delta > 0 { 0 } else { last }
-        }
-    };
-    Some(next.min(last))
 }
 
 /// Next selection walking issues-then-PRs as one flat list, clamped at the
@@ -207,7 +191,6 @@ pub fn search_query(query: &str, hours: u64, now: chrono::DateTime<chrono::Utc>)
 pub enum LoadSource {
     Issue,
     Diff,
-    Graph,
     Details,
     Board,
     Sections,
@@ -221,7 +204,6 @@ pub enum LoadSource {
 pub struct FetchState {
     pub issues: usize,
     pub diffs: usize,
-    pub graphs: usize,
     pub details: usize,
     pub sections_live: bool,
     pub bootstrap_live: bool,
@@ -268,9 +250,6 @@ pub fn loading(s: &FetchState) -> Vec<LoadingItem> {
     }
     if s.diffs > 0 {
         out.push(LoadingItem { source: LoadSource::Diff, progress: None });
-    }
-    if s.graphs > 0 {
-        out.push(LoadingItem { source: LoadSource::Graph, progress: None });
     }
     if s.details > 0 {
         out.push(LoadingItem { source: LoadSource::Details, progress: None });
@@ -339,7 +318,6 @@ pub fn loading_label(items: &[LoadingItem]) -> String {
             let name = match item.source {
                 LoadSource::Issue => "issue",
                 LoadSource::Diff => "diff",
-                LoadSource::Graph => "graph",
                 LoadSource::Details => "details",
                 LoadSource::Board => "board",
                 LoadSource::Sections => "sections",
@@ -758,19 +736,6 @@ mod tests {
     }
 
     #[test]
-    fn graph_cursor_steps_and_clamps() {
-        assert_eq!(graph_select(4, Some(1), 1), Some(2));
-        assert_eq!(graph_select(4, Some(0), -1), Some(0));
-        assert_eq!(graph_select(4, Some(3), 1), Some(3));
-        assert_eq!(graph_select(4, None, 1), Some(0));
-        assert_eq!(graph_select(4, None, -1), Some(3));
-        assert_eq!(graph_select(0, Some(0), 1), None);
-        // A cursor past a shrunken order clamps instead of panicking.
-        assert_eq!(graph_select(2, Some(9), 1), Some(1));
-        assert_eq!(graph_select(2, Some(9), -1), Some(1));
-    }
-
-    #[test]
     fn selection_walks_and_clamps() {
         let order = vec![7, 9];
         assert_eq!(next_in_order(&order, Some(7), 1), Some(9));
@@ -872,7 +837,6 @@ mod tests {
         for (state, source) in [
             (FetchState { issues: 1, ..FetchState::default() }, LoadSource::Issue),
             (FetchState { diffs: 2, ..FetchState::default() }, LoadSource::Diff),
-            (FetchState { graphs: 1, ..FetchState::default() }, LoadSource::Graph),
             (FetchState { details: 3, ..FetchState::default() }, LoadSource::Details),
             (FetchState { board: true, ..FetchState::default() }, LoadSource::Board),
             (FetchState { sections_live: true, ..FetchState::default() }, LoadSource::Sections),

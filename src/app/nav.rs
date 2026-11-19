@@ -126,12 +126,8 @@ impl App {
         self.diff.touched = false;
         self.refs.highlight = None;
         self.nav.hover = None;
-        self.graph.cursor = 0;
         self.sync_selection();
         self.load_diff(n, false);
-        if self.visual_graph() {
-            self.load_graph(n, false);
-        }
         self.refresh_refs();
     }
 
@@ -418,9 +414,10 @@ impl App {
         self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Graph)
     }
 
-    /// Switch tabs, resetting scroll. Selecting Diff on a PR or Graph on
-    /// any issue starts its background fetch so the pane fills in without
-    /// blocking; first visit fetches, later visits reuse the cache.
+    /// Switch tabs, resetting scroll. Selecting Diff on a PR starts its
+    /// background fetch so the pane fills in without blocking; first visit
+    /// fetches, later visits reuse the cache. The Graph tab reads the
+    /// local copy each frame (`map_tick`).
     pub(crate) fn set_tab(&mut self, tab: Tab) {
         self.request_tab(tab);
     }
@@ -433,11 +430,6 @@ impl App {
         if self.visual_diff() {
             if let Some(n) = self.nav.current {
                 self.load_diff(n, false);
-            }
-        }
-        if self.visual_graph() {
-            if let Some(n) = self.nav.current {
-                self.load_graph(n, false);
             }
         }
     }

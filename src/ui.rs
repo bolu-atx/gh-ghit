@@ -13,6 +13,7 @@ mod finder;
 mod help;
 mod hints;
 mod main_pane;
+mod map;
 mod search;
 mod sidebar;
 mod status;
@@ -33,6 +34,8 @@ mod help_tests;
 mod hint_tests;
 #[cfg(test)]
 mod main_pane_tests;
+#[cfg(test)]
+mod map_tests;
 #[cfg(test)]
 mod search_tests;
 #[cfg(test)]
@@ -86,6 +89,8 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     app.hits.labels_rows.clear();
     app.hits.side_issue_area = Rect::default();
     app.hits.side_pr_area = Rect::default();
+    app.hits.map_area = Rect::default();
+    app.hits.map_nodes.clear();
     let (sidebar_w, right_w) = (app.layout.sidebar, app.layout.right);
     let cols = Layout::default()
         .direction(Direction::Horizontal)

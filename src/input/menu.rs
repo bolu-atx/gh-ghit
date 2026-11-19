@@ -12,7 +12,7 @@ use crate::app::{App, Focus, MenuKind, MenuState};
 use crate::core::Pane;
 use crate::keymap::Action;
 
-fn open(app: &mut App, kind: MenuKind, anchor: (u16, u16)) {
+pub(super) fn open(app: &mut App, kind: MenuKind, anchor: (u16, u16)) {
     let menu = MenuState::new(kind, app, anchor);
     if !menu.entries.is_empty() {
         app.open(crate::app::Entry::Menu(menu));
@@ -31,6 +31,7 @@ pub(super) fn open_for_focus(app: &mut App) {
             Pane::Refs => (MenuKind::Ref, app.hits.refs_area),
             Pane::Labels => (MenuKind::Labels, app.hits.labels_area),
             Pane::History => (MenuKind::History, app.hits.history_area),
+            Pane::Main if app.visual_graph() => (MenuKind::Map, app.hits.map_area),
             Pane::Main => (MenuKind::Body, app.hits.body_area),
         }
     };

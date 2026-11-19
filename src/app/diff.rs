@@ -1,4 +1,4 @@
-//! Diff, graph and review-thread state and loads.
+//! Diff and review-thread state and loads.
 
 use std::collections::{HashMap, HashSet};
 
@@ -51,27 +51,6 @@ impl DiffView {
         Self { files: HashMap::new(), cursor: 0, line: None, touched: false,
             row_files: vec![], expanded_files: HashSet::new(), expanded_rows: HashSet::new(),
             headers: vec![], pending_jump: None, pending: HashSet::new(), tx, rx, split: false }
-    }
-}
-
-/// Graph tab state: fetched per-issue graph payloads, the fetch triplet,
-/// and the cursor into the current graph order.
-pub(crate) struct GraphView {
-    pub(crate) data: HashMap<u64, model::GraphData>,
-    pub(crate) pending: HashSet<u64>,
-    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<model::GraphData, String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<model::GraphData, String>)>,
-    /// Cursor into `graph_order_numbers` for the current issue. Reset on
-    /// issue switch; tab switches keep it so going back restores place.
-    pub(crate) cursor: usize,
-}
-
-impl GraphView {
-    pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(u64, Result<model::GraphData, String>)>,
-        rx: std::sync::mpsc::Receiver<(u64, Result<model::GraphData, String>)>,
-    ) -> Self {
-        Self { data: HashMap::new(), pending: HashSet::new(), tx, rx, cursor: 0 }
     }
 }
 
@@ -294,23 +273,6 @@ impl App {
         });
     }
 
-    /// Queue a graph fetch for `number`. No-op for cached rows and rows
-    /// already in flight. One cache entry per issue, so switching issues
-    /// refetches per issue and the tab shows a loading spinner meanwhile.
-    pub(crate) fn load_graph(&mut self, number: u64, force: bool) {
-        if !force && self.graph.data.contains_key(&number) {
-            return;
-        }
-        if !self.graph.pending.insert(number) {
-            return;
-        }
-        let tx = self.graph.tx.clone();
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        self.enqueue(core::Kind::Graph, Some(number), async move {
-            let _ = tx.send((number, github::fetch_graph(&repo, number, force).await));
-        });
-    }
-
     /// Expand-time REST load for the opt-in tree: at most one fetch per
     /// parent per session, and only when the summary reports children
     /// the fetched rows do not cover. The row renders a loading child
@@ -327,30 +289,6 @@ impl App {
         self.enqueue(core::Kind::Other, None, async move {
             let _ = tx.send((number, github::fetch_sub_issues(&repo, number).await));
         });
-    }
-
-    /// Flat navigation order for the graph tab: the center first, then
-    /// neighbors section by section. Empty without a loaded graph.
-    pub(crate) fn graph_order_numbers(&self) -> Vec<u64> {
-        let Some(n) = self.nav.current else { return vec![] };
-        let Some(data) = self.graph.data.get(&n) else { return vec![] };
-        model::graph_order(data).into_iter().take(8).map(|i| data.nodes[i].number).collect()
-    }
-
-    /// Move the graph cursor, clamped at the ends. No-op without a graph.
-    pub(crate) fn graph_move(&mut self, delta: isize) {
-        let order = self.graph_order_numbers();
-        if let Some(next) = core::graph_select(order.len(), Some(self.graph.cursor), delta) {
-            self.graph.cursor = next;
-        }
-    }
-
-    /// Open the graph node under the cursor in the viewer.
-    pub(crate) fn open_graph_selection(&mut self) {
-        let order = self.graph_order_numbers();
-        if let Some(&n) = order.get(self.graph.cursor) {
-            self.open_issue(n);
-        }
     }
 
     /// Pending review threads on the current PR, if any.
@@ -414,24 +352,6 @@ pub(crate) fn poll_diffs(app: &mut App) -> bool {
         match result {
             Ok(files) => {
                 app.diff.files.insert(number, files);
-            }
-            Err(e) => { auth_failure(app, &e); app.notify(e); }
-        }
-    }
-    landed
-}
-
-pub(crate) fn poll_graphs(app: &mut App) -> bool {
-    let ready: Vec<_> = app.graph.rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (number, result) in ready {
-        app.graph.pending.remove(&number);
-        match result {
-            Ok(data) => {
-                app.graph.data.insert(number, data);
-                if app.nav.current == Some(number) {
-                    app.graph.cursor = app.graph.cursor.min(app.graph_order_numbers().len().saturating_sub(1));
-                }
             }
             Err(e) => { auth_failure(app, &e); app.notify(e); }
         }

@@ -60,9 +60,16 @@ fn board(app: &mut App, to: Reach) {
     board_move(app, 0, dy);
 }
 
+/// On the map the ends pick the first or last node; half and full pages
+/// pan the view.
 fn graph(app: &mut App, to: Reach) {
-    let dy = to.rows(app.hits.body_area.height as usize).unwrap_or(if to.toward_end() { FAR } else { -FAR });
-    app.graph_move(dy);
+    match to.rows(app.hits.map_area.height as usize) {
+        None => app.map_select_end(to.toward_end()),
+        Some(rows) => {
+            app.map.camera.pan(0.0, rows as f64);
+            app.map.follow = false;
+        }
+    }
 }
 
 fn pane(app: &mut App, to: Reach) {

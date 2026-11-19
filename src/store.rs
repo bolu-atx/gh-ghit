@@ -11,7 +11,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::api::Row;
 use crate::cache;
-use crate::model::IssueData;
+use crate::model::{IssueData, MapItem};
 
 const SCHEMA_VERSION: &str = "5";
 
@@ -110,7 +110,6 @@ impl EdgeKind {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
     fn from_name(name: &str) -> Option<Self> {
         [EdgeKind::Blocks, EdgeKind::Parent, EdgeKind::Closes].into_iter().find(|kind| kind.name() == name)
     }
@@ -118,7 +117,6 @@ impl EdgeKind {
 
 /// One link between two stored item numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
 pub struct Edge {
     pub src: u64,
     pub dst: u64,
@@ -230,7 +228,6 @@ impl Store {
     }
 
     /// Every stored link between items.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
     pub fn edges(&self) -> Result<Vec<Edge>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let mut stmt = self.conn.prepare("SELECT src, dst, kind FROM edges ORDER BY dst, src, kind").map_err(fail)?;
@@ -238,32 +235,22 @@ impl Store {
         Ok(edges.collect::<Result<Vec<_>, _>>().map_err(fail)?.into_iter().flatten().collect())
     }
 
-    /// The links of the connected component that holds `number`, walking
-    /// links in both directions. Empty when `number` has no links.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
-    pub fn component_edges(&self, number: u64) -> Result<Vec<Edge>, String> {
-        let mut seen = std::collections::HashSet::from([number]);
-        let mut queue = vec![number];
-        while let Some(node) = queue.pop() {
-            for edge in self.edges_touching(node)? {
-                for next in [edge.src, edge.dst] {
-                    if seen.insert(next) {
-                        queue.push(next);
-                    }
-                }
-            }
-        }
-        let mut edges: Vec<Edge> = self.edges()?.into_iter().filter(|edge| seen.contains(&edge.src)).collect();
-        edges.sort_by_key(|edge| (edge.dst, edge.src));
-        Ok(edges)
-    }
-
-    #[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
-    fn edges_touching(&self, number: u64) -> Result<Vec<Edge>, String> {
+    /// Every stored item, as the dependency map needs it.
+    pub fn map_items(&self) -> Result<Vec<MapItem>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
-        let mut stmt = self.conn.prepare("SELECT src, dst, kind FROM edges WHERE src = ?1 OR dst = ?1").map_err(fail)?;
-        let edges = stmt.query_map([number as i64], read_edge).map_err(fail)?;
-        Ok(edges.collect::<Result<Vec<_>, _>>().map_err(fail)?.into_iter().flatten().collect())
+        let mut stmt = self.conn.prepare("SELECT number, kind, state, title, milestone FROM items ORDER BY number").map_err(fail)?;
+        let items = stmt
+            .query_map([], |r| {
+                Ok(MapItem {
+                    number: r.get::<_, i64>(0)? as u64,
+                    is_pr: r.get::<_, String>(1)? == "pr",
+                    state: r.get(2)?,
+                    title: r.get(3)?,
+                    milestone: r.get(4)?,
+                })
+            })
+            .map_err(fail)?;
+        items.collect::<Result<_, _>>().map_err(fail)
     }
 
     /// Every stored item as a finder candidate, most recently updated first.
@@ -338,7 +325,6 @@ impl Store {
 }
 
 /// An edge row; `None` for a kind this build does not know.
-#[cfg_attr(not(test), expect(dead_code, reason = "the dependency map (#270) reads the edges"))]
 fn read_edge(row: &rusqlite::Row) -> rusqlite::Result<Option<Edge>> {
     let kind: String = row.get(2)?;
     let (src, dst) = (row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64);
@@ -403,8 +389,6 @@ pub enum Detail {
     Issue,
     /// Changed files of a PR.
     Diff,
-    /// Dependency graph.
-    Graph,
 }
 
 impl Detail {
@@ -412,7 +396,6 @@ impl Detail {
         match self {
             Detail::Issue => "issue",
             Detail::Diff => "diff",
-            Detail::Graph => "graph",
         }
     }
 }
@@ -634,6 +617,9 @@ ON CONFLICT (number) DO UPDATE SET
 ";
 
 #[cfg(test)]
+mod demo_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -794,13 +780,10 @@ mod tests {
 
         let issue = crate::model::IssueData { number: 5, body: "b".to_string(), updated_at: "t1".to_string(), ..Default::default() };
         let files = vec![crate::model::DiffFile { filename: "a.rs".to_string(), ..Default::default() }];
-        let graph = crate::model::GraphData::default();
         store.put_detail(Detail::Issue, 5, "t1", &issue).unwrap();
         store.put_detail(Detail::Diff, 5, "t1", &files).unwrap();
-        store.put_detail(Detail::Graph, 5, "t1", &graph).unwrap();
         assert_eq!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).unwrap().body, "b");
         assert_eq!(store.fresh_detail::<Vec<crate::model::DiffFile>>(Detail::Diff, 5, false).unwrap()[0].filename, "a.rs");
-        assert_eq!(store.fresh_detail::<crate::model::GraphData>(Detail::Graph, 5, false), Some(graph));
         assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, true).is_none(), "force skips the store");
 
         // A sync that reports a newer updated_at makes every detail stale.
@@ -936,20 +919,18 @@ mod tests {
     }
 
     #[test]
-    fn component_follows_edges_both_ways_and_stops_at_its_boundary() {
+    fn map_items_carry_kind_state_title_and_milestone() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = open_at(&dir.path().join("e.sqlite")).unwrap();
-        // 1 -> 2 -> 3 and 4 -> 3 (a fork joins at 3); 10 -> 11 is apart.
-        store
-            .write("s1", &[linked(2, None, &[1], &[]), linked(3, None, &[2, 4], &[]), linked(11, None, &[10], &[])])
-            .unwrap();
-        let expected = [edge(1, 2, EdgeKind::Blocks), edge(2, 3, EdgeKind::Blocks), edge(4, 3, EdgeKind::Blocks)];
-        for start in [1, 2, 3, 4] {
-            assert_eq!(store.component_edges(start).unwrap(), expected, "from {start}");
-        }
-        assert_eq!(store.component_edges(10).unwrap(), [edge(10, 11, EdgeKind::Blocks)]);
-        assert!(store.component_edges(99).unwrap().is_empty());
-        assert_eq!(store.edges().unwrap().len(), 4);
+        let mut store = open_at(&dir.path().join("m.sqlite")).unwrap();
+        let mut pr = row(4, "MERGED");
+        pr.issue.is_pr = true;
+        pr.issue.milestone = Some("v1".to_string());
+        store.write("s1", &[row(3, "OPEN"), pr]).unwrap();
+        let mut items = store.map_items().unwrap();
+        items.sort_by_key(|item| item.number);
+        assert_eq!(items.len(), 2);
+        assert_eq!((items[0].number, items[0].is_pr, &*items[0].state, items[0].milestone.as_deref()), (3, false, "OPEN", None));
+        assert_eq!((items[1].is_pr, &*items[1].state, items[1].milestone.as_deref()), (true, "MERGED", Some("v1")));
     }
 
     #[test]

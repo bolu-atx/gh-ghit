@@ -1,184 +1,207 @@
-//! Dependency graph types, building and section ordering.
+//! Dependency map: issues and PRs as nodes, milestones as hubs, stored
+//! links as edges. Pure: built from the local copy's items and links,
+//! then laid out by `physics`.
 
-use super::*;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// Cap on nodes in one dependency graph (center included). The graph is a
-/// 1-hop star around the current issue; a full-repo layout is out of scope.
-pub const MAX_GRAPH_NODES: usize = 24;
+use super::physics::EdgeStyle;
 
-/// One relationship in the dependency graph, named from the center issue's
-/// perspective: `Blocks` means the center blocks the neighbor, `BlockedBy`
-/// the reverse, and so on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GraphEdgeKind {
+/// Top bit of a hub id, so a milestone hub never shares an id with an
+/// item number.
+const HUB_BIT: u64 = 1 << 63;
+
+/// One stored item, as the map needs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MapItem {
+    pub number: u64,
+    pub is_pr: bool,
+    /// GraphQL state: `OPEN`, `CLOSED` or `MERGED`.
+    pub state: String,
+    pub title: String,
+    pub milestone: Option<String>,
+}
+
+/// What a stored link means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkKind {
+    /// `src` blocks `dst`.
     Blocks,
-    BlockedBy,
+    /// `src` is the parent of `dst`.
     Parent,
-    Child,
-    References,
-    ReferencedBy,
+    /// The pull request `src` closes the issue `dst`.
     Closes,
 }
 
-/// Section order for the graph pane: blast radius first, then origins,
-/// then plain references.
-pub const GRAPH_SECTION_ORDER: [GraphEdgeKind; 7] = [
-    GraphEdgeKind::Blocks,
-    GraphEdgeKind::BlockedBy,
-    GraphEdgeKind::Parent,
-    GraphEdgeKind::Child,
-    GraphEdgeKind::Closes,
-    GraphEdgeKind::References,
-    GraphEdgeKind::ReferencedBy,
-];
-
-/// Pane section header per edge kind.
-pub fn graph_edge_label(kind: GraphEdgeKind) -> &'static str {
-    match kind {
-        GraphEdgeKind::Blocks => "Blocks",
-        GraphEdgeKind::BlockedBy => "Blocked by",
-        GraphEdgeKind::Parent => "Parent",
-        GraphEdgeKind::Child => "Sub-issues",
-        GraphEdgeKind::References => "References",
-        GraphEdgeKind::ReferencedBy => "Referenced by",
-        GraphEdgeKind::Closes => "Closing PRs",
-    }
+/// One stored link between two item numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MapLink {
+    pub src: u64,
+    pub dst: u64,
+    pub kind: LinkKind,
 }
 
-/// A PR linked to a graph node (closing reference), with its merge state.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphLinkedPr {
-    pub number: u64,
-    #[serde(default)]
-    pub state: String,
+/// Which items the map shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MapScope {
+    /// The linked component of the open issue, with its milestone hubs.
+    #[default]
+    Component,
+    /// Every item of the repo, pulled together by milestone hubs.
+    Repo,
 }
 
-/// One issue or PR in the dependency graph: number, slug title, state,
-/// project status, label chips, and linked PR numbers.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphNode {
-    pub number: u64,
-    #[serde(default)]
+/// How a node reads on the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeState {
+    /// An open issue with an open blocker.
+    Blocked,
+    /// An open issue with no open blocker.
+    Ready,
+    /// An open pull request.
+    Pr,
+    /// Closed or merged: shown only as a blocker of an open item, or as
+    /// the open issue itself.
+    Closed,
+    /// A milestone.
+    Hub,
+}
+
+/// One node: an item, or a milestone hub (`number` is `None`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MapNode {
+    /// Stable layout id: the item number, or a hub id.
+    pub id: u64,
+    pub number: Option<u64>,
     pub title: String,
-    #[serde(default)]
-    pub state: String,
-    #[serde(default)]
-    pub is_pr: bool,
-    #[serde(default)]
-    pub labels: Vec<Label>,
-    #[serde(default)]
-    pub project_status: Option<String>,
-    #[serde(default)]
-    pub linked_prs: Vec<GraphLinkedPr>,
+    pub state: NodeState,
 }
 
-/// A directed relationship between two graph nodes. `Blocks` edges point
-/// from the blocker to the blocked; every other kind points from the
-/// neighbor toward the center or vice versa per `edge_for`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphEdge {
-    pub from: u64,
-    pub to: u64,
-    pub kind: GraphEdgeKind,
+/// The built map: nodes, then edges as node index pairs. A `Directed`
+/// edge runs from the blocker to the blocked node; a `Hub` edge from an
+/// item to its milestone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MapGraph {
+    pub nodes: Vec<MapNode>,
+    pub edges: Vec<(usize, usize, EdgeStyle)>,
 }
 
-/// The 1-hop dependency star around one issue: the center plus its capped
-/// neighbors. `truncated` means neighbors were dropped at the cap;
-/// `from_references` means blocked-by/blocking fields were unavailable and
-/// reference edges were derived from body `#` refs instead.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphData {
-    pub center: u64,
-    #[serde(default)]
-    pub nodes: Vec<GraphNode>,
-    #[serde(default)]
-    pub edges: Vec<GraphEdge>,
-    #[serde(default)]
-    pub truncated: bool,
-    #[serde(default)]
-    pub from_references: bool,
-}
-
-/// Directed edge for one neighbor `kind`, from the center's perspective.
-pub fn edge_for(center: u64, neighbor: u64, kind: GraphEdgeKind) -> GraphEdge {
-    match kind {
-        GraphEdgeKind::Blocks
-        | GraphEdgeKind::Child
-        | GraphEdgeKind::References => GraphEdge { from: center, to: neighbor, kind },
-        GraphEdgeKind::BlockedBy
-        | GraphEdgeKind::Parent
-        | GraphEdgeKind::ReferencedBy
-        | GraphEdgeKind::Closes => GraphEdge { from: neighbor, to: center, kind },
+impl MapGraph {
+    /// Layout ids in node order.
+    pub fn ids(&self) -> Vec<u64> {
+        self.nodes.iter().map(|node| node.id).collect()
     }
-}
 
-/// Build the graph from the center plus neighbors in priority order (first
-/// edge wins on duplicates). Nodes past `MAX_GRAPH_NODES` drop and set
-/// `truncated`. The center node itself carries no edge.
-pub fn build_graph(center: GraphNode, neighbors: Vec<(GraphNode, GraphEdgeKind)>) -> GraphData {
-    let center_number = center.number;
-    let mut nodes = vec![center];
-    let mut edges = vec![];
-    let mut truncated = false;
-    for (node, kind) in neighbors {
-        if node.number == center_number || nodes.iter().any(|n| n.number == node.number) {
-            continue;
-        }
-        if nodes.len() >= MAX_GRAPH_NODES {
-            truncated = true;
-            continue;
-        }
-        edges.push(edge_for(center_number, node.number, kind));
-        nodes.push(node);
+    /// Index of the node with layout id `id`.
+    pub fn index_of(&self, id: u64) -> Option<usize> {
+        self.nodes.iter().position(|node| node.id == id)
     }
-    GraphData { center: center_number, nodes, edges, truncated, from_references: false }
-}
 
-/// True when `number` blocks something: it is the blocker end of a
-/// blocking relationship. Both `Blocks` and `BlockedBy` edges point from
-/// the blocker to the blocked (the kind names the center's perspective),
-/// so the blocker is always `from`. Nodes without one render gray/dim.
-#[cfg(test)]
-pub fn graph_blocks_something(data: &GraphData, number: u64) -> bool {
-    data.edges.iter().any(|e| {
-        e.from == number && matches!(e.kind, GraphEdgeKind::Blocks | GraphEdgeKind::BlockedBy)
-    })
-}
-
-/// Node indices grouped by edge kind in `GRAPH_SECTION_ORDER`. The center
-/// node carries no edge, so it never appears here; see `graph_order`.
-pub fn graph_sections(data: &GraphData) -> Vec<(GraphEdgeKind, Vec<usize>)> {
-    let kind_of = |idx: usize| {
-        let n = data.nodes[idx].number;
-        data.edges
-            .iter()
-            .find(|e| (e.from == n && e.to == data.center) || (e.from == data.center && e.to == n))
-            .map(|e| e.kind)
-    };
-    let mut out = vec![];
-    for kind in GRAPH_SECTION_ORDER {
-        let mut group = vec![];
-        for (idx, node) in data.nodes.iter().enumerate() {
-            if node.number != data.center && kind_of(idx) == Some(kind) {
-                group.push(idx);
+    /// Every node that blocks `index`, directly or through a chain.
+    pub fn blockers_of(&self, index: usize) -> HashSet<usize> {
+        let mut found = HashSet::new();
+        let mut queue = vec![index];
+        while let Some(node) = queue.pop() {
+            for &(src, dst, style) in &self.edges {
+                if style == EdgeStyle::Directed && dst == node && src != index && found.insert(src) {
+                    queue.push(src);
+                }
             }
         }
-        if !group.is_empty() {
-            out.push((kind, group));
-        }
+        found
     }
-    out
 }
 
-/// Flat navigation order: the center first, then neighbors section by
-/// section. Indices into `data.nodes`.
-pub fn graph_order(data: &GraphData) -> Vec<usize> {
-    let mut order = vec![];
-    if let Some(center) = data.nodes.iter().position(|n| n.number == data.center) {
-        order.push(center);
+/// Layout id of the hub for milestone `title`: FNV-1a with the hub bit.
+pub fn hub_id(title: &str) -> u64 {
+    let hash = title.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+    HUB_BIT | (hash >> 1)
+}
+
+/// Build the map. `center` is the open issue: the component scope walks
+/// links out from it, and it always shows. Links to numbers missing from
+/// `items` drop. Closed items hide, except closed blockers of an open item
+/// in scope.
+pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, scope: MapScope) -> MapGraph {
+    let by_number: HashMap<u64, &MapItem> = items.iter().map(|item| (item.number, item)).collect();
+    let links: Vec<MapLink> = links.iter().copied()
+        .filter(|link| link.src != link.dst && by_number.contains_key(&link.src) && by_number.contains_key(&link.dst))
+        .collect();
+    let in_scope: HashSet<u64> = match scope {
+        MapScope::Repo => by_number.keys().copied().collect(),
+        MapScope::Component => match center.filter(|n| by_number.contains_key(n)) {
+            Some(center) => component(&links, center),
+            None => HashSet::new(),
+        },
+    };
+    // Blocks links indexed both ways, so each node checks only its own.
+    let mut blocks: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut blocked_by: HashMap<u64, Vec<u64>> = HashMap::new();
+    for link in links.iter().filter(|link| link.kind == LinkKind::Blocks) {
+        blocks.entry(link.src).or_default().push(link.dst);
+        blocked_by.entry(link.dst).or_default().push(link.src);
     }
-    for (_, group) in graph_sections(data) {
-        order.extend(group);
+    let open = |n: u64| by_number.get(&n).is_some_and(|item| item.state == "OPEN");
+    let visible = |n: u64| {
+        open(n)
+            || Some(n) == center
+            || blocks.get(&n).is_some_and(|dsts| dsts.iter().any(|&dst| in_scope.contains(&dst) && open(dst)))
+    };
+    let mut numbers: Vec<u64> = in_scope.iter().copied().filter(|&n| visible(n)).collect();
+    numbers.sort_unstable();
+
+    let mut nodes: Vec<MapNode> = numbers.iter().map(|&n| {
+        let item = by_number[&n];
+        let blocked = blocked_by.get(&n).is_some_and(|srcs| srcs.iter().any(|&src| open(src)));
+        let state = match (open(n), item.is_pr, blocked) {
+            (false, _, _) => NodeState::Closed,
+            (true, true, _) => NodeState::Pr,
+            (true, false, true) => NodeState::Blocked,
+            (true, false, false) => NodeState::Ready,
+        };
+        MapNode { id: n, number: Some(n), title: item.title.clone(), state }
+    }).collect();
+    let index: HashMap<u64, usize> = numbers.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+
+    let mut edges: Vec<(usize, usize, EdgeStyle)> = links.iter().filter_map(|link| {
+        let (src, dst) = (*index.get(&link.src)?, *index.get(&link.dst)?);
+        let style = match link.kind {
+            LinkKind::Blocks => EdgeStyle::Directed,
+            LinkKind::Parent | LinkKind::Closes => EdgeStyle::Link,
+        };
+        Some((src, dst, style))
+    }).collect();
+    edges.sort_by_key(|&(src, dst, _)| (src, dst));
+    edges.dedup_by_key(|edge| (edge.0, edge.1));
+
+    let mut milestones: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, n) in numbers.iter().enumerate() {
+        if let Some(title) = by_number[n].milestone.as_deref() {
+            milestones.entry(title).or_default().push(i);
+        }
     }
-    order
+    for (title, members) in milestones {
+        let hub = nodes.len();
+        nodes.push(MapNode { id: hub_id(title), number: None, title: title.to_string(), state: NodeState::Hub });
+        edges.extend(members.into_iter().map(|i| (i, hub, EdgeStyle::Hub)));
+    }
+    MapGraph { nodes, edges }
+}
+
+/// Numbers linked to `center` through any chain of links, either way.
+fn component(links: &[MapLink], center: u64) -> HashSet<u64> {
+    let mut neighbors: HashMap<u64, Vec<u64>> = HashMap::new();
+    for link in links {
+        neighbors.entry(link.src).or_default().push(link.dst);
+        neighbors.entry(link.dst).or_default().push(link.src);
+    }
+    let mut seen = HashSet::from([center]);
+    let mut queue = vec![center];
+    while let Some(node) = queue.pop() {
+        for &next in neighbors.get(&node).into_iter().flatten() {
+            if seen.insert(next) {
+                queue.push(next);
+            }
+        }
+    }
+    seen
 }

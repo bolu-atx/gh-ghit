@@ -63,7 +63,13 @@ Recent rows refresh every 30 seconds when the UI is idle (override with GHIT_AUT
 `r` refreshes the current item and sidebar.
 A window refresh can remove vanished background rows that were not opened or pinned.
 
-The Visual tab shows a PR diff with line numbers or an issue graph.
+The Visual tab shows a PR diff with line numbers, or for an issue a dependency map drawn from the local copy:
+issues and PRs linked by blocks, parent and closes links, pulled together by milestone hubs.
+It shows the open issue's linked items, or the whole repo (`s`); closed items hide unless they block an open one.
+Drag a node to pin it or press `W` `A` `S` `D` to move the selected one, drag empty space or press `h` `j` `k` `l` to pan,
+wheel or `+` / `-` to zoom, `0` to fit, `.` / `,` to step nodes, `Enter` or a second click to open one, `x` to unpin,
+and right-click for its menu. Every other key keeps its global meaning on the map.
+`scripts/graph-demo.sh` opens a dense offline demo repo to try it.
 In a diff, `c` starts a line comment or replies to the review thread under the cursor.
 Use `Ctrl+S` to submit a pending review.
 The board opens the first Projects v2 project for the repository owner and loads its item pages through GraphQL.
@@ -90,18 +96,18 @@ The essentials:
 | Keys | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Cycle panes in screen order (Issues, PRs, Main, Refs, Filters, History) |
-| `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards, graph nodes (scroll the main pane) |
+| `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards (scroll the main pane, pan the map) |
 | `gg` / `G` | Jump to the top / bottom of any list or scroll area |
 | `Ctrl+D` / `Ctrl+U`, Page Down / Page Up | Half page / full page |
-| `Enter` | Open the selected row, reference, card or graph node; apply in dialogs |
+| `Enter` | Open the selected row, reference, card or map node; apply in dialogs |
 | `Space` | Expand a row, toggle a chip, fold a diff file |
 | `[` / `]` | Previous / next issue from any pane |
-| `h` / `l` | Fold / unfold tree rows and diff files; move between graph nodes and board columns; elsewhere step issues |
+| `h` / `l` | Fold / unfold tree rows and diff files; pan the map; move between board columns; elsewhere step issues |
 | `s` / `S` | Cycle / reverse the sort in Issues and PRs (`s` toggles split in the diff) |
 | `a` | In the diff, expand every small file, or fold all when they are open. Large files (over 300 changed lines) stay folded |
 | `Ctrl+S` | Submit the pending review |
 | `1` / `2` | Details / Visual tab |
-| `:` / `/` | Command bar / find. With a sidebar pane focused, `/` filters rows and `n` / `N` step between hits. With Main focused, `/` searches the content (Details, Diff, Graph): matches highlight as you type, `Enter` keeps them, smart case |
+| `:` / `/` | Command bar / find. With a sidebar pane focused, `/` filters rows and `n` / `N` step between hits. With Main focused, `/` searches the content (Details, Diff): matches highlight as you type, `Enter` keeps them, smart case |
 | `n` / `N` | Next / previous match (wraps). The `‹ 3/12 ›` counter on the Main tab line is clickable. A match in a folded diff file unfolds it |
 | `Ctrl+P` | Fuzzy finder: type part of a number or title, `↑` / `↓` or `Ctrl+N` / `Ctrl+P` move, `Enter` opens |
 | `f` / `b` / `F` | Format and filter / board / search GitHub |

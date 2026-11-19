@@ -6,7 +6,6 @@ pub enum Kind {
     /// Full issue or PR details.
     Details,
     Diff,
-    Graph,
     /// The sidebar listing. One request carries the issues and the PRs.
     Sections,
     /// Labels, milestones, sub-issue children, the board.
@@ -20,7 +19,7 @@ pub enum Kind {
 /// request runs at the Issues tier and the PRs ride along.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
-    /// The issue or PR in the main pane, and its visible diff or graph.
+    /// The issue or PR in the main pane, and its visible diff.
     Current,
     /// The sidebar sections.
     Sections,
@@ -31,13 +30,13 @@ pub enum Tier {
 }
 
 /// Tier of one request. `is_current` means the request belongs to the
-/// issue in the main pane. `tab_shown` means the Diff or Graph tab is up.
+/// issue in the main pane. `tab_shown` means the Diff tab is up.
 pub fn urgency(kind: Kind, is_current: bool, tab_shown: bool) -> Tier {
     match kind {
         Kind::Details if is_current => Tier::Current,
-        Kind::Diff | Kind::Graph if is_current && tab_shown => Tier::Current,
+        Kind::Diff if is_current && tab_shown => Tier::Current,
         Kind::Sections => Tier::Sections,
-        Kind::Details | Kind::Diff | Kind::Graph | Kind::Other => Tier::Background,
+        Kind::Details | Kind::Diff | Kind::Other => Tier::Background,
         Kind::Backfill => Tier::Idle,
     }
 }
@@ -53,12 +52,10 @@ mod tests {
     }
 
     #[test]
-    fn diff_and_graph_need_the_tab() {
-        for kind in [Kind::Diff, Kind::Graph] {
-            assert_eq!(urgency(kind, true, true), Tier::Current);
-            assert_eq!(urgency(kind, true, false), Tier::Background);
-            assert_eq!(urgency(kind, false, true), Tier::Background);
-        }
+    fn diff_needs_the_tab() {
+        assert_eq!(urgency(Kind::Diff, true, true), Tier::Current);
+        assert_eq!(urgency(Kind::Diff, true, false), Tier::Background);
+        assert_eq!(urgency(Kind::Diff, false, true), Tier::Background);
     }
 
     #[test]

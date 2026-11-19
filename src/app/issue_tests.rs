@@ -9,13 +9,11 @@ fn evict_drops_row_and_cached_data_then_moves_cursor() {
     app.nav.current = Some(7);
     app.diff.expanded_rows.insert(7);
     app.diff.files.insert(7, vec![]);
-    app.graph.data.insert(7, model::GraphData::default());
     app.evict_current();
     assert!(!app.nav.visited.contains(&7));
     assert!(!app.issues.data.contains_key(&7), "data dropped");
     assert!(!app.issues.statuses.contains_key(&7), "status dropped");
     assert!(!app.diff.files.contains_key(&7), "diff dropped");
-    assert!(!app.graph.data.contains_key(&7), "graph dropped");
     assert!(!app.diff.expanded_rows.contains(&7), "expansion dropped");
     assert_eq!(app.nav.current, Some(9), "cursor falls to the next row");
     assert_eq!(app.issue_numbers(), vec![9]);

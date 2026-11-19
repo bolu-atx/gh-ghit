@@ -7,6 +7,7 @@ mod actions;
 mod click;
 mod finder;
 mod hit;
+mod map;
 mod menu;
 mod mouse;
 mod reach;

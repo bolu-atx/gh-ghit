@@ -130,6 +130,9 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
             return;
         }
     }
+    if super::map::handle_map_mouse(app, m) {
+        return;
+    }
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => handle_left(app, m.column, m.row, false),
         MouseEventKind::Down(MouseButton::Right) => menu::right_click(app, m.column, m.row),
