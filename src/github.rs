@@ -186,7 +186,7 @@ pub enum Refresh {
 /// `Refresh::Full`, a miss, or an older payload walks the lists head-first and stops
 /// on overlap with the cache. `progress` re-tags the page counts onto the
 /// caller's existing section channel. `Refresh::Status` also refetches CI and
-/// project status of the open rows (best effort) and keeps `started_at`.
+/// project status of the open rows (best effort) after its change-only search.
 pub async fn fetch_recent_sections(
     repo: &str,
     hours: u64,
@@ -241,7 +241,6 @@ pub async fn fetch_recent_sections(
         }
     }
     // A walk just read every status; otherwise refresh the open rows'.
-    // `started_at` stays the fetch start so the next delta reaches back.
     if refresh == Refresh::Status && !walked {
         let targets = api::status_targets(&rows);
         if !targets.is_empty() {
