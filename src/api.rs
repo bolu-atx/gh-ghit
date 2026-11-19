@@ -13,7 +13,7 @@ pub use sections::{merge_rows, sections, MAX_SECTION_ROWS};
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};
 use client::{
-    client, get, graphql_auth_failure, graphql_url, http_fail, patch_json, post_json, rest_base,
+    client, get, graphql_auth_failure, RATE_LIMIT_FIELD, graphql_url, http_fail, patch_json, post_json, rest_base,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -45,7 +45,7 @@ pub async fn board_details(cards: &[(String, u64)], bearer: &str) -> Result<Vec<
         fields.push_str(&format!("c{i}: repository(owner: {}, name: {}) {{ issueOrPullRequest(number: {number}) {{ ... on Issue {{ createdAt updatedAt comments {{ totalCount }} }} ... on PullRequest {{ createdAt updatedAt comments {{ totalCount }} }} }} }} ", json!(owner), json!(name)));
     }
     let url = graphql_url();
-    let value = post_json(&client(), &url, bearer, &json!({"query": format!("query {{ {fields} }}")})).await?;
+    let value = post_json(&client(), &url, bearer, &json!({"query": format!("query {{ {fields} {RATE_LIMIT_FIELD} }}")})).await?;
     parse_board_details(&value, cards.len())
 }
 
@@ -388,7 +388,7 @@ pub async fn issue(
     // will-close flag, so `closingIssuesReferences` /
     // `closedByPullRequestsReferences` have no REST equivalent; and
     // Projects v2 status is GraphQL-only (see `sections`).
-    let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ {threads_field} {paired_field} projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} }}"#);
+    let query = format!(r#"query($owner:String!, $repo:String!, $num:Int!) {{ repository(owner:$owner,name:$repo) {{ {field}(number:$num) {{ {threads_field} {paired_field} projectItems(first:10) {{ nodes {{ project {{ title }} status: fieldValueByName(name:"Status") {{ ... on ProjectV2ItemFieldSingleSelectValue {{ name }} }} }} }} }} }} {RATE_LIMIT_FIELD} }}"#);
     let url = graphql_url();
     // Project statuses stay best-effort: a failed lookup yields none,
     // same as before, instead of failing the whole issue fetch.

@@ -37,7 +37,7 @@
     "body": [],
     "status": 200
   },
-  "POST /graphql repository a62c073da9e52763": {
+  "POST /graphql repository 87c39c1e717beb48": {
     "body": {
       "data": {
         "repository": {

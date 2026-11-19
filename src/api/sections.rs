@@ -1,12 +1,12 @@
 use super::{Row, SectionRows};
-use super::client::{client, graphql_auth_failure, graphql_url, post_json};
+use super::client::{client, graphql_auth_failure, graphql_url, post_json, RATE_LIMIT_FIELD};
 use crate::model::{Author, BoardDetail, IssueData, Label, SubSummary};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
 const PR_FIELDS: &str = r#"
- number title state author { login } labels(first: 100) { nodes { name } }
- assignees(first: 100) { nodes { login } } createdAt updatedAt url
+ number title state author { login } labels(first: 20) { nodes { name } }
+ assignees(first: 10) { nodes { login } } createdAt updatedAt url
  milestone { title }
  comments(first: 1) { totalCount } mergedAt
  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
@@ -15,8 +15,8 @@ const PR_FIELDS: &str = r#"
 "#;
 
 const ISSUE_FIELDS: &str = r#"
- number title state author { login } labels(first: 100) { nodes { name } }
- assignees(first: 100) { nodes { login } } createdAt updatedAt url
+ number title state author { login } labels(first: 20) { nodes { name } }
+ assignees(first: 10) { nodes { login } } createdAt updatedAt url
  milestone { title }
  comments(first: 1) { totalCount }
  parent { number }
@@ -47,7 +47,8 @@ fn query() -> String {
  merged: pullRequests(first: 50, states: MERGED, after: $mergedAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {PR_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
  openIssues: issues(first: 50, states: OPEN, after: $openIssuesAfter, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
  closedIssues: issues(first: 50, states: CLOSED, after: $closedIssuesAfter, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ nodes {{ {ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }}
- }} }}"#)
+ }}
+ {RATE_LIMIT_FIELD} }}"#)
 }
 
 fn within_window(s: Option<&str>, now: chrono::DateTime<chrono::Utc>, hours: u64) -> bool {
@@ -265,6 +266,9 @@ mod tests {
         // Startup fetches list-weight rows only: bodies and per-PR review
         // threads load when a row opens through the full fetch.
         let q = query();
+        assert!(q.contains("labels(first: 20)") && q.contains("assignees(first: 10)"));
+        assert!(!q.contains("labels(first: 100)") && !q.contains("assignees(first: 100)"));
+        assert!(q.contains("rateLimit { cost remaining resetAt }"));
         assert!(!q.contains("reviewThreads"), "sections query carries no threads");
         assert!(!q.contains("body"), "sections query carries no body");
         for field in ["number", "title", "state", "author", "labels", "assignees", "createdAt", "updatedAt", "url", "projectItems", "statusCheckRollup"] { assert!(q.contains(field), "sidebar/match field missing: {field}"); }

@@ -21,6 +21,8 @@ def request_key(method, path, body):
         query = urlencode(sorted(parse_qsl(parts.query, keep_blank_values=True)))
         return f"{method} {path}" + (f"?{query}" if query else "")
     query = " ".join(body.get("query", "").split())
+    # Cost metadata is not part of the recorded answer: keep keys stable.
+    query = re.sub(r"\s*rateLimit(?:\([^)]*\))?\s*\{[^}]*\}", "", query)
     match = re.search(r"\{\s*(?:\w+\s*:\s*)?(\w+)\s*(?:\(|\{)", query)
     root = match.group(1) if match else "unknown"
     variables = json.dumps(body.get("variables", {}), sort_keys=True, separators=(",", ":"))

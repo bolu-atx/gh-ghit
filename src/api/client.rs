@@ -171,6 +171,44 @@ pub(super) fn note_rate_limit(res: &reqwest::Response) {
     }
 }
 
+/// Selection every GraphQL query appends so each reply reports its cost.
+pub(super) const RATE_LIMIT_FIELD: &str = "rateLimit { cost remaining resetAt }";
+
+/// Below this many remaining points, GraphQL calls back off until reset.
+const LOW_POINTS: u64 = 100;
+
+/// `(cost, remaining, reset unix second)` from a payload's `rateLimit`.
+/// Payloads without it (REST, fixture server) yield `None`.
+pub(crate) fn parse_graphql_cost(value: &Value) -> Option<(u64, u64, u64)> {
+    let rl = value.pointer("/data/rateLimit")?;
+    let reset = chrono::DateTime::parse_from_rfc3339(rl.get("resetAt")?.as_str()?).ok()?;
+    Some((rl.get("cost")?.as_u64()?, rl.get("remaining")?.as_u64()?, u64::try_from(reset.timestamp()).ok()?))
+}
+
+/// One cost-log line: unix second, cost, remaining, and the query head
+/// (whitespace collapsed, first 80 chars) so calls tell apart.
+fn cost_log_line(now: u64, cost: u64, remaining: u64, body: &Value) -> String {
+    let query = body.get("query").and_then(Value::as_str).unwrap_or("");
+    let head: String = query.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+    format!("{now} cost={cost} remaining={remaining} {head}\n")
+}
+
+/// Record a reply's query cost and back off before the quota runs dry.
+/// `GHIT_COST_LOG=<path>` appends one line per GraphQL call (the TUI owns
+/// stderr, so this is the only cost readout).
+pub(super) fn note_graphql_cost(value: &Value, body: &Value) {
+    let Some((cost, remaining, reset)) = parse_graphql_cost(value) else { return };
+    if let Some(path) = std::env::var_os("GHIT_COST_LOG") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = f.write_all(cost_log_line(unix_now(), cost, remaining, body).as_bytes());
+        }
+    }
+    if remaining < LOW_POINTS {
+        RATE_LIMIT_UNTIL.fetch_max(reset, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// True while GitHub's last word says the quota is spent.
 pub fn rate_limited() -> bool {
     RATE_LIMIT_UNTIL.load(std::sync::atomic::Ordering::Relaxed) > unix_now()
@@ -229,7 +267,9 @@ pub(super) async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Re
 }
 
 pub(super) async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
-    send_json(client.post(url), url, bearer, body).await
+    let value = send_json(client.post(url), url, bearer, body).await?;
+    note_graphql_cost(&value, body);
+    Ok(value)
 }
 
 pub(super) async fn patch_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
@@ -295,6 +335,19 @@ pub(super) fn graphql_url() -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn graphql_cost_parses_and_tolerates_absence() {
+        let v = json!({"data": {"rateLimit": {"cost": 3, "remaining": 4990, "resetAt": "2026-11-18T12:00:00Z"}}});
+        assert_eq!(parse_graphql_cost(&v), Some((3, 4990, 1_795_003_200)));
+        assert_eq!(parse_graphql_cost(&json!({"data": {"repository": {}}})), None);
+        assert_eq!(parse_graphql_cost(&json!([1, 2])), None);
+    }
+    #[test]
+    fn cost_log_line_collapses_the_query_head() {
+        let body = json!({"query": "query($o: String!) {\n  repository(owner: $o) {  id }\n}"});
+        assert_eq!(cost_log_line(7, 3, 4990, &body),
+            "7 cost=3 remaining=4990 query($o: String!) { repository(owner: $o) { id } }\n");
+    }
     #[test]
     fn api_base_override_wins_over_host() {
         assert_eq!(api_endpoints("invalid.example", Some("http://127.0.0.1:1234/")),
