@@ -65,12 +65,6 @@ pub fn diff_lines(patch: &str) -> Vec<(DiffKind, String)> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VisualContent { Diff, Graph }
-
-pub fn visual_content(is_pr: bool) -> VisualContent {
-    if is_pr { VisualContent::Diff } else { VisualContent::Graph }
-}
 
 /// Map each patch row to its `(old, new)` file lines. Hunk headers and
 /// `\ No newline` markers map to `(None, None)`; deletions carry only

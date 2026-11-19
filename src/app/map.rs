@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
 
-use crate::app::App;
+use crate::app::{App, Tab};
 use crate::core::map::{Camera, ZOOM_STEP};
 use crate::github;
 use crate::model::physics::{Layout, Physics};
@@ -79,10 +79,11 @@ pub(crate) struct MapView {
     pub(crate) version: Option<i64>,
     pub(crate) scope: MapScope,
     pub(crate) graph: MapGraph,
-    /// Center and scope `graph` was built for; `None` forces a rebuild.
-    built: Option<(Option<u64>, MapScope)>,
-    /// Center of the last build. A data reread keeps the selection; a new
-    /// center takes it.
+    /// Scope `graph` was built for; `None` forces a rebuild.
+    built: Option<MapScope>,
+    /// Center of the last build: the open item in component scope, none
+    /// in repo scope or with no item open. A data reread keeps the
+    /// selection; a new center takes it.
     center: Option<u64>,
     pub(crate) layout: Layout,
     pub(crate) camera: Camera,
@@ -127,6 +128,10 @@ impl Default for MapView {
 }
 
 impl MapView {
+    pub(crate) fn center(&self) -> Option<u64> {
+        self.center
+    }
+
     /// Index of the selected node in `graph`.
     pub(crate) fn selected_index(&self) -> Option<usize> {
         self.graph.index_of(self.selected?)
@@ -189,12 +194,12 @@ impl App {
         self.map.built = None;
     }
 
-    /// Per-frame map work while the Graph tab shows: reread the store after
+    /// Per-frame map work while the Map tab shows: reread the store after
     /// a write, rebuild on a new center or scope, then step the layout a
     /// few times within the frame budget while it moves. True when the map
     /// changed on screen.
     pub(crate) fn map_tick(&mut self) -> bool {
-        if !self.visual_graph() {
+        if !self.map_shown() {
             return false;
         }
         if let Some(link) = self.sections.link.as_ref() {
@@ -229,7 +234,7 @@ impl App {
     /// Before a render: while the camera follows, fit the graph as it is
     /// now in the map's last drawn area.
     pub(crate) fn map_before_draw(&mut self) {
-        if self.visual_graph() {
+        if self.map_shown() {
             self.fit_map_view();
         }
     }
@@ -238,7 +243,7 @@ impl App {
     /// bring a pending card subject into view. True when the camera moved,
     /// so the frame draws again.
     pub(crate) fn map_after_draw(&mut self) -> bool {
-        if !self.visual_graph() {
+        if !self.map_shown() {
             return false;
         }
         let mut moved = false;
@@ -297,17 +302,19 @@ impl App {
     /// Rebuild the graph when the center or scope moved. A new center
     /// takes the selection.
     fn rebuild_map(&mut self) -> bool {
-        let center = self.nav.current;
-        let want = (center, self.map.scope);
-        if self.map.built == Some(want) {
+        let center = match self.map.scope {
+            MapScope::Component => self.nav.current,
+            MapScope::Repo => None,
+        };
+        if self.map.built == Some(self.map.scope) && self.map.center == center {
             return false;
         }
         let map = &mut self.map;
-        let new_center = map.center != center;
+        let new_center = center.is_some() && map.center != center;
         map.center = center;
         map.graph = model::build_map(&map.items, &map.links, center, map.scope);
         map.layout.rebuild(&map.graph.ids(), &map.graph.edges);
-        map.built = Some(want);
+        map.built = Some(map.scope);
         if new_center || map.selected_index().is_none() {
             map.selected = center.filter(|n| map.graph.index_of(*n).is_some());
         }
@@ -378,12 +385,21 @@ impl App {
         }
     }
 
-    /// Open the selected item in the viewer. A hub only names itself.
+    /// Open the selected item on the Details tab. The map keeps its
+    /// state, so the Map tab returns to it. A hub only names itself.
     pub(crate) fn map_open(&mut self) {
         let Some(node) = self.map.selected_index().map(|i| &self.map.graph.nodes[i]) else { return };
         match node.number {
-            Some(n) if Some(n) != self.nav.current => self.open_issue(n),
-            Some(_) => {}
+            Some(n) if Some(n) == self.nav.current => self.request_tab(Tab::Details),
+            Some(n) => {
+                // Pending review comments ask first; the tab stays until
+                // that dialog resolves the open.
+                let guarded = self.pending_threads() > 0;
+                self.open_issue(n);
+                if !guarded {
+                    self.set_tab_inner(Tab::Details);
+                }
+            }
             None => self.notify(format!("milestone: {}", node.title)),
         }
     }
@@ -410,16 +426,17 @@ impl App {
         self.map.follow = true;
     }
 
-    /// Flip between the open issue's component and the whole repo.
+    /// Flip between the open item's component and the whole repo.
     pub(crate) fn map_toggle_scope(&mut self) {
         self.map.scope = match self.map.scope {
             MapScope::Component => MapScope::Repo,
             MapScope::Repo => MapScope::Component,
         };
         self.map.follow = true;
-        self.notify(match self.map.scope {
-            MapScope::Component => "map: linked items".to_string(),
-            MapScope::Repo => "map: whole repo".to_string(),
+        self.notify(match (self.map.scope, self.nav.current) {
+            (MapScope::Component, Some(_)) => "map: linked items".to_string(),
+            (MapScope::Component, None) => "map: linked items once an item opens".to_string(),
+            (MapScope::Repo, _) => "map: whole repo".to_string(),
         });
     }
 

@@ -1,4 +1,4 @@
-//! Main pane: header, issue body, the Graph tab's map and wrapping helpers.
+//! Main pane: header, issue body, the Map tab's map and wrapping helpers.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -281,21 +281,16 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(mast).style(base()), rows[0]);
 
     let main_focused = app.pane_focused(crate::core::Pane::Main);
-    // Second tab follows the current item: PRs show their diff, issues
-    // the dependency graph. Nothing loaded yet reads as Graph.
-    let visual_label = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
-        Some(d) if d.is_pr => "Diff View",
-        _ => "Graph",
-    };
-    // Nerd Font glyphs: file-text, comments, code. Labels stay so a
-    // missing font degrades to a tofu box plus readable text. The
-    // `1`/`2` prefixes mirror the Details/Visual keys; the click
-    // router splits on the first title via `TAB_SPLIT_X`.
-    let tabs = Tabs::new(crate::app::tab_titles(visual_label).to_vec())
-        .select(match app.nav.tab { Tab::Details => 0, Tab::Visual => 1 })
+    // Nerd Font glyphs: file-text, code, map. Labels stay so a missing
+    // font degrades to a tofu box plus readable text. The `1`/`2`/`3`
+    // prefixes mirror the tab keys; the click router splits on the
+    // same titles via `tab_at`.
+    let tabs = Tabs::new(crate::app::TABS.iter().map(|(_, title)| *title).collect::<Vec<_>>())
+        .select(crate::app::TABS.iter().position(|(tab, _)| *tab == app.nav.tab))
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
-        .divider("  ")
+        .padding("", "")
+        .divider(" ")
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
@@ -321,7 +316,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(2)])
         .split(rows[4]);
     app.hits.body_area = gutter[1];
-    if app.visual_graph() {
+    if app.map_shown() {
         app.hits.body_total = 0;
         super::map::render_map(f, gutter[1], app);
         return;
@@ -337,11 +332,16 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                     .replace("_No comments yet._", &format!("_No comments yet. Press `{comment_key}` to write one._"));
                 crate::theme::render_markdown(&markdown)
             }
-            Tab::Visual => match model::visual_content(d.is_pr) {
-                model::VisualContent::Diff => diff_text_aux(app, d, (rows[4].width as usize).saturating_sub(5), &mut aux),
-                // The map draws itself above and returns early.
-                model::VisualContent::Graph => ratatui::text::Text::default(),
-            },
+            Tab::Visual if d.is_pr => diff_text_aux(app, d, (rows[4].width as usize).saturating_sub(5), &mut aux),
+            Tab::Visual => {
+                markdown = format!(
+                    "Issues have no diff.\n\nThe dependency map is on the Map tab (`{}`).",
+                    hints::key_in(Context::Global, Action::TabMap),
+                );
+                crate::theme::render_markdown(&markdown)
+            }
+            // The map draws itself above and returns early.
+            Tab::Map => ratatui::text::Text::default(),
         },
         None if app.pane_loading().main => {
             let label = app.nav.requested.map_or("Loading…".to_string(), |n| format!("Loading #{n}…"));

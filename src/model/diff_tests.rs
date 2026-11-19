@@ -81,11 +81,6 @@ fn header_file_index_matches_longest_filename() {
 }
 
 #[test]
-fn selects_visual_by_kind() {
-    assert_eq!(visual_content(true), VisualContent::Diff);
-    assert_eq!(visual_content(false), VisualContent::Graph);
-}
-#[test]
 fn matches_new_side_and_falls_back_for_missing_lines() {
     let file = DiffFile { filename: "a".into(), patch: "@@ -2,2 +4,2 @@\n-old\n+new\n context".into(), ..Default::default() };
     let mut thread = ReviewThread { path: "a".into(), line: Some(4), ..Default::default() };

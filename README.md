@@ -63,9 +63,9 @@ Recent rows refresh every 30 seconds when the UI is idle (override with GHIT_AUT
 `r` refreshes the current item and sidebar.
 A window refresh can remove vanished background rows that were not opened or pinned.
 
-The Visual tab shows a PR diff with line numbers, or for an issue a dependency map drawn from the local copy:
+The Diff tab (`2`) shows a PR diff with line numbers. The Map tab (`3`) shows a dependency map drawn from the local copy, with or without an open item:
 issues and PRs linked by blocks, parent and closes links, pulled together by milestone hubs.
-It shows the open issue's linked items, or the whole repo (`s`); closed items hide unless they block an open one.
+It shows the open item's linked items, or the whole repo (`s`, and always with no item open); closed items hide unless they block an open one.
 Drag a node to pin it or press `W` `A` `S` `D` to move the selected one, drag empty space or press `h` `j` `k` `l` to pan,
 wheel or `+` / `-` to zoom, `0` to fit, `.` / `,` to step nodes, `x` to unpin, and right-click for its menu.
 Every other key keeps its global meaning on the map.
@@ -110,7 +110,7 @@ The essentials:
 | `a` | In the diff, expand every small file, or fold all when they are open. Large files (over 300 changed lines) stay folded. The choice sticks: other PRs open the same way |
 | `x` | In the diff, cycle the context lines around changes: 3, 5, 25, 100, all. Above 3, ghit fetches the head side of each open file |
 | `Ctrl+S` | Submit the pending review |
-| `1` / `2` | Details / Visual tab |
+| `1` / `2` / `3` | Details / Diff / Map tab. `Enter` on a map node opens it on Details; `3` returns to the map as you left it |
 | `:` / `/` | Command bar / find. With a sidebar pane focused, `/` filters rows and `n` / `N` step between hits. With Main focused, `/` searches the content (Details, Diff): matches highlight as you type, `Enter` keeps them, smart case |
 | `n` / `N` | Next / previous match (wraps). The `‹ 3/12 ›` counter on the Main tab line is clickable. A match in a folded diff file unfolds it |
 | `Ctrl+P` | Fuzzy finder: type part of a number or title, `↑` / `↓` or `Ctrl+N` / `Ctrl+P` move, `Enter` opens |

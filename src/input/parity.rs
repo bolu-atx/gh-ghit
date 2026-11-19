@@ -89,7 +89,7 @@ fn graph() -> App {
     let mut app = base();
     app.show_issue(7);
     app.nav.pane = Pane::Main;
-    app.nav.tab = Tab::Visual;
+    app.nav.tab = Tab::Map;
     let item = |number: u64| MapItem {
         number,
         is_pr: false,

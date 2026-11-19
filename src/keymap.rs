@@ -40,7 +40,7 @@ macro_rules! actions {
 
 actions! {
     // Global.
-    HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
+    HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, TabMap, CycleTheme,
     OpenBoard, OpenFinder, Comment, CloseItem, OpenFormat, QuerySearch, SearchGithub, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     ContentFind, ContentNext, ContentPrev,
@@ -285,7 +285,7 @@ impl Context {
             Context::Pane(Pane::History) => "History pane",
             Context::Main(MainMode::Details) => "Details tab",
             Context::Main(MainMode::Diff) => "Diff tab",
-            Context::Main(MainMode::Graph) => "Graph tab",
+            Context::Main(MainMode::Graph) => "Map tab",
             Context::Dialog(Dialog::Shortcuts) => "Shortcuts",
             Context::Dialog(Dialog::Confirm) => "Confirm dialog",
             Context::Dialog(Dialog::Compose) => "Comment editor",
@@ -350,9 +350,9 @@ pub(crate) fn describe(action: Action) -> Option<&'static Binding> {
     all().find(|b| b.mods == Mods::Plain && b.prefix.is_none()).or_else(|| all().next())
 }
 
-/// Graph keys act only while the Graph tab has main focus.
+/// Graph keys act only while the Map tab has main focus.
 pub(crate) fn graph_focused(app: &App) -> bool {
-    app.visual_graph() && app.nav.pane == Pane::Main && app.nav.focus == Focus::Main
+    app.map_shown() && app.nav.pane == Pane::Main && app.nav.focus == Focus::Main
 }
 
 /// Contexts that own keys right now, top first. A dialog or text input

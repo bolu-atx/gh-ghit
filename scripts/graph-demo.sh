@@ -3,7 +3,7 @@
 #
 # Builds ghit, writes ~80 demo items with blocking chains, milestones,
 # PRs and orphans into a throwaway store (store/demo_tests.rs), then opens
-# `demo/graph` on the Graph tab of #24. Every network call goes to a
+# `demo/graph` at #24; press 3 for the Map tab. Every network call goes to a
 # closed local port and fails fast, so nothing touches GitHub or your
 # real data dir. Extra arguments go to ghit (for example `--drive SOCK`).
 #

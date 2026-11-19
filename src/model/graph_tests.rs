@@ -57,6 +57,14 @@ fn repo_scope_shows_every_open_item_and_every_hub() {
 }
 
 #[test]
+fn component_scope_with_no_center_shows_the_repo() {
+    let (items, links) = fixture();
+    let graph = build_map(&items, &links, None, MapScope::Component);
+    assert_eq!(numbers(&graph), numbers(&build_map(&items, &links, None, MapScope::Repo)));
+    assert_eq!(numbers(&graph), vec![1, 2, 3, 4, 9, 20]);
+}
+
+#[test]
 fn closed_items_hide_unless_they_block_an_open_item() {
     let (items, links) = fixture();
     let graph = build_map(&items, &links, Some(2), MapScope::Component);

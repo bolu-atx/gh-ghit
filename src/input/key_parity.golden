@@ -1,6 +1,7 @@
 issues | ' ' | diff: None/false/false/[] -> None/false/false/[8]
 issues | '/' | focus: false -> true ; search: ""/false -> ""/true
 issues | '2' | tab: Details -> Visual
+issues | '3' | tab: Details -> Map
 issues | ':' | focus: false -> true
 issues | '?' | shortcuts: false -> true
 issues | 'C' | confirm: None -> Some(("Close #8?", 2))
@@ -35,6 +36,7 @@ issues | g g | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
 issues-tree | ' ' | diff: None/false/false/[] -> None/false/false/[7]
 issues-tree | '/' | focus: false -> true ; search: ""/false -> ""/true
 issues-tree | '2' | tab: Details -> Visual
+issues-tree | '3' | tab: Details -> Map
 issues-tree | ':' | focus: false -> true
 issues-tree | '?' | shortcuts: false -> true
 issues-tree | 'C' | confirm: None -> Some(("Close #7?", 2))
@@ -73,6 +75,7 @@ issues-tree | ctrl-tab | message:  -> no newer issue
 issues-tree | g j | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
 prs | '/' | focus: false -> true ; search: ""/false -> ""/true
 prs | '2' | tab: Details -> Visual
+prs | '3' | tab: Details -> Map
 prs | ':' | focus: false -> true
 prs | '?' | shortcuts: false -> true
 prs | 'C' | confirm: None -> Some(("Close #8?", 2))
@@ -111,6 +114,7 @@ prs | g g | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | g j | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 main-details | '/' | focus: false -> true
 main-details | '2' | tab: Details -> Visual
+main-details | '3' | tab: Details -> Map
 main-details | ':' | focus: false -> true
 main-details | '?' | shortcuts: false -> true
 main-details | 'C' | confirm: None -> Some(("Close #8?", 2))
@@ -140,6 +144,7 @@ main-details | ctrl-tab | message:  -> no newer issue
 main-details | g j | scroll: 0 -> 3
 main-diff | '/' | focus: false -> true
 main-diff | '1' | tab: Visual -> Details
+main-diff | '3' | tab: Visual -> Map
 main-diff | ':' | focus: false -> true
 main-diff | '?' | shortcuts: false -> true
 main-diff | 'C' | confirm: None -> Some(("Close #9?", 2))
@@ -176,7 +181,8 @@ main-graph | ',' | graph: Some(7)/Component/true/0 -> Some(11)/Component/true/0
 main-graph | '-' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/0.00/0.80
 main-graph | '.' | graph: Some(7)/Component/true/0 -> Some(8)/Component/true/0
 main-graph | '/' | focus: false -> true
-main-graph | '1' | tab: Visual -> Details
+main-graph | '1' | tab: Map -> Details
+main-graph | '2' | tab: Map -> Visual
 main-graph | ':' | focus: false -> true
 main-graph | '<' | card: None -> Some(Edge { src: 11, dst: 7 })
 main-graph | '=' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/0.00/1.25
@@ -215,6 +221,7 @@ main-graph | ctrl-o | message:  -> no older issue
 main-graph | ctrl-p | finder: None -> Some(("", 0))
 main-graph | ctrl-s | message:  -> no pending comments to submit
 main-graph | ctrl-u | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/-10.00/1.00
+main-graph | enter | tab: Map -> Details
 main-graph | tab | pane: Main -> Refs
 main-graph | backtab | pane: Main -> PRs
 main-graph | up | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/-3.00/1.00
@@ -227,6 +234,7 @@ main-graph | ctrl-tab | message:  -> no newer issue
 main-graph | g j | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/3.00/1.00
 refs | '/' | focus: false -> true ; search: ""/false -> ""/true
 refs | '2' | tab: Details -> Visual
+refs | '3' | tab: Details -> Map
 refs | ':' | focus: false -> true
 refs | '?' | shortcuts: false -> true
 refs | 'C' | confirm: None -> Some(("Close #8?", 2))
@@ -265,6 +273,7 @@ refs | g j | refs: true/None -> true/Some(7)
 labels | ' ' | filters: []/0 -> ["bug"]/0
 labels | '/' | focus: false -> true ; search: ""/false -> ""/true
 labels | '2' | tab: Details -> Visual
+labels | '3' | tab: Details -> Map
 labels | ':' | focus: false -> true
 labels | '?' | shortcuts: false -> true
 labels | 'C' | confirm: None -> Some(("Close #8?", 2))
@@ -298,6 +307,7 @@ labels | ctrl-tab | message:  -> no newer issue
 labels | g j | labels-cursor: 0 -> 1
 history | '/' | focus: false -> true ; search: ""/false -> ""/true
 history | '2' | tab: Details -> Visual
+history | '3' | tab: Details -> Map
 history | ':' | focus: false -> true
 history | '?' | shortcuts: false -> true
 history | 'C' | confirm: None -> Some(("Close #9?", 2))

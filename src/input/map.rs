@@ -15,7 +15,7 @@ use crate::core::Pane;
 /// Route `m` to the map. True when the map took it.
 pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
     let area = app.hits.map_area;
-    if !app.visual_graph() {
+    if !app.map_shown() {
         app.map.drag = None;
         return false;
     }
