@@ -518,3 +518,147 @@ fn only_the_lease_holder_queues_a_backfill_page() {
     assert!(bare.sections.backfill.rx.is_none());
     restore_xdg(saved);
 }
+
+/// Stored rows as one finished sync plus backfill walks marked `done`.
+fn seed_backfilled(rows: Vec<crate::github::Row>, done: bool) {
+    put_sections(rows, 0);
+    let mut store = crate::store::open("o/r").unwrap();
+    for conn in crate::api::Conn::ALL {
+        store.backfill_save(conn.name(), None, &[], None, done, 0).unwrap();
+    }
+}
+
+fn stored(number: u64, state: &str, labels: &[&str], title: &str) -> crate::github::Row {
+    let mut row = cached_row(number, true);
+    row.issue.state = state.to_string();
+    row.issue.title = title.to_string();
+    row.issue.updated_at = chrono::Utc::now().to_rfc3339();
+    row.issue.labels = labels.iter().map(|name| model::Label { name: name.to_string() }).collect();
+    row
+}
+
+fn queued(app: &mut App) -> usize {
+    app.fetches.queue_mut().len()
+}
+
+#[test]
+fn local_query_answers_from_the_store_with_zero_requests() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![
+        stored(1, "OPEN", &["bug"], "crash on start"),
+        stored(2, "OPEN", &["feature"], "dark mode"),
+        stored(3, "CLOSED", &["bug"], "old crash"),
+    ], true);
+    let mut app = linked_app();
+    app.sections.merged_window_hours = 0;
+    app.sidebar.query_active = "is:open label:bug".to_string();
+    app.run_gh_search("is:open label:bug".to_string());
+    assert_eq!(app.nav.recent, vec![1], "only the matching stored row lands");
+    assert!(app.sections.rx.is_none() && !app.sections.replace, "no fetch was spawned");
+    assert_eq!(queued(&mut app), 0, "zero requests queued");
+    assert_eq!(app.sidebar.query_active, "is:open label:bug", "the query tag keeps its text");
+
+    // A store change re-filters with no request.
+    put_sections(vec![stored(1, "OPEN", &["bug"], "crash on start"), stored(2, "OPEN", &["bug"], "dark mode")], 0);
+    assert!(app.watch_store(Instant::now()), "the changed store re-filters");
+    assert!(app.nav.recent.contains(&1) && app.nav.recent.contains(&2));
+    assert!(app.sections.rx.is_none());
+    assert_eq!(queued(&mut app), 0);
+
+    // Auto-refresh in local mode runs no search; only the holder's quiet sync queues.
+    let start = app.sections.last_fetch;
+    app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    assert!(app.sections.rx.is_none() && !app.sections.replace);
+    assert_eq!(queued(&mut app), 1, "just the sync");
+    restore_xdg(saved);
+}
+
+#[test]
+fn local_query_matches_title_words_through_a_saved_query() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![stored(1, "OPEN", &[], "Crash on start"), stored(2, "OPEN", &[], "dark mode")], true);
+    let mut app = linked_app();
+    app.sections.merged_window_hours = 0;
+    app.sidebar.saved_queries = vec![github::SavedQuery { name: "crashes".to_string(), query: "is:open crash START".to_string() }];
+    app.sidebar.format_focus = 1;
+    app.toggle_format_widget();
+    assert_eq!(app.sidebar.query_active, "is:open crash START");
+    assert_eq!(app.nav.recent, vec![1]);
+    assert_eq!(queued(&mut app), 0);
+    restore_xdg(saved);
+}
+
+#[test]
+fn queries_the_store_cannot_answer_go_to_the_server() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
+    let mut app = linked_app();
+    app.sections.merged_window_hours = 0;
+    // An unknown term, and a closed query reaching past the backfill horizon.
+    for query in ["in:body crash", "is:closed"] {
+        app.sections.rx = None;
+        app.run_gh_search(query.to_string());
+        assert!(app.sections.rx.is_some() && app.sections.replace, "{query} runs the server search");
+    }
+    restore_xdg(saved);
+}
+
+#[test]
+fn an_unfinished_backfill_sends_queries_to_the_server() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], false);
+    let mut app = linked_app();
+    app.run_gh_search("is:open label:bug".to_string());
+    assert!(app.sections.rx.is_some(), "the store is incomplete");
+    restore_xdg(saved);
+}
+
+#[test]
+fn holder_syncs_behind_a_local_query_and_the_view_refilters() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash"), stored(2, "OPEN", &[], "dark mode")], true);
+    let mut holder = linked_app();
+    let mut other = linked_app();
+    assert!(holder.sync_holder() && !other.sync_holder());
+    for app in [&mut holder, &mut other] {
+        app.sections.merged_window_hours = 0;
+        app.sidebar.query_active = "is:open label:bug".to_string();
+        app.run_gh_search("is:open label:bug".to_string());
+        assert_eq!(app.nav.recent, vec![1]);
+    }
+    let start = holder.sections.last_sync;
+    holder.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    other.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    assert!(holder.sections.sync_rx.is_some(), "the holder syncs behind its query");
+    assert_eq!(queued(&mut holder), 1);
+    assert!(holder.sections.rx.is_none(), "the query result has no fetch of its own");
+    assert!(other.sections.sync_rx.is_none() && queued(&mut other) == 0, "a non-holder never syncs");
+
+    // The sync's Done writes the store but lands nothing in the sidebar.
+    let (tx, rx) = std::sync::mpsc::channel();
+    holder.sections.sync_rx = Some(rx);
+    tx.send(github::SectionEvent::Done(Ok(vec![stored(9, "OPEN", &["bug"], "listing row")]))).unwrap();
+    poll_sections(&mut holder);
+    assert!(holder.sections.sync_rx.is_none());
+    assert_eq!(holder.nav.recent, vec![1], "the query result stays");
+    assert!(!holder.issues.data.contains_key(&9));
+
+    // The store changed: the re-filter picks the row up with no request.
+    put_sections(vec![stored(1, "OPEN", &["bug"], "crash"), stored(2, "OPEN", &["bug"], "dark mode")], 0);
+    assert!(holder.watch_store(Instant::now()));
+    assert!(holder.nav.recent.contains(&2));
+    assert_eq!(queued(&mut holder), 1, "no new request");
+    restore_xdg(saved);
+}
+
+#[test]
+fn holder_still_syncs_behind_a_server_query() {
+    let (_guard, _dir, saved) = temp_xdg();
+    let mut holder = linked_app();
+    holder.sidebar.query_active = "in:body crash".to_string();
+    let start = holder.sections.last_sync;
+    holder.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    assert!(holder.sections.sync_rx.is_some(), "the store still syncs");
+    assert!(holder.sections.rx.is_some() && holder.sections.replace, "the search keeps its own refresh");
+    restore_xdg(saved);
+}

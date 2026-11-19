@@ -168,6 +168,7 @@ pub(super) async fn probe_says_changed(repo: &str, tx: &std::sync::mpsc::Sender<
 }
 
 pub(crate) fn poll_sections(app: &mut App) -> bool {
+    poll_quiet_sync(app);
     let Some(event) = app.sections.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
     match event {
         github::SectionEvent::Progress { done, total } => {
@@ -213,6 +214,26 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
         }
     }
     true
+}
+
+/// The holder's sync behind a query writes the store and lands no rows.
+/// A finished or dead sync frees the slot for the next cadence tick.
+fn poll_quiet_sync(app: &mut App) {
+    let Some(rx) = app.sections.sync_rx.as_ref() else { return };
+    let mut finished = false;
+    for event in rx.try_iter().collect::<Vec<_>>() {
+        match event {
+            github::SectionEvent::Done(result) => {
+                finished = true;
+                if let Err(e) = result { auth_failure(app, &e); }
+            }
+            github::SectionEvent::Unchanged => finished = true,
+            _ => {}
+        }
+    }
+    if finished || app.sections.sync_rx.as_ref().is_some_and(|rx| matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected))) {
+        app.sections.sync_rx = None;
+    }
 }
 
 /// Land listing rows: a window listing (`replace` false) first evicts the

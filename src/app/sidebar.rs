@@ -34,6 +34,11 @@ pub(crate) struct SectionFeed {
     pub(crate) last_status: Instant,
     /// When the last full walk started.
     pub(crate) last_full: Instant,
+    /// The lease holder's listing sync while a query shows: it writes the
+    /// store and lands nothing, so the query result stays. Its own clock
+    /// paces it, apart from the query's refresh.
+    pub(crate) sync_rx: Option<std::sync::mpsc::Receiver<github::SectionEvent>>,
+    pub(crate) last_sync: Instant,
     /// Section page progress: rows fetched vs the row cap, while pages
     /// remain. Cleared when the terminal result lands.
     pub(crate) progress: Option<(usize, usize)>,
@@ -56,6 +61,7 @@ impl SectionFeed {
             auto_refresh_interval: auto_refresh_interval_default(),
             auto_refresh: false, probe: false, refresh: github::Refresh::Delta,
             last_status: Instant::now(), last_full: Instant::now(),
+            sync_rx: None, last_sync: Instant::now(),
             progress: None, replace: false, merged_window_hours: 24,
             cap_notified: false, link: None,
             backfill: crate::app::backfill::BackfillFeed::new() }
@@ -274,16 +280,22 @@ impl App {
 
     /// Per tick: renew or try the sync lease, and when another process (or
     /// this one's own fetch) wrote a new sync, re-read this instance's view
-    /// of the stored rows. Search mode and an in-flight listing fetch skip
-    /// the re-read; the fetch lands the same rows itself. True when rows
-    /// landed.
+    /// of the stored rows. An in-flight fetch skips the re-read; it lands
+    /// the same rows itself. A local query re-runs its filter; a server
+    /// search keeps its own refresh. True when rows landed.
     pub(super) fn watch_store(&mut self, now: Instant) -> bool {
         let Some(link) = self.sections.link.as_mut() else { return false };
         link.tick(now);
-        if !self.sidebar.query_active.trim().is_empty() || self.sections.rx.is_some() || !link.changed() {
+        if self.sections.rx.is_some() || !link.changed() {
             return false;
         }
-        self.reread_sections()
+        let query = self.sidebar.query_active.clone();
+        if query.trim().is_empty() {
+            return self.reread_sections();
+        }
+        let Some(rows) = self.local_query_rows(&query) else { return false };
+        self.land_local_query(rows, true);
+        true
     }
 
     /// Land this instance's view of the stored rows: its window and list
@@ -297,7 +309,42 @@ impl App {
         true
     }
 
+    /// Query mode: the lease holder still runs the listing sync on the
+    /// normal cadence, because every ghit instance of the repo reads the
+    /// store it writes. The sync lands no rows here. A local query
+    /// re-filters when the store changes (`watch_store`).
+    fn sync_behind_query(&mut self, now: Instant) {
+        if now.duration_since(self.sections.last_sync) < self.sections.auto_refresh_interval
+            || self.sections.sync_rx.is_some()
+            || !self.sync_holder()
+            || self.focus().layer != Layer::Base
+            || github::rate_limited()
+        {
+            return;
+        }
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return };
+        self.sections.last_sync = now;
+        let refresh = refresh_plan(
+            now.duration_since(self.sections.last_status),
+            now.duration_since(self.sections.last_full),
+        );
+        if refresh != github::Refresh::Delta { self.sections.last_status = now; }
+        if refresh == github::Refresh::Full { self.sections.last_full = now; }
+        let probe = refresh == github::Refresh::Delta;
+        let (hours, show) = (self.sections.merged_window_hours, self.show_mask());
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.sections.sync_rx = Some(rx);
+        self.enqueue(core::Kind::Sections, None, async move {
+            if probe && !probe_says_changed(&repo, &tx).await { return; }
+            let result = github::fetch_recent_sections(&repo, hours, show, refresh, Some(tx.clone())).await;
+            let _ = tx.send(github::SectionEvent::Done(result));
+        });
+    }
+
     pub(super) fn auto_refresh_recent(&mut self, now: Instant) {
+        if !self.sidebar.query_active.trim().is_empty() {
+            self.sync_behind_query(now);
+        }
         if now.duration_since(self.sections.last_fetch) < self.sections.auto_refresh_interval
             || self.sections.rx.is_some()
             || self.focus().layer != Layer::Base
@@ -318,6 +365,10 @@ impl App {
             );
             self.sections.probe = self.sections.refresh == github::Refresh::Delta;
             self.merge_recent_sections();
+        } else if self.local_query(&self.sidebar.query_active).is_some() {
+            // A local query re-filters when the store changes (`watch_store`).
+            self.sections.last_fetch = now;
+            return;
         } else {
             // Periodic refresh: no "searching" toast on every pass.
             self.search_fetch(self.sidebar.query_active.clone());
@@ -373,8 +424,56 @@ impl App {
     /// stays exactly what the user typed.
     pub(crate) fn run_gh_search(&mut self, query: String) {
         self.sections.cap_notified = false;
+        if let Some(rows) = self.local_query_rows(&query) {
+            self.notify(format!("query: {query} ({} local)", rows.len()));
+            self.land_local_query(rows, false);
+            return;
+        }
         self.notify(format!("searching: {query}"));
         self.search_fetch(query);
+    }
+
+    /// The parsed query when the store alone answers it: every term is
+    /// local, and the store holds every row the query could match (the
+    /// window token counts as a term). `None` sends it to the server.
+    fn local_query(&self, query: &str) -> Option<core::LocalQuery> {
+        let link = self.sections.link.as_ref()?;
+        let now = chrono::Utc::now();
+        let search = core::search_query(query, self.sections.merged_window_hours, now);
+        let parsed = core::LocalQuery::parse(&search)?;
+        let (open_done, closed_done) = link.backfill_done();
+        parsed.covered(now, self.sections.backfill.months, open_done, closed_done).then_some(parsed)
+    }
+
+    /// Stored rows a local query matches, most recently updated first.
+    /// `None` when the query needs the server.
+    fn local_query_rows(&self, query: &str) -> Option<Vec<github::Row>> {
+        let parsed = self.local_query(query)?;
+        let mut rows: Vec<github::Row> = self.sections.link.as_ref()?.all_rows()?
+            .into_iter()
+            .filter(|row| parsed.matches(&row.issue))
+            .collect();
+        rows.sort_by(|a, b| {
+            (&b.issue.updated_at, b.issue.number).cmp(&(&a.issue.updated_at, a.issue.number))
+        });
+        Some(rows)
+    }
+
+    /// Land local query rows as a search result: replace semantics, and any
+    /// fetch in flight is abandoned so it cannot land over them.
+    fn land_local_query(&mut self, rows: Vec<github::Row>, auto: bool) {
+        self.sections.rx = None;
+        self.sections.progress = None;
+        self.sections.replace = false;
+        self.sections.auto_refresh = false;
+        self.sections.last_fetch = Instant::now();
+        self.drop_unvisited_background();
+        let numbers: Vec<u64> = rows.iter().map(|row| row.issue.number).collect();
+        crate::app::poll::land_rows(self, rows, true, auto);
+        // Complete rows already held are not re-filed by the landing.
+        for n in numbers {
+            self.ensure_recent(n);
+        }
     }
 
     /// Spawn the search fetch. Callers own the status-line announcement:
