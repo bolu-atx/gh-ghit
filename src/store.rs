@@ -166,6 +166,26 @@ impl Store {
         Ok(rows)
     }
 
+    /// The stored row of one item.
+    pub fn row(&self, number: u64) -> Option<Row> {
+        let json: String = self
+            .conn
+            .query_row("SELECT row_json FROM items WHERE number = ?1", [number as i64], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()?;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// Upsert `rows` newer-only: a stored row at the same or a later
+    /// `updated_at` stays as it is. Leaves `sync_state` untouched.
+    pub fn upsert_rows_newer(&mut self, rows: &[Row]) -> Result<(), String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
+        upsert_rows(&tx, &upsert_newer_sql(), rows)?;
+        tx.commit().map_err(fail)
+    }
+
     /// Every stored item as a finder candidate, most recently updated first.
     pub fn finder_candidates(&self) -> Result<Vec<Candidate>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
