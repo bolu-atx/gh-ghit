@@ -185,14 +185,25 @@ pub(crate) fn parse_graphql_cost(value: &Value) -> Option<(u64, u64, u64)> {
     Some((rl.get("cost")?.as_u64()?, rl.get("remaining")?.as_u64()?, u64::try_from(reset.timestamp()).ok()?))
 }
 
-/// Last GraphQL `(cost, remaining)`, kept for diagnostics. ghit has no
-/// log file and the TUI owns stderr, so nothing is printed.
-static LAST_COST: std::sync::Mutex<Option<(u64, u64)>> = std::sync::Mutex::new(None);
+/// One cost-log line: unix second, cost, remaining, and the query head
+/// (whitespace collapsed, first 80 chars) so calls tell apart.
+fn cost_log_line(now: u64, cost: u64, remaining: u64, body: &Value) -> String {
+    let query = body.get("query").and_then(Value::as_str).unwrap_or("");
+    let head: String = query.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+    format!("{now} cost={cost} remaining={remaining} {head}\n")
+}
 
 /// Record a reply's query cost and back off before the quota runs dry.
-pub(super) fn note_graphql_cost(value: &Value) {
+/// `GHIT_COST_LOG=<path>` appends one line per GraphQL call (the TUI owns
+/// stderr, so this is the only cost readout).
+pub(super) fn note_graphql_cost(value: &Value, body: &Value) {
     let Some((cost, remaining, reset)) = parse_graphql_cost(value) else { return };
-    *LAST_COST.lock().unwrap() = Some((cost, remaining));
+    if let Some(path) = std::env::var_os("GHIT_COST_LOG") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = f.write_all(cost_log_line(unix_now(), cost, remaining, body).as_bytes());
+        }
+    }
     if remaining < LOW_POINTS {
         RATE_LIMIT_UNTIL.fetch_max(reset, std::sync::atomic::Ordering::Relaxed);
     }
@@ -257,7 +268,7 @@ pub(super) async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Re
 
 pub(super) async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
     let value = send_json(client.post(url), url, bearer, body).await?;
-    note_graphql_cost(&value);
+    note_graphql_cost(&value, body);
     Ok(value)
 }
 
@@ -330,6 +341,12 @@ mod tests {
         assert_eq!(parse_graphql_cost(&v), Some((3, 4990, 1_795_003_200)));
         assert_eq!(parse_graphql_cost(&json!({"data": {"repository": {}}})), None);
         assert_eq!(parse_graphql_cost(&json!([1, 2])), None);
+    }
+    #[test]
+    fn cost_log_line_collapses_the_query_head() {
+        let body = json!({"query": "query($o: String!) {\n  repository(owner: $o) {  id }\n}"});
+        assert_eq!(cost_log_line(7, 3, 4990, &body),
+            "7 cost=3 remaining=4990 query($o: String!) { repository(owner: $o) { id } }\n");
     }
     #[test]
     fn api_base_override_wins_over_host() {
