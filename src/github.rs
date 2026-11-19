@@ -208,12 +208,12 @@ fn save_bundle(repo: &str, number: u64, bundle: &IssueBundle) {
     }
 }
 
-/// Stored diff or graph payload when fresh, else `None`. Blocking.
+/// Stored diff payload when fresh, else `None`. Blocking.
 fn stored_detail<T: serde::de::DeserializeOwned>(repo: &str, kind: store::Detail, number: u64) -> Option<T> {
     store::open(repo).ok()?.fresh_detail(kind, number, false)
 }
 
-/// Store a diff or graph payload at the item's synced `updated_at`; an
+/// Store a diff payload at the item's synced `updated_at`; an
 /// item no sync listed stores nothing, since an open could not serve it.
 /// Best effort. Blocking.
 fn save_detail<T: serde::Serialize>(repo: &str, kind: store::Detail, number: u64, value: &T) {
@@ -487,6 +487,28 @@ impl StoreLink {
         self.store.rows().ok()
     }
 
+    /// Every stored item and link, for the dependency map. `None` when the
+    /// store fails to read.
+    pub fn map_data(&self) -> Option<(Vec<model::MapItem>, Vec<model::MapLink>)> {
+        let items = self.store.map_items().ok()?;
+        let links = self.store.edges().ok()?.into_iter().map(|edge| model::MapLink {
+            src: edge.src,
+            dst: edge.dst,
+            kind: match edge.kind {
+                store::EdgeKind::Blocks => model::LinkKind::Blocks,
+                store::EdgeKind::Parent => model::LinkKind::Parent,
+                store::EdgeKind::Closes => model::LinkKind::Closes,
+            },
+        }).collect();
+        Some((items, links))
+    }
+
+    /// Store change counter: moves when any other connection commits, so
+    /// the map rereads only after a write.
+    pub fn data_version(&self) -> Option<i64> {
+        self.store.data_version().ok()
+    }
+
     /// Store GitHub search hits (newer-only, statuses kept) and return the
     /// stored version of every hit in GitHub's order, so the view shows what
     /// a later open reads. Falls back to the hits themselves when the store fails.
@@ -665,29 +687,8 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
     Ok(model::BoardDetail::from_issue(&data))
 }
 
-/// Dependency graph for one issue, stored like single issues.
-pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::GraphData, String> {
-    require_repo(repo)?;
-    let token = require_token()?;
-    if !force {
-        let repo_c = repo.to_string();
-        let hit: Option<model::GraphData> =
-            tokio::task::spawn_blocking(move || stored_detail(&repo_c, store::Detail::Graph, number))
-                .await
-                .map_err(|e| format!("store read failed: {e}"))?;
-        if let Some(data) = hit {
-            return Ok(data);
-        }
-    }
-    let data = api::graph(repo, number, &token).await?;
-    let (repo_c, data_c) = (repo.to_string(), data.clone());
-    let _ = tokio::task::spawn_blocking(move || save_detail(&repo_c, store::Detail::Graph, number, &data_c)).await;
-    Ok(data)
-}
-
-/// REST sub-issues for the opt-in sidebar tree, parsed like the graph
-/// pane's `issues/{n}/sub_issues` call. The app caches the result per
-/// parent for the session.
+/// REST sub-issues for the opt-in sidebar tree. The app caches the
+/// result per parent for the session.
 pub async fn fetch_sub_issues(repo: &str, number: u64) -> Result<Vec<model::IssueData>, String> {
     require_repo(repo)?;
     let token = require_token()?;
@@ -958,7 +959,6 @@ mod tests {
         assert!(fetch_board("").await.is_err());
         assert!(fetch_board_detail("", 1).await.is_err());
         assert!(fetch_diff("", 1, false).await.is_err());
-        assert!(fetch_graph("", 1, false).await.is_err());
         assert!(fetch_sub_issues("", 1).await.is_err());
     }
 
@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     /// An opened item no sync listed joins `items`; its second open and
-    /// its diff and graph then use the store.
+    /// its diff then uses the store.
     #[test]
     fn an_opened_unlisted_item_joins_the_store() {
         with_store_env(|| {
@@ -1029,9 +1029,7 @@ mod tests {
             let (got, _) = runtime.block_on(fetch_number("o/r", 7, false, None)).unwrap();
             assert_eq!(got.body, "b", "second open makes zero requests");
             save_detail("o/r", store::Detail::Diff, 7, &vec![1u8]);
-            save_detail("o/r", store::Detail::Graph, 7, &vec![2u8]);
             assert_eq!(stored_detail::<Vec<u8>>("o/r", store::Detail::Diff, 7), Some(vec![1]));
-            assert_eq!(stored_detail::<Vec<u8>>("o/r", store::Detail::Graph, 7), Some(vec![2]));
         });
     }
 

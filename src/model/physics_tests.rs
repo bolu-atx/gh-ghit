@@ -23,11 +23,15 @@ fn small_graph_settles() {
     let mut edges: Vec<_> = (1..12).map(|i| (i - 1, i, EdgeStyle::Link)).collect();
     edges.push((0, 11, EdgeStyle::Hub));
     l.rebuild(&ids, &edges);
-    let mut steps = 0;
-    while !l.settled() && steps < 3000 {
+    // A fresh layout is at rest; the first step sets it moving.
+    l.step();
+    assert!(!l.settled());
+    let mut steps = 1;
+    while !l.settled() && steps < 400 {
         l.step();
         steps += 1;
     }
+    // The map animates about four steps a frame, so this is a few seconds at most.
     assert!(l.settled(), "not settled after {steps} steps");
 }
 

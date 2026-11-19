@@ -1,7 +1,7 @@
 mod backfill;
 mod board;
 mod client;
-mod graph;
+mod sub_issues;
 mod sections;
 
 pub use client::{
@@ -10,7 +10,7 @@ pub use client::{
 };
 pub use backfill::{age_cutoff, fetch_page, Conn};
 pub use board::fetch_board;
-pub use graph::{graph, sub_issues};
+pub use sub_issues::sub_issues;
 #[cfg(test)]
 pub(crate) use sections::parse_node;
 pub use sections::{

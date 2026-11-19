@@ -193,7 +193,7 @@ fn every_menu_entry_has_a_mouse_gesture() {
     let app = App::new(Some("o/r".to_string()));
     for kind in [
         crate::app::MenuKind::Issue, crate::app::MenuKind::Ref, crate::app::MenuKind::History,
-        crate::app::MenuKind::Labels, crate::app::MenuKind::Body, crate::app::MenuKind::Board,
+        crate::app::MenuKind::Labels, crate::app::MenuKind::Body, crate::app::MenuKind::Map, crate::app::MenuKind::Board,
         crate::app::MenuKind::Global,
     ] {
         let menu = crate::app::MenuState::new(kind, &app, (0, 0));

@@ -13,6 +13,8 @@ pub(crate) enum MenuKind {
     History,
     Labels,
     Body,
+    /// The dependency map: its node under the pointer, or the view.
+    Map,
     Board,
     Global,
 }
@@ -42,14 +44,15 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
             if app.nav.current.and_then(|n| app.issues.data.get(&n)).is_some_and(|d| d.is_pr) {
                 actions.push(SubmitReview);
             }
-            if app.visual_graph() {
-                actions.extend([GraphPrev, GraphNext, GraphOpen]);
-            }
             if app.visual_diff() {
                 actions.extend([DiffPrevFile, DiffNextFile, DiffSplit, DiffToggleFile, DiffExpandAll]);
             }
             actions
         }
+        MenuKind::Map => vec![
+            GraphOpen, GraphNext, GraphPrev, GraphUnpin, GraphScope, GraphFit, GraphZoomIn, GraphZoomOut,
+            Comment, Refresh, OpenBrowser,
+        ],
         MenuKind::Board => vec![BoardOpen, BoardExpand, BoardFilter, BoardClearFilter, CloseBoard],
         MenuKind::Global => vec![
             Refresh, CycleTheme, OpenBoard, OpenFinder, OpenFormat, QuerySearch, FindBar, ToggleSidebar, ToggleRefs,
@@ -85,7 +88,7 @@ mod tests {
         let app = App::new(Some("o/r".to_string()));
         for kind in [
             MenuKind::Issue, MenuKind::Ref, MenuKind::History, MenuKind::Labels,
-            MenuKind::Body, MenuKind::Board, MenuKind::Global,
+            MenuKind::Body, MenuKind::Map, MenuKind::Board, MenuKind::Global,
         ] {
             for action in kind_actions(kind, &app) {
                 assert!(keymap::describe(action).is_some(), "{kind:?} lists {action:?} with no key");

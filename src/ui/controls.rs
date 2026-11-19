@@ -75,7 +75,8 @@ impl Tool {
 }
 
 /// Toolbar buttons of the open item, left to right. The split toggle
-/// shows on a PR's Diff view only; a merged PR cannot close or reopen.
+/// shows on a PR's Diff view only, the scope chip and fit on the map; a
+/// merged PR cannot close or reopen.
 fn tools(app: &App) -> Vec<Tool> {
     let Some(data) = app.nav.current.and_then(|n| app.issues.data.get(&n)) else { return vec![] };
     let mut tools = vec![];
@@ -84,6 +85,14 @@ fn tools(app: &App) -> Vec<Tool> {
         let (icon, label) =
             if app.diff_will_expand() { (theme::TOOL_EXPAND, "expand") } else { (theme::TOOL_FOLD, "fold") };
         tools.push(Tool { icon, label, action: Action::DiffExpandAll });
+    }
+    if app.visual_graph() {
+        let label = match app.map.scope {
+            crate::model::MapScope::Component => "linked",
+            crate::model::MapScope::Repo => "repo",
+        };
+        tools.push(Tool { icon: theme::TOOL_SCOPE, label, action: Action::GraphScope });
+        tools.push(Tool { icon: theme::TOOL_FIT, label: "fit", action: Action::GraphFit });
     }
     tools.push(Tool { icon: theme::TOOL_COMMENT, label: "comment", action: Action::Comment });
     match data.state.as_str() {

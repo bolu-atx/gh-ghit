@@ -18,7 +18,7 @@ pub(super) const MAX_RUNNING: usize = 4;
 pub(super) struct View {
     /// The issue in the main pane, or the one about to be.
     pub current: Option<u64>,
-    /// The Diff or Graph tab is up.
+    /// The Diff tab is up.
     pub tab_shown: bool,
 }
 

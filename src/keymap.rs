@@ -51,7 +51,9 @@ actions! {
     OpenRef, ToggleLabel, ClearLabels, OpenHistoryRow, OpenRow,
     // Main sub-modes.
     DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile, DiffExpandAll,
-    DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen,
+    DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen, GraphPanLeft, GraphPanRight, GraphPanUp,
+    GraphPanDown, GraphMoveLeft, GraphMoveRight, GraphMoveUp, GraphMoveDown, GraphZoomIn, GraphZoomOut,
+    GraphFit, GraphUnpin, GraphScope,
     // Shortcuts, confirm, compose.
     CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
     ComposeSend, ComposeTogglePreview, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
@@ -120,6 +122,8 @@ pub(crate) enum Gesture {
     Title,
     /// A clickable status-bar or dialog-footer hint.
     Hint,
+    /// Press, move and release the left button.
+    Drag,
     /// A click outside the layer dismisses it.
     Outside,
     /// No gesture fits. The reason is one of `ALLOWED_NO_MOUSE`.
@@ -434,6 +438,7 @@ impl Gesture {
             Gesture::Menu => Some("right-click menu"),
             Gesture::Title => Some("click title"),
             Gesture::Hint => Some("click hint"),
+            Gesture::Drag => Some("drag"),
             Gesture::Outside => Some("click outside"),
             Gesture::NoMouse(_) => None,
         }

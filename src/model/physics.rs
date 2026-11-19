@@ -79,10 +79,10 @@ impl Default for Physics {
             spring_length: 6.0,
             spring_strength: 0.08,
             hub_multiplier: 3.0,
-            gravity: 0.01,
+            gravity: 0.03,
             growth: Growth::Right,
             growth_strength: 0.3,
-            damping: 0.8,
+            damping: 0.6,
             max_speed: 3.0,
         }
     }

@@ -39,6 +39,7 @@ const MENU: Gesture = Gesture::Menu;
 const TITLE: Gesture = Gesture::Title;
 const HINT: Gesture = Gesture::Hint;
 const OUTSIDE: Gesture = Gesture::Outside;
+const DRAG: Gesture = Gesture::Drag;
 
 const GLOBAL: &[Binding] = &[
     key(ch('o'), Action::HistoryBack, "Back in history", "Move", MENU).ctrl(),
@@ -146,13 +147,27 @@ const DIFF: &[Binding] = &[
 ];
 
 const GRAPH: &[Binding] = &[
-    key(ch('j'), Action::GraphNext, "Next node", "Graph", MENU).hint(1),
-    key(ch('l'), Action::GraphNext, "Next node", "Graph", ALIAS),
-    key(KeyCode::Down, Action::GraphNext, "Next node", "Graph", ALIAS),
-    key(ch('k'), Action::GraphPrev, "Previous node", "Graph", MENU).hint(2),
-    key(ch('h'), Action::GraphPrev, "Previous node", "Graph", ALIAS),
-    key(KeyCode::Up, Action::GraphPrev, "Previous node", "Graph", ALIAS),
-    key(KeyCode::Enter, Action::GraphOpen, "Open node", "Graph", Gesture::Click).hint(3),
+    key(ch('n'), Action::GraphNext, "Next node", "Select", Gesture::Click).hint(1),
+    key(ch('N'), Action::GraphPrev, "Previous node", "Select", Gesture::Click),
+    key(KeyCode::Enter, Action::GraphOpen, "Open node", "Select", Gesture::SecondClick).hint(2),
+    key(ch('h'), Action::GraphPanLeft, "Pan left", "View", DRAG),
+    key(ch('j'), Action::GraphPanDown, "Pan down", "View", DRAG),
+    key(ch('k'), Action::GraphPanUp, "Pan up", "View", DRAG),
+    key(ch('l'), Action::GraphPanRight, "Pan right", "View", DRAG),
+    key(KeyCode::Left, Action::GraphPanLeft, "Pan left", "View", ALIAS),
+    key(KeyCode::Down, Action::GraphPanDown, "Pan down", "View", ALIAS),
+    key(KeyCode::Up, Action::GraphPanUp, "Pan up", "View", ALIAS),
+    key(KeyCode::Right, Action::GraphPanRight, "Pan right", "View", ALIAS),
+    key(ch('+'), Action::GraphZoomIn, "Zoom in", "View", Gesture::Wheel),
+    key(ch('='), Action::GraphZoomIn, "Zoom in", "View", ALIAS),
+    key(ch('-'), Action::GraphZoomOut, "Zoom out", "View", Gesture::Wheel),
+    key(ch('0'), Action::GraphFit, "Fit to view", "View", TITLE).hint(4),
+    key(ch('s'), Action::GraphScope, "Linked items or whole repo", "View", TITLE).hint(3),
+    key(ch('H'), Action::GraphMoveLeft, "Move node left", "Arrange", DRAG),
+    key(ch('J'), Action::GraphMoveDown, "Move node down", "Arrange", DRAG),
+    key(ch('K'), Action::GraphMoveUp, "Move node up", "Arrange", DRAG),
+    key(ch('L'), Action::GraphMoveRight, "Move node right", "Arrange", DRAG),
+    key(ch('x'), Action::GraphUnpin, "Unpin node", "Arrange", MENU).hint(5),
 ];
 
 const MENU_KEYS: &[Binding] = &[

@@ -11,7 +11,7 @@ use crate::app::{App, Focus, Tab};
 use crate::core::Pane;
 use crate::input::handle_key;
 use crate::model::{
-    Author, GraphEdgeKind, GraphNode, IssueData, SubSummary, build_graph,
+    Author, IssueData, LinkKind, MapItem, MapLink, SubSummary,
 };
 
 const GOLDEN: &str = include_str!("key_parity.golden");
@@ -90,20 +90,17 @@ fn graph() -> App {
     app.show_issue(7);
     app.nav.pane = Pane::Main;
     app.nav.tab = Tab::Visual;
-    let node = |number: u64| GraphNode {
+    let item = |number: u64| MapItem {
         number,
-        title: format!("Node {number}"),
-        state: "OPEN".to_string(),
         is_pr: false,
-        labels: vec![],
-        project_status: None,
-        linked_prs: vec![],
+        state: "OPEN".to_string(),
+        title: format!("Node {number}"),
+        milestone: None,
     };
-    let data = build_graph(
-        node(7),
-        vec![(node(8), GraphEdgeKind::Blocks), (node(11), GraphEdgeKind::BlockedBy)],
-    );
-    app.graph.data.insert(7, data);
+    let link = |src: u64, dst: u64| MapLink { src, dst, kind: LinkKind::Blocks };
+    app.set_map_data(vec![item(7), item(8), item(11)], vec![link(7, 8), link(11, 7)]);
+    app.hits.map_area = ratatui::layout::Rect::new(30, 5, 60, 20);
+    app.settle_map();
     app
 }
 
@@ -339,7 +336,9 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
             app.board.expanded, app.board.filter_focus)),
         ("board-filter", format!("{:?}/{}", app.board.filter, sorted(&app.board.milestone_draft.iter().cloned().collect()))),
         ("diff", format!("{:?}/{}/{}/{}", app.diff.line, app.diff.touched, app.diff.split, sorted(&app.diff.expanded_rows))),
-        ("graph", app.graph.cursor.to_string()),
+        ("graph", format!("{:?}/{:?}/{}/{}", app.map.selected, app.map.scope, app.map.follow,
+            app.map.layout.bodies().iter().filter(|body| body.pinned).count())),
+        ("camera", format!("{:.2}/{:.2}/{:.2}", app.map.camera.x, app.map.camera.y, app.map.camera.zoom)),
         ("pending", format!("{:?}", app.pending_prefix)),
         ("undo", app.undo.is_some().to_string()),
         ("reauth", app.auth.reauth_requested.to_string()),

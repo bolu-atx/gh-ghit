@@ -1,11 +1,8 @@
-//! Frame tests for the main pane, header and graph.
+//! Frame tests for the main pane and header.
 
 use crate::app::{App, Tab};
 use crate::input::{handle_key, handle_mouse};
-use crate::model::{
-    GraphData, GraphEdgeKind, GraphLinkedPr,
-    GraphNode, Label, PairedRef,
-};
+use crate::model::PairedRef;
 use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -22,44 +19,6 @@ fn masthead_text(app: &mut App) -> String {
         .map(|y| (crate::core::SIDEBAR_WIDTH..120).map(|x| buf[(x, y)].symbol()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn graph_node(number: u64, title: &str, state: &str) -> GraphNode {
-    GraphNode {
-        number,
-        title: title.to_string(),
-        state: state.to_string(),
-        is_pr: false,
-        labels: vec![Label { name: "bug".to_string() }],
-        project_status: None,
-        linked_prs: vec![],
-    }
-}
-
-fn graph_app() -> App {
-    let mut app = loaded_app();
-    let mut blocker = graph_node(11, "Upstream blocker", "OPEN");
-    blocker.project_status = Some("Todo".to_string());
-    blocker.linked_prs = vec![GraphLinkedPr { number: 44, state: "MERGED".to_string() }];
-    let center = GraphNode {
-        number: 7,
-        title: "Fix the thing".to_string(),
-        state: "OPEN".to_string(),
-        is_pr: false,
-        labels: vec![],
-        project_status: None,
-        linked_prs: vec![],
-    };
-    let data: GraphData = crate::model::build_graph(
-        center,
-        vec![
-            (graph_node(9, "Blocked work", "OPEN"), GraphEdgeKind::Blocks),
-            (blocker, GraphEdgeKind::BlockedBy),
-            (graph_node(10, "Plain ref", "CLOSED"), GraphEdgeKind::ReferencedBy),
-        ],
-    );
-    app.graph.data.insert(7, data);
-    app
 }
 
 #[test]
@@ -572,105 +531,6 @@ fn number_keys_switch_content_tabs() {
     assert_eq!(app.nav.tab, Tab::Details);
     handle_key(&mut app, key(KeyCode::Char('2')));
     assert_eq!(app.nav.tab, Tab::Visual);
-}
-
-#[test]
-fn graph_tab_shows_loading_while_pending() {
-    let mut app = loaded_app();
-    app.nav.tab = Tab::Visual;
-    app.graph.pending.insert(7);
-    let text = frame_text(&mut app);
-    assert!(text.contains("Graph"), "tab label: {text}");
-    assert!(text.contains("Fetching graph…") && text.contains("⣾"), "loading: {text}");
-}
-
-#[test]
-fn graph_tab_renders_sections_labels_and_prs() {
-    let mut app = graph_app();
-    app.set_tab(Tab::Visual);
-    let text = frame_text(&mut app);
-    assert!(text.contains("3 related"), "{text}");
-    assert!(text.contains("#9"), "{text}");
-    assert!(text.contains("#11"), "{text}");
-    assert!(text.contains("#10"), "{text}");
-    assert!(text.contains("╭") && text.contains("└─") && text.contains("█"), "node boxes and cursor: {text}");
-}
-
-#[test]
-fn graph_draws_at_most_eight_nodes() {
-    let mut app = graph_app();
-    let center = graph_node(7, "Center", "OPEN");
-    let neighbors = (20..30).map(|n| (graph_node(n, "Neighbor", "OPEN"), GraphEdgeKind::References)).collect();
-    app.graph.data.insert(7, crate::model::build_graph(center, neighbors));
-    app.set_tab(Tab::Visual);
-    let text = super::main_pane::graph_text(&app, app.issues.data.get(&7).unwrap(), 20).lines.iter().map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
-    assert_eq!(text.matches('╭').count(), 8, "{text}");
-    assert!(text.contains("+3 more"), "{text}");
-    assert_eq!(app.graph_order_numbers().len(), 8);
-}
-
-#[test]
-fn four_opens_graph_and_keys_stay_tab_scoped() {
-    let mut app = graph_app();
-    app.nav.pane = crate::core::Pane::Main;
-    // j on Body scrolls; the graph cursor never moves.
-    handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.graph.cursor, 0);
-    assert!(app.nav.scroll > 0);
-    // `4` opens the tab; arrows/hjkl move between nodes.
-    handle_key(&mut app, key(KeyCode::Char('2')));
-    assert_eq!(app.nav.tab, Tab::Visual);
-    let scroll = app.nav.scroll;
-    handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.graph.cursor, 1);
-    assert_eq!(app.nav.scroll, scroll, "graph takes the arrows, not scroll");
-    handle_key(&mut app, key(KeyCode::Down));
-    assert_eq!(app.graph.cursor, 2);
-    handle_key(&mut app, key(KeyCode::Char('k')));
-    assert_eq!(app.graph.cursor, 1);
-    handle_key(&mut app, key(KeyCode::Char('h')));
-    assert_eq!(app.graph.cursor, 0);
-    handle_key(&mut app, key(KeyCode::Char('l')));
-    assert_eq!(app.graph.cursor, 1);
-    handle_key(&mut app, key(KeyCode::Up));
-    assert_eq!(app.graph.cursor, 0);
-    handle_key(&mut app, key(KeyCode::Up));
-    assert_eq!(app.graph.cursor, 0, "clamped at the top");
-}
-
-#[test]
-fn graph_enter_opens_selected_issue_per_issue() {
-    use crate::model::DiffFile;
-    let mut app = graph_app();
-    app.nav.pane = crate::core::Pane::Main;
-    // Switching issues on the Graph tab refetches per issue: cache #9's
-    // graph and diff so the open stays synchronous with no fetch.
-    app.graph.data.insert(9, crate::model::build_graph(graph_node(9, "Blocked work", "OPEN"), vec![]));
-    app.diff.files.insert(9, Vec::<DiffFile>::new());
-    handle_key(&mut app, key(KeyCode::Char('2')));
-    handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.graph.cursor, 1);
-    handle_key(&mut app, key(KeyCode::Enter));
-    assert_eq!(app.nav.current, Some(9));
-    assert_eq!(app.graph.cursor, 0, "issue switch resets the cursor");
-    assert!(app.graph.data.contains_key(&9), "per-issue graph");
-    // Tab switch away and back keeps the graph and the cursor.
-    handle_key(&mut app, key(KeyCode::Char('1')));
-    assert_eq!(app.nav.tab, Tab::Details);
-    handle_key(&mut app, key(KeyCode::Char('2')));
-    assert_eq!(app.nav.tab, Tab::Visual);
-    assert!(app.graph.data.contains_key(&9));
-}
-
-#[test]
-fn graph_fetch_lands_without_touching_selection() {
-    use crate::app::poll_graphs;
-    let mut app = loaded_app();
-    app.graph.tx.send((7, Ok(crate::model::build_graph(graph_node(7, "seven", "OPEN"), vec![])))).unwrap();
-    poll_graphs(&mut app);
-    assert!(!app.graph.pending.contains(&7));
-    assert!(app.graph.data.contains_key(&7));
-    assert_eq!(app.nav.current, Some(7));
 }
 
 #[test]

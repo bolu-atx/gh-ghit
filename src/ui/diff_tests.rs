@@ -335,7 +335,7 @@ fn diff_tab_notes_issues_have_no_diff() {
     let mut app = loaded_app();
     app.set_tab(Tab::Visual);
     let text = frame_text(&mut app);
-    assert!(text.contains("graph"), "{text}");
+    assert!(text.contains("Reading the local copy"), "issues map instead: {text}");
     assert!(text.contains("Graph"), "issue mode tab label: {text}");
 }
 

@@ -81,7 +81,6 @@ fn bar_loading_fits_the_80_cell_bar() {
     let mut app = loaded_app();
     app.issues.pending.insert(7);
     app.diff.pending.insert(9);
-    app.graph.pending.insert(7);
     app.board.detail_pending.insert(100);
     let (tx, rx) = std::sync::mpsc::channel();
     app.sections.rx = Some(rx);

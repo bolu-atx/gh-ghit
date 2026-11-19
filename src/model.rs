@@ -6,8 +6,6 @@ mod diff;
 mod graph;
 mod issue;
 mod links;
-// Not wired into the app until the graph map lands (#270).
-#[allow(dead_code)]
 pub mod physics;
 mod sidebar;
 mod text;
@@ -35,13 +33,13 @@ use serde::{Deserialize, Serialize};
 
 pub use board::{BoardData, BoardDetail, BoardItem, CardFields, RowFields, board_columns, board_milestones, card_assignee, card_footer_labels, card_footer_right, card_meta};
 pub use diff::{DiffFile, DiffKind, SplitRow, VisualContent, diff_lines, diff_summary, header_file_index, line_target_at_cursor, patch_line_numbers, split_rows, strip_diff_gutter, thread_at_cursor, thread_patch_row, visual_content};
-pub use graph::{GraphData, GraphEdgeKind, GraphLinkedPr, GraphNode, MAX_GRAPH_NODES, build_graph, graph_edge_label, graph_order, graph_sections};
+pub use graph::{LinkKind, MapGraph, MapItem, MapLink, MapNode, MapScope, NodeState, build_map};
+#[cfg(test)]
+pub use graph::hub_id;
 pub use issue::{merge_comment_pages, paired_refs, parse_check_state, parse_review_threads, thread_reply_comment_id};
 pub use links::{LinkTarget, link_ranges, linkify, links_in_line, nearest_link, referenced_numbers};
 pub use sidebar::{GroupBy, LazyChildren, SideRow, sidebar_lines};
 pub use text::{MetaKind, body_md, build_comments_md, meta_spans, status_text};
-#[cfg(test)]
-pub use graph::graph_blocks_something;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Author {

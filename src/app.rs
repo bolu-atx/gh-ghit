@@ -18,6 +18,8 @@ mod fetch_queue;
 mod finder;
 mod format;
 mod issue;
+mod map;
+pub(crate) use map::MapView;
 mod menu;
 pub(crate) use menu::{MenuKind, MenuState};
 pub(crate) use finder::FinderRow;
@@ -75,7 +77,7 @@ use ratatui::layout::Rect;
 use crate::core::{self, Layer, Pane};
 use crate::{github, model};
 use poll::poll_bootstrap;
-pub(crate) use diff::{poll_review_submit, poll_diffs, poll_graphs, poll_sub_issues};
+pub(crate) use diff::{poll_review_submit, poll_diffs, poll_sub_issues};
 pub(crate) use board::{board_open, board_columns, board_move, board_selected_number, poll_board};
 pub(crate) use compose::{poll_compose, run_compose_editor};
 pub(crate) use confirm::{poll_auth, poll_set_state, auth_failure, run_reauth};
@@ -85,7 +87,7 @@ pub(crate) use board::BoardView;
 pub(crate) use compose::ComposeSlot;
 #[cfg(test)]
 pub(crate) use compose::{ComposeState, ComposeTarget};
-pub(crate) use diff::{DiffView, GraphView, SubIssueLoads};
+pub(crate) use diff::{DiffView, SubIssueLoads};
 pub(crate) use sidebar::{FilterItem, LabelsPane, QueryAction, SectionFeed, Sidebar};
 pub(crate) use issue::{IssueStore, RefsPane};
 pub(crate) use nav::Nav;
@@ -205,6 +207,10 @@ pub(crate) struct HitAreas {
     /// Status-bar hints as drawn: rect plus the action a click runs.
     /// Rebuilt every frame in `render_bar`.
     pub(crate) bar_hints: Vec<(Rect, crate::keymap::Action)>,
+    /// Dependency map view rect; empty while the map is not drawn.
+    pub(crate) map_area: Rect,
+    /// Map node labels as drawn, topmost first: rect plus node index.
+    pub(crate) map_nodes: Vec<(Rect, usize)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
@@ -251,7 +257,7 @@ pub(crate) struct App {
     pub(crate) nav: Nav,
     pub(crate) board: BoardView,
     pub(crate) diff: DiffView,
-    pub(crate) graph: GraphView,
+    pub(crate) map: MapView,
     pub(crate) subs: SubIssueLoads,
     pub(crate) refs: RefsPane,
     pub(crate) labels: LabelsPane,
@@ -294,7 +300,6 @@ impl App {
         let (review_submit_tx, review_submit_rx) = std::sync::mpsc::channel();
         let (issue_tx, issue_rx) = std::sync::mpsc::channel();
         let (diff_tx, diff_rx) = std::sync::mpsc::channel();
-        let (graph_tx, graph_rx) = std::sync::mpsc::channel();
         Self {
             repo_flag,
             repo_slug: None,
@@ -316,7 +321,7 @@ impl App {
             fetches: fetch_queue::Fetches::default(),
             board: BoardView::new(detail_tx, detail_rx),
             diff: DiffView::new(diff_tx, diff_rx),
-            graph: GraphView::new(graph_tx, graph_rx),
+            map: MapView::default(),
             subs: SubIssueLoads::new(),
             quit: false,
             hits: HitAreas::default(),
@@ -403,7 +408,6 @@ impl App {
         core::FetchState {
             issues: self.issues.pending.len(),
             diffs: self.diff.pending.len(),
-            graphs: self.graph.pending.len(),
             details: self.board.detail_pending.len(),
             sections_live: self.sections.rx.is_some(),
             bootstrap_live: self.auth.bootstrap_rx.is_some(),
@@ -487,13 +491,13 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= app.drive_backfill(Instant::now());
     landed |= poll_issues(app);
     landed |= poll_diffs(app);
-    landed |= poll_graphs(app);
     landed |= poll_sub_issues(app);
     landed |= poll_board(app);
     landed |= poll_details(app);
     landed |= poll_compose(app);
     landed |= poll_review_submit(app);
     landed |= poll_set_state(app);
+    landed |= app.map_tick();
     landed
 }
 

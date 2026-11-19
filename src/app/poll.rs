@@ -336,7 +336,6 @@ pub(crate) fn poll_issues(app: &mut App) -> bool {
                         app.issues.statuses.insert(number, statuses);
                         if app.nav.current == Some(number) {
                             app.refresh_refs();
-                            if app.visual_graph() { app.load_graph(number, false); }
                             if app.visual_diff() { app.load_diff(number, false); }
                         }
                         if app.nav.requested == Some(number) {

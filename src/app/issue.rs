@@ -86,8 +86,6 @@ impl App {
         self.board.details.remove(&n);
         self.diff.files.remove(&n);
         self.diff.pending.remove(&n);
-        self.graph.data.remove(&n);
-        self.graph.pending.remove(&n);
     }
 
     /// Evict the highlighted sidebar row: drop it from the pane lists and
@@ -314,7 +312,7 @@ impl App {
         }
         self.load_issue(n, true);
         self.load_diff(n, true);
-        self.load_graph(n, true);
+        self.map.loaded = false;
         self.refresh_listing();
         self.notify(format!("refreshed #{n}"));
     }
