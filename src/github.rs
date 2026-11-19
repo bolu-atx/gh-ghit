@@ -422,6 +422,19 @@ impl StoreLink {
     pub fn rows(&self, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
         stored_view(&self.store, hours, show)
     }
+
+    /// Every stored row, whatever the window and mask; `None` before the
+    /// first sync. Local `/` queries filter these.
+    pub fn all_rows(&self) -> Option<Vec<api::Row>> {
+        self.store.sync_started_at()?;
+        self.store.rows().ok()
+    }
+
+    /// Which backfill walks finished: the open ones, then the closed ones.
+    pub fn backfill_done(&self) -> (bool, bool) {
+        let done = |conns: &[api::Conn]| conns.iter().all(|c| self.store.backfill_conn(c.name()).done);
+        (done(&[api::Conn::PrsOpen, api::Conn::IssuesOpen]), done(&[api::Conn::PrsClosed, api::Conn::IssuesClosed]))
+    }
 }
 
 impl Drop for StoreLink {

@@ -8,6 +8,7 @@
 mod focus;
 mod fuzzy;
 mod layout;
+mod query;
 mod search;
 mod tree;
 mod urgency;
@@ -21,6 +22,7 @@ pub(crate) use fuzzy::score as fuzzy_score;
 pub(crate) use layout::{MAX_DIFF_FILES, SMALL_DIFF_LINES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
 #[cfg(test)]
 pub(crate) use layout::MIN_MAIN_WIDTH;
+pub(crate) use query::LocalQuery;
 pub(crate) use search::find_ranges;
 pub(crate) use tree::{needs_lazy_children, tree_rows};
 pub(crate) use urgency::{Kind, Tier, urgency};
