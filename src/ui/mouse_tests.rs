@@ -566,3 +566,23 @@ fn toolbar_expand_button_shows_on_diff_only_and_click_runs_it() {
     let line = tab_line(&frame_text_sized(&mut app, 140, H));
     assert!(line.contains(&format!("a {fold} fold")), "{line}");
 }
+
+#[test]
+fn clicking_the_source_segment_or_its_hint_searches_github() {
+    for target in ["segment", "hint"] {
+        let mut app = loaded_app();
+        app.repo_slug = Some("o/r".to_string());
+        app.sidebar.query_active = "label:bug".to_string();
+        draw(&mut app);
+        let (x, y) = if target == "segment" {
+            let r = app.hits.source;
+            assert!(r.width > 0, "source segment drawn");
+            (r.x, r.y)
+        } else {
+            let (r, _) = app.hits.bar_hints.iter().find(|(_, a)| *a == Action::SearchGithub).expect("hint drawn");
+            (r.x, r.y)
+        };
+        left(&mut app, x, y);
+        assert!(app.sections.rx.is_some() && app.sections.replace, "{target} click searches GitHub");
+    }
+}

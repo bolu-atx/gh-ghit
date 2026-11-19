@@ -114,6 +114,12 @@ pub(super) fn render_finder(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let line = Line::from(vec![Span::raw("  "), Span::styled(text, Style::new().bg(ink()).fg(muted()))]);
         f.render_widget(Paragraph::new(line), Rect::new(list.x, list.y, list.width, 1));
     }
+    if rows.len() < 3 && !query.is_empty() && list.height as usize > rows.len().max(1) {
+        let key = app.github_key();
+        let text = format!("  Not here? Esc, / for a query, then {key} searches GitHub.");
+        let at = Rect::new(list.x, list.y + rows.len().max(1) as u16, list.width, 1);
+        f.render_widget(Paragraph::new(Span::styled(text, Style::new().bg(ink()).fg(muted()))), at);
+    }
     let visible = list.height as usize;
     let offset = (cursor + 1).saturating_sub(visible);
     let number_width = rows.iter().skip(offset).take(visible)

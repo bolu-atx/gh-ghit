@@ -14,6 +14,7 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, base, ink, muted, paper};
     app.hits.bar_hints.clear();
     app.hits.repo = Rect::default();
+    app.hits.source = Rect::default();
     if app.nav.focus == crate::app::Focus::Bar {
         let content = app.search.typing;
         let text = if content { &app.search.query } else if app.sidebar.searching { &app.sidebar.search } else { &app.bar };
@@ -67,6 +68,11 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         repo_segment = Some(segments.len());
         segments.push((format!("\u{f1d3} {repo}"), false));
     }
+    let mut source_segment = None;
+    if !app.sidebar.query_active.trim().is_empty() {
+        source_segment = Some(segments.len());
+        segments.push((format!("\u{f002} {}", app.query_source()), false));
+    }
     if let Some(statuses) = app.nav.current.and_then(|n| app.issues.statuses.get(&n)) {
         for (title, status) in statuses.iter().filter(|(title, _)| !title.is_empty()) {
             let suffix = status.as_ref().filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default();
@@ -95,13 +101,17 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if app.message_visible() && !app.message.is_empty() {
         segments.push((format!("\u{f071} {}", app.message), true));
     }
-    if let Some(at) = repo_segment {
+    let segment_rect = |at: usize| {
         let before: usize = segments[..at].iter().map(|(s, _)| s.chars().count() + 3).sum();
         let width = segments[at].0.chars().count() as u16;
         let x = area.x + before as u16;
-        if x + width <= area.right() {
-            app.hits.repo = Rect::new(x, area.y, width, 1);
-        }
+        (x + width <= area.right()).then(|| Rect::new(x, area.y, width, 1))
+    };
+    if let Some(rect) = repo_segment.and_then(segment_rect) {
+        app.hits.repo = rect;
+    }
+    if let Some(rect) = source_segment.and_then(segment_rect) {
+        app.hits.source = rect;
     }
     let left_used: usize =
         segments.iter().map(|(s, _)| s.chars().count()).sum::<usize>() + segments.len().saturating_sub(1) * 3;

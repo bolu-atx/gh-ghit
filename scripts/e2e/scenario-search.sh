@@ -16,6 +16,10 @@ e2e_key 4
 e2e_key e
 e2e_type "label:bug"
 e2e_key Enter
+# The store cannot answer here, so the query waits for the explicit
+# GitHub action (H); only then does the REST search run.
+e2e_wait "searches GitHub" 10 || fail "the unanswerable query did not name the action"
+e2e_key H
 # 3 requested rows (9 is an issue) plus all 102 issue hits prove page 2
 # landed: the Issues pane counts both pages.
 e2e_wait "103 ·" 30 || fail "paged search never landed"

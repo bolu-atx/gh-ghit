@@ -6,6 +6,7 @@ issues | '?' | shortcuts: false -> true
 issues | 'C' | confirm: None -> Some(("Close #8?", 2))
 issues | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 issues | 'F' | format: false/false/false -> true/true/false
+issues | 'H' | message:  -> no query: F writes one, then H searches GitHub
 issues | 'N' | message:  -> no search: press /
 issues | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 issues | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -42,6 +43,7 @@ issues-tree | 'C' | confirm: None -> Some(("Close #7?", 2))
 issues-tree | 'E' | pane: Issues -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 issues-tree | 'F' | format: false/false/false -> true/true/false
 issues-tree | 'G' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
+issues-tree | 'H' | message:  -> no query: F writes one, then H searches GitHub
 issues-tree | 'N' | message:  -> no search: press /
 issues-tree | 'Z' | folded: [] -> [7]
 issues-tree | '[' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
@@ -79,6 +81,7 @@ prs | 'C' | confirm: None -> Some(("Close #8?", 2))
 prs | 'E' | pane: PRs -> Main ; message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 prs | 'F' | format: false/false/false -> true/true/false
 prs | 'G' | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
+prs | 'H' | message:  -> no query: F writes one, then H searches GitHub
 prs | 'N' | message:  -> no search: press /
 prs | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 prs | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -117,6 +120,7 @@ main-details | '?' | shortcuts: false -> true
 main-details | 'C' | confirm: None -> Some(("Close #8?", 2))
 main-details | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-details | 'F' | format: false/false/false -> true/true/false
+main-details | 'H' | message:  -> no query: F writes one, then H searches GitHub
 main-details | 'N' | message:  -> no search: press /
 main-details | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 main-details | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -148,6 +152,7 @@ main-diff | 'C' | confirm: None -> Some(("Close #9?", 2))
 main-diff | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-diff | 'F' | format: false/false/false -> true/true/false
 main-diff | 'G' | diff: None/false/false/[] -> Some(9)/true/false/[]
+main-diff | 'H' | message:  -> no query: F writes one, then H searches GitHub
 main-diff | 'N' | message:  -> no search: press /
 main-diff | '[' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: []/[]/0 -> [9]/[]/0
 main-diff | ']' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: []/[]/0 -> [9]/[]/0
@@ -179,6 +184,7 @@ main-graph | 'C' | confirm: None -> Some(("Close #7?", 2))
 main-graph | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 main-graph | 'F' | format: false/false/false -> true/true/false
 main-graph | 'G' | graph: 0 -> 2
+main-graph | 'H' | message:  -> no query: F writes one, then H searches GitHub
 main-graph | 'N' | message:  -> no search: press /
 main-graph | '[' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
 main-graph | ']' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
@@ -211,6 +217,7 @@ refs | 'C' | confirm: None -> Some(("Close #8?", 2))
 refs | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 refs | 'F' | format: false/false/false -> true/true/false
 refs | 'G' | refs: true/None -> true/Some(9)
+refs | 'H' | message:  -> no query: F writes one, then H searches GitHub
 refs | 'N' | message:  -> no search: press /
 refs | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 refs | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -250,6 +257,7 @@ labels | 'C' | confirm: None -> Some(("Close #8?", 2))
 labels | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 labels | 'F' | format: false/false/false -> true/true/false
 labels | 'G' | labels-cursor: 0 -> 1
+labels | 'H' | message:  -> no query: F writes one, then H searches GitHub
 labels | 'N' | message:  -> no search: press /
 labels | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 labels | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
@@ -283,6 +291,7 @@ history | '?' | shortcuts: false -> true
 history | 'C' | confirm: None -> Some(("Close #9?", 2))
 history | 'E' | message:  -> sidebar: hidden ; show: truetruetruetruetrue -> truetruetruetruefalse
 history | 'F' | format: false/false/false -> true/true/false
+history | 'H' | message:  -> no query: F writes one, then H searches GitHub
 history | 'N' | message:  -> no search: press /
 history | '[' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
 history | ']' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0

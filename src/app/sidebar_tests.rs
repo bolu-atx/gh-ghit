@@ -108,11 +108,11 @@ fn lease_holder_alone_auto_refreshes_the_listing() {
     }
     assert!(holder.sections.rx.is_some(), "the holder syncs");
     assert!(other.sections.rx.is_none(), "a non-holder sends no listing request");
-    // Search mode stays per instance: a non-holder still refreshes its search.
+    // A query never refreshes on GitHub by itself, in any instance.
     other.sidebar.query_active = "label:bug".to_string();
     let start = other.sections.last_fetch;
     other.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
-    assert!(other.sections.rx.is_some() && other.sections.replace);
+    assert!(other.sections.rx.is_none() && !other.sections.replace);
     // A manual refresh takes the lease from any process.
     other.sidebar.query_active.clear();
     other.sections.rx = None;
@@ -334,7 +334,7 @@ fn four_selects_all_time_and_zero_resets_to_recent() {
 }
 
 #[test]
-fn startup_restored_query_runs_search_instead_of_window_fetch() {
+fn startup_restored_query_runs_locally_instead_of_window_fetch() {
     let (_guard, _dir, saved) = temp_xdg();
     let mut prefs = github::load_prefs();
     prefs.queries.insert(github::prefs_repo_key("o/r"), "label:bug".to_string());
@@ -345,8 +345,8 @@ fn startup_restored_query_runs_search_instead_of_window_fetch() {
     tx.send(Some("o/r".to_string())).unwrap();
     assert!(poll_bootstrap(&mut app));
     assert_eq!(app.sidebar.query_active, "label:bug");
-    assert!(app.sections.rx.is_some(), "restored query fetches from the server");
-    assert!(app.sections.replace, "search results replace the listing");
+    assert!(app.sections.rx.is_none() && !app.sections.replace, "restored query sends no search");
+    assert_eq!(queued(&mut app), 0);
     restore_xdg(saved);
 }
 
@@ -589,27 +589,30 @@ fn local_query_matches_title_words_through_a_saved_query() {
 }
 
 #[test]
-fn queries_the_store_cannot_answer_go_to_the_server() {
+fn queries_the_store_cannot_answer_show_a_notice_and_send_nothing() {
     let (_guard, _dir, saved) = temp_xdg();
     seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
     let mut app = linked_app();
     app.sections.merged_window_hours = 0;
     // An unknown term, and a closed query reaching past the backfill horizon.
     for query in ["in:body crash", "is:closed"] {
-        app.sections.rx = None;
+        app.sidebar.query_active = query.to_string();
         app.run_gh_search(query.to_string());
-        assert!(app.sections.rx.is_some() && app.sections.replace, "{query} runs the server search");
+        assert!(app.sections.rx.is_none() && !app.sections.replace, "{query} sends no search");
+        assert_eq!(queued(&mut app), 0, "{query} queues no request");
+        assert!(app.message.contains(&app.github_key()) && app.message.contains("GitHub"), "{}", app.message);
+        assert_eq!(app.query_source(), "local");
     }
     restore_xdg(saved);
 }
 
 #[test]
-fn an_unfinished_backfill_sends_queries_to_the_server() {
+fn an_unfinished_backfill_sends_no_search() {
     let (_guard, _dir, saved) = temp_xdg();
     seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], false);
     let mut app = linked_app();
     app.run_gh_search("is:open label:bug".to_string());
-    assert!(app.sections.rx.is_some(), "the store is incomplete");
+    assert!(app.sections.rx.is_none() && queued(&mut app) == 0, "the store is incomplete, the notice names the action");
     restore_xdg(saved);
 }
 
@@ -652,13 +655,97 @@ fn holder_syncs_behind_a_local_query_and_the_view_refilters() {
 }
 
 #[test]
-fn holder_still_syncs_behind_a_server_query() {
+fn holder_still_syncs_behind_an_unanswerable_query_and_sends_no_search() {
     let (_guard, _dir, saved) = temp_xdg();
     let mut holder = linked_app();
     holder.sidebar.query_active = "in:body crash".to_string();
     let start = holder.sections.last_sync;
     holder.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
     assert!(holder.sections.sync_rx.is_some(), "the store still syncs");
-    assert!(holder.sections.rx.is_some() && holder.sections.replace, "the search keeps its own refresh");
+    assert!(holder.sections.rx.is_none() && !holder.sections.replace, "no search of its own");
+    restore_xdg(saved);
+}
+
+fn gh_hit(number: u64, updated: &str, title: &str) -> crate::github::Row {
+    let mut row = cached_row(number, false);
+    row.issue.updated_at = updated.to_string();
+    row.issue.title = title.to_string();
+    row
+}
+
+fn land_search(app: &mut App, rows: Vec<crate::github::Row>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.sections.rx = Some(rx);
+    app.sections.replace = true;
+    tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();
+    poll_sections(app);
+}
+
+#[test]
+fn the_search_action_runs_one_github_search_and_lands_github_rows() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
+    let mut app = linked_app();
+    app.sidebar.query_active = "in:body crash".to_string();
+    app.run_gh_search("in:body crash".to_string());
+    assert_eq!(app.query_source(), "local");
+    assert_eq!(queued(&mut app), 0);
+    app.search_github();
+    assert_eq!(queued(&mut app), 1, "exactly one search");
+    assert!(app.sections.rx.is_some() && app.sections.replace);
+    land_search(&mut app, vec![gh_hit(40, "2030-01-01T00:00:00Z", "body hit")]);
+    assert_eq!(app.query_source(), "GitHub");
+    assert_eq!(app.nav.recent, vec![40]);
+    let stored = crate::store::open("o/r").unwrap().rows_by_number(&[40]);
+    assert_eq!(stored.len(), 1, "the hit is in the store");
+    restore_xdg(saved);
+}
+
+#[test]
+fn github_results_upsert_newer_only_and_keep_statuses() {
+    let (_guard, _dir, saved) = temp_xdg();
+    let mut old = stored(5, "OPEN", &[], "stored title");
+    old.issue.updated_at = "2030-01-01T00:00:00Z".to_string();
+    old.issue.checks = Some(model::CheckState::Pass);
+    old.statuses = vec![("Board".to_string(), Some("Doing".to_string()))];
+    let mut same = stored(6, "OPEN", &[], "same time");
+    same.issue.updated_at = "2030-01-01T00:00:00Z".to_string();
+    seed_backfilled(vec![old, same], true);
+    let mut app = linked_app();
+    app.sidebar.query_active = "in:body x".to_string();
+    land_search(&mut app, vec![
+        gh_hit(5, "2030-02-01T00:00:00Z", "newer title"),
+        gh_hit(6, "2030-01-01T00:00:00Z", "ignored title"),
+    ]);
+    let store = crate::store::open("o/r").unwrap();
+    let five = &store.rows_by_number(&[5])[0];
+    assert_eq!(five.issue.title, "newer title");
+    assert!(five.issue.checks.is_some(), "checks survive the REST row");
+    assert_eq!(five.statuses.len(), 1, "statuses survive the REST row");
+    assert_eq!(store.rows_by_number(&[6])[0].issue.title, "same time", "equal updated_at keeps the stored row");
+    restore_xdg(saved);
+}
+
+#[test]
+fn a_github_result_set_stays_visible_and_never_auto_refreshes() {
+    let (_guard, _dir, saved) = temp_xdg();
+    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
+    let mut app = linked_app();
+    app.sidebar.query_active = "in:body crash".to_string();
+    land_search(&mut app, vec![gh_hit(40, "2030-01-01T00:00:00Z", "body hit")]);
+    let queued_before = queued(&mut app);
+    // Auto-refresh sends no search.
+    let start = app.sections.last_fetch;
+    app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    assert!(app.sections.rx.is_none() && !app.sections.replace);
+    assert!(queued(&mut app) <= queued_before + 1, "at most the holder's quiet sync");
+    // A store change re-reads the same numbers.
+    put_sections(vec![stored(1, "OPEN", &["bug"], "crash"), gh_hit(40, "2030-01-02T00:00:00Z", "body hit v2")], 0);
+    assert!(app.watch_store(Instant::now()));
+    assert_eq!(app.nav.recent, vec![40], "the GitHub result set stays");
+    assert_eq!(app.query_source(), "GitHub");
+    // A new local query run resets the source.
+    app.run_gh_search("in:body crash".to_string());
+    assert_eq!(app.query_source(), "local");
     restore_xdg(saved);
 }

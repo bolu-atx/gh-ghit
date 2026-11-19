@@ -43,6 +43,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
             app.open_sidebar_format();
             app.start_query_edit();
         }
+        Action::SearchGithub => app.search_github(),
         Action::MoveDown => pane_down(app, 1),
         Action::MoveUp => pane_down(app, -1),
         Action::StepPrev => app.step_issue(-1),

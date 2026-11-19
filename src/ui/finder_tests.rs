@@ -201,3 +201,15 @@ fn typed_keys_never_leak_to_the_panes_behind() {
     assert!(!app.quit && !app.shortcuts_open() && app.draft().is_none());
     assert_eq!(app.finder().map(|f| f.query.as_str()), Some("q?jpc"));
 }
+
+#[test]
+fn few_results_name_the_github_action_in_the_list() {
+    let mut app = app();
+    open(&mut app);
+    typed(&mut app, "zzzz");
+    let frame = text(&mut app);
+    assert!(frame.contains("H searches GitHub"), "{frame}");
+    let mut app = self::app();
+    open(&mut app);
+    assert!(!text(&mut app).contains("searches GitHub"), "an empty query says nothing");
+}

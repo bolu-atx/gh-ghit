@@ -41,7 +41,7 @@ macro_rules! actions {
 actions! {
     // Global.
     HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, CycleTheme,
-    OpenBoard, OpenFinder, Comment, CloseItem, OpenFormat, QuerySearch, MoveDown, MoveUp, StepPrev, StepNext,
+    OpenBoard, OpenFinder, Comment, CloseItem, OpenFormat, QuerySearch, SearchGithub, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     ContentFind, ContentNext, ContentPrev,
     OpenBrowser, Refresh, Reauth, Pin, Yank, ToggleRefs, ToggleSidebar, SubmitReview,
@@ -496,6 +496,11 @@ fn main_pane(app: &App) -> bool {
 /// A content search has a query, so `n`/`N` have somewhere to go.
 fn content_search_live(app: &App) -> bool {
     app.search.active()
+}
+
+/// A `/` query is active, so there is something to re-run on GitHub.
+fn query_live(app: &App) -> bool {
+    !app.sidebar.query_active.trim().is_empty()
 }
 
 fn side_pane(app: &App) -> bool {

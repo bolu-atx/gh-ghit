@@ -205,6 +205,7 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                 app.drop_unvisited_background();
             }
             match result {
+                Ok(rows) if replace => app.land_github(rows),
                 Ok(rows) => land_rows(app, rows, replace, auto),
                 // Auto-refresh failures notify too: a silent empty
                 // sidebar is how under-scoped tokens went unnoticed.

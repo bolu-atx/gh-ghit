@@ -485,6 +485,24 @@ impl StoreLink {
         self.store.rows().ok()
     }
 
+    /// Store GitHub search hits (newer-only, statuses kept) and return the
+    /// stored version of every hit in GitHub's order, so the view shows what
+    /// a later open reads. Falls back to the hits themselves when the store fails.
+    pub fn save_search(&mut self, hits: Vec<api::Row>) -> Vec<api::Row> {
+        if self.store.upsert_search(&hits).is_err() {
+            return hits;
+        }
+        let numbers: Vec<u64> = hits.iter().map(|row| row.issue.number).collect();
+        let mut rows = self.store.rows_by_number(&numbers);
+        rows.sort_by_key(|row| numbers.iter().position(|n| *n == row.issue.number));
+        rows
+    }
+
+    /// The stored rows with these numbers, most recently updated first.
+    pub fn rows_by_number(&self, numbers: &[u64]) -> Vec<api::Row> {
+        self.store.rows_by_number(numbers)
+    }
+
     /// Which backfill walks finished: the open ones, then the closed ones.
     pub fn backfill_done(&self) -> (bool, bool) {
         let done = |conns: &[api::Conn]| conns.iter().all(|c| self.store.backfill_conn(c.name()).done);

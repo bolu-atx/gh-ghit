@@ -330,7 +330,7 @@ impl App {
             }
             self.sections.refresh = github::Refresh::Full;
             self.merge_recent_sections();
-        } else {
+        } else if !self.reread_github(false) {
             let q = self.sidebar.query_active.clone();
             self.run_gh_search(q);
         }

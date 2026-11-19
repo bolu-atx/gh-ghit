@@ -220,6 +220,43 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Store GitHub search hits. A hit only replaces a stored row with an
+    /// older `updated_at`. REST hits carry no CI or project status, so a
+    /// replaced row keeps the stored `checks`, statuses and parent.
+    /// `sync_state` stays untouched, so no process sees a sync.
+    pub fn upsert_search(&mut self, rows: &[Row]) -> Result<(), String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
+        for hit in rows {
+            let stored: Option<String> = tx
+                .query_row("SELECT row_json FROM items WHERE number = ?1", [hit.issue.number as i64], |r| r.get(0))
+                .optional()
+                .map_err(fail)?;
+            let mut row = hit.clone();
+            if let Some(old) = stored.and_then(|json| serde_json::from_str::<Row>(&json).ok()) {
+                if old.issue.updated_at >= row.issue.updated_at {
+                    continue;
+                }
+                row.issue.checks = old.issue.checks;
+                row.issue.parent = old.issue.parent;
+                row.statuses = old.statuses;
+            }
+            upsert_rows(&tx, UPSERT, std::slice::from_ref(&row))?;
+        }
+        tx.commit().map_err(fail)
+    }
+
+    /// The stored rows with these numbers, most recently updated first.
+    pub fn rows_by_number(&self, numbers: &[u64]) -> Vec<Row> {
+        let mut rows: Vec<Row> = self.rows().unwrap_or_default().into_iter()
+            .filter(|row| numbers.contains(&row.issue.number))
+            .collect();
+        rows.sort_by(|a, b| (&b.issue.updated_at, b.issue.number).cmp(&(&a.issue.updated_at, a.issue.number)));
+        rows
+    }
+}
+
 /// Upsert `rows` inside `tx` with the given upsert statement.
 fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<(), String> {
     let fail = |e: rusqlite::Error| format!("store: {e}");
