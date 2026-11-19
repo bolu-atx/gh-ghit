@@ -6,6 +6,9 @@ mod diff;
 mod graph;
 mod issue;
 mod links;
+// Not wired into the app until the graph map lands (#270).
+#[allow(dead_code)]
+pub mod physics;
 mod sidebar;
 mod text;
 
@@ -19,6 +22,8 @@ mod graph_tests;
 mod issue_tests;
 #[cfg(test)]
 mod links_tests;
+#[cfg(test)]
+mod physics_tests;
 #[cfg(test)]
 mod sidebar_tests;
 #[cfg(test)]
