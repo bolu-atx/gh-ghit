@@ -134,7 +134,7 @@ fn sidebar_shows_spinner_and_loading_body_while_sections_load() {
     app.sections.rx = Some(rx);
     let text = sidebar_text(&mut app);
     assert!(text.contains("Issues") && text.contains("⠋"), "title spinner: {text}");
-    assert!(text.contains("Loading issues…"), "loading body: {text}");
+    assert!(text.contains("Loading open + last 24h closed issues…"), "loading body: {text}");
     app.sections.rx = None;
     let text = sidebar_text(&mut app);
     assert!(!text.contains("⠋") && !text.contains("Loading"), "idle sidebar: {text}");
@@ -150,10 +150,10 @@ fn sidebar_loading_goes_quiet_while_the_current_issue_loads() {
     app.issues.pending.insert(7);
     let text = sidebar_text(&mut app);
     assert!(text.contains("⠋"), "title spinner stays: {text}");
-    assert!(!text.contains("Loading issues…"), "no sidebar loading body under the main loading body: {text}");
+    assert!(!text.contains("Loading open + last 24h closed issues…"), "no sidebar loading body under the main loading body: {text}");
     assert!(!text.contains("No issues"), "no empty hint while loading: {text}");
     app.issues.pending.clear();
-    assert!(sidebar_text(&mut app).contains("Loading issues…"), "loading body returns once the main pane is done");
+    assert!(sidebar_text(&mut app).contains("Loading open + last 24h closed issues…"), "loading body returns once the main pane is done");
 }
 
 #[test]
