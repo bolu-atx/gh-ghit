@@ -1,20 +1,26 @@
 //! The Graph tab's dependency map. Edges draw first as box-drawing lines
 //! with arrowheads at the blocked end; labels draw on top, the selected
 //! node and its blocker chain last so they win overlaps. Every label rect
-//! lands in `app.hits.map_nodes` for the mouse.
+//! lands in `app.hits.map_nodes` and every edge cell in `app.hits.map_edges`
+//! for the mouse. An open card docks at the right and the map takes the
+//! rest.
 
 use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
 use crate::app::App;
-use crate::core::map::{arrow, line, stroke, Camera, LabelDetail};
+use crate::core::map::{arrow, line, stroke, LabelDetail};
 use crate::model::physics::EdgeStyle;
 use crate::model::{self, MapScope, NodeState};
-use crate::theme::{amber, green, muted, paper, pr_ref, red};
+use crate::theme::{amber, green, muted, paper, pr_ref, red, teal};
+
+/// Card width bounds, in cells.
+const CARD_MIN: u16 = 30;
+const CARD_MAX: u16 = 42;
 
 /// A label as placed: left cell, row and width, in view cells.
 #[derive(Clone, Copy)]
@@ -31,8 +37,20 @@ impl Place {
 }
 
 pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
-    app.hits.map_area = area;
     app.hits.map_nodes.clear();
+    app.hits.map_edges.clear();
+    app.hits.map_card = Rect::default();
+    app.hits.map_card_hits.clear();
+    let area = if app.map.card.is_some() && !app.map.graph.nodes.is_empty() {
+        let width = (area.width * 2 / 5).clamp(CARD_MIN, CARD_MAX).min(area.width);
+        let [map, card] = Layout::horizontal([Constraint::Min(0), Constraint::Length(width)])
+            .areas(area);
+        super::map_card::render_map_card(f, card, app);
+        map
+    } else {
+        area
+    };
+    app.hits.map_area = area;
     if area.width < 4 || area.height < 2 {
         return;
     }
@@ -47,11 +65,9 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         return;
     }
     let bodies: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
-    if app.map.follow {
-        app.map.camera = Camera::fit(&bodies, area.width, area.height);
-    }
     let camera = app.map.camera;
     let graph = &app.map.graph;
+    let card_edge = app.map.card_edge();
     let detail = camera.detail();
     let centers: Vec<(i32, i32)> = bodies.iter().map(|&(x, y)| camera.cell(x, y, area.width, area.height)).collect();
     let selected = app.map.selected_index();
@@ -67,29 +83,41 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let chain: HashSet<usize> = selected.map(|i| graph.blockers_of(i)).unwrap_or_default();
     let lit = |i: usize| Some(i) == selected || chain.contains(&i);
 
-    // Hub edges first, so links and blocks draw over their dots.
-    let mut edges = graph.edges.clone();
-    edges.sort_by_key(|&(_, _, style)| style != EdgeStyle::Hub);
-    for &(a, b, style) in &edges {
+    // Hub edges first, so links and blocks draw over their dots; the
+    // card's edge last, so it reads whole.
+    let mut edges: Vec<usize> = (0..graph.edges.len()).collect();
+    edges.sort_by_key(|&e| (Some(e) == card_edge, graph.edges[e].2 != EdgeStyle::Hub));
+    let mut edge_hits = vec![];
+    for e in edges {
+        let (a, b, style) = graph.edges[e];
         let (from, to) = (centers[a], centers[b]);
         let (dx, dy) = (to.0 - from.0, to.1 - from.1);
         let on_chain = style == EdgeStyle::Directed && lit(a) && lit(b);
-        let pen = if on_chain { Style::new().fg(amber()).add_modifier(Modifier::BOLD) } else { Style::new().fg(muted()) };
+        let pen = match (Some(e) == card_edge, on_chain) {
+            (true, _) => Style::new().fg(teal()).add_modifier(Modifier::BOLD),
+            (false, true) => Style::new().fg(amber()).add_modifier(Modifier::BOLD),
+            (false, false) => Style::new().fg(muted()),
+        };
         let glyph = if style == EdgeStyle::Hub { '·' } else { stroke(dx, dy) };
         let cells = line(from, to);
         for &cell in &cells {
-            if !places[a].holds(cell) && !places[b].holds(cell) {
-                put_char(buf, area, cell, glyph, pen);
+            let free = !places[a].holds(cell) && !places[b].holds(cell);
+            if free && put_char(buf, area, cell, glyph, pen) {
+                edge_hits.push((screen(area, cell), e));
             }
         }
         if style == EdgeStyle::Directed {
             // The arrowhead sits where the line leaves the blocked label.
             if let Some(&cell) = cells.iter().rev().find(|cell| !places[b].holds(**cell) && !places[a].holds(**cell)) {
-                let head = if on_chain { pen } else { Style::new().fg(red()) };
-                put_char(buf, area, cell, arrow(dx, dy), head);
+                let lit_edge = on_chain || Some(e) == card_edge;
+                let head = if lit_edge { pen } else { Style::new().fg(red()) };
+                if put_char(buf, area, cell, arrow(dx, dy), head) {
+                    edge_hits.push((screen(area, cell), e));
+                }
             }
         }
     }
+    app.hits.map_edges = edge_hits;
 
     // Plain items first, then hubs, then the chain, then the selection.
     let rank = |i: usize| match (Some(i) == selected, chain.contains(&i), graph.nodes[i].state) {
@@ -103,13 +131,7 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let mut hits = Vec::with_capacity(order.len());
     for i in order {
         let node = &graph.nodes[i];
-        let mut style = Style::new().fg(match node.state {
-            NodeState::Blocked => red(),
-            NodeState::Ready => green(),
-            NodeState::Pr => pr_ref(),
-            NodeState::Closed => muted(),
-            NodeState::Hub => amber(),
-        });
+        let mut style = Style::new().fg(node_color(node.state));
         if node.state == NodeState::Closed {
             style = style.add_modifier(Modifier::DIM);
         }
@@ -143,6 +165,17 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     put(buf, area, (0, i32::from(area.height) - 1), &format!("{summary} "), Style::new().fg(paper()).add_modifier(Modifier::DIM));
 }
 
+/// The color a node state reads in, on the map and on its card.
+pub(super) fn node_color(state: NodeState) -> Color {
+    match state {
+        NodeState::Blocked => red(),
+        NodeState::Ready => green(),
+        NodeState::Pr => pr_ref(),
+        NodeState::Closed => muted(),
+        NodeState::Hub => amber(),
+    }
+}
+
 /// Label text at a zoom: `#n title…`, `#n` or `•`; hubs keep a box.
 fn label(node: &model::MapNode, detail: LabelDetail) -> String {
     match (node.number, detail) {
@@ -156,11 +189,19 @@ fn label(node: &model::MapNode, detail: LabelDetail) -> String {
 }
 
 /// One glyph at view cell `cell`, dropped when it falls outside `area`.
-fn put_char(buf: &mut Buffer, area: Rect, (col, row): (i32, i32), glyph: char, style: Style) {
+/// True when it was drawn.
+fn put_char(buf: &mut Buffer, area: Rect, cell: (i32, i32), glyph: char, style: Style) -> bool {
+    let (col, row) = cell;
     if col < 0 || row < 0 || col >= i32::from(area.width) || row >= i32::from(area.height) {
-        return;
+        return false;
     }
-    buf[(area.x + col as u16, area.y + row as u16)].set_char(glyph).set_style(style);
+    buf[screen(area, cell)].set_char(glyph).set_style(style);
+    true
+}
+
+/// Screen cell of view cell `(col, row)`, which must lie inside `area`.
+fn screen(area: Rect, (col, row): (i32, i32)) -> (u16, u16) {
+    (area.x + col as u16, area.y + row as u16)
 }
 
 /// `text` from view cell `(col, row)`, clipped to `area`. Returns the

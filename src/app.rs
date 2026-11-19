@@ -19,7 +19,9 @@ mod finder;
 mod format;
 mod issue;
 mod map;
-pub(crate) use map::MapView;
+pub(crate) use map::{CardHit, MapCard, MapView};
+#[cfg(test)]
+pub(crate) use map::CardDetail;
 mod menu;
 pub(crate) use menu::{MenuKind, MenuState};
 pub(crate) use finder::FinderRow;
@@ -211,6 +213,13 @@ pub(crate) struct HitAreas {
     pub(crate) map_area: Rect,
     /// Map node labels as drawn, topmost first: rect plus node index.
     pub(crate) map_nodes: Vec<(Rect, usize)>,
+    /// Map edge cells as drawn, in draw order: screen cell plus edge index.
+    /// Node labels win over them.
+    pub(crate) map_edges: Vec<((u16, u16), usize)>,
+    /// The map card's rect; empty while no card shows.
+    pub(crate) map_card: Rect,
+    /// Clickable parts of the map card.
+    pub(crate) map_card_hits: Vec<(Rect, CardHit)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).
@@ -468,10 +477,19 @@ impl App {
 }
 
 /// The board modal is up, whether still fetching or fully loaded.
-/// Draw one frame: fit the columns to the terminal width, then render.
+/// Draw one frame: fit the columns to the terminal width and the map camera
+/// to the graph, then render.
 pub(crate) fn draw_frame(f: &mut ratatui::Frame, app: &mut App) {
     app.apply_width(f.area().width);
+    app.map_before_draw();
     crate::ui::render(f, app);
+    // The map's area is known only once it drew. A new area or a pending
+    // reveal moves the camera here, and the frame draws again, so no frame
+    // shows a stale view.
+    if app.map_after_draw() {
+        f.buffer_mut().reset();
+        crate::ui::render(f, app);
+    }
 }
 
 /// Every background lander, once per loop pass. The terminal and drive

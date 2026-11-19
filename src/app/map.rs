@@ -5,8 +5,11 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::layout::Rect;
+
 use crate::app::App;
 use crate::core::map::{Camera, ZOOM_STEP};
+use crate::github;
 use crate::model::physics::{Layout, Physics};
 use crate::model::{self, MapGraph, MapItem, MapLink, MapScope};
 
@@ -29,11 +32,42 @@ const NUDGE_CELLS: i32 = 2;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum MapDrag {
     /// Pressed on the node with layout id `id`. An id, not an index, so a
-    /// rebuild mid-drag never moves another node. A release with no motion
-    /// on the node that was already selected opens it.
-    Node { id: u64, moved: bool, was_selected: bool },
-    /// Pressed on empty space: the view follows the pointer from this cell.
-    Pan { col: u16, row: u16 },
+    /// rebuild mid-drag never moves another node. A release with no
+    /// motion shows the node's card, or opens the node when its card
+    /// already showed (`shown`).
+    Node { id: u64, moved: bool, shown: bool },
+    /// Pressed off the nodes: the view follows the pointer from this cell.
+    /// A release with no motion on an edge shows its card.
+    Pan { col: u16, row: u16, edge: Option<(u64, u64)>, moved: bool },
+}
+
+/// The card docked at the right of the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MapCard {
+    /// The selected node's details.
+    Node,
+    /// One edge, named by the layout ids of its ends.
+    Edge { src: u64, dst: u64 },
+}
+
+/// A clickable part of the card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CardHit {
+    Open,
+    Close,
+    NextEdge,
+    /// An end of the shown edge, by layout id.
+    End(u64),
+}
+
+/// The stored row and body of the item a node card shows. Read once per
+/// selection and store change, never per frame.
+pub(crate) struct CardDetail {
+    pub(crate) number: u64,
+    /// Store change counter at the read.
+    pub(crate) version: Option<i64>,
+    pub(crate) row: Option<github::Row>,
+    pub(crate) body: Option<String>,
 }
 
 pub(crate) struct MapView {
@@ -57,6 +91,12 @@ pub(crate) struct MapView {
     /// Layout id of the selected node.
     pub(crate) selected: Option<u64>,
     pub(crate) drag: Option<MapDrag>,
+    pub(crate) card: Option<MapCard>,
+    pub(crate) detail: Option<CardDetail>,
+    /// The next frame brings the card's subject into view.
+    reveal: bool,
+    /// Map area the camera last fit for.
+    view: Rect,
     /// Steps still owed before the layout may rest.
     wake: usize,
 }
@@ -77,6 +117,10 @@ impl Default for MapView {
             follow: true,
             selected: None,
             drag: None,
+            card: None,
+            detail: None,
+            reveal: false,
+            view: Rect::default(),
             wake: 0,
         }
     }
@@ -100,6 +144,34 @@ impl MapView {
 
     fn wake(&mut self) {
         self.wake = WAKE_STEPS;
+    }
+
+    /// Index of the edge the card shows.
+    pub(crate) fn card_edge(&self) -> Option<usize> {
+        match self.card? {
+            MapCard::Edge { src, dst } => self.graph.edge_between(src, dst),
+            MapCard::Node => None,
+        }
+    }
+
+    /// Item number the node card shows.
+    fn card_number(&self) -> Option<u64> {
+        match self.card? {
+            MapCard::Node => self.graph.nodes[self.selected_index()?].number,
+            MapCard::Edge { .. } => None,
+        }
+    }
+
+    /// Show `card` and bring it into view.
+    fn show(&mut self, card: MapCard) {
+        self.card = Some(card);
+        self.reveal = true;
+    }
+
+    /// Show the card of edge `edge`.
+    fn show_edge(&mut self, edge: usize) {
+        let (a, b, _) = self.graph.edges[edge];
+        self.show(MapCard::Edge { src: self.graph.nodes[a].id, dst: self.graph.nodes[b].id });
     }
 }
 
@@ -135,11 +207,77 @@ impl App {
             }
         }
         let mut changed = self.rebuild_map();
+        changed |= self.read_card_detail();
         if self.map.moving() {
             self.step_map(FRAME_BUDGET);
             changed = true;
         }
         changed
+    }
+
+    /// While the camera follows, fit the whole graph in the map's last
+    /// drawn area. True when the camera moved.
+    fn fit_map_view(&mut self) -> bool {
+        let area = self.hits.map_area;
+        self.map.view = area;
+        if !self.map.follow || !map_drawable(area) || self.map.graph.nodes.is_empty() {
+            return false;
+        }
+        let bodies: Vec<(f64, f64)> = self.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+        let camera = Camera::fit(&bodies, area.width, area.height);
+        std::mem::replace(&mut self.map.camera, camera) != camera
+    }
+
+    /// Before a render: while the camera follows, fit the graph as it is
+    /// now in the map's last drawn area.
+    pub(crate) fn map_before_draw(&mut self) {
+        if self.visual_graph() {
+            self.fit_map_view();
+        }
+    }
+
+    /// After a render, which records the map's area: fit a new area and
+    /// bring a pending card subject into view. True when the camera moved,
+    /// so the frame draws again.
+    pub(crate) fn map_after_draw(&mut self) -> bool {
+        if !self.visual_graph() {
+            return false;
+        }
+        let mut moved = false;
+        if self.hits.map_area != self.map.view {
+            moved |= self.fit_map_view();
+        }
+        let area = self.hits.map_area;
+        if self.map.reveal && map_drawable(area) && !self.map.graph.nodes.is_empty() {
+            self.map.reveal = false;
+            if !self.map.follow {
+                moved |= self.reveal_card_subject(area);
+            }
+        }
+        moved
+    }
+
+    /// Center the view on the card's subject when it sits outside `area`:
+    /// the selected node, or the middle of the shown edge. True when the
+    /// camera moved.
+    fn reveal_card_subject(&mut self, area: Rect) -> bool {
+        let bodies = self.map.layout.bodies();
+        let target = match self.map.card_edge() {
+            Some(e) => {
+                let (a, b, _) = self.map.graph.edges[e];
+                ((bodies[a].x + bodies[b].x) / 2.0, (bodies[a].y + bodies[b].y) / 2.0)
+            }
+            None => match self.map.selected_index() {
+                Some(i) => (bodies[i].x, bodies[i].y),
+                None => return false,
+            },
+        };
+        let (col, row) = self.map.camera.cell(target.0, target.1, area.width, area.height);
+        if col < 1 || row < 0 || col >= i32::from(area.width) - 1 || row >= i32::from(area.height) - 1 {
+            (self.map.camera.x, self.map.camera.y) = target;
+            return true;
+        }
+        false
     }
 
     /// Step the layout until `budget` elapses: at least one step, at most
@@ -175,7 +313,33 @@ impl App {
         if new_center || map.selected_index().is_none() {
             map.selected = center.filter(|n| map.graph.index_of(*n).is_some());
         }
+        // A card whose subject left the graph closes.
+        let gone = match map.card {
+            Some(MapCard::Node) => map.selected_index().is_none(),
+            Some(MapCard::Edge { .. }) => map.card_edge().is_none(),
+            None => false,
+        };
+        if gone {
+            map.card = None;
+        }
         map.wake();
+        true
+    }
+
+    /// Read the stored row and body for the node card when its item or
+    /// the store changed. True when a new read landed.
+    fn read_card_detail(&mut self) -> bool {
+        let Some(number) = self.map.card_number() else { return false };
+        let version = self.map.version;
+        if self.map.detail.as_ref().is_some_and(|d| d.number == number && d.version == version) {
+            return false;
+        }
+        let read = self.sections.link.as_ref().and_then(|link| link.item_card(number));
+        let (row, body) = match read {
+            Some((row, body)) => (Some(row), body),
+            None => (None, None),
+        };
+        self.map.detail = Some(CardDetail { number, version, row, body });
         true
     }
 
@@ -226,9 +390,14 @@ impl App {
         }
     }
 
-    /// Move the view by whole cells; it stops following the graph.
+    /// Move the view by pan steps; it stops following the graph.
     pub(crate) fn map_pan(&mut self, cols: f64, rows: f64) {
-        self.map.camera.pan(cols * PAN_CELLS, rows * PAN_CELLS / 2.0);
+        self.map_scroll(cols * PAN_CELLS, rows * PAN_CELLS / 2.0);
+    }
+
+    /// Move the view by `cols` x `rows` cells; it stops following the graph.
+    pub(crate) fn map_scroll(&mut self, cols: f64, rows: f64) {
+        self.map.camera.pan(cols, rows);
         self.map.follow = false;
     }
 
@@ -289,47 +458,126 @@ impl App {
     }
 
     /// Left press on the map at view cell `(col, row)`: on node `node` it
-    /// selects and grabs it, elsewhere it starts a pan.
-    pub(crate) fn map_press(&mut self, node: Option<usize>, col: u16, row: u16) {
+    /// selects and grabs it, elsewhere (on edge `edge` or empty space) it
+    /// starts a pan.
+    pub(crate) fn map_press(
+        &mut self,
+        node: Option<usize>,
+        edge: Option<usize>,
+        col: u16,
+        row: u16,
+    ) {
         self.map.drag = Some(match node {
             Some(index) => {
                 let id = self.map.graph.nodes[index].id;
-                let was_selected = self.map.selected == Some(id);
+                let shown = self.map.selected == Some(id) && self.map.card == Some(MapCard::Node);
                 self.map.selected = Some(id);
-                MapDrag::Node { id, moved: false, was_selected }
+                MapDrag::Node { id, moved: false, shown }
             }
-            None => MapDrag::Pan { col, row },
+            None => {
+                let graph = &self.map.graph;
+                let ends = |e: usize| (graph.nodes[graph.edges[e].0].id, graph.nodes[graph.edges[e].1].id);
+                MapDrag::Pan { col, row, edge: edge.map(ends), moved: false }
+            }
         });
     }
 
     /// The held button moved to view cell `(col, row)`.
     pub(crate) fn map_drag_to(&mut self, col: u16, row: u16) {
         match self.map.drag {
-            Some(MapDrag::Node { id, was_selected, .. }) => {
+            Some(MapDrag::Node { id, shown, .. }) => {
                 // A rebuild dropped the grabbed node: the drag ends.
                 let Some(index) = self.map.graph.index_of(id) else {
                     self.map.drag = None;
                     return;
                 };
                 self.map_place(index, i32::from(col), i32::from(row));
-                self.map.drag = Some(MapDrag::Node { id, moved: true, was_selected });
+                self.map.drag = Some(MapDrag::Node { id, moved: true, shown });
             }
-            Some(MapDrag::Pan { col: from_col, row: from_row }) => {
+            Some(MapDrag::Pan { col: from_col, row: from_row, edge, .. }) => {
+                if (from_col, from_row) == (col, row) {
+                    return;
+                }
                 let (dc, dr) = (f64::from(from_col) - f64::from(col), f64::from(from_row) - f64::from(row));
-                self.map.camera.pan(dc, dr);
-                self.map.follow = false;
-                self.map.drag = Some(MapDrag::Pan { col, row });
+                self.map_scroll(dc, dr);
+                self.map.drag = Some(MapDrag::Pan { col, row, edge, moved: true });
             }
             None => {}
         }
     }
 
-    /// The button came up: a still press on the selected node opens it.
+    /// The button came up. A still press on a node shows its card, or
+    /// opens it when the card already showed it (the app's second click).
+    /// A still press on an edge shows the edge's card.
     pub(crate) fn map_release(&mut self) {
-        if let Some(MapDrag::Node { id, moved: false, was_selected: true }) = self.map.drag.take() {
-            if self.map.selected == Some(id) && self.map.graph.index_of(id).is_some() {
-                self.map_open();
+        match self.map.drag.take() {
+            Some(MapDrag::Node { id, moved: false, shown }) => {
+                if self.map.selected != Some(id) || self.map.graph.index_of(id).is_none() {
+                    return;
+                }
+                if shown {
+                    self.map_open();
+                } else {
+                    self.map.show(MapCard::Node);
+                }
+            }
+            Some(MapDrag::Pan { edge: Some((src, dst)), moved: false, .. }) => {
+                if let Some(edge) = self.map.graph.edge_between(src, dst) {
+                    self.map.show_edge(edge);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Show the selected node's card, or hide the card when it shows.
+    pub(crate) fn map_toggle_card(&mut self) {
+        if self.map.card == Some(MapCard::Node) {
+            self.map.card = None;
+        } else if self.map.selected_index().is_some() {
+            self.map.show(MapCard::Node);
+        }
+    }
+
+    pub(crate) fn map_close_card(&mut self) {
+        self.map.card = None;
+    }
+
+    /// Show the card of the next (`1`) or previous (`-1`) edge of the
+    /// selected node, wrapping.
+    pub(crate) fn map_step_edge(&mut self, delta: isize) {
+        let Some(index) = self.map.selected_index() else { return };
+        let edges = self.map.graph.edges_of(index);
+        if edges.is_empty() {
+            self.notify("this node has no links".to_string());
+            return;
+        }
+        let at = self.map.card_edge().and_then(|e| edges.iter().position(|&o| o == e));
+        let next = match at {
+            Some(at) => (at as isize + delta).rem_euclid(edges.len() as isize) as usize,
+            None if delta < 0 => edges.len() - 1,
+            None => 0,
+        };
+        self.map.show_edge(edges[next]);
+    }
+
+    /// A click on part of the card.
+    pub(crate) fn map_card_click(&mut self, hit: CardHit) {
+        match hit {
+            CardHit::Open => self.map_open(),
+            CardHit::Close => self.map_close_card(),
+            CardHit::NextEdge => self.map_step_edge(1),
+            CardHit::End(id) => {
+                if self.map.graph.index_of(id).is_some() {
+                    self.map.selected = Some(id);
+                    self.map.show(MapCard::Node);
+                }
             }
         }
     }
+}
+
+/// The map has room to draw in `area`.
+fn map_drawable(area: Rect) -> bool {
+    area.width >= 4 && area.height >= 2
 }

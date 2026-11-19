@@ -66,6 +66,19 @@ pub enum NodeState {
     Hub,
 }
 
+impl NodeState {
+    /// The state in a word or two, for cards.
+    pub fn word(self) -> &'static str {
+        match self {
+            NodeState::Blocked => "blocked",
+            NodeState::Ready => "ready",
+            NodeState::Pr => "open PR",
+            NodeState::Closed => "closed",
+            NodeState::Hub => "milestone",
+        }
+    }
+}
+
 /// One node: an item, or a milestone hub (`number` is `None`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapNode {
@@ -94,6 +107,41 @@ impl MapGraph {
     /// Index of the node with layout id `id`.
     pub fn index_of(&self, id: u64) -> Option<usize> {
         self.nodes.iter().position(|node| node.id == id)
+    }
+
+    /// Indexes of the edges that touch node `index`, in edge order.
+    pub fn edges_of(&self, index: usize) -> Vec<usize> {
+        let touches = |&e: &usize| self.edges[e].0 == index || self.edges[e].1 == index;
+        (0..self.edges.len()).filter(touches).collect()
+    }
+
+    /// Index of the edge from layout id `src` to layout id `dst`.
+    pub fn edge_between(&self, src: u64, dst: u64) -> Option<usize> {
+        let (a, b) = (self.index_of(src)?, self.index_of(dst)?);
+        self.edges.iter().position(|&(from, to, _)| from == a && to == b)
+    }
+
+    /// Edge `edge` in words: "#16 blocks #17", "#40 closes #25", "#3 is
+    /// the parent of #8", "#16 is in milestone Fast startup". `links`
+    /// tell a parent link from a closing one, which share a style.
+    pub fn relation(&self, edge: usize, links: &[MapLink]) -> String {
+        let (a, b, style) = self.edges[edge];
+        let (from, to) = (&self.nodes[a], &self.nodes[b]);
+        let name = |node: &MapNode| node.number.map_or(node.title.clone(), |n| format!("#{n}"));
+        let verb = match style {
+            EdgeStyle::Hub => return format!("{} is in milestone {}", name(from), to.title),
+            EdgeStyle::Directed => "blocks",
+            EdgeStyle::Link => {
+                let same = |l: &&MapLink| Some(l.src) == from.number && Some(l.dst) == to.number;
+                let kind = links.iter().filter(same).find(|l| l.kind != LinkKind::Blocks).map(|l| l.kind);
+                match kind {
+                    Some(LinkKind::Parent) => "is the parent of",
+                    Some(LinkKind::Closes) => "closes",
+                    _ => "links to",
+                }
+            }
+        };
+        format!("{} {verb} {}", name(from), name(to))
     }
 
     /// Every node that blocks `index`, directly or through a chain.

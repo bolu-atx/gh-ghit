@@ -183,7 +183,9 @@ main-graph | '.' | graph: Some(7)/Component/true/0 -> Some(8)/Component/true/0
 main-graph | '/' | focus: false -> true
 main-graph | '1' | tab: Visual -> Details
 main-graph | ':' | focus: false -> true
+main-graph | '<' | card: None -> Some(Edge { src: 11, dst: 7 })
 main-graph | '=' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/0.00/1.25
+main-graph | '>' | card: None -> Some(Edge { src: 7, dst: 8 })
 main-graph | '?' | shortcuts: false -> true
 main-graph | 'A' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/1
 main-graph | 'C' | confirm: None -> Some(("Close #7?", 2))
@@ -202,6 +204,7 @@ main-graph | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/No
 main-graph | 'f' | format: false/false/false -> true/false/false
 main-graph | 'g' | pending: None -> Some('g')
 main-graph | 'h' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> -3.00/0.00/1.00
+main-graph | 'i' | card: None -> Some(Node)
 main-graph | 'j' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/3.00/1.00
 main-graph | 'k' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 0.00/-3.00/1.00
 main-graph | 'l' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> 3.00/0.00/1.00

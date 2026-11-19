@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 
 use super::{
     Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, query_live, side_pane,
-    sub_issue_tree, undo_live,
+    sub_issue_tree, undo_live, map_card_open,
 };
 use crate::core::{Dialog, Pane, TextInput};
 
@@ -150,6 +150,11 @@ const GRAPH: &[Binding] = &[
     key(ch('.'), Action::GraphNext, "Next node", "Select", Gesture::Click).hint(1),
     key(ch(','), Action::GraphPrev, "Previous node", "Select", Gesture::Click),
     key(KeyCode::Enter, Action::GraphOpen, "Open node", "Select", Gesture::SecondClick).hint(2),
+    key(ch('i'), Action::GraphCard, "Show or hide card", "Select", Gesture::Click).hint(6),
+    key(ch('>'), Action::GraphNextEdge, "Next link", "Select", Gesture::Click).hint(7),
+    key(ch('<'), Action::GraphPrevEdge, "Previous link", "Select", Gesture::Click),
+    key(KeyCode::Esc, Action::GraphCloseCard, "Close card", "Select", Gesture::Click)
+        .when(map_card_open),
     key(ch('h'), Action::GraphPanLeft, "Pan left", "View", DRAG),
     key(ch('j'), Action::GraphPanDown, "Pan down", "View", DRAG),
     key(ch('k'), Action::GraphPanUp, "Pan up", "View", DRAG),

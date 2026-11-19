@@ -53,7 +53,7 @@ actions! {
     DiffNextFile, DiffPrevFile, DiffLineDown, DiffLineUp, DiffSplit, DiffToggleFile, DiffExpandAll,
     DiffFold, DiffUnfold, GraphNext, GraphPrev, GraphOpen, GraphPanLeft, GraphPanRight, GraphPanUp,
     GraphPanDown, GraphMoveLeft, GraphMoveRight, GraphMoveUp, GraphMoveDown, GraphZoomIn, GraphZoomOut,
-    GraphFit, GraphUnpin, GraphScope,
+    GraphFit, GraphUnpin, GraphScope, GraphCard, GraphNextEdge, GraphPrevEdge, GraphCloseCard,
     // Shortcuts, confirm, compose.
     CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
     ComposeSend, ComposeTogglePreview, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
@@ -510,6 +510,11 @@ fn query_live(app: &App) -> bool {
 
 fn side_pane(app: &App) -> bool {
     app.nav.pane != Pane::Main
+}
+
+/// A card shows on the map, so `Esc` closes it first.
+fn map_card_open(app: &App) -> bool {
+    app.map.card.is_some()
 }
 
 fn undo_live(app: &App) -> bool {

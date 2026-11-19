@@ -339,6 +339,7 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("graph", format!("{:?}/{:?}/{}/{}", app.map.selected, app.map.scope, app.map.follow,
             app.map.layout.bodies().iter().filter(|body| body.pinned).count())),
         ("camera", format!("{:.2}/{:.2}/{:.2}", app.map.camera.x, app.map.camera.y, app.map.camera.zoom)),
+        ("card", format!("{:?}", app.map.card)),
         ("pending", format!("{:?}", app.pending_prefix)),
         ("undo", app.undo.is_some().to_string()),
         ("reauth", app.auth.reauth_requested.to_string()),

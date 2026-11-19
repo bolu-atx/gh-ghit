@@ -503,6 +503,14 @@ impl StoreLink {
         Some((items, links))
     }
 
+    /// The stored row of one item and the body of its stored detail, of
+    /// any age, for a map card. Reads only the local copy.
+    pub fn item_card(&self, number: u64) -> Option<(api::Row, Option<String>)> {
+        let row = self.store.row(number)?;
+        let body = self.store.stored_detail::<IssueBundle>(store::Detail::Issue, number);
+        Some((row, body.map(|(issue, _)| issue.body)))
+    }
+
     /// Store change counter: moves when any other connection commits, so
     /// the map rereads only after a write.
     pub fn data_version(&self) -> Option<i64> {

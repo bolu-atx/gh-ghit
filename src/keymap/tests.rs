@@ -431,13 +431,14 @@ fn finder_has_key_mouse_and_hint() {
 }
 
 /// The map keeps every global and Main key. Only the keys the old graph
-/// already took (h j k l and the arrows) pan the map instead.
+/// already took (h j k l and the arrows) pan the map instead. Esc keeps
+/// its global meaning: it closes the nearest layer, here an open card.
 #[test]
 fn map_keys_never_shadow_global_or_main_keys() {
     let kept = [ch_code('h'), ch_code('j'), ch_code('k'), ch_code('l'), KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down];
     let below: Vec<&Binding> = bindings(Context::Global).chain(bindings(Context::Pane(Pane::Main))).collect();
     for map in bindings(Context::Main(MainMode::Graph)) {
-        if kept.contains(&map.key) {
+        if kept.contains(&map.key) || (map.key == KeyCode::Esc && map.when.is_some()) {
             continue;
         }
         let clash = below.iter().find(|b| b.key == map.key && b.prefix == map.prefix && b.mods == map.mods);

@@ -1,7 +1,9 @@
 //! Mouse on the dependency map: press a node to select and grab it,
-//! drag it to move and pin it, drag empty space to pan, press the
-//! selected node again to open it, wheel to zoom, right-click for the
-//! map menu. Hit tests read the label rects `ui` recorded this frame.
+//! drag it to move and pin it, drag empty space to pan, release on a
+//! node to show its card and press it again to open it, click an edge
+//! for its card, click the card's buttons, wheel to zoom, right-click
+//! for the map menu. Hit tests read the label rects, edge cells and card
+//! parts `ui` recorded this frame; labels win over edges.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
@@ -13,18 +15,36 @@ use crate::core::Pane;
 /// Route `m` to the map. True when the map took it.
 pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
     let area = app.hits.map_area;
-    if !app.visual_graph() || area.width == 0 {
+    if !app.visual_graph() {
+        app.map.drag = None;
+        return false;
+    }
+    if app.map.drag.is_none() && in_rect(app.hits.map_card, m.column, m.row) {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+            app.nav.focus = Focus::Main;
+            app.nav.pane = Pane::Main;
+            if let Some((_, part)) = hit(&app.hits.map_card_hits, m.column, m.row) {
+                app.map_card_click(part);
+            }
+        }
+        return true;
+    }
+    if area.width == 0 {
         app.map.drag = None;
         return false;
     }
     let inside = in_rect(area, m.column, m.row);
     let (col, row) = (m.column.saturating_sub(area.x), m.row.saturating_sub(area.y));
     let node = hit(&app.hits.map_nodes, m.column, m.row).map(|(_, index)| index);
+    // Edges drawn later sit on top, so the search runs from the end.
+    let edges = &app.hits.map_edges;
+    let edge = || edges.iter().rev().find(|(cell, _)| *cell == (m.column, m.row)).map(|&(_, e)| e);
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) if inside => {
             app.nav.focus = Focus::Main;
             app.nav.pane = Pane::Main;
-            app.map_press(node, col, row);
+            let edge = if node.is_none() { edge() } else { None };
+            app.map_press(node, edge, col, row);
         }
         MouseEventKind::Drag(MouseButton::Left) if app.map.drag.is_some() => {
             let col = m.column.clamp(area.x, area.right() - 1) - area.x;

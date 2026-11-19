@@ -126,6 +126,10 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::GraphFit => app.map_fit(),
         Action::GraphUnpin => app.map_unpin(),
         Action::GraphScope => app.map_toggle_scope(),
+        Action::GraphCard => app.map_toggle_card(),
+        Action::GraphNextEdge => app.map_step_edge(1),
+        Action::GraphPrevEdge => app.map_step_edge(-1),
+        Action::GraphCloseCard => app.map_close_card(),
 
         Action::CloseHelp => { app.close(Slot::Shortcuts); }
         Action::HelpDown => app.help_scroll = app.help_scroll.saturating_add(1),
