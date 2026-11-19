@@ -70,8 +70,8 @@ Drag a node to pin it or press `W` `A` `S` `D` to move the selected one, drag em
 wheel or `+` / `-` to zoom, `0` to fit, `.` / `,` to step nodes, `x` to unpin, and right-click for its menu.
 Every other key keeps its global meaning on the map.
 A click on a node shows its card at the right: state, milestone, project status, labels, assignees, checks,
-last update and the stored body. Its open button, `Enter` or a second click opens the item; `Space` shows or hides the card.
-A click on a link, or `e` / `E` on the selected node, shows the link in words with a card for each end; `Esc` closes the card.
+last update and the stored body. Its open button, `Enter` or a second click opens the item; `i` shows or hides the card.
+A click on a link, or `>` / `<` on the selected node, shows the link in words with a card for each end; `Esc` closes the card.
 `scripts/graph-demo.sh` opens a dense offline demo repo to try it.
 In a diff, `c` starts a line comment or replies to the review thread under the cursor.
 Use `Ctrl+S` to submit a pending review.

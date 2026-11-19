@@ -463,21 +463,21 @@ fn a_press_shows_the_card_and_the_open_button_or_a_second_press_opens() {
 fn card_keys_toggle_step_links_and_close() {
     let mut app = map_app();
     pin_layout(&mut app);
-    handle_key(&mut app, key(KeyCode::Char(' ')));
-    assert_eq!(app.map.card, Some(crate::app::MapCard::Node), "space shows the card");
-    handle_key(&mut app, key(KeyCode::Char(' ')));
-    assert_eq!(app.map.card, None, "space again hides it");
+    handle_key(&mut app, key(KeyCode::Char('i')));
+    assert_eq!(app.map.card, Some(crate::app::MapCard::Node), "i shows the card");
+    handle_key(&mut app, key(KeyCode::Char('i')));
+    assert_eq!(app.map.card, None, "i again hides it");
     let seven = app.map.graph.index_of(7).unwrap();
     let links: Vec<String> = app.map.graph.edges_of(seven).into_iter().map(|e| app.map.graph.relation(e, &app.map.links)).collect();
     let mut seen = vec![];
     for _ in 0..links.len() {
-        handle_key(&mut app, key(KeyCode::Char('e')));
+        handle_key(&mut app, key(KeyCode::Char('>')));
         seen.push(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links));
     }
-    assert_eq!(seen, links, "e steps through every link of the node");
-    handle_key(&mut app, key(KeyCode::Char('e')));
+    assert_eq!(seen, links, "> steps through every link of the node");
+    handle_key(&mut app, key(KeyCode::Char('>')));
     assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[0], "and wraps");
-    handle_key(&mut app, key(KeyCode::Char('E')));
+    handle_key(&mut app, key(KeyCode::Char('<')));
     assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[links.len() - 1]);
     handle_key(&mut app, key(KeyCode::Esc));
     assert_eq!(app.map.card, None, "esc closes the card");
@@ -489,7 +489,7 @@ fn a_milestone_card_lists_its_items_and_a_click_selects_one() {
     let mut app = map_app();
     pin_layout(&mut app);
     app.map.selected = Some(crate::model::hub_id("Ship it"));
-    handle_key(&mut app, key(KeyCode::Char(' ')));
+    handle_key(&mut app, key(KeyCode::Char('i')));
     let text = card_rows(&mut app);
     for line in ["┌ milestone ", "◆ milestone · 2 items on the map", "#7 Center issue", "#8 Waits on seven"] {
         assert!(text.contains(line), "{line} missing:\n{text}");

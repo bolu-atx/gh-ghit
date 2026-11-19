@@ -150,9 +150,9 @@ const GRAPH: &[Binding] = &[
     key(ch('.'), Action::GraphNext, "Next node", "Select", Gesture::Click).hint(1),
     key(ch(','), Action::GraphPrev, "Previous node", "Select", Gesture::Click),
     key(KeyCode::Enter, Action::GraphOpen, "Open node", "Select", Gesture::SecondClick).hint(2),
-    key(ch(' '), Action::GraphCard, "Show or hide card", "Select", Gesture::Click).hint(6),
-    key(ch('e'), Action::GraphNextEdge, "Next link", "Select", Gesture::Click).hint(7),
-    key(ch('E'), Action::GraphPrevEdge, "Previous link", "Select", Gesture::Click),
+    key(ch('i'), Action::GraphCard, "Show or hide card", "Select", Gesture::Click).hint(6),
+    key(ch('>'), Action::GraphNextEdge, "Next link", "Select", Gesture::Click).hint(7),
+    key(ch('<'), Action::GraphPrevEdge, "Previous link", "Select", Gesture::Click),
     key(KeyCode::Esc, Action::GraphCloseCard, "Close card", "Select", Gesture::Click)
         .when(map_card_open),
     key(ch('h'), Action::GraphPanLeft, "Pan left", "View", DRAG),
