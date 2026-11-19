@@ -271,3 +271,16 @@ fn auto_refresh_failures_notify_instead_of_going_silent() {
     assert!(app.sections.rx.is_none(), "terminal result clears the channel");
     assert!(app.message.contains("403"), "auto error surfaces: {}", app.message);
 }
+
+#[test]
+fn toggling_a_list_queues_a_sections_fetch_with_the_new_mask() {
+    let mut app = sidebar_app(&[1]);
+    app.fetches.hold = true;
+    assert!(app.sections.rx.is_none());
+    app.toggle_list(1);
+    assert!(!app.sidebar.show_merged_prs);
+    assert_eq!(app.show_mask(), [true, false, true, true]);
+    assert!(app.sections.rx.is_some(), "toggle refetches the sections");
+    let view = fetch_queue::View { current: app.nav.requested, tab_shown: false };
+    assert_eq!(app.fetches.queue_mut().order(&view), vec![(core::Kind::Sections, None)]);
+}

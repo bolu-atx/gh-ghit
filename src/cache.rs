@@ -94,7 +94,7 @@ pub enum Key {
     Comments { repo: String, number: u64 },
     Diff { repo: String, number: u64 },
     Graph { repo: String, number: u64 },
-    Sections { repo: String, hours: u64 },
+    Sections { repo: String, hours: u64, show: [bool; 4] },
     Board { owner: String },
     Labels { repo: String },
     Milestones { repo: String },
@@ -109,7 +109,10 @@ impl Key {
             Key::Comments { repo, number } => format!("comments-{h}-{}-{number}", slug(repo)),
             Key::Diff { repo, number } => format!("diff-{h}-{}-{number}", slug(repo)),
             Key::Graph { repo, number } => format!("graph-{h}-{}-{number}", slug(repo)),
-            Key::Sections { repo, hours } => format!("sections-{h}-{}-{hours}", slug(repo)),
+            Key::Sections { repo, hours, show } => {
+                let mask: String = show.iter().map(|s| if *s { '1' } else { '0' }).collect();
+                format!("sections-{h}-{}-{hours}-{mask}", slug(repo))
+            }
             Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
             Key::Labels { repo } => format!("labels-{h}-{}", slug(repo)),
             Key::Milestones { repo } => format!("milestones-{h}-{}", slug(repo)),
@@ -342,7 +345,7 @@ mod tests {
                 Key::Comments { repo: repo.to_string(), number: 7 }.name(),
                 Key::Diff { repo: repo.to_string(), number: 7 }.name(),
                 Key::Graph { repo: repo.to_string(), number: 7 }.name(),
-                Key::Sections { repo: repo.to_string(), hours: 24 }.name(),
+                Key::Sections { repo: repo.to_string(), hours: 24, show: [true; 4] }.name(),
                 Key::Board { owner: "octo".to_string() }.name(),
                 Key::Labels { repo: repo.to_string() }.name(),
                 Key::Milestones { repo: repo.to_string() }.name(),

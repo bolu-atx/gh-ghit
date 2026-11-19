@@ -6,7 +6,7 @@ use super::test_support::{issue, restore_xdg, sidebar_app, temp_xdg};
 use crate::model::BoardData;
 
 fn sections_cache() -> String {
-    github::Key::Sections { repo: "o/r".to_string(), hours: 24 }.name()
+    github::Key::Sections { repo: "o/r".to_string(), hours: 24, show: [true; 4] }.name()
 }
 
 fn cached_row(number: u64, complete: bool) -> crate::github::Row {

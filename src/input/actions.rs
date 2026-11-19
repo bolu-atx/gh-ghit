@@ -154,24 +154,12 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::FormatCycleWindow => {
             app.set_window(core::cycle_window(app.sections.merged_window_hours));
         }
-        // State toggles are client-side: they never refetch or edit the
-        // query text.
-        Action::ToggleOpenPrs => {
-            app.sidebar.show_open_prs = !app.sidebar.show_open_prs;
-            app.persist_prefs();
-        }
-        Action::ToggleMergedPrs => {
-            app.sidebar.show_merged_prs = !app.sidebar.show_merged_prs;
-            app.persist_prefs();
-        }
-        Action::ToggleOpenIssues => {
-            app.sidebar.show_open_issues = !app.sidebar.show_open_issues;
-            app.persist_prefs();
-        }
-        Action::ToggleClosedIssues => {
-            app.sidebar.show_closed_issues = !app.sidebar.show_closed_issues;
-            app.persist_prefs();
-        }
+        // List toggles refetch: a hidden list is left out of the sections
+        // query. They never edit the query text.
+        Action::ToggleOpenPrs => app.toggle_list(0),
+        Action::ToggleMergedPrs => app.toggle_list(1),
+        Action::ToggleOpenIssues => app.toggle_list(2),
+        Action::ToggleClosedIssues => app.toggle_list(3),
         Action::CycleGroup => {
             app.sidebar.group_by = app.sidebar.group_by.next();
             app.persist_prefs();
