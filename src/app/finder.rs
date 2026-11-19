@@ -1,16 +1,21 @@
 //! The Ctrl+P finder: a query over every issue and PR the app knows.
-//! Candidates come from memory only, so typing never touches the network.
+//! Candidates are the items in memory plus the repo's local store, read
+//! once when the finder opens, so typing never touches the network.
 
 use std::collections::HashSet;
 
 use crate::app::{App, Entry, Slot};
 use crate::core;
+use crate::github;
+use crate::store::Candidate;
 
 /// State that exists only while the finder is open.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FinderState {
     pub(crate) query: String,
     pub(crate) cursor: usize,
+    /// The repo's stored items, loaded once on open.
+    pub(crate) stored: Vec<Candidate>,
 }
 
 /// One result row. `indices` are char positions in `#number title`.
@@ -24,7 +29,9 @@ pub(crate) struct FinderRow {
 
 impl App {
     pub(crate) fn open_finder(&mut self) {
-        self.open(Entry::Finder(FinderState::default()));
+        // A local SQLite read (a few thousand rows is well under a frame).
+        let stored = self.repo_key().map(|repo| github::finder_candidates(&repo)).unwrap_or_default();
+        self.open(Entry::Finder(FinderState { stored, ..Default::default() }));
     }
 
     pub(crate) fn finder(&self) -> Option<&FinderState> {
@@ -35,10 +42,11 @@ impl App {
         self.dialogs.iter_mut().find_map(|e| if let Entry::Finder(f) = e { Some(f) } else { None })
     }
 
-    /// Numbers with loaded data, most useful first: the open item, then
-    /// history (newest first), then the sidebar order, pins, visits and
-    /// recent rows, then whatever else is cached by number.
-    fn finder_candidates(&self) -> Vec<u64> {
+    /// Items to search, most useful first: numbers with loaded data (the
+    /// open item, history newest first, then the sidebar order, pins,
+    /// visits and recent rows, then whatever else is cached by number),
+    /// then stored items not in memory, newest update first.
+    fn finder_candidates(&self) -> Vec<Candidate> {
         let mut seen = HashSet::new();
         let mut order = vec![];
         let mut cached: Vec<u64> = self.issues.data.keys().copied().collect();
@@ -54,9 +62,20 @@ impl App {
             cached,
         ];
         for n in sources.into_iter().flatten() {
-            if self.issues.data.contains_key(&n) && seen.insert(n) {
-                order.push(n);
+            let Some(data) = self.issues.data.get(&n) else { continue };
+            if seen.insert(n) {
+                order.push(Candidate {
+                    number: n,
+                    is_pr: data.is_pr,
+                    state: data.state.clone(),
+                    title: data.title.clone(),
+                    author: data.author.login.clone(),
+                    labels: data.labels.iter().map(|l| l.name.clone()).collect(),
+                });
             }
+        }
+        if let Some(finder) = self.finder() {
+            order.extend(finder.stored.iter().filter(|c| seen.insert(c.number)).cloned());
         }
         order
     }
@@ -67,17 +86,24 @@ impl App {
     }
 
     /// Ranked results for the open query. Equal scores keep candidate order.
+    /// A query matches `#number title`; failing that, the labels and author.
     pub(crate) fn finder_rows(&self) -> Vec<FinderRow> {
         let Some(finder) = self.finder() else { return vec![] };
         let mut hits: Vec<(i32, FinderRow)> = vec![];
-        for n in self.finder_candidates() {
-            let Some(data) = self.issues.data.get(&n) else { continue };
-            let Some(found) = core::fuzzy_score(&finder.query, &format!("#{n} {}", data.title)) else { continue };
+        for c in self.finder_candidates() {
+            let head = format!("#{} {}", c.number, c.title);
+            let found = core::fuzzy_score(&finder.query, &head).or_else(|| {
+                let tail = format!("{head} {} {}", c.labels.join(" "), c.author);
+                let mut f = core::fuzzy_score(&finder.query, &tail)?;
+                f.indices.retain(|i| *i < head.chars().count());
+                Some(f)
+            });
+            let Some(found) = found else { continue };
             hits.push((found.score, FinderRow {
-                number: n,
-                title: data.title.clone(),
-                state: data.state.clone(),
-                is_pr: data.is_pr,
+                number: c.number,
+                title: c.title,
+                state: c.state,
+                is_pr: c.is_pr,
                 indices: found.indices,
             }));
         }
@@ -150,6 +176,66 @@ mod tests {
         app.nav.history = vec![5, 77];
         assert_eq!(numbers(&app), vec![77, 5, 241, 198]);
         assert_eq!(app.finder_total(), 4);
+    }
+
+    fn stored(number: u64, title: &str, author: &str, labels: &[&str]) -> Candidate {
+        Candidate {
+            number,
+            is_pr: false,
+            state: "CLOSED".into(),
+            title: title.into(),
+            author: author.into(),
+            labels: labels.iter().map(|l| l.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn store_only_items_follow_memory_and_dedupe_by_number() {
+        let mut app = app();
+        app.nav.history = vec![5];
+        app.finder_mut().unwrap().stored = vec![
+            stored(900, "Newest stored", "ann", &[]),
+            stored(77, "stale stored copy", "ann", &[]),
+            stored(10, "Older stored", "ann", &[]),
+        ];
+        assert_eq!(numbers(&app), vec![5, 241, 198, 77, 900, 10]);
+        assert_eq!(app.finder_total(), 6);
+        assert_eq!(app.finder_rows().iter().find(|r| r.number == 77).unwrap().title, "Probe for token scopes");
+    }
+
+    #[test]
+    fn stored_items_match_title_label_and_author() {
+        let mut app = app();
+        app.finder_mut().unwrap().stored = vec![stored(900, "Crash on resize", "zelda", &["regression"])];
+        for q in ["resize", "regress", "zelda"] {
+            app.finder_mut().unwrap().query = q.to_string();
+            assert_eq!(numbers(&app), vec![900], "{q}");
+        }
+    }
+
+    #[test]
+    fn a_missing_store_falls_back_to_memory() {
+        let (_guard, _dir, saved) = crate::app::test_support::temp_xdg();
+        let mut app = App::new(Some("o/r".to_string()));
+        app.issues.data.insert(5, issue(5, "2026-01-01T00:00:00Z"));
+        app.open_finder();
+        let stored = app.finder().unwrap().stored.len();
+        let rows = numbers(&app);
+        crate::app::test_support::restore_xdg(saved);
+        assert_eq!(stored, 0);
+        assert_eq!(rows, vec![5]);
+        assert!(App::new(None).finder_rows().is_empty());
+    }
+
+    #[test]
+    fn opening_a_store_only_item_requests_it_by_number() {
+        let mut app = app();
+        app.finder_mut().unwrap().stored = vec![stored(900, "Only in store", "ann", &[])];
+        for c in "only in".chars() {
+            app.finder_type(c);
+        }
+        app.finder_open();
+        assert_eq!(app.nav.requested, Some(900));
     }
 
     #[test]

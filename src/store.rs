@@ -62,6 +62,17 @@ impl Sync {
     }
 }
 
+/// What the finder needs of one stored item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub number: u64,
+    pub is_pr: bool,
+    pub state: String,
+    pub title: String,
+    pub author: String,
+    pub labels: Vec<String>,
+}
+
 /// One open repo store.
 pub struct Store {
     conn: Connection,
@@ -162,6 +173,29 @@ impl Store {
         Ok(rows)
     }
 
+    /// Every stored item as a finder candidate, most recently updated first.
+    pub fn finder_candidates(&self) -> Result<Vec<Candidate>, String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT number, kind, state, title, author, labels FROM items ORDER BY updated_at DESC, number DESC")
+            .map_err(fail)?;
+        let rows = stmt
+            .query_map([], |r| {
+                let labels: String = r.get(5)?;
+                Ok(Candidate {
+                    number: r.get::<_, i64>(0)? as u64,
+                    is_pr: r.get::<_, String>(1)? == "pr",
+                    state: r.get(2)?,
+                    title: r.get(3)?,
+                    author: r.get(4)?,
+                    labels: serde_json::from_str(&labels).unwrap_or_default(),
+                })
+            })
+            .map_err(fail)?;
+        rows.collect::<Result<_, _>>().map_err(fail)
+    }
+
     /// One transaction: upsert `listed` (the sidebar result, positioned in
     /// its order) and `other` (fetched rows no list shows now, unpositioned),
     /// clear the old positions, and record `sync`.
@@ -244,6 +278,24 @@ mod tests {
 
     fn numbers(store: &Store) -> Vec<u64> {
         store.rows().unwrap().iter().map(|r| r.issue.number).collect()
+    }
+
+    #[test]
+    fn finder_candidates_list_every_item_newest_update_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("s.sqlite")).unwrap();
+        let mut a = row(1, "OPEN");
+        a.issue.title = "old".into();
+        a.issue.updated_at = "2026-01-01T00:00:00Z".into();
+        a.issue.labels = vec![crate::model::Label { name: "bug".into() }];
+        let mut b = row(2, "MERGED");
+        b.issue.is_pr = true;
+        b.issue.updated_at = "2026-02-01T00:00:00Z".into();
+        store.write(&sync("2026-02-02T00:00:00Z"), &[], &[a, b]).unwrap();
+        let got = store.finder_candidates().unwrap();
+        assert_eq!(got.iter().map(|c| c.number).collect::<Vec<_>>(), vec![2, 1]);
+        assert!(got[0].is_pr && got[0].state == "MERGED");
+        assert_eq!((got[1].title.as_str(), got[1].labels.clone()), ("old", vec!["bug".to_string()]));
     }
 
     #[test]

@@ -170,6 +170,15 @@ fn load_sections(repo: &str, hours: u64, show: [bool; 4]) -> Option<(store::Sync
     Some((sync, rows))
 }
 
+/// Every stored item of `repo` for the finder, newest update first. Empty
+/// when the repo has no store file yet (never creates one). Local read only.
+pub fn finder_candidates(repo: &str) -> Vec<store::Candidate> {
+    if !store::path(repo).is_some_and(|p| p.exists()) {
+        return vec![];
+    }
+    store::open(repo).and_then(|s| s.finder_candidates()).unwrap_or_default()
+}
+
 /// Write the sidebar result `rows` in order, plus every other row the
 /// fetch returned (rows no shown list holds now keep their new state),
 /// and record `sync`. Best effort: the next sync rewrites. Blocking.
