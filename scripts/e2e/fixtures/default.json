@@ -108,53 +108,7 @@
     ],
     "status": 200
   },
-  "POST /graphql repository 264bc1ffdc35a18f": {
-    "body": {
-      "data": {
-        "repository": {
-          "issue": {
-            "closedByPullRequestsReferences": {
-              "nodes": []
-            },
-            "closingIssuesReferences": {
-              "nodes": []
-            },
-            "projectItems": {
-              "nodes": []
-            },
-            "reviewThreads": {
-              "nodes": []
-            }
-          }
-        }
-      }
-    },
-    "status": 200
-  },
-  "POST /graphql repository 7f55ac5d96402430": {
-    "body": {
-      "data": {
-        "repository": {
-          "pullRequest": {
-            "closedByPullRequestsReferences": {
-              "nodes": []
-            },
-            "closingIssuesReferences": {
-              "nodes": []
-            },
-            "projectItems": {
-              "nodes": []
-            },
-            "reviewThreads": {
-              "nodes": []
-            }
-          }
-        }
-      }
-    },
-    "status": 200
-  },
-  "POST /graphql repository 87c39c1e717beb48": {
+  "POST /graphql repository 1065eea4af6269d5": {
     "body": {
       "data": {
         "repository": {
@@ -278,6 +232,52 @@
             "pageInfo": {
               "endCursor": null,
               "hasNextPage": false
+            }
+          }
+        }
+      }
+    },
+    "status": 200
+  },
+  "POST /graphql repository 264bc1ffdc35a18f": {
+    "body": {
+      "data": {
+        "repository": {
+          "issue": {
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "projectItems": {
+              "nodes": []
+            },
+            "reviewThreads": {
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    "status": 200
+  },
+  "POST /graphql repository 7f55ac5d96402430": {
+    "body": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "projectItems": {
+              "nodes": []
+            },
+            "reviewThreads": {
+              "nodes": []
             }
           }
         }
