@@ -335,6 +335,7 @@ fn read_edge(row: &rusqlite::Row) -> rusqlite::Result<Option<Edge>> {
 fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<(), String> {
     let fail = |e: rusqlite::Error| format!("store: {e}");
     let mut upsert = tx.prepare(sql).map_err(fail)?;
+    let mut changed = false;
     for row in rows {
         let issue = &row.issue;
         let names = |list: Vec<&str>| serde_json::to_string(&list).unwrap_or_default();
@@ -361,9 +362,23 @@ fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<()
         // A newer-only upsert may leave the stored row alone; its edges stay too.
         if written > 0 {
             replace_edges(tx, issue).map_err(fail)?;
+            changed = true;
         }
     }
+    if changed {
+        bump_generation(tx).map_err(fail)?;
+    }
     Ok(())
+}
+
+/// Count one write to item rows or edges in the `meta` table.
+fn bump_generation(tx: &rusqlite::Transaction) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO meta (key, value) VALUES ('items_gen', '1')
+         ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
+        [],
+    )
+    .map(|_| ())
 }
 
 /// Replace every edge into `issue` with the links its row carries.
@@ -480,6 +495,7 @@ impl Store {
         tx.execute("DELETE FROM items WHERE number = ?1", [number as i64]).map_err(fail)?;
         tx.execute("DELETE FROM details WHERE number = ?1", [number as i64]).map_err(fail)?;
         tx.execute("DELETE FROM edges WHERE dst = ?1", [number as i64]).map_err(fail)?;
+        bump_generation(&tx).map_err(fail)?;
         tx.commit().map_err(fail)
     }
 }
@@ -528,6 +544,28 @@ impl Store {
     /// another connection (any process) commits to the file.
     pub fn data_version(&self) -> Result<i64, String> {
         self.conn.query_row("PRAGMA data_version", [], |r| r.get(0)).map_err(|e| format!("store: {e}"))
+    }
+
+    /// Count of writes to item rows and edges, any connection. Lease
+    /// renewals and detail writes leave it alone; search hits move it.
+    pub fn items_generation(&self) -> Result<i64, String> {
+        self.conn
+            .query_row("SELECT value FROM meta WHERE key = 'items_gen'", [], |r| r.get::<_, String>(0))
+            .optional()
+            .map(|v| v.and_then(|v| v.parse().ok()).unwrap_or(0))
+            .map_err(|e| format!("store: {e}"))
+    }
+
+    /// Stamp of what a map card shows for one item: the row's and the
+    /// stored issue detail's `updated_at`. It moves when either is rewritten.
+    pub fn card_stamp(&self, number: u64) -> Option<String> {
+        let detail: Option<String> = self
+            .conn
+            .query_row("SELECT updated_at FROM details WHERE number = ?1 AND kind = 'issue'", [number as i64], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten();
+        Some(format!("{}|{}", self.item_updated_at(number)?, detail.unwrap_or_default()))
     }
 
     /// How long this connection waits for another process's lock.
@@ -735,6 +773,40 @@ mod tests {
         assert!(a.claim_lease("a", 192, 60, false).unwrap(), "a released lease is free at once");
         assert!(b.claim_lease("b", 193, 60, true).unwrap(), "force takes a live lease");
         assert!(!a.claim_lease("a", 194, 60, false).unwrap());
+    }
+
+    #[test]
+    fn items_generation_counts_row_edge_and_search_writes_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
+        assert_eq!(store.items_generation().unwrap(), 0);
+        store.write("t1", &[row(1, "OPEN")]).unwrap();
+        assert_eq!(store.items_generation().unwrap(), 1, "a sync write counts");
+        store.claim_lease("a", 100, 60, false).unwrap();
+        store.put_detail(Detail::Issue, 1, "u", &"body").unwrap();
+        assert_eq!(store.items_generation().unwrap(), 1, "lease and detail writes do not");
+        store.upsert_search(&[row(1, "OPEN")]).unwrap();
+        assert_eq!(store.items_generation().unwrap(), 1, "a search hit that changes no row does not");
+        let mut newer = row(2, "OPEN");
+        newer.issue.updated_at = "2".into();
+        store.upsert_search(&[newer]).unwrap();
+        assert_eq!(store.items_generation().unwrap(), 2, "a stored search hit counts");
+        store.drop_item(2).unwrap();
+        assert_eq!(store.items_generation().unwrap(), 3, "a drop counts");
+    }
+
+    #[test]
+    fn card_stamp_moves_with_the_items_row_and_detail() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
+        assert_eq!(store.card_stamp(1), None);
+        store.write("t1", &[row(1, "OPEN")]).unwrap();
+        let bare = store.card_stamp(1);
+        store.put_detail(Detail::Issue, 1, "u", &"body").unwrap();
+        assert_ne!(store.card_stamp(1), bare, "a stored detail moves it");
+        let other = store.card_stamp(1);
+        store.write("t2", &[row(2, "OPEN")]).unwrap();
+        assert_eq!(store.card_stamp(1), other, "another item's write does not");
     }
 
     #[test]
