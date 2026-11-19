@@ -121,18 +121,31 @@ fn spawn_bg<F: std::future::Future<Output = ()> + Send + 'static>(task: F) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
     Details,
+    /// A PR's diff.
     Visual,
+    /// The dependency map. It needs no open item.
+    Map,
 }
 
-/// Content tab titles with their `1`/`2` shortcuts. The mouse router
-/// splits on the first title plus the divider; `TAB_SPLIT_X` stays in
-/// sync by construction — see `tab_split_matches_first_title_width`.
-pub(crate) fn tab_titles(visual_label: &str) -> [String; 2] {
-    ["\u{f15c}  1 Details".to_string(), format!("\u{f121}  2 {visual_label}")]
-}
+/// Content tabs in order, each with its title and `1`/`2`/`3` shortcut.
+pub(crate) const TABS: [(Tab, &str); 3] = [
+    (Tab::Details, "\u{f15c}  1 Details"),
+    (Tab::Visual, "\u{f121}  2 Diff"),
+    (Tab::Map, "\u{f279}  3 Map"),
+];
 
-/// Click columns before this select Details: first tab title plus divider.
-pub(crate) const TAB_SPLIT_X: u16 = 14;
+/// The tab a click `rel` columns into the tab line selects: each title
+/// owns its cells plus the divider after it; the last takes the rest.
+pub(crate) fn tab_at(rel: u16) -> Tab {
+    let mut end = 0;
+    for (tab, title) in TABS {
+        end += title.chars().count() as u16 + 1;
+        if rel < end {
+            return tab;
+        }
+    }
+    Tab::Map
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {

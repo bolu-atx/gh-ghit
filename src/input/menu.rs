@@ -31,7 +31,7 @@ pub(super) fn open_for_focus(app: &mut App) {
             Pane::Refs => (MenuKind::Ref, app.hits.refs_area),
             Pane::Labels => (MenuKind::Labels, app.hits.labels_area),
             Pane::History => (MenuKind::History, app.hits.history_area),
-            Pane::Main if app.visual_graph() => (MenuKind::Map, app.hits.map_area),
+            Pane::Main if app.map_shown() => (MenuKind::Map, app.hits.map_area),
             Pane::Main => (MenuKind::Body, app.hits.body_area),
         }
     };

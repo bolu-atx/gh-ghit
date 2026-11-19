@@ -3,7 +3,8 @@
 # written through the real store code, every API call goes to a closed
 # port, so this scenario needs no mock fixtures. Drag a node to pin it,
 # drag empty space to pan, then unpin with x. Click a node for its card,
-# click a link for the link card, click an end card, then Esc.
+# click a link for the link card, click an end card, then Esc. Open a
+# node, then return to the map by the Map tab and by its 3 key.
 source "$(dirname "$0")/lib.sh"
 export E2E_REPO=demo/graph E2E_NUMS=24 GHIT_API_BASE=http://127.0.0.1:9
 host="$(printf '%s' "${GH_HOST:-github.com}" | tr '[:upper:]' '[:lower:]')"
@@ -12,7 +13,7 @@ GHIT_DEMO_STORE="$E2E_XDG/ghit/store/$host/demo/graph.sqlite" \
   store::demo_tests::write_graph_demo_store -- --ignored >/dev/null || fail "demo store not written"
 e2e_start
 e2e_wait "One local copy per repo" 60 || fail "stored issue never opened"
-e2e_key 2
+e2e_key 3
 e2e_wait "items · linked to #24" 30 || fail "map never drew"
 sleep 4
 # Cell just inside the first `$1` right of the sidebar, 1-based "row col".
@@ -107,5 +108,20 @@ e2e_wait "−  right  +" 10 || fail "r did not reset the growth direction"
 e2e_key Escape
 sleep 1
 e2e_pane | grep -qF "growth direction" && fail "Esc left the physics dialog open"
+# The map is a view of its own: Enter opens the selected node on its
+# Details tab, then a click on the Map tab and the 3 key bring it back.
+e2e_key Enter
+sleep 1
+e2e_pane | grep -qF "items · " && fail "Enter left the map up"
+read -r trow tcol < <(cell_of "3 Map")
+[ -n "${trow:-}" ] || fail "no Map tab"
+mouse down-left "$trow" "$tcol"
+mouse up-left "$trow" "$tcol"
+e2e_wait "items · " 10 || fail "a click on the Map tab did not show the map"
+e2e_key 1
+sleep 1
+e2e_pane | grep -qF "items · " && fail "1 left the map up"
+e2e_key 3
+e2e_wait "items · " 10 || fail "3 did not return to the map"
 e2e_send '{"type":"quit"}'
 echo "PASS graph map"

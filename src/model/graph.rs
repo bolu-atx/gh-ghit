@@ -165,21 +165,20 @@ pub fn hub_id(title: &str) -> u64 {
     HUB_BIT | (hash >> 1)
 }
 
-/// Build the map. `center` is the open issue: the component scope walks
-/// links out from it, and it always shows. Links to numbers missing from
-/// `items` drop. Closed items hide, except closed blockers of an open item
-/// in scope.
+/// Build the map. `center` is the open item: the component scope walks
+/// links out from it, and it always shows. With no center the component
+/// scope shows the whole repo. Links to numbers missing from `items`
+/// drop. Closed items hide, except closed blockers of an open item in
+/// scope.
 pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, scope: MapScope) -> MapGraph {
     let by_number: HashMap<u64, &MapItem> = items.iter().map(|item| (item.number, item)).collect();
     let links: Vec<MapLink> = links.iter().copied()
         .filter(|link| link.src != link.dst && by_number.contains_key(&link.src) && by_number.contains_key(&link.dst))
         .collect();
-    let in_scope: HashSet<u64> = match scope {
-        MapScope::Repo => by_number.keys().copied().collect(),
-        MapScope::Component => match center.filter(|n| by_number.contains_key(n)) {
-            Some(center) => component(&links, center),
-            None => HashSet::new(),
-        },
+    let in_scope: HashSet<u64> = match (scope, center) {
+        (MapScope::Repo, _) | (MapScope::Component, None) => by_number.keys().copied().collect(),
+        (MapScope::Component, Some(center)) if by_number.contains_key(&center) => component(&links, center),
+        (MapScope::Component, Some(_)) => HashSet::new(),
     };
     // Blocks links indexed both ways, so each node checks only its own.
     let mut blocks: HashMap<u64, Vec<u64>> = HashMap::new();

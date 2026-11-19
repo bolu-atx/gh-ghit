@@ -354,51 +354,40 @@ fn content_tabs_show_nerd_icons() {
     let text = frame_text(&mut app);
     assert!(text.contains('\u{f15c}'), "{text}");
     assert!(text.contains('\u{f121}'), "{text}");
-    assert!(text.contains("Graph"), "issue mode names the Graph tab: {text}");
-    assert!(!text.contains("Diff View"), "{text}");
+    assert!(text.contains('\u{f279}'), "{text}");
 }
 
 #[test]
 fn content_tabs_show_shortcut_numbers() {
+    // The titles stay the same for issues, PRs and no open item.
     let mut app = loaded_app();
-    let text = frame_text(&mut app);
-    assert!(text.contains("1 Details"), "details tab names its key: {text}");
-    assert!(text.contains("2 Graph"), "graph tab names its key: {text}");
-    app.show_issue(9);
-    let text = frame_text(&mut app);
-    assert!(text.contains("2 Diff View"), "PR tab names its key: {text}");
-}
-
-#[test]
-fn content_tab_names_diff_view_for_prs() {
-    // loaded_app files issue 7 and PR 9; parking on the PR renames it.
-    let mut app = loaded_app();
-    app.show_issue(9);
-    let text = frame_text(&mut app);
-    assert!(text.contains("Diff View"), "PR mode names the Diff View tab: {text}");
-    assert!(!text.contains("Graph"), "{text}");
+    for number in [7, 9] {
+        app.show_issue(number);
+        let text = frame_text(&mut app);
+        assert!(text.contains("1 Details"), "details tab names its key: {text}");
+        assert!(text.contains("2 Diff"), "diff tab names its key: {text}");
+        assert!(text.contains("3 Map"), "map tab names its key: {text}");
+    }
+    let mut empty = App::new(Some("o/r".to_string()));
+    let text = frame_text(&mut empty);
+    assert!(text.contains("1 Details") && text.contains("3 Map"), "{text}");
 }
 
 #[test]
 fn tab_click_zones_match_wider_labels() {
-    // Glyph plus two spaces plus `1 Details` spans rel 0..12, then
-    // the divider: rel 12..14 still selects Details, rel 14 lands
-    // on the `2 …` tab. The split follows `TAB_SPLIT_X`.
+    // Glyph plus two spaces plus `1 Details` spans rel 0..12, then a
+    // one-cell divider: rel 12 still selects Details, rel 13 lands on
+    // `2 Diff` (13..22), rel 23 on `3 Map`. The split follows `tab_at`.
     let mut app = loaded_app();
     let _ = frame_text(&mut app);
     let (tx, y) = (app.hits.tabs_area.x, app.hits.tabs_area.y);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 8, y));
-    assert_eq!(app.nav.tab, Tab::Details);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 12, y));
-    assert_eq!(app.nav.tab, Tab::Details);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 14, y));
-    assert_eq!(app.nav.tab, Tab::Visual);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 22, y));
-    assert_eq!(app.nav.tab, Tab::Visual);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 30, y));
-    assert_eq!(app.nav.tab, Tab::Visual);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 31, y));
-    assert_eq!(app.nav.tab, Tab::Visual);
+    for (rel, tab) in [
+        (8, Tab::Details), (12, Tab::Details), (13, Tab::Visual), (21, Tab::Visual),
+        (22, Tab::Visual), (23, Tab::Map), (30, Tab::Map), (8, Tab::Details),
+    ] {
+        handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + rel, y));
+        assert_eq!(app.nav.tab, tab, "click at rel {rel}");
+    }
 }
 
 #[test]
@@ -523,14 +512,19 @@ fn yank_key_and_empty_state_toast() {
 #[test]
 fn number_keys_switch_content_tabs() {
     let mut app = loaded_app();
-    handle_key(&mut app, key(KeyCode::Char('3')));
-    assert_eq!(app.nav.tab, Tab::Details);
     handle_key(&mut app, key(KeyCode::Char('4')));
     assert_eq!(app.nav.tab, Tab::Details);
     handle_key(&mut app, key(KeyCode::Char('1')));
     assert_eq!(app.nav.tab, Tab::Details);
     handle_key(&mut app, key(KeyCode::Char('2')));
     assert_eq!(app.nav.tab, Tab::Visual);
+    handle_key(&mut app, key(KeyCode::Char('3')));
+    assert_eq!(app.nav.tab, Tab::Map);
+    // The map key works from a sidebar pane and with no item open.
+    let mut empty = App::new(Some("o/r".to_string()));
+    assert_ne!(empty.nav.pane, crate::core::Pane::Main);
+    handle_key(&mut empty, key(KeyCode::Char('3')));
+    assert_eq!(empty.nav.tab, Tab::Map);
 }
 
 #[test]

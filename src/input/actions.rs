@@ -29,6 +29,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::Undo => app.undo_last(),
         Action::TabDetails => app.set_tab(Tab::Details),
         Action::TabVisual => app.set_tab(Tab::Visual),
+        Action::TabMap => app.set_tab(Tab::Map),
         Action::CycleTheme => app.notify(format!("theme: {}", crate::theme::cycle())),
         Action::OpenBoard => app.open_board(),
         Action::OpenFinder => app.open_finder(),

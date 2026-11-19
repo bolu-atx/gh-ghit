@@ -408,16 +408,17 @@ impl App {
     }
 
     pub(crate) fn visual_diff(&self) -> bool {
-        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Diff)
+        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| d.is_pr)
     }
 
-    pub(crate) fn visual_graph(&self) -> bool {
-        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| model::visual_content(d.is_pr) == model::VisualContent::Graph)
+    /// The Map tab shows, with or without an open item.
+    pub(crate) fn map_shown(&self) -> bool {
+        self.nav.tab == Tab::Map
     }
 
     /// Switch tabs, resetting scroll. Selecting Diff on a PR starts its
     /// background fetch so the pane fills in without blocking; first visit
-    /// fetches, later visits reuse the cache. The Graph tab reads the
+    /// fetches, later visits reuse the cache. The Map tab reads the
     /// local copy each frame (`map_tick`).
     pub(crate) fn set_tab(&mut self, tab: Tab) {
         self.request_tab(tab);

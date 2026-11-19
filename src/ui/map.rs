@@ -1,4 +1,4 @@
-//! The Graph tab's dependency map. Edges draw first as box-drawing lines
+//! The Map tab's dependency map. Edges draw first as box-drawing lines
 //! with arrowheads at the blocked end; labels draw on top, the selected
 //! node and its blocker chain last so they win overlaps. Every label rect
 //! lands in `app.hits.map_nodes` and every edge cell in `app.hits.map_edges`
@@ -15,7 +15,7 @@ use ratatui::text::Span;
 use crate::app::App;
 use crate::core::map::{arrow, line, stroke, LabelDetail};
 use crate::model::physics::EdgeStyle;
-use crate::model::{self, MapScope, NodeState};
+use crate::model::{self, NodeState};
 use crate::theme::{amber, green, muted, paper, pr_ref, red, teal};
 
 /// Card width bounds, in cells.
@@ -56,7 +56,7 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
     let buf = f.buffer_mut();
     if app.map.graph.nodes.is_empty() {
-        let text = match app.nav.current {
+        let text = match app.map.center() {
             _ if !app.map.loaded => "Reading the local copy…".to_string(),
             Some(n) => format!("#{n} is not in the local copy yet. Press s to see the whole repo."),
             None => "Nothing to map.".to_string(),
@@ -154,9 +154,9 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
     let items = graph.nodes.iter().filter(|node| node.number.is_some()).count();
     let pinned = app.map.layout.bodies().iter().filter(|body| body.pinned).count();
-    let scope = match (app.map.scope, app.nav.current) {
-        (MapScope::Component, Some(n)) => format!("linked to #{n}"),
-        _ => "whole repo".to_string(),
+    let scope = match app.map.center() {
+        Some(n) => format!("linked to #{n}"),
+        None => "whole repo".to_string(),
     };
     let mut summary = format!(" {items} items · {scope}");
     if pinned > 0 {

@@ -16,7 +16,13 @@ fn spin_owed_paces_spinner_repaints() {
 }
 
 #[test]
-fn tab_split_matches_first_title_width() {
-    let first = tab_titles("Diff View")[0].chars().count() as u16;
-    assert_eq!(TAB_SPLIT_X, first + 2, "click split follows the first title plus divider");
+fn tab_click_columns_follow_title_widths() {
+    let first = TABS[0].1.chars().count() as u16 + 1;
+    let second = first + TABS[1].1.chars().count() as u16 + 1;
+    assert_eq!(tab_at(0), Tab::Details);
+    assert_eq!(tab_at(first - 1), Tab::Details, "the divider after a title selects it");
+    assert_eq!(tab_at(first), Tab::Visual);
+    assert_eq!(tab_at(second - 1), Tab::Visual);
+    assert_eq!(tab_at(second), Tab::Map);
+    assert_eq!(tab_at(200), Tab::Map, "the last tab takes the rest of the line");
 }

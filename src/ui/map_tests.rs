@@ -1,4 +1,4 @@
-//! Frame and mouse tests for the dependency map on the Graph tab.
+//! Frame and mouse tests for the dependency map on the Map tab.
 
 use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 
@@ -15,7 +15,11 @@ fn item(number: u64, state: &str, title: &str, milestone: Option<&str>) -> MapIt
 /// #7 (open) is blocked by #11 (open) and #12 (closed), blocks #8, and the
 /// PR #9 closes it. #7 and #8 share a milestone; #30 is not linked.
 fn map_app() -> App {
-    let mut app = loaded_app();
+    with_map(loaded_app())
+}
+
+/// `app` with the stored items of `map_app`, on the Map tab.
+fn with_map(mut app: App) -> App {
     let mut pr = item(9, "OPEN", "Fix it", None);
     pr.is_pr = true;
     let items = vec![
@@ -35,7 +39,7 @@ fn map_app() -> App {
     ];
     app.set_map_data(items, links);
     app.nav.pane = Pane::Main;
-    app.set_tab(Tab::Visual);
+    app.set_tab(Tab::Map);
     app
 }
 
@@ -481,7 +485,7 @@ fn card_keys_toggle_step_links_and_close() {
     assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[links.len() - 1]);
     handle_key(&mut app, key(KeyCode::Esc));
     assert_eq!(app.map.card, None, "esc closes the card");
-    assert_eq!(app.nav.tab, Tab::Visual, "and nothing else");
+    assert_eq!(app.nav.tab, Tab::Map, "and nothing else");
 }
 
 #[test]
@@ -663,4 +667,85 @@ fn the_toolbar_button_opens_the_physics_dialog() {
     assert!(app.physics_focus().is_some());
     handle_key(&mut app, key(KeyCode::Esc));
     assert!(app.physics_focus().is_none(), "Esc closes it");
+}
+
+/// Line of the frame that holds the content tabs.
+fn tab_line(app: &mut App) -> String {
+    let buf = draw_buffer(app);
+    let area = app.hits.tabs_area;
+    (area.x..area.right()).map(|x| buf[(x, area.y)].symbol()).collect::<String>().trim_end().to_string()
+}
+
+#[test]
+fn the_map_is_its_own_view_with_no_item_open() {
+    let mut app = with_map(crate::app::App::new(Some("o/r".to_string())));
+    assert_eq!(app.nav.current, None);
+    pin_layout(&mut app);
+    let thirty = app.map.graph.index_of(30).expect("the whole repo shows");
+    app.map.layout.set_position(thirty, 0.0, -8.0);
+    app.map.layout.pin(thirty);
+    let expected = [
+        "09|                                                 #30 Elsewhere",
+        "13|           #11 Open blocker                                                    #8 Waits on seven",
+        "14|                        ─────────                                          ───────▸    ·",
+        "15|                                 ─────────                         ────────            ·",
+        "16|                                          ────────▸        ────────                    ·",
+        "17|                                                #7 Center issue                        ·",
+        "18|                                          ────────▸    │  ·····                        ·",
+        "19|                                 ─────────             │       ······                  ·",
+        "20|                        ─────────                      │             ·····             ·",
+        "21|           #12 Done blocker                            │                  ·····        ·",
+        "22|                                                       │                       ······  ·",
+        "23|                                                   #9 Fix it                      ╭ Ship it ╮",
+        "33| 6 items · whole repo · 7 pinned",
+    ];
+    assert_eq!(snapshot(&mut app), expected.join("\n"));
+    let tabs = tab_line(&mut app);
+    assert!(tabs.contains("3 Map") && tabs.contains("s \u{f0e8} repo") && tabs.contains("0 \u{f065} fit"), "{tabs}");
+    assert!(!tabs.contains("comment"), "no item, so nothing to comment on: {tabs}");
+    // A request still loading leaves the map up: it reads only the store.
+    app.nav.requested = Some(7);
+    app.issues.pending.insert(7);
+    let text = super::test_support::frame_text(&mut app);
+    assert!(text.contains("whole repo") && !text.contains("Loading #7"), "{text}");
+}
+
+#[test]
+fn the_map_is_its_own_view_with_an_item_open() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    let tabs = tab_line(&mut app);
+    assert!(tabs.contains("3 Map") && tabs.contains("s \u{f0e8} linked") && tabs.contains("comment"), "{tabs}");
+    assert_eq!(app.map.center(), Some(7), "component scope centers on the open item");
+    handle_key(&mut app, key(KeyCode::Char('s')));
+    app.settle_map();
+    assert_eq!(app.map.center(), None, "whole-repo scope has no center");
+    assert_eq!(app.map.selected, Some(7), "dropping the center keeps the selection");
+    let tabs = tab_line(&mut app);
+    assert!(tabs.contains("s \u{f0e8} repo"), "{tabs}");
+}
+
+#[test]
+fn opening_a_pr_from_the_map_keeps_the_map_for_the_map_key() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('s')));
+    app.settle_map();
+    let eleven = app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()].clone();
+    let camera = app.map.camera;
+    app.map.selected = Some(9);
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.nav.requested.or(app.nav.current), Some(9), "enter opens the PR");
+    assert_eq!(app.nav.tab, Tab::Details, "on its Details tab");
+    let text = super::test_support::frame_text(&mut app);
+    assert!(text.contains("No comments yet") && !text.contains("6 items"), "{text}");
+    handle_key(&mut app, key(KeyCode::Char('3')));
+    assert_eq!(app.nav.tab, Tab::Map, "the map key returns to the map");
+    app.settle_map();
+    assert_eq!(app.map.scope, MapScope::Repo);
+    assert_eq!(app.map.selected, Some(9), "the opened node stays selected");
+    assert_eq!(app.map.camera, camera, "the view holds still");
+    let back = &app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()];
+    assert_eq!((back.x, back.y, back.pinned), (eleven.x, eleven.y, eleven.pinned), "pins survive");
+    assert!(map_rows(&mut app).join("\n").contains("whole repo"));
 }

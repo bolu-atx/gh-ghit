@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use super::hit::{hit, in_rect};
 use super::menu;
 
-use crate::app::{App, Focus, Tab};
+use crate::app::{App, Focus};
 use crate::core::Pane;
 
 /// Sidebar rows are 3 lines each (`Item`) with 1-line labeled dividers,
@@ -224,7 +224,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         if !drag {
             app.nav.pane = Pane::Main;
             let rel = x.saturating_sub(app.hits.tabs_area.x);
-            app.set_tab(if rel < crate::app::TAB_SPLIT_X { Tab::Details } else { Tab::Visual });
+            app.set_tab(crate::app::tab_at(rel));
             app.note_click(Rect::new(x, y, 1, 1));
         }
         return;

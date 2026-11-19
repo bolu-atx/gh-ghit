@@ -110,8 +110,7 @@ fn diff_tab_folds_files_by_default() {
     app.set_tab(Tab::Visual);
     app.nav.pane = crate::core::Pane::Main;
     let text = frame_text(&mut app);
-    assert!(text.contains("Diff View"), "{text}");
-    assert!(!text.contains("Graph"), "{text}");
+    assert!(text.contains("2 Diff"), "{text}");
     assert!(text.contains("2 files"), "{text}");
     assert!(text.contains("src/a.rs"), "{text}");
     assert!(text.contains("▸"), "folded by default");
@@ -339,8 +338,9 @@ fn diff_tab_notes_issues_have_no_diff() {
     let mut app = loaded_app();
     app.set_tab(Tab::Visual);
     let text = frame_text(&mut app);
-    assert!(text.contains("Reading the local copy"), "issues map instead: {text}");
-    assert!(text.contains("Graph"), "issue mode tab label: {text}");
+    assert!(text.contains("Issues have no diff."), "{text}");
+    assert!(text.contains("Map tab (3)"), "the note points at the map: {text}");
+    assert!(!text.contains("Reading the local copy"), "the map stays on its own tab: {text}");
 }
 
 #[test]
@@ -374,7 +374,7 @@ fn mouse_click_reaches_diff_tab() {
     let mut app = loaded_app();
     let _ = frame_text(&mut app);
     let (tx, y) = (app.hits.tabs_area.x, app.hits.tabs_area.y);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 24, y));
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), tx + 18, y));
     assert_eq!(app.nav.tab, Tab::Visual);
 }
 

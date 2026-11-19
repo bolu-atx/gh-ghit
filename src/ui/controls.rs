@@ -74,11 +74,10 @@ impl Tool {
     }
 }
 
-/// Toolbar buttons of the open item, left to right. The split toggle
-/// shows on a PR's Diff view only, the scope chip and fit on the map; a
-/// merged PR cannot close or reopen.
+/// Toolbar buttons, left to right. The split toggle shows on a PR's Diff
+/// view only, the scope chip and fit on the map; comment and close need
+/// an open item, and a merged PR cannot close or reopen.
 fn tools(app: &App) -> Vec<Tool> {
-    let Some(data) = app.nav.current.and_then(|n| app.issues.data.get(&n)) else { return vec![] };
     let mut tools = vec![];
     if app.visual_diff() {
         tools.push(Tool { icon: theme::TOOL_SPLIT, label: "split", action: Action::DiffSplit });
@@ -87,15 +86,13 @@ fn tools(app: &App) -> Vec<Tool> {
         tools.push(Tool { icon, label, action: Action::DiffExpandAll });
         tools.push(Tool { icon: theme::TOOL_CONTEXT, label: app.diff_context_label(), action: Action::DiffContext });
     }
-    if app.visual_graph() {
-        let label = match app.map.scope {
-            crate::model::MapScope::Component => "linked",
-            crate::model::MapScope::Repo => "repo",
-        };
+    if app.map_shown() {
+        let label = if app.map.center().is_some() { "linked" } else { "repo" };
         tools.push(Tool { icon: theme::TOOL_SCOPE, label, action: Action::GraphScope });
         tools.push(Tool { icon: theme::TOOL_FIT, label: "fit", action: Action::GraphFit });
         tools.push(Tool { icon: theme::TOOL_PHYSICS, label: "physics", action: Action::GraphPhysics });
     }
+    let Some(data) = app.nav.current.and_then(|n| app.issues.data.get(&n)) else { return tools };
     tools.push(Tool { icon: theme::TOOL_COMMENT, label: "comment", action: Action::Comment });
     match data.state.as_str() {
         "MERGED" => {}
@@ -133,8 +130,10 @@ pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
     let counter = app.search.active().then(|| app.search.counter());
     // The match counter leads the toolbar: `‹ 3/12 ›` steps like `N`/`n`.
     let lead = counter.as_ref().map_or(0, |c| c.chars().count() as u16 + STEP_WIDTH + 1);
-    let titles = crate::app::tab_titles(if steps { "Diff View" } else { "Graph" });
-    let used = titles.iter().map(|t| t.chars().count() as u16).sum::<u16>() + 6;
+    // Titles have no pad cells, only a one-cell divider between them, so
+    // one more cell keeps the last title off the first button.
+    let titles = crate::app::TABS.map(|(_, title)| title);
+    let used = titles.iter().map(|t| t.chars().count() as u16).sum::<u16>() + titles.len() as u16;
     let room = tabs.width.saturating_sub(used + 1);
     let room_for_tools = room.saturating_sub(if lead > 0 { lead + TOOL_GAP } else { 0 });
     let Some((labeled, widths)) = fit_tools(&tools, steps, room_for_tools) else { return };
