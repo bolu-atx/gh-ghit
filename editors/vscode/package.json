@@ -4,6 +4,7 @@
   "description": "Open the ghit GitHub issues and PRs terminal UI inside VS Code.",
   "publisher": "bolu-atx",
   "version": "0.1.0",
+  "icon": "media/icon.png",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/bolu-atx/gh-ghit.git", "directory": "editors/vscode" },
   "engines": { "vscode": "^1.85.0" },
