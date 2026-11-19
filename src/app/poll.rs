@@ -119,9 +119,14 @@ pub(super) fn poll_bootstrap(app: &mut App) -> bool {
                 app.queue_issue(n, false);
             }
         }
+        app.sections.link = github::StoreLink::open(&key);
         if app.sidebar.query_active.trim().is_empty() {
             app.hydrate_cached_sections();
-            app.merge_recent_sections();
+            // Another process holds the sync lease: its syncs land through
+            // `watch_store`.
+            if app.sync_holder() {
+                app.merge_recent_sections();
+            }
         } else {
             let q = app.sidebar.query_active.clone();
             app.run_gh_search(q);
@@ -199,44 +204,7 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                 app.drop_unvisited_background();
             }
             match result {
-                Ok(rows) => {
-                    if !replace {
-                        evict_vanished_rows(app, &rows);
-                    }
-                    let mut last = None;
-                    for row in rows {
-                        let n = row.issue.number;
-                        if let Some(d) = app.issues.data.get_mut(&n) {
-                            // Window listings refresh display fields only.
-                            // Body, comments, and review threads belong to
-                            // the full fetch and stay. Search hits carry no
-                            // statuses, so replace mode never touches known
-                            // rows — dropped unvisited rows reinsert below.
-                            // A listing older than what we hold (search index
-                            // lag, a cached page) never overwrites it: a
-                            // just-closed item must not flip back to open.
-                            if !replace && row.issue.updated_at >= d.updated_at {
-                                d.title = row.issue.title;
-                                d.state = row.issue.state;
-                                d.checks = row.issue.checks;
-                                d.labels = row.issue.labels;
-                                d.updated_at = row.issue.updated_at;
-                                app.issues.statuses.insert(n, row.statuses);
-                                app.board.details.insert(n, row.detail);
-                            }
-                        } else {
-                            if !row.complete { app.issues.partial.insert(n); }
-                            app.issues.data.insert(n, row.issue);
-                            app.issues.statuses.insert(n, row.statuses);
-                            app.board.details.insert(n, row.detail);
-                            app.ensure_recent(n);
-                            last = Some(n);
-                        }
-                    }
-                    if !auto && app.nav.current.is_none() && app.nav.requested.is_none() {
-                        if let Some(n) = last { app.load_issue(n, false); }
-                    }
-                },
+                Ok(rows) => land_rows(app, rows, replace, auto),
                 // Auto-refresh failures notify too: a silent empty
                 // sidebar is how under-scoped tokens went unnoticed.
                 // The backoff above still bounds the retry rate.
@@ -245,6 +213,49 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
         }
     }
     true
+}
+
+/// Land listing rows: a window listing (`replace` false) first evicts the
+/// background rows it no longer carries, then known rows refresh display
+/// fields and new rows file under recent. A user fetch (`auto` false) with
+/// nothing open opens the last new row.
+pub(super) fn land_rows(app: &mut App, rows: Vec<crate::github::Row>, replace: bool, auto: bool) {
+    if !replace {
+        evict_vanished_rows(app, &rows);
+    }
+    let mut last = None;
+    for row in rows {
+        let n = row.issue.number;
+        if let Some(d) = app.issues.data.get_mut(&n) {
+            // Window listings refresh display fields only.
+            // Body, comments, and review threads belong to
+            // the full fetch and stay. Search hits carry no
+            // statuses, so replace mode never touches known
+            // rows — dropped unvisited rows reinsert below.
+            // A listing older than what we hold (search index
+            // lag, a cached page) never overwrites it: a
+            // just-closed item must not flip back to open.
+            if !replace && row.issue.updated_at >= d.updated_at {
+                d.title = row.issue.title;
+                d.state = row.issue.state;
+                d.checks = row.issue.checks;
+                d.labels = row.issue.labels;
+                d.updated_at = row.issue.updated_at;
+                app.issues.statuses.insert(n, row.statuses);
+                app.board.details.insert(n, row.detail);
+            }
+        } else {
+            if !row.complete { app.issues.partial.insert(n); }
+            app.issues.data.insert(n, row.issue);
+            app.issues.statuses.insert(n, row.statuses);
+            app.board.details.insert(n, row.detail);
+            app.ensure_recent(n);
+            last = Some(n);
+        }
+    }
+    if !auto && app.nav.current.is_none() && app.nav.requested.is_none() {
+        if let Some(n) = last { app.load_issue(n, false); }
+                    }
 }
 
 /// Window landing: evict listed background rows the fresh payload no

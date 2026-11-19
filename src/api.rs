@@ -10,7 +10,7 @@ pub use client::{
 pub use board::fetch_board;
 pub use graph::{graph, sub_issues};
 pub use sections::{
-    apply_statuses, changed_rows, delta_since, fetch_statuses, merge_delta, merge_rows, sections, status_targets, visible_rows,
+    apply_statuses, changed_rows, delta_since, fetch_statuses, sections, status_targets, visible_rows,
     MAX_SECTION_ROWS,
 };
 

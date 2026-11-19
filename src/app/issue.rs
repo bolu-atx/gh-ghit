@@ -321,8 +321,13 @@ impl App {
 
     /// A search listing refreshes from the server; a window listing
     /// re-walks every list (idempotent through the contains checks in polling).
+    /// The walk takes the sync lease first, so a manual refresh works from
+    /// any process; the old holder stops syncing on its next renewal.
     pub(crate) fn refresh_listing(&mut self) {
         if self.sidebar.query_active.trim().is_empty() {
+            if let Some(link) = self.sections.link.as_mut() {
+                link.take_over();
+            }
             self.sections.refresh = github::Refresh::Full;
             self.merge_recent_sections();
         } else {

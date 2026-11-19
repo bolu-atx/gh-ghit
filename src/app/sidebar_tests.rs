@@ -2,14 +2,13 @@
 
 use super::*;
 use super::sidebar::{FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, STATUS_REFRESH_INTERVAL, refresh_interval_from, refresh_plan};
-use super::test_support::{issue, restore_xdg, sidebar_app, temp_xdg};
+use super::test_support::{issue, restore_xdg, section_row, sidebar_app, temp_xdg};
 use crate::model::BoardData;
 
-/// Store rows as a fresh 24h, all-lists sync that started `age_secs` ago.
+/// Store rows as a sync that started `age_secs` ago.
 fn put_sections(rows: Vec<crate::github::Row>, age_secs: i64) {
     let started = chrono::Utc::now() - chrono::TimeDelta::seconds(age_secs);
-    let sync = crate::store::Sync { started_at: started.to_rfc3339(), hours: 24, show: [true; 4] };
-    crate::store::open("o/r").unwrap().write(&sync, &rows, &[]).unwrap();
+    crate::store::open("o/r").unwrap().write(&started.to_rfc3339(), &rows).unwrap();
 }
 
 fn cached_row(number: u64, complete: bool) -> crate::github::Row {
@@ -42,11 +41,13 @@ fn add_recent(app: &mut App, n: u64, updated: &str, labels: &[&str], milestone: 
 #[test]
 fn startup_hydrates_sidebar_from_sections_cache() {
     let (_guard, _dir, saved) = temp_xdg();
-    put_sections(vec![cached_row(7, false), cached_row(9, true)], 0);
+    let mut newer = cached_row(7, false);
+    newer.issue.created_at = "2026-01-02T00:00:00Z".to_string();
+    put_sections(vec![newer, cached_row(9, true)], 0);
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.hydrate_cached_sections();
-    assert_eq!(app.nav.recent, vec![7, 9], "cached order becomes sidebar order");
+    assert_eq!(app.nav.recent, vec![7, 9], "stored order (open rows newest created first) becomes sidebar order");
     assert!(app.issues.data.contains_key(&7) && app.issues.data.contains_key(&9));
     assert!(app.issues.partial.contains(&7), "slim rows stay partial so open runs the full fetch");
     assert!(!app.issues.partial.contains(&9));
@@ -71,15 +72,80 @@ fn startup_hydration_leaves_present_rows_alone() {
 }
 
 #[test]
-fn startup_hydration_ignores_missing_and_expired_cache() {
+fn startup_hydration_ignores_a_missing_store_but_paints_an_old_sync() {
     let (_guard, _dir, saved) = temp_xdg();
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.hydrate_cached_sections();
     assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "no store means no rows");
+    // The store is the shared local copy: a process that does not hold
+    // the sync lease reads it whatever its age.
     put_sections(vec![cached_row(7, false)], 3601);
     app.hydrate_cached_sections();
-    assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "a sync over an hour old reads as a miss");
+    assert_eq!(app.nav.recent, vec![7], "an old sync still paints");
+    restore_xdg(saved);
+}
+
+/// A booted app on repo `o/r` with its store link open, as
+/// `poll_bootstrap` leaves it; fetches stay queued.
+fn linked_app() -> App {
+    let mut app = sidebar_app(&[]);
+    app.fetches.hold = true;
+    app.sections.link = github::StoreLink::open("o/r");
+    assert!(app.sections.link.is_some(), "store opens");
+    app
+}
+
+#[test]
+fn lease_holder_alone_auto_refreshes_the_listing() {
+    let (_guard, _dir, saved) = temp_xdg();
+    let mut holder = linked_app();
+    let mut other = linked_app();
+    assert!(holder.sync_holder() && !other.sync_holder(), "one lease per repo");
+    for app in [&mut holder, &mut other] {
+        let start = app.sections.last_fetch;
+        app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    }
+    assert!(holder.sections.rx.is_some(), "the holder syncs");
+    assert!(other.sections.rx.is_none(), "a non-holder sends no listing request");
+    // Search mode stays per instance: a non-holder still refreshes its search.
+    other.sidebar.query_active = "label:bug".to_string();
+    let start = other.sections.last_fetch;
+    other.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
+    assert!(other.sections.rx.is_some() && other.sections.replace);
+    // A manual refresh takes the lease from any process.
+    other.sidebar.query_active.clear();
+    other.sections.rx = None;
+    other.refresh_listing();
+    assert!(other.sync_holder() && other.sections.rx.is_some(), "r takes the lease and walks");
+    assert_eq!(other.sections.refresh, github::Refresh::Delta, "the Full plan was consumed by the spawn");
+    restore_xdg(saved);
+}
+
+#[test]
+fn another_process_sync_lands_through_the_store_watch() {
+    let (_guard, _dir, saved) = temp_xdg();
+    let mut app = linked_app();
+    app.sections.merged_window_hours = 168;
+    let now = Instant::now();
+    assert!(!app.watch_store(now), "nothing new yet");
+    let mut merged = section_row(issue(4, "2026-01-05T00:00:00Z"));
+    merged.issue.is_pr = true;
+    merged.issue.state = "MERGED".to_string();
+    merged.window_at = Some(chrono::Utc::now().to_rfc3339());
+    put_sections(vec![cached_row(7, false), merged], 0);
+    assert!(app.watch_store(now), "a sync by another connection lands");
+    assert!(app.nav.recent.contains(&7) && app.nav.recent.contains(&4));
+    assert!(!app.watch_store(now), "each sync lands once");
+    // List toggles and the window filter the stored rows locally.
+    app.toggle_list(1);
+    assert!(!app.nav.recent.contains(&4), "hiding merged PRs drops the row");
+    assert!(app.sections.rx.is_none(), "a toggle sends no request");
+    app.toggle_list(1);
+    assert!(app.nav.recent.contains(&4));
+    app.set_window(1);
+    assert!(app.nav.recent.contains(&4), "merged now is inside 1h");
+    assert!(app.sections.rx.is_none(), "a window change sends no request");
     restore_xdg(saved);
 }
 

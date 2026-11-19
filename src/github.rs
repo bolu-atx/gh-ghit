@@ -184,21 +184,27 @@ fn save_detail<T: serde::Serialize>(repo: &str, kind: store::Detail, number: u64
     }
 }
 
-/// Stored rows that can stand in for this window and list mask, with
-/// the sync that wrote them: the shown rows only, in sidebar order.
-/// `None` when the store is empty or unreadable, the last sync is an
-/// hour old or more (`api::delta_since`), or its walk did not cover this window and
-/// mask. Blocking: call from the blocking pool.
-fn load_sections(repo: &str, hours: u64, show: [bool; 4]) -> Option<(store::Sync, Vec<api::Row>)> {
-    let store = store::open(repo).ok()?;
-    let sync = store.last_sync()?;
-    let now = chrono::Utc::now();
-    api::delta_since(Some(&sync.started_at), now, false)?;
-    if !sync.covers(hours, show) {
-        return None;
-    }
-    let rows = api::visible_rows(store.rows().ok()?, now, hours, show);
-    Some((sync, rows))
+/// Narrowest merged/closed window a sync walk covers. The walk serves
+/// every instance of the repo whatever its own window, so it reaches back
+/// as far as the widest bounded window (7 days). Merged and closed lists
+/// still retire at that cutoff, so open lists keep the row budget.
+const SYNC_MIN_HOURS: u64 = 168;
+
+/// How long a sync lease lasts without renewal: a crashed holder's lease
+/// frees after this.
+const LEASE_TTL_SECS: i64 = 60;
+
+/// How often every process renews its lease, or tries to take a free one.
+const LEASE_RETRY: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long the UI thread waits on another process's store lock before
+/// it skips this lease try or read.
+const LINK_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Window a sync walk covers: the given instance window, widened to
+/// `SYNC_MIN_HOURS`. 0 (all time) stays unbounded.
+fn sync_hours(window: u64) -> u64 {
+    if window == 0 { 0 } else { window.max(SYNC_MIN_HOURS) }
 }
 
 /// Every stored item of `repo` for the finder, newest update first. Empty
@@ -210,15 +216,25 @@ pub fn finder_candidates(repo: &str) -> Vec<store::Candidate> {
     store::open(repo).and_then(|s| s.finder_candidates()).unwrap_or_default()
 }
 
-/// Write the sidebar result `rows` in order, plus every other row the
-/// fetch returned (rows no shown list holds now keep their new state),
-/// and record `sync`. Best effort: the next sync rewrites. Blocking.
-fn save_sections(repo: &str, sync: &store::Sync, rows: &[api::Row], fetched: Vec<api::Row>) {
-    let listed: std::collections::HashSet<u64> = rows.iter().map(|r| r.issue.number).collect();
-    let other: Vec<api::Row> = fetched.into_iter().filter(|r| !listed.contains(&r.issue.number)).collect();
+/// The last sync start and every stored row, unordered by list. Empty when
+/// the store is new or unreadable. Blocking: call from the blocking pool.
+fn load_rows(repo: &str) -> (Option<String>, Vec<api::Row>) {
+    let Ok(store) = store::open(repo) else { return (None, Vec::new()) };
+    (store.sync_started_at(), store.rows().unwrap_or_default())
+}
+
+/// Upsert `rows` and record `started_at` as the last sync start. Best
+/// effort: the next sync rewrites. Blocking.
+fn save_rows(repo: &str, started_at: &str, rows: &[api::Row]) {
     if let Ok(mut store) = store::open(repo) {
-        let _ = store.write(sync, rows, &other);
+        let _ = store.write(started_at, rows);
     }
+}
+
+/// `stored` with each `fetched` row replacing the stored row of its number.
+fn overlay(stored: Vec<api::Row>, fetched: &[api::Row]) -> Vec<api::Row> {
+    let fresh: std::collections::HashSet<u64> = fetched.iter().map(|r| r.issue.number).collect();
+    stored.into_iter().filter(|r| !fresh.contains(&r.issue.number)).chain(fetched.iter().cloned()).collect()
 }
 
 /// How a sections refresh runs: a change-only search (`Delta`), the same
@@ -232,17 +248,20 @@ pub enum Refresh {
     Full,
 }
 
-/// Recent rows: open + windowed merged PRs, open + windowed closed issues.
-/// `show` is the visible-list mask (open PRs, merged PRs, open issues, closed
-/// issues); hidden lists are not queried.
-/// Rows persist in the repo's store (`store`), with the start of the
-/// fetch that wrote them and the window and mask its walk covered. A sync
-/// under an hour old that covered this window and mask refreshes through
-/// one change-only search (`api::changed_rows`) merged into the stored rows;
-/// `Refresh::Full`, no usable sync, or an older one walks the lists head-first
-/// and stops on overlap with the stored rows. `progress` re-tags the page counts onto the
-/// caller's existing section channel. `Refresh::Status` also refetches CI and
-/// project status of the open rows (best effort) after its change-only search.
+/// Sync the repo's recent rows into its store, then return the rows this
+/// instance shows: open + windowed merged PRs, open + windowed closed
+/// issues, filtered by `hours` and the list mask `show` (open PRs, merged
+/// PRs, open issues, closed issues).
+///
+/// The sync itself is per repo: it covers all four lists and
+/// `sync_hours(hours)`, so every instance's window and mask filter the
+/// same stored rows. Only the store's sync lease holder calls this. A
+/// sync under an hour old refreshes through one change-only search
+/// (`api::changed_rows`); `Refresh::Full`, no sync, or an older one walks
+/// the lists head-first and stops on overlap with the stored rows.
+/// `progress` re-tags the page counts onto the caller's existing section
+/// channel. `Refresh::Status` also refetches CI and project status of the
+/// open rows (best effort) after its change-only search.
 pub async fn fetch_recent_sections(
     repo: &str,
     hours: u64,
@@ -251,28 +270,18 @@ pub async fn fetch_recent_sections(
     progress: Option<std::sync::mpsc::Sender<SectionEvent>>,
 ) -> Result<Vec<api::Row>, String> {
     require_repo(repo)?;
-    // Every list hidden: nothing to fetch.
-    if !show.iter().any(|s| *s) {
-        return Ok(Vec::new());
-    }
     let token = require_token()?;
     let started = chrono::Utc::now();
     let read_repo = repo.to_string();
-    let cached = tokio::task::spawn_blocking(move || load_sections(&read_repo, hours, show)).await.unwrap_or(None);
-    let since = api::delta_since(cached.as_ref().map(|c| c.0.started_at.as_str()), started, refresh == Refresh::Full);
-    let mut sync = store::Sync { started_at: started.to_rfc3339(), hours, show };
+    let (last, stored) = tokio::task::spawn_blocking(move || load_rows(&read_repo)).await.unwrap_or_default();
+    let since = api::delta_since(last.as_deref(), started, refresh == Refresh::Full);
     let mut walked = false;
-    let (mut rows, capped, fetched) = match (since, cached) {
-        (Some(since), Some((last, cached))) => {
-            // A change-only search keeps the walk coverage it builds on.
-            (sync.hours, sync.show) = (last.hours, last.show);
-            let delta = api::changed_rows(repo, since, &token).await?;
-            (api::merge_delta(delta.clone(), cached, chrono::Utc::now(), hours, show), false, delta)
-        }
-        (_, cached) => {
-            let cached = cached.map(|c| c.1);
-            let cached_numbers: Option<std::collections::HashSet<u64>> =
-                cached.as_ref().map(|rows| rows.iter().map(|r| r.issue.number).collect());
+    let mut capped = false;
+    let fetched = match since {
+        Some(since) => api::changed_rows(repo, since, &token).await?,
+        None => {
+            let stored_numbers: Option<std::collections::HashSet<u64>> =
+                (!stored.is_empty()).then(|| stored.iter().map(|r| r.issue.number).collect());
             let report = |done: usize, total: usize| {
                 if let Some(tx) = &progress {
                     let _ = tx.send(SectionEvent::Progress { done, total });
@@ -280,43 +289,153 @@ pub async fn fetch_recent_sections(
             };
             let fresh = api::sections(
                 repo,
-                hours,
+                sync_hours(hours),
                 &token,
-                cached_numbers.as_ref(),
-                show,
+                stored_numbers.as_ref(),
+                [true; 4],
                 Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
             )
             .await?;
-            let rows = api::merge_rows(fresh.rows.clone(), cached.unwrap_or_default(), chrono::Utc::now(), hours);
             walked = true;
-            (rows, fresh.capped, fresh.rows)
+            capped = fresh.capped;
+            fresh.rows
         }
     };
-    if capped || rows.len() >= api::MAX_SECTION_ROWS {
-        if let Some(tx) = &progress {
-            let _ = tx.send(SectionEvent::Capped);
-        }
-    }
+    let mut changed: std::collections::HashSet<u64> = fetched.iter().map(|r| r.issue.number).collect();
+    let mut rows = overlay(stored, &fetched);
     // A walk just read every status; otherwise refresh the open rows'.
     if refresh == Refresh::Status && !walked {
         let targets = api::status_targets(&rows);
         if !targets.is_empty() {
             if let Ok(updates) = api::fetch_statuses(repo, &targets, &token).await {
+                changed.extend(updates.iter().map(|u| u.number));
                 api::apply_statuses(&mut rows, updates);
             }
         }
     }
-    let (save_repo, saved) = (repo.to_string(), rows.clone());
-    let _ = tokio::task::spawn_blocking(move || save_sections(&save_repo, &sync, &saved, fetched)).await;
-    Ok(rows)
+    let saved: Vec<api::Row> = rows.iter().filter(|r| changed.contains(&r.issue.number)).cloned().collect();
+    let save_repo = repo.to_string();
+    let started = started.to_rfc3339();
+    let _ = tokio::task::spawn_blocking(move || save_rows(&save_repo, &started, &saved)).await;
+    let shown = api::visible_rows(rows, chrono::Utc::now(), hours, show);
+    if capped || shown.len() >= api::MAX_SECTION_ROWS {
+        if let Some(tx) = &progress {
+            let _ = tx.send(SectionEvent::Capped);
+        }
+    }
+    Ok(shown)
 }
 
-/// Stored rows for a repo, window and list mask (`None` when no usable
-/// sync exists; see `load_sections`). Startup hydration reads through
-/// here so the sidebar paints previous state before the background
-/// refresh lands.
+/// Stored rows this window and list mask show, in sidebar order; `None`
+/// before the first sync or when the store is unreadable. Startup
+/// hydration reads through here so the sidebar paints previous state
+/// before the background refresh lands. Blocking.
 pub(crate) fn cached_sections(repo: &str, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
-    load_sections(repo, hours, show).map(|c| c.1)
+    let store = store::open(repo).ok()?;
+    stored_view(&store, hours, show)
+}
+
+fn stored_view(store: &store::Store, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
+    store.sync_started_at()?;
+    Some(api::visible_rows(store.rows().ok()?, chrono::Utc::now(), hours, show))
+}
+
+/// One process's tie to its repo store: the sync lease and the change
+/// watch. Every ghit process of a repo shares one sync stream. The lease
+/// holder alone fetches listings; every process notices the holder's
+/// writes through `changed` and re-reads its own view. Dropping the link
+/// releases a held lease, so another process takes over on its next try.
+pub struct StoreLink {
+    store: store::Store,
+    holder: String,
+    holding: bool,
+    tried: std::time::Instant,
+    version: i64,
+    seen: Option<String>,
+}
+
+impl StoreLink {
+    /// Open the link for `repo` and try to take the lease. `None` when the
+    /// store cannot open; the caller then syncs on its own.
+    pub fn open(repo: &str) -> Option<Self> {
+        let store = store::open(repo).ok()?;
+        store.set_busy_timeout(LINK_BUSY_TIMEOUT).ok()?;
+        Some(Self::new(store, holder_id()))
+    }
+
+    fn new(store: store::Store, holder: String) -> Self {
+        let version = store.data_version().unwrap_or_default();
+        let seen = store.sync_started_at();
+        let mut link = Self { store, holder, holding: false, tried: std::time::Instant::now(), version, seen };
+        link.claim(false, chrono::Utc::now().timestamp());
+        link
+    }
+
+    /// True while this process holds the sync lease.
+    pub fn holding(&self) -> bool {
+        self.holding
+    }
+
+    /// Renew the lease, or try to take a free one, every `LEASE_RETRY`.
+    pub fn tick(&mut self, now: std::time::Instant) {
+        if now.duration_since(self.tried) >= LEASE_RETRY {
+            self.tried = now;
+            self.claim(false, chrono::Utc::now().timestamp());
+        }
+    }
+
+    /// Take the lease even from a live holder: a manual refresh syncs
+    /// from here, and the old holder stops on its next renewal.
+    pub fn take_over(&mut self) {
+        self.claim(true, chrono::Utc::now().timestamp());
+    }
+
+    /// A failed try (a lock held past the busy timeout) keeps the last
+    /// answer; the next try settles it.
+    fn claim(&mut self, force: bool, now: i64) {
+        if let Ok(holding) = self.store.claim_lease(&self.holder, now, LEASE_TTL_SECS, force) {
+            self.holding = holding;
+        }
+    }
+
+    /// True once per new sync written by any process since the last call.
+    /// `PRAGMA data_version` gates it, so an idle store costs one pragma;
+    /// lease renewals move that counter but not the sync start.
+    pub fn changed(&mut self) -> bool {
+        let Ok(version) = self.store.data_version() else { return false };
+        if version == self.version {
+            return false;
+        }
+        self.version = version;
+        let started = self.store.sync_started_at();
+        if started == self.seen {
+            return false;
+        }
+        self.seen = started;
+        true
+    }
+
+    /// Stored rows this window and list mask show (see `cached_sections`).
+    pub fn rows(&self, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
+        stored_view(&self.store, hours, show)
+    }
+}
+
+impl Drop for StoreLink {
+    fn drop(&mut self) {
+        if self.holding {
+            let _ = self.store.release_lease(&self.holder);
+        }
+    }
+}
+
+/// Lease holder name: host and pid, plus a per-process sequence so two
+/// links in one process (tests) stay distinct.
+fn holder_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let host = std::env::var("HOSTNAME").or_else(|_| std::env::var("HOST")).unwrap_or_else(|_| "localhost".to_string());
+    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{host}:{}:{seq}", std::process::id())
 }
 
 /// Typed cache keys, re-exported so UI layers never touch `cache`.
@@ -592,70 +711,128 @@ mod tests {
         out
     }
 
+    /// A row created and last updated `hours_ago`; merged PRs and closed
+    /// issues anchor their window there too, as the listing parse does.
+    fn dated(number: u64, is_pr: bool, state: &str, now: chrono::DateTime<chrono::Utc>, hours_ago: i64) -> Row {
+        let at = (now - chrono::TimeDelta::hours(hours_ago)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let windowed = matches!((is_pr, state), (true, "MERGED") | (false, "CLOSED"));
+        let mut row = row(number, is_pr, state, windowed.then(|| at.clone()));
+        row.issue.created_at = at.clone();
+        row.issue.updated_at = at;
+        row
+    }
+
     /// Parity pin for the sidebar rows: a cold walk, a persisted round
-    /// trip, a change-only merge over the persisted rows, and startup
-    /// hydration, the way `fetch_recent_sections` chains them.
+    /// trip, a change-only sync over the persisted rows, and startup
+    /// hydration, the way `fetch_recent_sections` chains them. Since #244
+    /// the store keeps no list positions: order derives from row dates, so
+    /// the rows carry dates, and a sync upserts only the rows it fetched.
     #[test]
     fn sidebar_rows_survive_walk_delta_and_hydration() {
         with_temp_data(|| {
             let (repo, hours, show) = ("o/r", 24, [true; 4]);
             let now = chrono::Utc::now();
-            let recent = Some((now - chrono::TimeDelta::hours(1)).to_rfc3339());
-            let stale = Some((now - chrono::TimeDelta::hours(30)).to_rfc3339());
             assert!(cached_sections(repo, hours, show).is_none(), "no sync yet hydrates nothing");
 
-            // Cold walk: rows regroup by list; a cached row out of the window never joins.
-            let fresh = vec![
-                row(3, false, "OPEN", None),
-                row(1, true, "OPEN", None),
-                row(4, false, "CLOSED", recent.clone()),
-                row(2, true, "MERGED", recent.clone()),
+            // Cold walk: rows regroup by list; a stored row out of the window never shows.
+            let walked = vec![
+                dated(3, false, "OPEN", now, 5),
+                dated(1, true, "OPEN", now, 4),
+                dated(4, false, "CLOSED", now, 2),
+                dated(2, true, "MERGED", now, 1),
+                dated(9, true, "MERGED", now, 30),
             ];
-            let walked = api::merge_rows(fresh.clone(), vec![row(9, true, "MERGED", stale)], now, hours);
-            assert_eq!(numbers(&walked), vec![1, 2, 3, 4]);
-            let sync = store::Sync { started_at: now.to_rfc3339(), hours, show };
-            save_sections(repo, &sync, &walked, fresh);
-            let hydrated = cached_sections(repo, hours, show).expect("fresh sync hydrates");
-            assert_eq!(numbers(&hydrated), vec![1, 2, 3, 4], "persisted order is sidebar order");
-            assert_eq!(hydrated[0].statuses, walked[0].statuses, "row fields round trip");
+            save_rows(repo, &now.to_rfc3339(), &walked);
+            let hydrated = cached_sections(repo, hours, show).expect("a sync hydrates");
+            assert_eq!(numbers(&hydrated), vec![1, 2, 3, 4], "derived order is sidebar order");
+            assert_eq!(hydrated[0].statuses, walked[1].statuses, "row fields round trip");
 
-            // Change-only merge: #1 retitled stays in place, #3 moves list,
+            // Change-only sync: #1 retitled stays in place, #3 moves list,
             // #6 is new, #7 is a closed (unmerged) PR no list shows.
-            let (last, cached) = load_sections(repo, hours, show).expect("cached rows");
-            assert!(api::delta_since(Some(&last.started_at), now, false).is_some(), "a fresh sync takes the delta path");
-            let mut retitled = row(1, true, "OPEN", None);
+            let (last, stored) = load_rows(repo);
+            assert!(api::delta_since(last.as_deref(), now, false).is_some(), "a fresh sync takes the delta path");
+            let mut retitled = walked[1].clone();
             retitled.issue.title = "renamed".to_string();
-            let delta = vec![row(3, false, "CLOSED", recent.clone()), retitled, row(6, true, "OPEN", None), row(7, true, "CLOSED", None)];
-            let merged = api::merge_delta(delta.clone(), cached, now, hours, show);
-            assert_eq!(numbers(&merged), vec![6, 1, 2, 3, 4]);
-            save_sections(repo, &last, &merged, delta);
+            let mut closed = dated(3, false, "CLOSED", now, 0);
+            closed.issue.created_at = walked[0].issue.created_at.clone();
+            let delta = vec![closed, retitled, dated(6, true, "OPEN", now, 0), dated(7, true, "CLOSED", now, 0)];
+            let shown = api::visible_rows(overlay(stored, &delta), now, hours, show);
+            assert_eq!(numbers(&shown), vec![6, 1, 2, 3, 4]);
+            save_rows(repo, last.as_deref().unwrap(), &delta);
             let hydrated = cached_sections(repo, hours, show).expect("hydrates after delta");
-            assert_eq!(numbers(&hydrated), vec![6, 1, 2, 3, 4]);
+            assert_eq!(numbers(&hydrated), vec![6, 1, 2, 3, 4], "the store reads back what the sync returned");
             assert_eq!(hydrated[1].issue.title, "renamed");
             assert_eq!(hydrated[3].issue.state, "CLOSED");
         });
     }
 
     /// The store holds the repo's rows, not one window's: reads apply
-    /// the list mask and window, and a sync only stands in for windows
-    /// and masks its walk covered.
+    /// the list mask and window, whatever window or mask synced them.
     #[test]
     fn stored_rows_filter_by_mask_and_window_on_read() {
         with_temp_data(|| {
             let repo = "o/r";
             let now = chrono::Utc::now();
-            let at = |h: i64| Some((now - chrono::TimeDelta::hours(h)).to_rfc3339());
-            let rows = vec![row(1, true, "OPEN", None), row(2, true, "MERGED", at(30)), row(3, true, "MERGED", at(2)), row(4, false, "CLOSED", at(2))];
-            let sync = store::Sync { started_at: now.to_rfc3339(), hours: 168, show: [true; 4] };
-            save_sections(repo, &sync, &rows, vec![row(5, true, "CLOSED", None)]);
-            assert_eq!(numbers(&cached_sections(repo, 168, [true; 4]).unwrap()), vec![1, 2, 3, 4], "stored order; the closed PR is in no list");
+            let rows = vec![dated(1, true, "OPEN", now, 1), dated(2, true, "MERGED", now, 30), dated(3, true, "MERGED", now, 2), dated(4, false, "CLOSED", now, 2), dated(5, true, "CLOSED", now, 1)];
+            save_rows(repo, &now.to_rfc3339(), &rows);
+            assert_eq!(numbers(&cached_sections(repo, 168, [true; 4]).unwrap()), vec![1, 3, 2, 4], "the closed PR is in no list");
             assert_eq!(numbers(&cached_sections(repo, 24, [true; 4]).unwrap()), vec![1, 3, 4], "aged-out merged PR drops");
             assert_eq!(numbers(&cached_sections(repo, 24, [true, false, true, false]).unwrap()), vec![1], "hidden lists drop");
-            assert!(cached_sections(repo, 720, [true; 4]).is_none(), "a wider window than the walk is a miss");
-            let narrow = store::Sync { started_at: now.to_rfc3339(), hours: 24, show: [true, false, true, true] };
-            save_sections(repo, &narrow, &rows[..1], Vec::new());
-            assert!(cached_sections(repo, 24, [true; 4]).is_none(), "a list the walk hid is a miss");
-            assert_eq!(numbers(&cached_sections(repo, 24, [true, false, false, true]).unwrap()), vec![1, 4]);
+            assert_eq!(numbers(&cached_sections(repo, 0, [false, true, false, false]).unwrap()), vec![3, 2], "all time reads every stored row");
+        });
+    }
+
+    #[test]
+    fn sync_walk_covers_at_least_a_week() {
+        assert_eq!(sync_hours(1), SYNC_MIN_HOURS);
+        assert_eq!(sync_hours(24), SYNC_MIN_HOURS);
+        assert_eq!(sync_hours(168), 168);
+        assert_eq!(sync_hours(720), 720);
+        assert_eq!(sync_hours(0), 0, "all time stays unbounded");
+    }
+
+    /// Two ghit processes on one repo with different windows: one lease
+    /// holder syncs, both see each sync once, neither view clobbers the
+    /// other, and a lapsed or released lease hands over.
+    #[test]
+    fn two_processes_share_one_sync_without_clobbering_views() {
+        with_temp_data(|| {
+            let repo = "o/r";
+            let now = chrono::Utc::now();
+            let t = now.timestamp();
+            // A: 24h window, every list. B: 7d window, PRs only.
+            let (a_view, b_view) = ((24, [true; 4]), (168, [true, true, false, false]));
+            let mut a = StoreLink::open(repo).expect("store opens");
+            let mut b = StoreLink::open(repo).expect("store opens");
+            assert!(a.holding() && !b.holding(), "only one process holds the lease");
+
+            // A syncs the whole repo, whatever its own view.
+            save_rows(repo, &now.to_rfc3339(), &[dated(1, true, "OPEN", now, 3), dated(2, true, "MERGED", now, 30), dated(3, false, "OPEN", now, 2), dated(4, false, "CLOSED", now, 50)]);
+            assert!(a.changed() && b.changed(), "every process sees the new sync");
+            assert!(!b.changed(), "once per sync");
+            assert_eq!(numbers(&a.rows(a_view.0, a_view.1).unwrap()), vec![1, 3]);
+            assert_eq!(numbers(&b.rows(b_view.0, b_view.1).unwrap()), vec![1, 2]);
+            a.claim(false, t);
+            assert!(a.holding() && !b.changed(), "a lease renewal is not a new sync");
+
+            // A stops renewing (a crash): B takes over once the lease expires.
+            b.claim(false, t + LEASE_TTL_SECS - 1);
+            assert!(!b.holding(), "a live lease refuses B");
+            b.claim(false, t + LEASE_TTL_SECS);
+            assert!(b.holding(), "an expired lease hands over");
+            a.claim(false, t + LEASE_TTL_SECS + 1);
+            assert!(!a.holding(), "A learns it lost the lease");
+
+            // B's sync keeps A's view whole: it covers the repo, not B's view.
+            save_rows(repo, &chrono::Utc::now().to_rfc3339(), &[dated(5, false, "OPEN", now, 0)]);
+            assert!(a.changed());
+            assert_eq!(numbers(&a.rows(a_view.0, a_view.1).unwrap()), vec![1, 5, 3]);
+            assert_eq!(numbers(&b.rows(b_view.0, b_view.1).unwrap()), vec![1, 2]);
+
+            // A quitting holder releases: the other takes over on its next try.
+            drop(b);
+            a.claim(false, t + LEASE_TTL_SECS + 2);
+            assert!(a.holding(), "a released lease is free before its expiry");
         });
     }
 
@@ -686,8 +863,7 @@ mod tests {
         std::env::set_var("GH_TOKEN", "test");
         let mut listed = row(5, false, "OPEN", None);
         listed.issue.updated_at = "t1".to_string();
-        let sync = store::Sync { started_at: chrono::Utc::now().to_rfc3339(), hours: 24, show: [true; 4] };
-        save_sections("o/r", &sync, &[listed], Vec::new());
+        save_rows("o/r", &chrono::Utc::now().to_rfc3339(), &[listed]);
         let data = IssueData { number: 5, body: "stored body".to_string(), updated_at: "t1".to_string(), ..Default::default() };
         save_bundle("o/r", 5, &(data, vec![("Board".to_string(), Some("Old".to_string()))]));
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();

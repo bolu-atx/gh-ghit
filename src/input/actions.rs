@@ -81,7 +81,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ToggleRow => app.toggle_row_expansion(),
         Action::MergedWindow => {
             app.sections.merged_window_hours = core::cycle_window(app.sections.merged_window_hours);
-            app.refetch_recent();
+            app.reload_recent();
             app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
         }
@@ -294,7 +294,7 @@ fn submit_input(app: &mut App) {
             match app.commit_query_draft() {
                 QueryAction::Run(q) => app.run_gh_search(q),
                 QueryAction::Refetch => {
-                    app.refetch_recent();
+                    app.reload_recent();
                     app.notify("back to recent".to_string());
                 }
             }
