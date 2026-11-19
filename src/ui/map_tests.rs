@@ -9,12 +9,12 @@ use crate::model::{LinkKind, MapItem, MapLink, MapScope};
 use super::test_support::{click, draw_buffer, key, loaded_app};
 
 fn item(number: u64, state: &str, title: &str, milestone: Option<&str>) -> MapItem {
-    MapItem { number, is_pr: false, state: state.to_string(), title: title.to_string(), milestone: milestone.map(str::to_string) }
+    MapItem { number, is_pr: false, state: state.to_string(), title: title.to_string(), milestone: milestone.map(str::to_string), labels: vec![] }
 }
 
 /// #7 (open) is blocked by #11 (open) and #12 (closed), blocks #8, and the
 /// PR #9 closes it. #7 and #8 share a milestone; #30 is not linked.
-fn map_app() -> App {
+pub(super) fn map_app() -> App {
     with_map(loaded_app())
 }
 
@@ -45,7 +45,7 @@ fn with_map(mut app: App) -> App {
 
 /// Pin every node at a hand-picked world point, so the frame does not
 /// depend on the simulation.
-fn pin_layout(app: &mut App) {
+pub(super) fn pin_layout(app: &mut App) {
     app.settle_map();
     let hub = crate::model::hub_id("Ship it");
     let at = [(7, 0.0, 0.0), (8, 16.0, -4.0), (9, 0.0, 6.0), (11, -18.0, -4.0), (12, -18.0, 4.0), (hub, 16.0, 6.0)];
@@ -68,7 +68,7 @@ fn snapshot(app: &mut App) -> String {
 }
 
 /// Rows of the map view as text.
-fn map_rows(app: &mut App) -> Vec<String> {
+pub(super) fn map_rows(app: &mut App) -> Vec<String> {
     let buf = draw_buffer(app);
     let area = app.hits.map_area;
     (area.y..area.bottom())
@@ -240,7 +240,7 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     assert!(app.map.layout.bodies()[twelve].x > before && app.map.layout.bodies()[twelve].pinned);
     assert!(!app.map.follow, "a nudge stops the fit, so the view holds still");
     handle_key(&mut app, key(KeyCode::Char('s')));
-    assert_eq!(app.map.scope, MapScope::Repo);
+    assert_eq!(app.map.filter.scope, MapScope::Repo);
     app.settle_map();
     let text = map_rows(&mut app).join("\n");
     assert!(text.contains("#30") && text.contains("whole repo"), "{text}");
@@ -472,17 +472,17 @@ fn card_keys_toggle_step_links_and_close() {
     handle_key(&mut app, key(KeyCode::Char('i')));
     assert_eq!(app.map.card, None, "i again hides it");
     let seven = app.map.graph.index_of(7).unwrap();
-    let links: Vec<String> = app.map.graph.edges_of(seven).into_iter().map(|e| app.map.graph.relation(e, &app.map.links)).collect();
+    let links: Vec<String> = app.map.graph.edges_of(seven).into_iter().map(|e| app.map.graph.relation(e)).collect();
     let mut seen = vec![];
     for _ in 0..links.len() {
         handle_key(&mut app, key(KeyCode::Char('>')));
-        seen.push(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links));
+        seen.push(app.map.graph.relation(app.map.card_edge().unwrap()));
     }
     assert_eq!(seen, links, "> steps through every link of the node");
     handle_key(&mut app, key(KeyCode::Char('>')));
-    assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[0], "and wraps");
+    assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap()), links[0], "and wraps");
     handle_key(&mut app, key(KeyCode::Char('<')));
-    assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[links.len() - 1]);
+    assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap()), links[links.len() - 1]);
     handle_key(&mut app, key(KeyCode::Esc));
     assert_eq!(app.map.card, None, "esc closes the card");
     assert_eq!(app.nav.tab, Tab::Map, "and nothing else");
@@ -530,7 +530,7 @@ fn physics_app() -> App {
 }
 
 /// Rows of the open physics popup as text.
-fn popup_rows(app: &mut App) -> Vec<String> {
+pub(super) fn popup_rows(app: &mut App) -> Vec<String> {
     let buf = draw_buffer(app);
     let popup = app.hits.form_popup;
     (popup.y..popup.bottom())
@@ -670,7 +670,7 @@ fn the_toolbar_button_opens_the_physics_dialog() {
 }
 
 /// Line of the frame that holds the content tabs.
-fn tab_line(app: &mut App) -> String {
+pub(super) fn tab_line(app: &mut App) -> String {
     let buf = draw_buffer(app);
     let area = app.hits.tabs_area;
     (area.x..area.right()).map(|x| buf[(x, area.y)].symbol()).collect::<String>().trim_end().to_string()
@@ -742,7 +742,7 @@ fn opening_a_pr_from_the_map_keeps_the_map_for_the_map_key() {
     handle_key(&mut app, key(KeyCode::Char('3')));
     assert_eq!(app.nav.tab, Tab::Map, "the map key returns to the map");
     app.settle_map();
-    assert_eq!(app.map.scope, MapScope::Repo);
+    assert_eq!(app.map.filter.scope, MapScope::Repo);
     assert_eq!(app.map.selected, Some(9), "the opened node stays selected");
     assert_eq!(app.map.camera, camera, "the view holds still");
     let back = &app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()];

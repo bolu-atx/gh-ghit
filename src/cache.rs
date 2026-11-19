@@ -253,6 +253,9 @@ pub struct Prefs {
     /// merged or closed PRs updated within it. 0 = all history.
     #[serde(default = "default_backfill_months")]
     pub backfill_months: u32,
+    /// Map filter per repo, keyed like `queries`.
+    #[serde(default)]
+    pub map_filters: std::collections::HashMap<String, crate::model::MapFilter>,
 }
 
 impl Default for Prefs {
@@ -271,7 +274,8 @@ impl Default for Prefs {
             sub_issue_tree: false,
             sort: crate::core::SideSort::Default,
             sort_desc: false,
-            backfill_months: default_backfill_months() }
+            backfill_months: default_backfill_months(),
+            map_filters: std::collections::HashMap::new() }
     }
 }
 

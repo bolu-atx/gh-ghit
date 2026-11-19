@@ -240,6 +240,7 @@ impl App {
             let mut milestones: Vec<Option<String>> =
                 self.sidebar.milestone_filter.iter().cloned().collect();
             milestones.sort();
+            prefs.map_filters.insert(key.clone(), self.map.filter.clone());
             prefs.sidebar_filters.insert(
                 key,
                 github::SavedSidebarFilter { labels, milestones },
@@ -295,6 +296,9 @@ impl App {
             let repo_key = github::prefs_repo_key(&key);
             if let Some(q) = prefs.queries.get(&repo_key) {
                 self.sidebar.query_active = q.clone();
+            }
+            if let Some(filter) = prefs.map_filters.get(&repo_key) {
+                self.map.filter = filter.clone();
             }
             if let Some(saved) = prefs.sidebar_filters.get(&repo_key) {
                 self.sidebar.label_filter = saved.labels.iter().cloned().collect();

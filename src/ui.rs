@@ -37,6 +37,8 @@ mod hint_tests;
 #[cfg(test)]
 mod main_pane_tests;
 #[cfg(test)]
+mod map_filter_tests;
+#[cfg(test)]
 mod map_tests;
 #[cfg(test)]
 mod search_tests;
@@ -240,6 +242,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     if app.physics_focus().is_some() {
         dim_background(f, 0.35);
         dialogs::render_physics(f, f.area(), app);
+    }
+    if app.map_filter_focus().is_some() {
+        dim_background(f, 0.35);
+        dialogs::render_map_filter(f, f.area(), app);
     }
     controls::render_menu(f, f.area(), app);
     if app.finder().is_some() {

@@ -127,6 +127,24 @@ e2e_wait "▌$pick " 10 || fail "a click on ready $pick did not select it"
 e2e_key B
 sleep 1
 e2e_pane | grep -qF "┌ ranks " && fail "B left the strip open"
+# Map filter: f opens it, c shows every closed item (the merged PRs that
+# close #24's closed blockers join the map), c hides them again, Esc
+# closes it.
+count() { e2e_pane | grep -oE '[0-9]+ items · linked to #24' | head -1 | cut -d' ' -f1; }
+before="$(count)"
+e2e_key f
+e2e_wait "c toggle closed items" 10 || fail "f did not open the map filter"
+e2e_key c
+e2e_wait "linked to #24 · filtered" 10 || fail "c did not filter the map"
+after="$(count)"
+[ "${after:-0}" -gt "${before:-0}" ] || fail "closed items did not join the map: $before -> $after"
+e2e_key c
+sleep 1
+e2e_pane | grep -qF "· filtered" && fail "a second c left the map filtered"
+[ "$(count)" = "$before" ] || fail "hiding closed items again left $(count) items, want $before"
+e2e_key Escape
+sleep 1
+e2e_pane | grep -qF "c toggle closed items" && fail "Esc left the map filter open"
 # The map is a view of its own: Enter opens the selected node on its
 # Details tab, then a click on the Map tab and the 3 key bring it back.
 e2e_key Enter

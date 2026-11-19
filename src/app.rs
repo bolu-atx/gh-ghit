@@ -19,9 +19,11 @@ mod finder;
 mod format;
 mod issue;
 mod map;
+mod map_filter;
 mod map_physics;
 mod map_rank;
 pub(crate) use map::{CardHit, MapCard, MapView};
+pub(crate) use map_filter::FilterRow;
 #[cfg(test)]
 pub(crate) use map::CardDetail;
 mod menu;

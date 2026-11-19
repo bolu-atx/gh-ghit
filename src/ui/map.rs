@@ -69,6 +69,9 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let text = match app.map.center() {
             _ if !app.map.loaded => "Reading the local copy…".to_string(),
             Some(n) => format!("#{n} is not in the local copy yet. Press s to see the whole repo."),
+            None if app.map.filter.changed() => {
+                "Nothing matches the map filter. Press f to change it.".to_string()
+            }
             None => "Nothing to map.".to_string(),
         };
         put(buf, area, (0, 0), &text, Style::new().fg(muted()));
@@ -169,6 +172,9 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         None => "whole repo".to_string(),
     };
     let mut summary = format!(" {items} items · {scope}");
+    if app.map.filter.changed() {
+        summary.push_str(" · filtered");
+    }
     if pinned > 0 {
         summary.push_str(&format!(" · {pinned} pinned"));
     }

@@ -1,7 +1,7 @@
 //! Tests for model::rank. Graphs are built by hand, so the ranks do not
 //! depend on how `build_map` scopes the items.
 
-use super::graph::{MapGraph, MapNode, NodeState};
+use super::graph::{LinkKind, MapGraph, MapNode, NodeState};
 use super::physics::EdgeStyle;
 use super::rank::{Ranking, rank};
 use NodeState::{Blocked as B, Closed as C, Hub as H, Pr as P, Ready as R};
@@ -12,10 +12,11 @@ fn graph(states: &[NodeState], blocks: &[(usize, usize)], hubs: &[(usize, usize)
         let number = (state != NodeState::Hub).then_some(i as u64 + 1);
         MapNode { id: i as u64 + 1, number, title: format!("Node {i}"), state }
     }).collect();
-    let edges = blocks.iter().map(|&(a, b)| (a, b, EdgeStyle::Directed))
+    let edges: Vec<_> = blocks.iter().map(|&(a, b)| (a, b, EdgeStyle::Directed))
         .chain(hubs.iter().map(|&(a, b)| (a, b, EdgeStyle::Hub)))
         .collect();
-    MapGraph { nodes, edges }
+    let kinds = edges.iter().map(|e| if e.2 == EdgeStyle::Directed { vec![LinkKind::Blocks] } else { vec![] }).collect();
+    MapGraph { nodes, edges, kinds }
 }
 
 #[test]

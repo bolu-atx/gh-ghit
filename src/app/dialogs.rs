@@ -27,6 +27,8 @@ pub(crate) enum Entry {
     Shortcuts,
     /// The map physics dialog, holding the focused row.
     Physics(usize),
+    /// The map filter dialog, holding the focused row.
+    MapFilter(usize),
 }
 
 /// The kind of an entry. Declaration order is stacking order: a kind
@@ -39,6 +41,7 @@ pub(crate) enum Slot {
     Board,
     Format,
     Physics,
+    MapFilter,
     Menu,
     Finder,
     Compose,
@@ -52,6 +55,7 @@ impl Entry {
             Entry::Board => Slot::Board,
             Entry::Format(_) => Slot::Format,
             Entry::Physics(_) => Slot::Physics,
+            Entry::MapFilter(_) => Slot::MapFilter,
             Entry::Menu(_) => Slot::Menu,
             Entry::Finder(_) => Slot::Finder,
             Entry::Compose(_) => Slot::Compose,
@@ -143,6 +147,20 @@ impl App {
         }
     }
 
+    /// The focused row of the open map filter dialog, `None` while closed.
+    pub(crate) fn map_filter_focus(&self) -> Option<usize> {
+        self.dialogs.iter()
+            .find_map(|e| if let Entry::MapFilter(row) = e { Some(*row) } else { None })
+    }
+
+    pub(crate) fn set_map_filter_focus(&mut self, row: usize) {
+        for e in &mut self.dialogs {
+            if let Entry::MapFilter(focus) = e {
+                *focus = row;
+            }
+        }
+    }
+
     fn format_edit(&self) -> FormatEdit {
         self.dialogs.iter()
             .find_map(|e| if let Entry::Format(edit) = e { Some(*edit) } else { None })
@@ -189,6 +207,7 @@ impl App {
                     }
                 }
                 Entry::Physics(_) => stack.push(Layer::Dialog(Dialog::Physics)),
+                Entry::MapFilter(_) => stack.push(Layer::Dialog(Dialog::MapFilter)),
                 Entry::Menu(_) => stack.push(Layer::Dialog(Dialog::Menu)),
                 Entry::Finder(_) => stack.push(Layer::Dialog(Dialog::Finder)),
                 Entry::Compose(_) => stack.push(Layer::Dialog(Dialog::Compose)),

@@ -4,7 +4,7 @@
 //! the action does. Actions that several contexts share (`Back`,
 //! `InputSubmit`, `InputBackspace`) read the top focus layer.
 
-use crate::app::{App, Focus, QueryAction, Slot, Tab, board_move, board_selected_number};
+use crate::app::{App, FilterRow, Focus, QueryAction, Slot, Tab, board_move, board_selected_number};
 use crate::core::{self, Dialog, Layer, TextInput};
 use crate::keymap::Action;
 
@@ -39,6 +39,9 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::FinderBackspace => app.finder_backspace(),
         Action::Comment => app.open_compose(),
         Action::CloseItem => app.request_set_state(),
+        // `f` is global, so a map binding would shadow it: on the focused
+        // map the same action opens the map filter instead.
+        Action::OpenFormat if crate::keymap::graph_focused(app) => app.open_map_filter(),
         Action::OpenFormat => app.open_sidebar_format(),
         Action::QuerySearch => {
             app.open_sidebar_format();
@@ -137,6 +140,15 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::GraphStripNext => app.map_strip_step(1),
         Action::GraphStripPrev => app.map_strip_step(-1),
         Action::ClosePhysics => { app.close(Slot::Physics); }
+        Action::CloseMapFilter => { app.close(Slot::MapFilter); }
+        Action::MapFilterDown => app.map_filter_step(1),
+        Action::MapFilterUp => app.map_filter_step(-1),
+        Action::MapFilterToggle => app.map_filter_toggle(),
+        Action::MapFilterScope => app.map_filter_flip(FilterRow::Scope),
+        Action::MapFilterClosed => app.map_filter_flip(FilterRow::Closed),
+        Action::MapFilterPrs => app.map_filter_flip(FilterRow::Prs),
+        Action::MapFilterHubs => app.map_filter_flip(FilterRow::Hubs),
+        Action::MapFilterReset => app.map_filter_reset(),
         Action::PhysicsDown => app.physics_step(1),
         Action::PhysicsUp => app.physics_step(-1),
         Action::PhysicsLower => app.physics_nudge(-1),

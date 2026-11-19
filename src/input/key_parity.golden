@@ -202,7 +202,7 @@ main-graph | '[' | requested: Some(7) -> Some(6) ; history: []/[]/0 -> [7]/[]/0
 main-graph | ']' | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8) ; history: []/[]/0 -> [7]/[]/0
 main-graph | 'c' | compose: None/false -> Some(("", 0, ""))/false
 main-graph | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
-main-graph | 'f' | format: false/false/false -> true/false/false
+main-graph | 'f' | map-filter: None -> Some(0)
 main-graph | 'g' | pending: None -> Some('g')
 main-graph | 'h' | graph: Some(7)/Component/true/0 -> Some(7)/Component/false/0 ; camera: 0.00/0.00/1.00 -> -3.00/0.00/1.00
 main-graph | 'i' | card: None -> Some(Node)

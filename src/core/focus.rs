@@ -28,6 +28,8 @@ pub(crate) enum Dialog {
     Finder,
     /// Dependency map physics steppers.
     Physics,
+    /// Dependency map filter: scope, toggles and chips.
+    MapFilter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

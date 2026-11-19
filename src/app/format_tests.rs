@@ -112,6 +112,28 @@ fn stale_saved_milestones_prune_when_board_lands() {
 }
 
 #[test]
+fn the_map_filter_is_saved_per_repo() {
+    let (_guard, _dir, saved) = temp_xdg();
+    let mut first = App::new(Some("o/r".to_string()));
+    first.repo_slug = Some("o/r".to_string());
+    first.prefs_loaded = true;
+    first.map_filter_flip(crate::app::FilterRow::Closed);
+    first.map_filter_flip(crate::app::FilterRow::Label("bug".to_string()));
+    first.map_toggle_scope();
+    let want = first.map.filter.clone();
+    assert!(want.closed && want.labels.contains("bug") && want.scope == model::MapScope::Repo);
+    let mut second = App::new(Some("o/r".to_string()));
+    second.repo_slug = Some("o/r".to_string());
+    second.apply_prefs();
+    assert_eq!(second.map.filter, want, "every change saved, scope included");
+    let mut other = App::new(Some("o/other".to_string()));
+    other.repo_slug = Some("o/other".to_string());
+    other.apply_prefs();
+    assert_eq!(other.map.filter, model::MapFilter::default(), "another repo keeps its own filter");
+    restore_xdg(saved);
+}
+
+#[test]
 fn prefs_saved_under_another_host_stay_unrestored() {
     let _guard = crate::cache::test_env_lock();
     let dir = tempfile::TempDir::new().unwrap();

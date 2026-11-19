@@ -2,7 +2,9 @@
 //! links as edges. Pure: built from the local copy's items and links,
 //! then laid out by `physics`.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+use serde::{Deserialize, Serialize};
 
 use super::physics::EdgeStyle;
 
@@ -19,10 +21,12 @@ pub struct MapItem {
     pub state: String,
     pub title: String,
     pub milestone: Option<String>,
+    pub labels: Vec<String>,
 }
 
-/// What a stored link means.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a stored link means. Declaration order is the order an edge
+/// lists its kinds in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LinkKind {
     /// `src` blocks `dst`.
     Blocks,
@@ -41,13 +45,85 @@ pub struct MapLink {
 }
 
 /// Which items the map shows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MapScope {
     /// The linked component of the open issue, with its milestone hubs.
     #[default]
     Component,
     /// Every item of the repo, pulled together by milestone hubs.
     Repo,
+}
+
+/// What the map draws. The default draws the open item's component with
+/// every PR, hub and link kind, closed items only as blockers of open
+/// items, and no chips. The open item always shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MapFilter {
+    pub scope: MapScope,
+    /// Every closed item in scope shows, not only the closed blockers of
+    /// open items.
+    pub closed: bool,
+    pub prs: bool,
+    /// Milestone hub nodes and the edges that join items to them.
+    pub hubs: bool,
+    pub blocks: bool,
+    pub parents: bool,
+    pub closes: bool,
+    /// Only items in one of these milestones show. Empty means any.
+    pub milestones: BTreeSet<String>,
+    /// Only items with one of these labels show. Empty means any.
+    pub labels: BTreeSet<String>,
+}
+
+impl Default for MapFilter {
+    fn default() -> Self {
+        MapFilter {
+            scope: MapScope::default(),
+            closed: false,
+            prs: true,
+            hubs: true,
+            blocks: true,
+            parents: true,
+            closes: true,
+            milestones: BTreeSet::new(),
+            labels: BTreeSet::new(),
+        }
+    }
+}
+
+impl MapFilter {
+    /// The switch for links of `kind`.
+    pub fn link_mut(&mut self, kind: LinkKind) -> &mut bool {
+        match kind {
+            LinkKind::Blocks => &mut self.blocks,
+            LinkKind::Parent => &mut self.parents,
+            LinkKind::Closes => &mut self.closes,
+        }
+    }
+
+    /// Links of `kind` draw.
+    pub fn draws(&self, kind: LinkKind) -> bool {
+        match kind {
+            LinkKind::Blocks => self.blocks,
+            LinkKind::Parent => self.parents,
+            LinkKind::Closes => self.closes,
+        }
+    }
+
+    /// `item` passes the PR switch and both chip sets.
+    pub fn keeps(&self, item: &MapItem) -> bool {
+        let milestone = self.milestones.is_empty()
+            || item.milestone.as_ref().is_some_and(|title| self.milestones.contains(title));
+        let label = self.labels.is_empty()
+            || item.labels.iter().any(|name| self.labels.contains(name));
+        (self.prs || !item.is_pr) && milestone && label
+    }
+
+    /// The filter differs from the default in more than its scope.
+    pub fn changed(&self) -> bool {
+        *self != MapFilter { scope: self.scope, ..MapFilter::default() }
+    }
 }
 
 /// How a node reads on the map.
@@ -89,13 +165,17 @@ pub struct MapNode {
     pub state: NodeState,
 }
 
-/// The built map: nodes, then edges as node index pairs. A `Directed`
-/// edge runs from the blocker to the blocked node; a `Hub` edge from an
-/// item to its milestone.
+/// The built map: nodes, then edges as node index pairs. One edge per
+/// ordered pair: a `Directed` edge carries a blocks link and runs from
+/// the blocker to the blocked node; a `Hub` edge runs from an item to its
+/// milestone.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MapGraph {
     pub nodes: Vec<MapNode>,
     pub edges: Vec<(usize, usize, EdgeStyle)>,
+    /// Every link kind each edge carries, in `LinkKind` order. Empty for
+    /// a hub edge.
+    pub kinds: Vec<Vec<LinkKind>>,
 }
 
 impl MapGraph {
@@ -122,25 +202,21 @@ impl MapGraph {
     }
 
     /// Edge `edge` in words: "#16 blocks #17", "#40 closes #25", "#3 is
-    /// the parent of #8", "#16 is in milestone Fast startup". `links`
-    /// tell a parent link from a closing one, which share a style.
-    pub fn relation(&self, edge: usize, links: &[MapLink]) -> String {
+    /// the parent of #8", "#3 blocks and is the parent of #8", "#16 is in
+    /// milestone Fast startup".
+    pub fn relation(&self, edge: usize) -> String {
         let (a, b, style) = self.edges[edge];
         let (from, to) = (&self.nodes[a], &self.nodes[b]);
         let name = |node: &MapNode| node.number.map_or(node.title.clone(), |n| format!("#{n}"));
-        let verb = match style {
-            EdgeStyle::Hub => return format!("{} is in milestone {}", name(from), to.title),
-            EdgeStyle::Directed => "blocks",
-            EdgeStyle::Link => {
-                let same = |l: &&MapLink| Some(l.src) == from.number && Some(l.dst) == to.number;
-                let kind = links.iter().filter(same).find(|l| l.kind != LinkKind::Blocks).map(|l| l.kind);
-                match kind {
-                    Some(LinkKind::Parent) => "is the parent of",
-                    Some(LinkKind::Closes) => "closes",
-                    _ => "links to",
-                }
-            }
-        };
+        if style == EdgeStyle::Hub {
+            return format!("{} is in milestone {}", name(from), to.title);
+        }
+        let verbs: Vec<&str> = self.kinds.get(edge).into_iter().flatten().map(|kind| match kind {
+            LinkKind::Blocks => "blocks",
+            LinkKind::Parent => "is the parent of",
+            LinkKind::Closes => "closes",
+        }).collect();
+        let verb = if verbs.is_empty() { "links to".to_string() } else { verbs.join(" and ") };
         format!("{} {verb} {}", name(from), name(to))
     }
 
@@ -168,28 +244,41 @@ pub fn hub_id(title: &str) -> u64 {
 /// Build the map. `center` is the open item: the component scope walks
 /// links out from it, and it always shows. With no center the component
 /// scope shows the whole repo. Links to numbers missing from `items`
-/// drop. Closed items hide, except closed blockers of an open item in
-/// scope.
-pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, scope: MapScope) -> MapGraph {
+/// drop. `filter` picks the items, link kinds and hubs that draw; the
+/// component walks only drawn links. Closed items hide, except closed
+/// blockers of an open item in scope, unless `filter.closed` shows them.
+/// A node's state counts every stored blocks link, drawn or not.
+pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filter: &MapFilter) -> MapGraph {
     let by_number: HashMap<u64, &MapItem> = items.iter().map(|item| (item.number, item)).collect();
-    let links: Vec<MapLink> = links.iter().copied()
+    let stored: Vec<MapLink> = links.iter().copied()
         .filter(|link| link.src != link.dst && by_number.contains_key(&link.src) && by_number.contains_key(&link.dst))
         .collect();
-    let in_scope: HashSet<u64> = match (scope, center) {
-        (MapScope::Repo, _) | (MapScope::Component, None) => by_number.keys().copied().collect(),
+    let kept = |n: u64| {
+        Some(n) == center || by_number.get(&n).is_some_and(|item| filter.keeps(item))
+    };
+    let links: Vec<MapLink> = stored.iter().copied()
+        .filter(|link| filter.draws(link.kind) && kept(link.src) && kept(link.dst))
+        .collect();
+    let in_scope: HashSet<u64> = match (filter.scope, center) {
+        (MapScope::Repo, _) | (MapScope::Component, None) => {
+            by_number.keys().copied().filter(|&n| kept(n)).collect()
+        }
         (MapScope::Component, Some(center)) if by_number.contains_key(&center) => component(&links, center),
         (MapScope::Component, Some(_)) => HashSet::new(),
     };
     // Blocks links indexed both ways, so each node checks only its own.
     let mut blocks: HashMap<u64, Vec<u64>> = HashMap::new();
-    let mut blocked_by: HashMap<u64, Vec<u64>> = HashMap::new();
     for link in links.iter().filter(|link| link.kind == LinkKind::Blocks) {
         blocks.entry(link.src).or_default().push(link.dst);
+    }
+    let mut blocked_by: HashMap<u64, Vec<u64>> = HashMap::new();
+    for link in stored.iter().filter(|link| link.kind == LinkKind::Blocks) {
         blocked_by.entry(link.dst).or_default().push(link.src);
     }
     let open = |n: u64| by_number.get(&n).is_some_and(|item| item.state == "OPEN");
     let visible = |n: u64| {
         open(n)
+            || filter.closed
             || Some(n) == center
             || blocks.get(&n).is_some_and(|dsts| dsts.iter().any(|&dst| in_scope.contains(&dst) && open(dst)))
     };
@@ -209,29 +298,40 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, scop
     }).collect();
     let index: HashMap<u64, usize> = numbers.iter().enumerate().map(|(i, &n)| (n, i)).collect();
 
-    let mut edges: Vec<(usize, usize, EdgeStyle)> = links.iter().filter_map(|link| {
-        let (src, dst) = (*index.get(&link.src)?, *index.get(&link.dst)?);
-        let style = match link.kind {
-            LinkKind::Blocks => EdgeStyle::Directed,
-            LinkKind::Parent | LinkKind::Closes => EdgeStyle::Link,
-        };
-        Some((src, dst, style))
-    }).collect();
-    edges.sort_by_key(|&(src, dst, _)| (src, dst));
-    edges.dedup_by_key(|edge| (edge.0, edge.1));
-
-    let mut milestones: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-    for (i, n) in numbers.iter().enumerate() {
-        if let Some(title) = by_number[n].milestone.as_deref() {
-            milestones.entry(title).or_default().push(i);
+    // One edge per ordered pair, carrying every kind linked that way.
+    let mut pairs: BTreeMap<(usize, usize), Vec<LinkKind>> = BTreeMap::new();
+    for link in &links {
+        if let (Some(&src), Some(&dst)) = (index.get(&link.src), index.get(&link.dst)) {
+            pairs.entry((src, dst)).or_default().push(link.kind);
         }
     }
-    for (title, members) in milestones {
-        let hub = nodes.len();
-        nodes.push(MapNode { id: hub_id(title), number: None, title: title.to_string(), state: NodeState::Hub });
-        edges.extend(members.into_iter().map(|i| (i, hub, EdgeStyle::Hub)));
+    let mut edges = Vec::with_capacity(pairs.len());
+    let mut kinds = Vec::with_capacity(pairs.len());
+    for ((src, dst), mut found) in pairs {
+        found.sort_unstable();
+        found.dedup();
+        let blocks = found.contains(&LinkKind::Blocks);
+        edges.push((src, dst, if blocks { EdgeStyle::Directed } else { EdgeStyle::Link }));
+        kinds.push(found);
     }
-    MapGraph { nodes, edges }
+
+    if filter.hubs {
+        let mut milestones: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (i, n) in numbers.iter().enumerate() {
+            if let Some(title) = by_number[n].milestone.as_deref() {
+                milestones.entry(title).or_default().push(i);
+            }
+        }
+        for (title, members) in milestones {
+            let hub = nodes.len();
+            nodes.push(MapNode { id: hub_id(title), number: None, title: title.to_string(), state: NodeState::Hub });
+            for i in members {
+                edges.push((i, hub, EdgeStyle::Hub));
+                kinds.push(vec![]);
+            }
+        }
+    }
+    MapGraph { nodes, edges, kinds }
 }
 
 /// Numbers linked to `center` through any chain of links, either way.
