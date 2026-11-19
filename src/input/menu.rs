@@ -143,6 +143,17 @@ pub(super) fn repo_click(app: &mut App, x: u16, y: u16) -> bool {
     true
 }
 
+/// A press on the query source segment of the status bar searches GitHub.
+pub(super) fn source_click(app: &mut App, x: u16, y: u16) -> bool {
+    if !in_rect(app.hits.source, x, y) {
+        return false;
+    }
+    let rect = app.hits.source;
+    app.note_click(rect);
+    app.search_github();
+    true
+}
+
 /// Which pane's title row a press landed on: it focuses that pane.
 pub(super) fn title_row_pane(app: &App, x: u16, y: u16) -> Option<Pane> {
     [

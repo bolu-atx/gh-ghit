@@ -124,7 +124,9 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         if menu::press(app, hint) {
             return;
         }
-        if menu::repo_click(app, m.column, m.row) || menu::control_click(app, m.column, m.row) {
+        if menu::repo_click(app, m.column, m.row)
+            || menu::source_click(app, m.column, m.row)
+            || menu::control_click(app, m.column, m.row) {
             return;
         }
     }

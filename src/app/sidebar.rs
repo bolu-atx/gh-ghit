@@ -86,6 +86,10 @@ pub(crate) struct Sidebar {
     pub(crate) show_closed_issues: bool,
     pub(crate) query_draft: String,
     pub(crate) query_active: String,
+    /// Numbers a GitHub-run query returned. `Some` means the view shows
+    /// GitHub results, re-read from the store on change; `None` means the
+    /// store answered locally.
+    pub(crate) query_github: Option<Vec<u64>>,
     pub(crate) saved_queries: Vec<github::SavedQuery>,
     pub(crate) name_draft: String,
     pub(crate) group_by: model::GroupBy,
@@ -124,7 +128,7 @@ impl Sidebar {
         Self { show: true, search: String::new(), searching: false, sort: core::SideSort::Default,
             sort_desc: false, show_open_prs: true, show_merged_prs: true,
             show_open_issues: true, show_closed_issues: true,
-            query_draft: String::new(), query_active: String::new(),
+            query_draft: String::new(), query_active: String::new(), query_github: None,
             saved_queries: Vec::new(), name_draft: String::new(),
             group_by: model::GroupBy::None, sub_issue_tree: false,
             folded_issues: HashSet::new(), label_filter: HashSet::new(),
@@ -281,8 +285,8 @@ impl App {
     /// Per tick: renew or try the sync lease, and when another process (or
     /// this one's own fetch) wrote a new sync, re-read this instance's view
     /// of the stored rows. An in-flight fetch skips the re-read; it lands
-    /// the same rows itself. A local query re-runs its filter; a server
-    /// search keeps its own refresh. True when rows landed.
+    /// the same rows itself. A local query re-runs its filter; a GitHub
+    /// result set is re-read by number. True when rows landed.
     pub(super) fn watch_store(&mut self, now: Instant) -> bool {
         let Some(link) = self.sections.link.as_mut() else { return false };
         link.tick(now);
@@ -292,6 +296,9 @@ impl App {
         let query = self.sidebar.query_active.clone();
         if query.trim().is_empty() {
             return self.reread_sections();
+        }
+        if self.sidebar.query_github.is_some() {
+            return self.reread_github(true);
         }
         let Some(rows) = self.local_query_rows(&query) else { return false };
         self.land_local_query(rows, true);
@@ -365,13 +372,11 @@ impl App {
             );
             self.sections.probe = self.sections.refresh == github::Refresh::Delta;
             self.merge_recent_sections();
-        } else if self.local_query(&self.sidebar.query_active).is_some() {
-            // A local query re-filters when the store changes (`watch_store`).
+        } else {
+            // A query never refreshes on GitHub by itself: it re-filters
+            // when the store changes (`watch_store`).
             self.sections.last_fetch = now;
             return;
-        } else {
-            // Periodic refresh: no "searching" toast on every pass.
-            self.search_fetch(self.sidebar.query_active.clone());
         }
         if self.sections.rx.is_some() {
             self.sections.auto_refresh = true;
@@ -418,19 +423,64 @@ impl App {
         self.notify("recent: default query and window".to_string());
     }
 
-    /// Server-side GitHub search scoped to the repo. Results replace the
-    /// recent list when they land; see `sections.replace`. The window
-    /// rides in as an `updated:` token at fetch time, so the query text
-    /// stays exactly what the user typed.
+    /// Run a `/` query against the local store. A query the store cannot
+    /// answer lands no rows and names the GitHub action instead of
+    /// calling the network.
     pub(crate) fn run_gh_search(&mut self, query: String) {
         self.sections.cap_notified = false;
+        self.sidebar.query_github = None;
         if let Some(rows) = self.local_query_rows(&query) {
             self.notify(format!("query: {query} ({} local)", rows.len()));
             self.land_local_query(rows, false);
             return;
         }
-        self.notify(format!("searching: {query}"));
+        self.land_local_query(vec![], false);
+        self.notify(format!("the local copy cannot answer: {query} · {} searches GitHub", self.github_key()));
+    }
+
+    /// Re-read the GitHub result set from the store, with no request.
+    pub(crate) fn reread_github(&mut self, auto: bool) -> bool {
+        let Some(numbers) = self.sidebar.query_github.clone() else { return false };
+        let Some(rows) = self.sections.link.as_ref().map(|link| link.rows_by_number(&numbers)) else { return false };
+        self.land_local_query(rows, auto);
+        true
+    }
+
+    /// Key name of the Search GitHub action, for notices.
+    pub(crate) fn github_key(&self) -> String {
+        crate::keymap::describe(crate::keymap::Action::SearchGithub)
+            .map_or_else(String::new, |binding| binding.key_name())
+    }
+
+    /// Where the active query's rows came from, for the status line.
+    pub(crate) fn query_source(&self) -> &'static str {
+        if self.sidebar.query_github.is_some() { "GitHub" } else { "local" }
+    }
+
+    /// Re-run the active query once on GitHub. The hits land in the store
+    /// (`land_github`); nothing re-runs it until the user asks again.
+    pub(crate) fn search_github(&mut self) {
+        let query = self.sidebar.query_active.trim().to_string();
+        if query.is_empty() {
+            self.notify("no query: F writes one, then H searches GitHub".to_string());
+            return;
+        }
+        self.sections.cap_notified = false;
+        self.notify(format!("searching GitHub: {query}"));
         self.search_fetch(query);
+    }
+
+    /// Land GitHub search hits: store them (newer-only, statuses kept),
+    /// show the stored rows, and remember their numbers so a store change
+    /// keeps the same result set on screen.
+    pub(super) fn land_github(&mut self, hits: Vec<github::Row>) {
+        let rows = match self.sections.link.as_mut() {
+            Some(link) => link.save_search(hits),
+            None => hits,
+        };
+        let numbers = rows.iter().map(|row| row.issue.number).collect();
+        self.land_local_query(rows, false);
+        self.sidebar.query_github = Some(numbers);
     }
 
     /// The parsed query when the store alone answers it: every term is
@@ -476,8 +526,7 @@ impl App {
         }
     }
 
-    /// Spawn the search fetch. Callers own the status-line announcement:
-    /// user searches name the query, periodic refreshes stay quiet.
+    /// Spawn the GitHub search fetch; the caller announces it.
     fn search_fetch(&mut self, query: String) {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
             self.notify("search needs a repo: use -R or run inside one".to_string());
@@ -487,11 +536,9 @@ impl App {
         self.sections.auto_refresh = false;
         self.sections.replace = true;
         let search = core::search_query(&query, self.sections.merged_window_hours, chrono::Utc::now());
-        let probe = std::mem::take(&mut self.sections.probe);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
         self.enqueue(core::Kind::Sections, None, async move {
-            if probe && !probe_says_changed(&repo, &tx).await { return; }
             let result = github::search_repo(&repo, &search, Some(tx.clone())).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         });

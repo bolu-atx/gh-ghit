@@ -13,6 +13,8 @@ e2e_wait "Precompiled" 60 || fail "startup listing never landed"
 e2e_key F
 e2e_type "label:bug"
 e2e_key Enter
+# The store cannot answer: H runs the REST search on GitHub.
+e2e_key H
 e2e_wait "search hit 1001" 30 || fail "search results never landed"
 # The parent is expandable from its summary alone. Its children live
 # only on GitHub, so it reads folded until the first click loads them.

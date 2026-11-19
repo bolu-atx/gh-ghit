@@ -150,3 +150,24 @@ fn pending_g_shows_in_the_bar_until_the_next_key() {
     handle_key(&mut app, key(KeyCode::Char('g')));
     assert!(!frame_text(&mut app).contains("g…"), "gg ends the wait");
 }
+
+#[test]
+fn bar_names_the_query_source_and_the_github_action_only_with_a_query() {
+    let mut app = loaded_app();
+    let text = frame_text(&mut app);
+    assert!(!text.contains("search GitHub") && !text.contains(" local"), "no query, no source: {text}");
+    app.sidebar.query_active = "label:bug".to_string();
+    let text = frame_text(&mut app);
+    assert!(text.contains("local") && text.contains("H search GitHub"), "{text}");
+    app.sidebar.query_github = Some(vec![7]);
+    assert!(frame_text(&mut app).contains("GitHub ·"), "source flips to GitHub");
+}
+
+#[test]
+fn h_key_searches_github_with_the_active_query() {
+    let mut app = loaded_app();
+    app.repo_slug = Some("o/r".to_string());
+    app.sidebar.query_active = "label:bug".to_string();
+    handle_key(&mut app, key(KeyCode::Char('H')));
+    assert!(app.sections.rx.is_some() && app.sections.replace, "one GitHub search is in flight");
+}

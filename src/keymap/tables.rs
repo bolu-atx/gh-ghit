@@ -4,7 +4,7 @@
 use crossterm::event::KeyCode;
 
 use super::{
-    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, side_pane,
+    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, query_live, side_pane,
     sub_issue_tree, undo_live,
 };
 use crate::core::{Dialog, Pane, TextInput};
@@ -57,7 +57,7 @@ const GLOBAL: &[Binding] = &[
     key(ch('c'), Action::Comment, "Comment", "Open", HINT).hint(6),
     key(ch('C'), Action::CloseItem, "Close or reopen", "Open", TITLE).hint_if(12, main_pane),
     key(ch('f'), Action::OpenFormat, "Format and filter", "Open", TITLE),
-    key(ch('F'), Action::QuerySearch, "Search GitHub", "Open", MENU),
+    key(ch('F'), Action::QuerySearch, "Edit query", "Open", MENU),
     key(ch('j'), Action::MoveDown, "Select next", "Move", Gesture::Wheel).hint_if(2, side_pane),
     key(ch('k'), Action::MoveUp, "Select previous", "Move", Gesture::Wheel).hint_if(3, side_pane),
     key(KeyCode::Down, Action::MoveDown, "Select next", "Move", ALIAS),
@@ -76,6 +76,7 @@ const GLOBAL: &[Binding] = &[
     key(KeyCode::BackTab, Action::PrevPane, "Previous pane", "Move", ALIAS),
     key(ch(':'), Action::CommandBar, "Command", "Search", Gesture::Click).hint(11),
     key(ch('/'), Action::FindBar, "Find", "Search", MENU),
+    key(ch('H'), Action::SearchGithub, "Search GitHub", "Search", HINT).hint_if(1, query_live),
     key(ch('n'), Action::NextHit, "Next match", "Search", LIST),
     key(ch('N'), Action::PrevHit, "Previous match", "Search", LIST),
     key(ch('o'), Action::OpenBrowser, "Open in browser", "Item", MENU),

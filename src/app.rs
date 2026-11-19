@@ -223,6 +223,8 @@ pub(crate) struct HitAreas {
     pub(crate) finder_rows: Vec<(Rect, usize)>,
     /// The repo segment of the status bar.
     pub(crate) repo: Rect,
+    /// The query source segment of the status bar.
+    pub(crate) source: Rect,
 }
 
 /// Side column widths for the current terminal width, set once per frame
