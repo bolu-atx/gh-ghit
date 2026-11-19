@@ -43,6 +43,9 @@ pub(crate) struct SectionFeed {
     /// A cap notice already showed for this fetch setting, so the periodic
     /// auto-refresh never repeats it.
     pub(crate) cap_notified: bool,
+    /// The repo store's sync lease and change watch, opened at startup.
+    /// `None` (no repo, or the store cannot open) syncs on its own.
+    pub(crate) link: Option<github::StoreLink>,
 }
 
 impl SectionFeed {
@@ -52,7 +55,7 @@ impl SectionFeed {
             auto_refresh: false, probe: false, refresh: github::Refresh::Delta,
             last_status: Instant::now(), last_full: Instant::now(),
             progress: None, replace: false, merged_window_hours: 24,
-            cap_notified: false }
+            cap_notified: false, link: None }
     }
 }
 
@@ -192,7 +195,7 @@ impl App {
     /// Startup hydration: paint the last persisted sidebar instantly so a
     /// cold start shows previous state. The background refresh landing in
     /// `poll_sections` updates these rows in place, so hydration only
-    /// changes when rows first appear. Missing or expired cache is a
+    /// changes when rows first appear. A store with no sync is a
     /// no-op and startup behaves as before. Startup-only: refreshes must
     /// never resurrect evicted rows, so nothing else calls this.
     pub(super) fn hydrate_cached_sections(&mut self) {
@@ -243,8 +246,9 @@ impl App {
     }
 
     /// Flip one list (0 open PRs, 1 merged PRs, 2 open issues, 3 closed
-    /// issues). The mask picks what the sections query fetches, so a plain
-    /// listing refetches; an active search ignores the toggles server-side.
+    /// issues). The mask filters the stored rows, so a plain listing
+    /// re-reads the store and sends no request; an active search ignores
+    /// the toggles server-side.
     pub(crate) fn toggle_list(&mut self, index: usize) {
         let value = match index {
             0 => &mut self.sidebar.show_open_prs,
@@ -255,8 +259,39 @@ impl App {
         *value = !*value;
         self.persist_prefs();
         if self.sidebar.query_active.trim().is_empty() {
-            self.refetch_recent();
+            self.reread_sections();
         }
+    }
+
+    /// True when this process syncs the repo's listing: it holds the
+    /// store's sync lease, or has no store link and syncs on its own.
+    pub(super) fn sync_holder(&self) -> bool {
+        self.sections.link.as_ref().is_none_or(github::StoreLink::holding)
+    }
+
+    /// Per tick: renew or try the sync lease, and when another process (or
+    /// this one's own fetch) wrote a new sync, re-read this instance's view
+    /// of the stored rows. Search mode and an in-flight listing fetch skip
+    /// the re-read; the fetch lands the same rows itself. True when rows
+    /// landed.
+    pub(super) fn watch_store(&mut self, now: Instant) -> bool {
+        let Some(link) = self.sections.link.as_mut() else { return false };
+        link.tick(now);
+        if !self.sidebar.query_active.trim().is_empty() || self.sections.rx.is_some() || !link.changed() {
+            return false;
+        }
+        self.reread_sections()
+    }
+
+    /// Land this instance's view of the stored rows: its window and list
+    /// toggles filter them locally, with no request. Rows the view no
+    /// longer shows leave unless visited or pinned. True when rows landed.
+    fn reread_sections(&mut self) -> bool {
+        let hours = self.sections.merged_window_hours;
+        let show = self.show_mask();
+        let Some(rows) = self.sections.link.as_ref().and_then(|link| link.rows(hours, show)) else { return false };
+        crate::app::poll::land_rows(self, rows, false, true);
+        true
     }
 
     pub(super) fn auto_refresh_recent(&mut self, now: Instant) {
@@ -269,6 +304,11 @@ impl App {
         }
         let search = !self.sidebar.query_active.trim().is_empty();
         if !search {
+            // Another process holds the sync lease: its writes land
+            // through `watch_store`, so this one sends no listing request.
+            if !self.sync_holder() {
+                return;
+            }
             self.sections.refresh = refresh_plan(
                 now.duration_since(self.sections.last_status),
                 now.duration_since(self.sections.last_full),
@@ -284,24 +324,30 @@ impl App {
         }
     }
 
-    /// Window change: drop unopened background rows and refetch from
-    /// scratch so a narrower window actually shrinks the list. The active
-    /// query keeps its text; the window only changes the search's
-    /// `updated:` token.
-    pub(crate) fn refetch_recent(&mut self) {
+    /// Window change or back to the listing: re-read the stored rows
+    /// through the new window, so a narrower window shrinks the list with
+    /// no request. The active query keeps its text and refetches; the
+    /// window only changes the search's `updated:` token.
+    pub(crate) fn reload_recent(&mut self) {
         self.sections.cap_notified = false;
-        self.drop_unvisited_background();
         if self.sidebar.query_active.trim().is_empty() {
-            self.merge_recent_sections();
+            // A search still in flight must not replace the listing later.
+            if std::mem::take(&mut self.sections.replace) {
+                self.sections.rx = None;
+                self.sections.progress = None;
+                self.sections.auto_refresh = false;
+            }
+            self.reread_sections();
         } else {
+            self.drop_unvisited_background();
             self.run_gh_search(self.sidebar.query_active.clone());
         }
     }
 
-    /// Set the merged/closed window and refetch the active query path.
+    /// Set the merged/closed window and reload the active view.
     pub(crate) fn set_window(&mut self, hours: u64) {
         self.sections.merged_window_hours = hours;
-        self.refetch_recent();
+        self.reload_recent();
         self.persist_prefs();
         self.notify(format!("merged window: {}", self.window_label()));
     }
@@ -313,7 +359,7 @@ impl App {
         self.sidebar.query_draft.clear();
         self.set_format_edit(crate::app::FormatEdit::None);
         self.sections.merged_window_hours = core::DEFAULT_WINDOW_HOURS;
-        self.refetch_recent();
+        self.reload_recent();
         self.persist_prefs();
         self.notify("recent: default query and window".to_string());
     }

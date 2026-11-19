@@ -475,6 +475,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed |= poll_auth(app);
     landed |= poll_sections(app);
     landed |= poll_repo_meta(app);
+    landed |= app.watch_store(Instant::now());
     let had_fetch = app.sections.rx.is_some();
     app.auto_refresh_recent(Instant::now());
     landed |= had_fetch != app.sections.rx.is_some();

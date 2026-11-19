@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use crate::api::Row;
 use crate::cache;
 
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION: &str = "3";
 
 /// How long a write waits for another process's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -38,7 +38,6 @@ CREATE TABLE items (
     checks TEXT,
     project_status TEXT NOT NULL,
     window_at TEXT,
-    position INTEGER,
     row_json TEXT NOT NULL
 );
 CREATE TABLE details (
@@ -50,24 +49,20 @@ CREATE TABLE details (
 );
 ";
 
-/// The last sync: its start (RFC 3339), which the next change-only
-/// search reaches back to, and the window and list mask it walked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sync {
-    pub started_at: String,
-    pub hours: u64,
-    pub show: [bool; 4],
-}
-
-impl Sync {
-    /// True when this sync's walk fetched every row the given window and
-    /// list mask show: a window no wider (0 is unbounded) and no list
-    /// it hid.
-    pub fn covers(&self, hours: u64, show: [bool; 4]) -> bool {
-        let window = self.hours == 0 || (hours != 0 && hours <= self.hours);
-        window && show.iter().zip(self.show).all(|(want, had)| !want || had)
-    }
-}
+/// The sync lease and the last sync start, one row per repo store.
+/// `holder` names the process that syncs the repo; its claim lasts until
+/// `lease_expires` (unix seconds) unless it renews. `started_at` (RFC
+/// 3339) is the start of the last sync, which the next change-only search
+/// reaches back to.
+const SYNC_SCHEMA: &str = "
+CREATE TABLE sync_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    started_at TEXT,
+    holder TEXT NOT NULL DEFAULT '',
+    lease_expires INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO sync_state (id) VALUES (1);
+";
 
 /// What the finder needs of one stored item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +125,7 @@ fn open_at(path: &Path) -> Result<Store, String> {
                 tx.execute_batch(&format!("DROP TABLE \"{}\"", table.replace('"', "\"\""))).map_err(fail)?;
             }
             tx.execute_batch(SCHEMA).map_err(fail)?;
+            tx.execute_batch(SYNC_SCHEMA).map_err(fail)?;
             tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?1)", [SCHEMA_VERSION])
                 .map_err(fail)?;
         }
@@ -147,28 +143,11 @@ fn schema_version(conn: &Connection) -> Option<String> {
 }
 
 impl Store {
-    /// The last sync, or `None` before the first one.
-    pub fn last_sync(&self) -> Option<Sync> {
-        let get = |key: &str| -> Option<String> {
-            self.conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional().ok().flatten()
-        };
-        let show_text = get("sync_show")?;
-        let flags: Vec<bool> = show_text.chars().map(|c| c == '1').collect();
-        Some(Sync {
-            started_at: get("sync_started_at")?,
-            hours: get("sync_hours")?.parse().ok()?,
-            show: flags.try_into().ok()?,
-        })
-    }
-
-    /// Every stored row: rows of the last sidebar result in its order,
-    /// then the rest, newest number first.
+    /// Every stored row, newest number first. The sidebar derives list
+    /// order from row data (`api::visible_rows`).
     pub fn rows(&self) -> Result<Vec<Row>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
-        let mut stmt = self
-            .conn
-            .prepare("SELECT row_json FROM items ORDER BY position IS NULL, position, number DESC")
-            .map_err(fail)?;
+        let mut stmt = self.conn.prepare("SELECT row_json FROM items ORDER BY number DESC").map_err(fail)?;
         let raw = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(fail)?;
         let mut rows = Vec::new();
         for json in raw {
@@ -203,17 +182,14 @@ impl Store {
         rows.collect::<Result<_, _>>().map_err(fail)
     }
 
-    /// One transaction: upsert `listed` (the sidebar result, positioned in
-    /// its order) and `other` (fetched rows no list shows now, unpositioned),
-    /// clear the old positions, and record `sync`.
-    pub fn write(&mut self, sync: &Sync, listed: &[Row], other: &[Row]) -> Result<(), String> {
+    /// One transaction: upsert `rows` and record `started_at` as the last
+    /// sync start. Rows it leaves out keep their stored data.
+    pub fn write(&mut self, started_at: &str, rows: &[Row]) -> Result<(), String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
-        tx.execute("UPDATE items SET position = NULL", []).map_err(fail)?;
         {
             let mut upsert = tx.prepare(UPSERT).map_err(fail)?;
-            let positioned = listed.iter().enumerate().map(|(i, row)| (row, Some(i as i64)));
-            for (row, position) in positioned.chain(other.iter().map(|row| (row, None))) {
+            for row in rows {
                 let issue = &row.issue;
                 let names = |list: Vec<&str>| serde_json::to_string(&list).unwrap_or_default();
                 let merged_at = (issue.is_pr && issue.state == "MERGED").then(|| row.window_at.clone()).flatten();
@@ -233,20 +209,12 @@ impl Store {
                         issue.checks.map(|c| format!("{c:?}")),
                         serde_json::to_string(&row.statuses).unwrap_or_default(),
                         row.window_at,
-                        position,
                         serde_json::to_string(row).map_err(|e| format!("store: {e}"))?,
                     ])
                     .map_err(fail)?;
             }
         }
-        let show: String = sync.show.iter().map(|s| if *s { '1' } else { '0' }).collect();
-        for (key, value) in [("sync_started_at", sync.started_at.clone()), ("sync_hours", sync.hours.to_string()), ("sync_show", show)] {
-            tx.execute(
-                "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                params![key, value],
-            )
-            .map_err(fail)?;
-        }
+        tx.execute("UPDATE sync_state SET started_at = ?1 WHERE id = 1", [started_at]).map_err(fail)?;
         tx.commit().map_err(fail)
     }
 }
@@ -343,18 +311,70 @@ impl Store {
     }
 }
 
+/// Sync lease and change watch. Every ghit process of a repo shares one
+/// sync stream: the lease holder alone fetches listings, and every
+/// process watches the file for the holder's writes.
+impl Store {
+    /// Start of the last sync, or `None` before the first one.
+    pub fn sync_started_at(&self) -> Option<String> {
+        self.conn
+            .query_row("SELECT started_at FROM sync_state WHERE id = 1", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+            .flatten()
+    }
+
+    /// Take or renew the lease for `holder` until `now + ttl` (unix
+    /// seconds). It succeeds when `holder` already holds it or the last
+    /// claim expired; `force` takes it from a live holder too. True when
+    /// `holder` holds the lease afterwards.
+    pub fn claim_lease(&self, holder: &str, now: i64, ttl: i64, force: bool) -> Result<bool, String> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE sync_state SET holder = ?1, lease_expires = ?2
+                 WHERE id = 1 AND (?4 OR holder = ?1 OR lease_expires <= ?3)",
+                params![holder, now + ttl, now, force],
+            )
+            .map_err(|e| format!("store: {e}"))?;
+        Ok(changed == 1)
+    }
+
+    /// Give the lease up at once, so another process takes it on its next
+    /// try instead of waiting out the expiry. A no-op unless `holder`
+    /// holds it.
+    pub fn release_lease(&self, holder: &str) -> Result<(), String> {
+        self.conn
+            .execute("UPDATE sync_state SET lease_expires = 0 WHERE id = 1 AND holder = ?1", [holder])
+            .map(|_| ())
+            .map_err(|e| format!("store: {e}"))
+    }
+
+    /// SQLite's change counter for this connection: it moves whenever
+    /// another connection (any process) commits to the file.
+    pub fn data_version(&self) -> Result<i64, String> {
+        self.conn.query_row("PRAGMA data_version", [], |r| r.get(0)).map_err(|e| format!("store: {e}"))
+    }
+
+    /// How long this connection waits for another process's lock.
+    pub fn set_busy_timeout(&self, timeout: Duration) -> Result<(), String> {
+        self.conn.busy_timeout(timeout).map_err(|e| format!("store: {e}"))
+    }
+}
+
 /// `closed_at` stays NULL: the listing fields carry no `closedAt`.
 const UPSERT: &str = "
 INSERT INTO items (number, kind, state, title, author, labels, assignees, milestone,
-    created_at, updated_at, merged_at, checks, project_status, window_at, position, row_json)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+    created_at, updated_at, merged_at, checks, project_status, window_at, row_json)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
 ON CONFLICT (number) DO UPDATE SET
     kind = excluded.kind, state = excluded.state, title = excluded.title,
     author = excluded.author, labels = excluded.labels, assignees = excluded.assignees,
     milestone = excluded.milestone, created_at = excluded.created_at,
     updated_at = excluded.updated_at, merged_at = excluded.merged_at,
     checks = excluded.checks, project_status = excluded.project_status,
-    window_at = excluded.window_at, position = excluded.position, row_json = excluded.row_json
+    window_at = excluded.window_at, row_json = excluded.row_json
 ";
 
 #[cfg(test)]
@@ -369,10 +389,6 @@ mod tests {
             complete: false,
             window_at: None,
         }
-    }
-
-    fn sync(started_at: &str) -> Sync {
-        Sync { started_at: started_at.to_string(), hours: 24, show: [true, false, true, true] }
     }
 
     fn numbers(store: &Store) -> Vec<u64> {
@@ -390,7 +406,7 @@ mod tests {
         let mut b = row(2, "MERGED");
         b.issue.is_pr = true;
         b.issue.updated_at = "2026-02-01T00:00:00Z".into();
-        store.write(&sync("2026-02-02T00:00:00Z"), &[], &[a, b]).unwrap();
+        store.write("2026-02-02T00:00:00Z", &[a, b]).unwrap();
         let got = store.finder_candidates().unwrap();
         assert_eq!(got.iter().map(|c| c.number).collect::<Vec<_>>(), vec![2, 1]);
         assert!(got[0].is_pr && got[0].state == "MERGED");
@@ -416,17 +432,21 @@ mod tests {
     }
 
     #[test]
-    fn writes_round_trip_rows_order_and_sync() {
+    fn writes_round_trip_rows_and_sync_start() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
-        assert!(store.last_sync().is_none() && numbers(&store).is_empty(), "a new store is empty");
-        store.write(&sync("t1"), &[row(5, "OPEN"), row(2, "OPEN")], &[row(9, "CLOSED")]).unwrap();
-        assert_eq!(numbers(&store), vec![5, 2, 9], "listed order first, then the rest");
-        assert_eq!(store.last_sync(), Some(sync("t1")));
-        // A later write repositions; rows it leaves out keep their data.
-        store.write(&sync("t2"), &[row(2, "OPEN")], &[]).unwrap();
-        assert_eq!(numbers(&store), vec![2, 9, 5]);
-        assert_eq!(store.last_sync().unwrap().started_at, "t2");
+        assert!(store.sync_started_at().is_none() && numbers(&store).is_empty(), "a new store is empty");
+        store.write("t1", &[row(5, "OPEN"), row(2, "OPEN"), row(9, "CLOSED")]).unwrap();
+        assert_eq!(numbers(&store), vec![9, 5, 2]);
+        assert_eq!(store.sync_started_at().as_deref(), Some("t1"));
+        // A later write upserts; rows it leaves out keep their data.
+        let mut retitled = row(2, "OPEN");
+        retitled.issue.title = "renamed".to_string();
+        store.write("t2", &[retitled]).unwrap();
+        let rows = store.rows().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.iter().find(|r| r.issue.number == 2).unwrap().issue.title, "renamed");
+        assert_eq!(store.sync_started_at().as_deref(), Some("t2"));
         let wal: String = store.conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(wal, "wal");
     }
@@ -437,11 +457,42 @@ mod tests {
         let file = dir.path().join("r.sqlite");
         let mut first = open_at(&file).unwrap();
         let mut second = open_at(&file).unwrap();
-        first.write(&sync("t1"), &[row(1, "OPEN")], &[]).unwrap();
+        first.write("t1", &[row(1, "OPEN")]).unwrap();
         assert_eq!(numbers(&second), vec![1]);
-        second.write(&sync("t2"), &[row(2, "OPEN"), row(1, "OPEN")], &[]).unwrap();
+        second.write("t2", &[row(2, "OPEN")]).unwrap();
         assert_eq!(numbers(&first), vec![2, 1]);
-        assert_eq!(first.last_sync().unwrap().started_at, "t2");
+        assert_eq!(first.sync_started_at().as_deref(), Some("t2"));
+    }
+
+    #[test]
+    fn lease_has_one_holder_until_it_expires_or_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("r.sqlite");
+        let (a, b) = (open_at(&file).unwrap(), open_at(&file).unwrap());
+        assert!(a.claim_lease("a", 100, 60, false).unwrap(), "a free lease is taken");
+        assert!(!b.claim_lease("b", 101, 60, false).unwrap(), "a live lease refuses others");
+        assert!(a.claim_lease("a", 130, 60, false).unwrap(), "the holder renews");
+        assert!(!b.claim_lease("b", 189, 60, false).unwrap(), "renewal pushed the expiry to 190");
+        assert!(b.claim_lease("b", 190, 60, false).unwrap(), "an expired lease hands over");
+        assert!(!a.claim_lease("a", 191, 60, false).unwrap(), "the old holder lost it");
+        a.release_lease("a").unwrap();
+        assert!(!a.claim_lease("a", 192, 60, false).unwrap(), "only the holder can release");
+        b.release_lease("b").unwrap();
+        assert!(a.claim_lease("a", 192, 60, false).unwrap(), "a released lease is free at once");
+        assert!(b.claim_lease("b", 193, 60, true).unwrap(), "force takes a live lease");
+        assert!(!a.claim_lease("a", 194, 60, false).unwrap());
+    }
+
+    #[test]
+    fn data_version_moves_on_other_connections_commits_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("r.sqlite");
+        let mut writer = open_at(&file).unwrap();
+        let watcher = open_at(&file).unwrap();
+        let (seen, own) = (watcher.data_version().unwrap(), writer.data_version().unwrap());
+        writer.write("t1", &[row(1, "OPEN")]).unwrap();
+        assert_ne!(watcher.data_version().unwrap(), seen, "another connection's commit moves it");
+        assert_eq!(writer.data_version().unwrap(), own, "a connection's own commit does not");
     }
 
     #[test]
@@ -449,30 +500,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("r.sqlite");
         let mut store = open_at(&file).unwrap();
-        store.write(&sync("t1"), &[row(1, "OPEN")], &[]).unwrap();
+        store.write("t1", &[row(1, "OPEN")]).unwrap();
         store.conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'", []).unwrap();
         store.conn.execute_batch("CREATE TABLE leftover (x)").unwrap();
         drop(store);
         let store = open_at(&file).unwrap();
-        assert!(store.last_sync().is_none() && numbers(&store).is_empty(), "mismatch drops the old copy");
+        assert!(store.sync_started_at().is_none() && numbers(&store).is_empty(), "mismatch drops the old copy");
         let leftover: i64 = store
             .conn
             .query_row("SELECT count(*) FROM sqlite_master WHERE name = 'leftover'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(leftover, 0, "every old table goes");
         assert_eq!(schema_version(&store.conn).as_deref(), Some(SCHEMA_VERSION));
-    }
-
-    #[test]
-    fn sync_covers_narrower_windows_and_fewer_lists_only() {
-        let synced = Sync { started_at: String::new(), hours: 168, show: [true, true, false, true] };
-        assert!(synced.covers(168, [true, true, false, true]));
-        assert!(synced.covers(24, [true, false, false, false]), "narrower window, fewer lists");
-        assert!(!synced.covers(720, [true; 4]), "wider window");
-        assert!(!synced.covers(0, [true, false, false, false]), "unbounded window");
-        assert!(!synced.covers(24, [false, false, true, false]), "a list it hid");
-        let unbounded = Sync { hours: 0, ..synced };
-        assert!(unbounded.covers(0, [true, false, false, false]) && unbounded.covers(24, [true, false, false, false]));
+        assert!(store.claim_lease("a", 1, 60, false).unwrap(), "the rebuilt lease row is free");
     }
 
     #[test]
@@ -491,7 +531,7 @@ mod tests {
         let mut listed = row(5, "OPEN");
         listed.issue.updated_at = "t1".to_string();
         listed.statuses = vec![("Board".to_string(), Some("Todo".to_string()))];
-        store.write(&sync("s"), &[listed], &[]).unwrap();
+        store.write("s", &[listed]).unwrap();
         assert_eq!(store.item_updated_at(5).as_deref(), Some("t1"));
         assert_eq!(store.item_statuses(5), Some(vec![("Board".to_string(), Some("Todo".to_string()))]));
         assert_eq!(store.item_updated_at(6), None);
@@ -510,7 +550,7 @@ mod tests {
         // A sync that reports a newer updated_at makes every detail stale.
         let mut newer = row(5, "OPEN");
         newer.issue.updated_at = "t2".to_string();
-        store.write(&sync("s2"), &[newer], &[]).unwrap();
+        store.write("s2", &[newer]).unwrap();
         assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
 
         // A refetch replaces the stored copy.

@@ -332,7 +332,7 @@ pub async fn sections(
 ///
 /// Rows regroup by section before the fresh-then-cached merge, so the
 /// default (unsorted) sidebar keeps a full refresh's order.
-pub fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chrono::Utc>, hours: u64) -> Vec<Row> {
+fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chrono::Utc>, hours: u64) -> Vec<Row> {
     fn section(row: &Row) -> usize {
         match (row.issue.is_pr, row.issue.state.as_str()) {
             (true, "MERGED") => 1,
@@ -467,44 +467,26 @@ fn shown(row: &Row, now: chrono::DateTime<chrono::Utc>, hours: u64, show: [bool;
         && row.window_at.as_deref().is_none_or(|at| within_window(Some(at), now, hours))
 }
 
-/// Sidebar view of stored rows: the shown ones, regrouped by list in
-/// stored order, up to the row cap.
+/// Sidebar view of stored rows: the shown ones, grouped by list, each
+/// list in its server order (`list_order`), up to the row cap.
 pub fn visible_rows(rows: Vec<Row>, now: chrono::DateTime<chrono::Utc>, hours: u64, show: [bool; 4]) -> Vec<Row> {
-    let rows = rows.into_iter().filter(|r| shown(r, now, hours, show)).collect();
+    let mut rows: Vec<Row> = rows.into_iter().filter(|r| shown(r, now, hours, show)).collect();
+    rows.sort_by(|a, b| list_order(b).cmp(&list_order(a)));
     merge_rows(Vec::new(), rows, now, hours)
 }
 
-/// Merge change-only rows into the last cached payload. A changed row
-/// that stays in its list replaces the cached one in place; a new row, or
-/// one that moved list, goes in as fresh. A changed row that is now
-/// hidden, out of the window, or in no list drops, cached copy included.
-pub fn merge_delta(
-    delta: Vec<Row>,
-    cached: Vec<Row>,
-    now: chrono::DateTime<chrono::Utc>,
-    hours: u64,
-    show: [bool; 4],
-) -> Vec<Row> {
-    let touched: HashSet<u64> = delta.iter().map(|r| r.issue.number).collect();
-    let order: Vec<u64> = delta.iter().map(|r| r.issue.number).collect();
-    let mut changed: std::collections::HashMap<u64, Row> = delta.into_iter()
-        .filter(|r| shown(r, now, hours, show))
-        .map(|r| (r.issue.number, r))
-        .collect();
-    let mut kept = Vec::with_capacity(cached.len());
-    for row in cached {
-        let n = row.issue.number;
-        if !touched.contains(&n) {
-            kept.push(row);
-            continue;
-        }
-        let same_list = changed.get(&n).is_some_and(|c| listed_section(c) == listed_section(&row));
-        if same_list {
-            kept.extend(changed.remove(&n));
-        }
-    }
-    let fresh = order.into_iter().filter_map(|n| changed.remove(&n)).collect();
-    merge_rows(fresh, kept, now, hours)
+/// Sort key, descending, that matches each list's server order from row
+/// data alone: open rows by creation, merged PRs by merge time (their
+/// window anchor), closed issues by last update; ties by number. GitHub
+/// timestamps share one RFC 3339 form, so text order is time order.
+fn list_order(row: &Row) -> (&str, u64) {
+    let issue = &row.issue;
+    let at = match (issue.is_pr, issue.state.as_str()) {
+        (true, "MERGED") => row.window_at.as_deref().unwrap_or(&issue.updated_at),
+        (_, "CLOSED") => &issue.updated_at,
+        _ => &issue.created_at,
+    };
+    (at, issue.number)
 }
 
 #[cfg(test)]
@@ -790,6 +772,32 @@ mod tests {
             "openIssues":{"nodes": [], "pageInfo":{"hasNextPage":false,"endCursor":null}},
             "closedIssues":{"nodes": [], "pageInfo":{"hasNextPage":false,"endCursor":null}}}}})
     }
+    #[test]
+    fn visible_rows_order_each_list_from_row_dates() {
+        let now = test_now();
+        let dated = |n: u64, is_pr: bool, state: &str, created: &str, updated: &str, merged: Option<&str>| {
+            let mut row = section_row(n, "", state, is_pr, merged.or((state == "CLOSED").then_some(updated)));
+            row.issue.created_at = created.to_owned();
+            row.issue.updated_at = updated.to_owned();
+            row
+        };
+        let rows = vec![
+            // Open: newest created first, whatever the update time.
+            dated(1, true, "OPEN", "2026-11-10T01:00:00Z", "2026-11-10T11:00:00Z", None),
+            dated(2, true, "OPEN", "2026-11-10T05:00:00Z", "2026-11-10T05:00:00Z", None),
+            // Merged: newest merged first; a later update does not lift it.
+            dated(3, true, "MERGED", "2026-11-01T00:00:00Z", "2026-11-10T11:30:00Z", Some("2026-11-10T02:00:00Z")),
+            dated(4, true, "MERGED", "2026-11-01T00:00:00Z", "2026-11-10T04:00:00Z", Some("2026-11-10T04:00:00Z")),
+            // Open issues tie on creation: higher number first.
+            dated(5, false, "OPEN", "2026-11-10T03:00:00Z", "2026-11-10T03:00:00Z", None),
+            dated(6, false, "OPEN", "2026-11-10T03:00:00Z", "2026-11-10T03:00:00Z", None),
+            // Closed issues: newest updated first.
+            dated(7, false, "CLOSED", "2026-11-10T08:00:00Z", "2026-11-10T03:00:00Z", None),
+            dated(8, false, "CLOSED", "2026-11-01T00:00:00Z", "2026-11-10T06:00:00Z", None),
+        ];
+        let order: Vec<u64> = visible_rows(rows, now, 24, [true; 4]).iter().map(|r| r.issue.number).collect();
+        assert_eq!(order, vec![2, 1, 4, 3, 6, 5, 8, 7]);
+    }
     fn section_row(number: u64, title: &str, state: &str, is_pr: bool, window_at: Option<&str>) -> Row {
         Row {
             issue: IssueData {
@@ -994,32 +1002,5 @@ mod tests {
         assert_eq!(row(2).issue.parent, Some(9));
         assert_eq!(row(2).issue.labels[0].name, "bug");
         assert!(parse_delta_page(&json!({"errors": [{"message": "boom"}]})).is_err());
-    }
-    #[test]
-    fn merge_delta_replaces_adds_and_drops_rows() {
-        let now = test_now();
-        let cached = vec![
-            section_row(1, "old open pr", "OPEN", true, None),
-            section_row(2, "kept pr", "OPEN", true, None),
-            section_row(3, "open issue", "OPEN", false, None),
-            section_row(4, "soon closed pr", "OPEN", true, None),
-            section_row(5, "soon hidden", "OPEN", false, None),
-        ];
-        let delta = vec![
-            section_row(1, "old open pr, edited", "OPEN", true, None),
-            section_row(9, "new pr", "OPEN", true, None),
-            section_row(3, "issue now closed", "CLOSED", false, Some("2026-11-10T11:30:00Z")),
-            section_row(4, "closed unmerged", "CLOSED", true, None),
-            section_row(5, "closed long ago", "CLOSED", false, Some("2026-11-01T00:00:00Z")),
-            section_row(6, "merged, hidden list", "MERGED", true, Some("2026-11-10T11:00:00Z")),
-        ];
-        let rows = merge_delta(delta, cached, now, 24, [true, false, true, true]);
-        let shown: Vec<(u64, &str)> = rows.iter().map(|r| (r.issue.number, r.issue.title.as_str())).collect();
-        assert_eq!(shown, vec![
-            (9, "new pr"),
-            (1, "old open pr, edited"),
-            (2, "kept pr"),
-            (3, "issue now closed"),
-        ], "new rows lead their list, changed rows replace in place, aged-out, unlisted and hidden rows drop");
     }
 }

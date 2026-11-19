@@ -87,7 +87,7 @@ fn section_landing_warns_at_row_cap() {
     poll_sections(&mut app);
     assert!(app.message.is_empty(), "no repeat for the same fetch setting");
     // A user window change re-arms the notice.
-    app.refetch_recent();
+    app.reload_recent();
     assert!(!app.sections.cap_notified);
 }
 
@@ -273,14 +273,13 @@ fn auto_refresh_failures_notify_instead_of_going_silent() {
 }
 
 #[test]
-fn toggling_a_list_queues_a_sections_fetch_with_the_new_mask() {
+fn toggling_a_list_filters_locally_without_a_fetch() {
     let mut app = sidebar_app(&[1]);
     app.fetches.hold = true;
-    assert!(app.sections.rx.is_none());
     app.toggle_list(1);
     assert!(!app.sidebar.show_merged_prs);
     assert_eq!(app.show_mask(), [true, false, true, true]);
-    assert!(app.sections.rx.is_some(), "toggle refetches the sections");
+    assert!(app.sections.rx.is_none(), "toggle sends no request");
     let view = fetch_queue::View { current: app.nav.requested, tab_shown: false };
-    assert_eq!(app.fetches.queue_mut().order(&view), vec![(core::Kind::Sections, None)]);
+    assert!(app.fetches.queue_mut().order(&view).is_empty());
 }
