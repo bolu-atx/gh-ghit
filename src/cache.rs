@@ -8,6 +8,10 @@ pub const CACHE_TTL_SECS: u64 = 1800; // 30 minutes
 pub(crate) fn base_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         PathBuf::from(xdg).join("ghit")
+    } else if cfg!(test) {
+        // A test that forgets a temp XDG_DATA_HOME must never write into
+        // the user's real data dir (stores, prefs, caches).
+        std::env::temp_dir().join(format!("ghit-test-{}", std::process::id()))
     } else if let Ok(home) = std::env::var("HOME") {
         PathBuf::from(home).join(".local").join("share").join("ghit")
     } else {
@@ -299,6 +303,22 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tests_never_resolve_the_real_data_dir() {
+        let _guard = test_env_lock();
+        let saved = std::env::var("XDG_DATA_HOME").ok();
+        std::env::remove_var("XDG_DATA_HOME");
+        let dir = base_dir();
+        if let Some(v) = saved {
+            std::env::set_var("XDG_DATA_HOME", v);
+        }
+        assert!(dir.starts_with(std::env::temp_dir()), "{dir:?}");
+        if let Ok(home) = std::env::var("HOME") {
+            let real = std::path::Path::new(&home).join(".local").join("share");
+            assert!(!dir.starts_with(real), "{dir:?}");
+        }
+    }
 
     #[test]
     fn saved_queries_round_trip_and_default_for_old_prefs() {
