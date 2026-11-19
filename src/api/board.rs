@@ -1,4 +1,4 @@
-use super::client::{client, graphql_auth_failure, graphql_url, post_json};
+use super::client::{client, RATE_LIMIT_FIELD, graphql_auth_failure, graphql_url, post_json};
 use crate::model::{BoardData, BoardItem, Label};
 use serde_json::{json, Map, Value};
 
@@ -45,6 +45,7 @@ fn query(kind: &str) -> String {
                     }}
                 }}
             }}
+            {RATE_LIMIT_FIELD}
         }}"#
     )
 }

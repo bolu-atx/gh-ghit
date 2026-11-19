@@ -1,4 +1,4 @@
-use super::client::{client, get, graphql_auth_failure, graphql_url, post_json, rest_base};
+use super::client::{client, RATE_LIMIT_FIELD, get, graphql_auth_failure, graphql_url, post_json, rest_base};
 use crate::model::{self, GraphData, GraphEdgeKind, GraphLinkedPr, GraphNode, Label};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -42,7 +42,9 @@ fn graph_query(with_blockers: bool) -> String {
     q.push_str(GRAPH_META);
     q.push_str(" } ... on PullRequest { number title state ");
     q.push_str(GRAPH_META);
-    q.push_str(" } } } } } } } }");
+    q.push_str(" } } } } } } }");
+    q.push_str(RATE_LIMIT_FIELD);
+    q.push_str(" }");
     q
 }
 
@@ -57,7 +59,7 @@ fn graph_detail_query(owner: &str, name: &str, numbers: &[u64]) -> String {
             json!(name)
         ));
     }
-    format!("query {{ {fields} }}")
+    format!("query {{ {fields} {RATE_LIMIT_FIELD} }}")
 }
 
 fn parse_graph_labels(v: &Value) -> Vec<Label> {

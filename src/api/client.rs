@@ -171,6 +171,33 @@ pub(super) fn note_rate_limit(res: &reqwest::Response) {
     }
 }
 
+/// Selection every GraphQL query appends so each reply reports its cost.
+pub(super) const RATE_LIMIT_FIELD: &str = "rateLimit { cost remaining resetAt }";
+
+/// Below this many remaining points, GraphQL calls back off until reset.
+const LOW_POINTS: u64 = 100;
+
+/// `(cost, remaining, reset unix second)` from a payload's `rateLimit`.
+/// Payloads without it (REST, fixture server) yield `None`.
+pub(crate) fn parse_graphql_cost(value: &Value) -> Option<(u64, u64, u64)> {
+    let rl = value.pointer("/data/rateLimit")?;
+    let reset = chrono::DateTime::parse_from_rfc3339(rl.get("resetAt")?.as_str()?).ok()?;
+    Some((rl.get("cost")?.as_u64()?, rl.get("remaining")?.as_u64()?, u64::try_from(reset.timestamp()).ok()?))
+}
+
+/// Last GraphQL `(cost, remaining)`, kept for diagnostics. ghit has no
+/// log file and the TUI owns stderr, so nothing is printed.
+static LAST_COST: std::sync::Mutex<Option<(u64, u64)>> = std::sync::Mutex::new(None);
+
+/// Record a reply's query cost and back off before the quota runs dry.
+pub(super) fn note_graphql_cost(value: &Value) {
+    let Some((cost, remaining, reset)) = parse_graphql_cost(value) else { return };
+    *LAST_COST.lock().unwrap() = Some((cost, remaining));
+    if remaining < LOW_POINTS {
+        RATE_LIMIT_UNTIL.fetch_max(reset, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// True while GitHub's last word says the quota is spent.
 pub fn rate_limited() -> bool {
     RATE_LIMIT_UNTIL.load(std::sync::atomic::Ordering::Relaxed) > unix_now()
@@ -229,7 +256,9 @@ pub(super) async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Re
 }
 
 pub(super) async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
-    send_json(client.post(url), url, bearer, body).await
+    let value = send_json(client.post(url), url, bearer, body).await?;
+    note_graphql_cost(&value);
+    Ok(value)
 }
 
 pub(super) async fn patch_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
@@ -295,6 +324,13 @@ pub(super) fn graphql_url() -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn graphql_cost_parses_and_tolerates_absence() {
+        let v = json!({"data": {"rateLimit": {"cost": 3, "remaining": 4990, "resetAt": "2026-11-18T12:00:00Z"}}});
+        assert_eq!(parse_graphql_cost(&v), Some((3, 4990, 1_795_003_200)));
+        assert_eq!(parse_graphql_cost(&json!({"data": {"repository": {}}})), None);
+        assert_eq!(parse_graphql_cost(&json!([1, 2])), None);
+    }
     #[test]
     fn api_base_override_wins_over_host() {
         assert_eq!(api_endpoints("invalid.example", Some("http://127.0.0.1:1234/")),
