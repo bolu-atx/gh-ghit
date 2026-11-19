@@ -5,9 +5,12 @@
 
 use super::open_at;
 use crate::api::Row;
-use crate::model::{BoardDetail, IssueData, IssueLinks};
+use crate::model::{Author, BoardDetail, CheckState, IssueData, IssueLinks, Label};
 
 const MILESTONES: [&str; 5] = ["Offline first", "Fast startup", "Clear review flow", "Safe sync", "Readable diffs"];
+/// The subject label of each milestone, in `MILESTONES` order.
+const SUBJECTS: [&str; 5] = ["store", "perf", "review", "sync", "diff"];
+const PEOPLE: [&str; 3] = ["bo", "ana", "kim"];
 
 /// One demo item: number, PR or not, state, title, milestone index.
 type Spec = (u64, bool, &'static str, &'static str, Option<usize>);
@@ -136,8 +139,39 @@ fn demo_rows() -> Vec<Row> {
             links: IssueLinks { blocked_by: incoming(BLOCKS), closed_by: incoming(CLOSES) },
             ..IssueData::default()
         };
+        // Labels, assignees, project status and checks vary by number, so
+        // map cards have something to show.
+        let mut labels: Vec<&str> = milestone.map(|i| SUBJECTS[i]).into_iter().collect();
+        if number % 7 == 0 {
+            labels.push("bug");
+        }
+        if milestone.is_none() {
+            labels.push("good first issue");
+        }
+        let issue = IssueData {
+            labels: labels.into_iter().map(|name| Label { name: name.to_string() }).collect(),
+            assignees: PEOPLE.iter()
+                .skip(number as usize % 3)
+                .take(if number % 4 == 0 { 0 } else { 1 + number as usize % 2 })
+                .map(|login| Author { login: login.to_string() })
+                .collect(),
+            checks: is_pr.then(|| [CheckState::Pass, CheckState::Fail, CheckState::Pending][number as usize % 3]),
+            ..issue
+        };
+        let status = match (state, number % 3) {
+            ("OPEN", 0) => "Todo",
+            ("OPEN", 1) => "In progress",
+            ("OPEN", _) => "In review",
+            _ => "Done",
+        };
+        let detail = BoardDetail {
+            created: "2026-11-01".to_string(),
+            updated: issue.updated_at[..10].to_string(),
+            comments: number as usize % 5,
+        };
         let window_at = (state != "OPEN").then(|| issue.updated_at.clone());
-        Row { issue, statuses: vec![], detail: BoardDetail::default(), complete: false, window_at }
+        let statuses = vec![("Roadmap".to_string(), Some(status.to_string()))];
+        Row { issue, statuses, detail, complete: false, window_at }
     }).collect()
 }
 
@@ -163,10 +197,20 @@ fn write_graph_demo_store() {
     let mut store = open_at(&path).expect("store opens");
     let rows = demo_rows();
     store.write("2026-11-19T00:00:00Z", &rows).expect("store writes");
-    // Stored details let every open serve offline, with no request.
+    // Stored details let every open serve offline, with no request. Every
+    // fifth item has an empty body, so its map card says so.
     for row in &rows {
         let mut issue = row.issue.clone();
-        issue.body = format!("Demo item #{} for the dependency map.", issue.number);
+        if issue.number % 5 != 0 {
+            issue.body = format!(
+                "Demo item #{} for the dependency map: {}.\n\nIt belongs to {}. Its links come \
+                 from the demo tables, so the map, the cards and the e2e scenario all read \
+                 the same store.",
+                issue.number,
+                issue.title.to_lowercase(),
+                issue.milestone.as_deref().unwrap_or("no milestone"),
+            );
+        }
         let bundle = (issue, Vec::<(String, Option<String>)>::new());
         store.put_detail(super::Detail::Issue, row.issue.number, &row.issue.updated_at, &bundle).expect("detail writes");
     }

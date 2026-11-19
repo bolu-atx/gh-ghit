@@ -14,6 +14,7 @@ mod help;
 mod hints;
 mod main_pane;
 mod map;
+mod map_card;
 mod search;
 mod sidebar;
 mod status;
@@ -91,6 +92,9 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
     app.hits.side_pr_area = Rect::default();
     app.hits.map_area = Rect::default();
     app.hits.map_nodes.clear();
+    app.hits.map_edges.clear();
+    app.hits.map_card = Rect::default();
+    app.hits.map_card_hits.clear();
     let (sidebar_w, right_w) = (app.layout.sidebar, app.layout.right);
     let cols = Layout::default()
         .direction(Direction::Horizontal)

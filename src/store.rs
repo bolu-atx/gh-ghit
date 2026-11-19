@@ -430,8 +430,26 @@ impl Store {
 
     /// The stored detail when it is fresh for an open (`serve_stored`).
     pub fn fresh_detail<T: serde::de::DeserializeOwned>(&self, kind: Detail, number: u64, force: bool) -> Option<T> {
-        let (stored_at, payload): (String, String) = self
-            .conn
+        let (stored_at, payload) = self.detail_payload(kind, number)?;
+        let current = self.item_updated_at(number);
+        if !serve_stored(force, Some(&stored_at), current.as_deref()) {
+            return None;
+        }
+        // A payload that no longer parses is a miss; the fetch rewrites it.
+        serde_json::from_str(&payload).ok()
+    }
+
+    /// The stored detail whatever its age, for views that only show it.
+    pub fn stored_detail<T>(&self, kind: Detail, number: u64) -> Option<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        serde_json::from_str(&self.detail_payload(kind, number)?.1).ok()
+    }
+
+    /// `updated_at` and raw payload of a stored detail.
+    fn detail_payload(&self, kind: Detail, number: u64) -> Option<(String, String)> {
+        self.conn
             .query_row(
                 "SELECT updated_at, payload FROM details WHERE number = ?1 AND kind = ?2",
                 params![number as i64, kind.name()],
@@ -439,13 +457,7 @@ impl Store {
             )
             .optional()
             .ok()
-            .flatten()?;
-        let current = self.item_updated_at(number);
-        if !serve_stored(force, Some(&stored_at), current.as_deref()) {
-            return None;
-        }
-        // A payload that no longer parses is a miss; the fetch rewrites it.
-        serde_json::from_str(&payload).ok()
+            .flatten()
     }
 
     /// Store a detail with the `updated_at` it was fetched at.
@@ -791,6 +803,7 @@ mod tests {
         newer.issue.updated_at = "t2".to_string();
         store.write("s2", &[newer]).unwrap();
         assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
+        assert_eq!(store.stored_detail::<crate::model::IssueData>(Detail::Issue, 5).unwrap().body, "b", "a view still reads it");
 
         // A refetch replaces the stored copy.
         let fixed = crate::model::IssueData { body: "new".to_string(), updated_at: "t2".to_string(), ..issue.clone() };

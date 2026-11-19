@@ -323,3 +323,179 @@ fn one_tick_steps_a_moving_layout_at_least_once() {
     assert_ne!(before, after, "the tick stepped the layout");
     assert_eq!(app.step_map(std::time::Duration::ZERO), 1, "a spent budget still takes one step");
 }
+
+/// Stored details for #7's card: status, labels, assignees and a body.
+fn stored_detail(app: &mut App) {
+    let mut issue = super::test_support::sample(7);
+    issue.title = "Center issue".to_string();
+    issue.labels = vec![crate::model::Label { name: "perf".to_string() }, crate::model::Label { name: "sync".to_string() }];
+    issue.assignees = vec![crate::model::Author { login: "bo".to_string() }, crate::model::Author { login: "ana".to_string() }];
+    let detail = crate::model::BoardDetail { created: "2026-01-02".to_string(), updated: "2026-01-05".to_string(), comments: 2 };
+    let row = crate::github::Row {
+        issue,
+        statuses: vec![("Board".to_string(), Some("In progress".to_string()))],
+        detail,
+        complete: false,
+        window_at: None,
+    };
+    let body = "Split the queue in two.\n\nThe current issue goes first; the rest wait their turn.".to_string();
+    app.map.detail = Some(crate::app::CardDetail { number: 7, version: app.map.version, row: Some(row), body: Some(body) });
+}
+
+/// Rows of the card as text.
+fn card_rows(app: &mut App) -> String {
+    let buf = draw_buffer(app);
+    let area = app.hits.map_card;
+    (area.y..area.bottom())
+        .map(|y| (area.x..area.right()).map(|x| buf[(x, y)].symbol()).collect::<String>().trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Screen cell of some drawn cell of the edge from `src` to `dst`.
+fn edge_cell(app: &App, src: u64, dst: u64) -> (u16, u16) {
+    let edge = app.map.graph.edge_between(src, dst).unwrap();
+    app.hits.map_edges.iter().rev().find(|(_, e)| *e == edge).map(|(cell, _)| *cell).unwrap()
+}
+
+#[test]
+fn node_card_shows_the_stored_item() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    stored_detail(&mut app);
+    app.map.card = Some(crate::app::MapCard::Node);
+    let text = card_rows(&mut app);
+    let rows: Vec<&str> = text.lines().collect();
+    let expected = [
+        "┌ #7 ───────────────────────────────── × ┐",
+        "│ Center issue                           │",
+        "│ ● issue · open · blocked               │",
+        "│                                        │",
+        "│ milestone Ship it                      │",
+        &format!("│ status    {} In progress                │", crate::theme::column_icon("In progress")),
+        "│ labels    ● perf ● sync                │",
+        "│ assignees @bo @ana                     │",
+        "│ updated   2 comments · 2026-01-05      │",
+        "│                                        │",
+        "│ Split the queue in two.                │",
+        "│                                        │",
+        "│ The current issue goes first; the rest │",
+        "│ wait their turn.                       │",
+    ];
+    assert_eq!(rows[..expected.len()].join("\n"), expected.join("\n"));
+    assert_eq!(rows[rows.len() - 2], "│ [open ↵] [next link e] [close esc]     │");
+    let map = map_rows(&mut app).join("\n");
+    assert!(map.contains("▌#7 Center issue"), "the selected node stays in view:\n{map}");
+    assert!(app.hits.map_area.right() <= app.hits.map_card.x, "the map shrinks to the left of the card");
+
+    app.map.detail = None;
+    let text = card_rows(&mut app);
+    assert!(text.contains("Not in the local copy yet.") && text.contains("milestone Ship it"), "{text}");
+}
+
+#[test]
+fn edge_card_names_the_link_and_both_ends() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    app.map.card = Some(crate::app::MapCard::Edge { src: 9, dst: 7 });
+    let text = card_rows(&mut app);
+    let rows: Vec<&str> = text.lines().collect();
+    let expected = [
+        "┌ link ─────────────────────────────── × ┐",
+        "│ #9 closes #7                           │",
+        "│                                        │",
+        "│  #9 Fix it                             │",
+        "│   PR · open                            │",
+        "│                                        │",
+        "│ ▌#7 Center issue                       │",
+        "│   issue · open · blocked               │",
+    ];
+    assert_eq!(rows[..expected.len()].join("\n"), expected.join("\n"));
+    assert_eq!(rows[rows.len() - 2], "│ [next link e] [close esc]              │");
+    let buf = draw_buffer(&mut app);
+    let (x, y) = edge_cell(&app, 9, 7);
+    assert_eq!(buf[(x, y)].fg, crate::theme::teal(), "the card's edge is highlighted");
+}
+
+#[test]
+fn edge_hits_skip_labels_and_a_click_on_an_edge_shows_its_card() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    for &((x, y), _) in &app.hits.map_edges {
+        assert!(app.hits.map_nodes.iter().all(|(rect, _)| !rect.contains((x, y).into())), "labels win at {x},{y}");
+    }
+    let (x, y) = edge_cell(&app, 11, 7);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+    handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
+    assert_eq!(app.map.card, Some(crate::app::MapCard::Edge { src: 11, dst: 7 }));
+    let text = card_rows(&mut app);
+    assert!(text.contains("#11 blocks #7"), "{text}");
+    let (end, _) = app.hits.map_card_hits.iter().find(|(_, part)| *part == crate::app::CardHit::End(11)).unwrap();
+    let (ex, ey) = (end.x + 2, end.y);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), ex, ey));
+    assert_eq!((app.map.selected, app.map.card), (Some(11), Some(crate::app::MapCard::Node)), "an end card selects its node");
+    draw_buffer(&mut app);
+    let (x, y) = edge_cell(&app, 12, 7);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+    handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x + 3, y));
+    handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x + 3, y));
+    assert_eq!(app.map.card, Some(crate::app::MapCard::Node), "dragging from an edge pans, it shows no card");
+}
+
+#[test]
+fn a_press_shows_the_card_and_the_open_button_or_a_second_press_opens() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    let (x, y) = node_cell(&app, 8);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+    handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
+    assert_eq!((app.map.selected, app.map.card), (Some(8), Some(crate::app::MapCard::Node)), "the first press shows the card");
+    assert_eq!(app.nav.current, Some(7));
+    draw_buffer(&mut app);
+    let (open, _) = *app.hits.map_card_hits.iter().find(|(_, part)| *part == crate::app::CardHit::Open).unwrap();
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), open.x, open.y));
+    assert_eq!(app.nav.requested.or(app.nav.current), Some(8), "the open button opens");
+}
+
+#[test]
+fn card_keys_toggle_step_links_and_close() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    handle_key(&mut app, key(KeyCode::Char(' ')));
+    assert_eq!(app.map.card, Some(crate::app::MapCard::Node), "space shows the card");
+    handle_key(&mut app, key(KeyCode::Char(' ')));
+    assert_eq!(app.map.card, None, "space again hides it");
+    let seven = app.map.graph.index_of(7).unwrap();
+    let links: Vec<String> = app.map.graph.edges_of(seven).into_iter().map(|e| app.map.graph.relation(e, &app.map.links)).collect();
+    let mut seen = vec![];
+    for _ in 0..links.len() {
+        handle_key(&mut app, key(KeyCode::Char('e')));
+        seen.push(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links));
+    }
+    assert_eq!(seen, links, "e steps through every link of the node");
+    handle_key(&mut app, key(KeyCode::Char('e')));
+    assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[0], "and wraps");
+    handle_key(&mut app, key(KeyCode::Char('E')));
+    assert_eq!(app.map.graph.relation(app.map.card_edge().unwrap(), &app.map.links), links[links.len() - 1]);
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.map.card, None, "esc closes the card");
+    assert_eq!(app.nav.tab, Tab::Visual, "and nothing else");
+}
+
+#[test]
+fn a_milestone_card_lists_its_items_and_a_click_selects_one() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    app.map.selected = Some(crate::model::hub_id("Ship it"));
+    handle_key(&mut app, key(KeyCode::Char(' ')));
+    let text = card_rows(&mut app);
+    for line in ["┌ milestone ", "◆ milestone · 2 items on the map", "#7 Center issue", "#8 Waits on seven"] {
+        assert!(text.contains(line), "{line} missing:\n{text}");
+    }
+    assert!(!text.contains("[open"), "a milestone has nothing to open:\n{text}");
+    let (row, _) = *app.hits.map_card_hits.iter().find(|(_, part)| *part == crate::app::CardHit::End(8)).unwrap();
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+    assert_eq!((app.map.selected, app.map.card), (Some(8), Some(crate::app::MapCard::Node)));
+}

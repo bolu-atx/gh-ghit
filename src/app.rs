@@ -19,7 +19,9 @@ mod finder;
 mod format;
 mod issue;
 mod map;
-pub(crate) use map::MapView;
+pub(crate) use map::{CardHit, MapCard, MapView};
+#[cfg(test)]
+pub(crate) use map::CardDetail;
 mod menu;
 pub(crate) use menu::{MenuKind, MenuState};
 pub(crate) use finder::FinderRow;
@@ -211,6 +213,13 @@ pub(crate) struct HitAreas {
     pub(crate) map_area: Rect,
     /// Map node labels as drawn, topmost first: rect plus node index.
     pub(crate) map_nodes: Vec<(Rect, usize)>,
+    /// Map edge cells as drawn, in draw order: screen cell plus edge index.
+    /// Node labels win over them.
+    pub(crate) map_edges: Vec<((u16, u16), usize)>,
+    /// The map card's rect; empty while no card shows.
+    pub(crate) map_card: Rect,
+    /// Clickable parts of the map card.
+    pub(crate) map_card_hits: Vec<(Rect, CardHit)>,
     /// Click flash: the last clicked rect plus when it landed. Render
     /// inverts it for `CLICK_FLASH_MS`, then clears it. Theme-agnostic
     /// by construction (reversed style, no colors).

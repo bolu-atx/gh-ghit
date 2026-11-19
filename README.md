@@ -67,8 +67,11 @@ The Visual tab shows a PR diff with line numbers, or for an issue a dependency m
 issues and PRs linked by blocks, parent and closes links, pulled together by milestone hubs.
 It shows the open issue's linked items, or the whole repo (`s`); closed items hide unless they block an open one.
 Drag a node to pin it or press `W` `A` `S` `D` to move the selected one, drag empty space or press `h` `j` `k` `l` to pan,
-wheel or `+` / `-` to zoom, `0` to fit, `.` / `,` to step nodes, `Enter` or a second click to open one, `x` to unpin,
-and right-click for its menu. Every other key keeps its global meaning on the map.
+wheel or `+` / `-` to zoom, `0` to fit, `.` / `,` to step nodes, `x` to unpin, and right-click for its menu.
+Every other key keeps its global meaning on the map.
+A click on a node shows its card at the right: state, milestone, project status, labels, assignees, checks,
+last update and the stored body. Its open button, `Enter` or a second click opens the item; `Space` shows or hides the card.
+A click on a link, or `e` / `E` on the selected node, shows the link in words with a card for each end; `Esc` closes the card.
 `scripts/graph-demo.sh` opens a dense offline demo repo to try it.
 In a diff, `c` starts a line comment or replies to the review thread under the cursor.
 Use `Ctrl+S` to submit a pending review.

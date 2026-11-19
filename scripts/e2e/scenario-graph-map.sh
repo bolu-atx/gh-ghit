@@ -2,7 +2,8 @@
 # The dependency map, offline: the demo store (store/demo_tests.rs) is
 # written through the real store code, every API call goes to a closed
 # port, so this scenario needs no mock fixtures. Drag a node to pin it,
-# drag empty space to pan, then unpin with x.
+# drag empty space to pan, then unpin with x. Click a node for its card,
+# click a link for the link card, click an end card, then Esc.
 source "$(dirname "$0")/lib.sh"
 export E2E_REPO=demo/graph E2E_NUMS=24 GHIT_API_BASE=http://127.0.0.1:9
 host="$(printf '%s' "${GH_HOST:-github.com}" | tr '[:upper:]' '[:lower:]')"
@@ -52,5 +53,47 @@ read -r row3 col3 < <(cell_of "#16 Split")
 e2e_key x
 sleep 1
 e2e_pane | grep -q "1 pinned" && fail "x left the node pinned"
+# Card: a still click on a node shows its stored details at the right.
+read -r row col < <(cell_of "#17 Fetch")
+[ -n "${row:-}" ] || fail "#17 not on the map"
+mouse down-left "$row" "$col"
+mouse up-left "$row" "$col"
+e2e_wait "┌ #17 " 10 || fail "no node card"
+for text in "Fetch the current issue first" "issue · open · blocked" "milestone Fast startup" \
+  "status" "labels    ● perf" "assignees @" "Demo item #17 for the dependency map" "[open ↵]"; do
+  e2e_pane | grep -qF "$text" || fail "node card lacks: $text"
+done
+# 1-based "row col" of the middle of a run of three line cells left of
+# the card, or "row col" of the first end card when $1 is "end".
+card_spot() {
+  e2e_pane | python3 -c '
+import sys
+lines = sys.stdin.read().splitlines()
+start = next(line.index("1 Details") for line in lines if "1 Details" in line) - 3
+top = next(i for i, line in enumerate(lines) if "┌ #" in line or "┌ link" in line)
+card = lines[top].index("┌")
+if sys.argv[1] == "end":
+    print(top + 4, card + 4)
+    sys.exit()
+for i, line in enumerate(lines):
+    for c in range(start + 1, min(card, len(line)) - 1):
+        if line[c - 1:c + 2] == "───":
+            print(i + 1, c + 1)
+            sys.exit()
+' "$1"
+}
+read -r erow ecol < <(card_spot edge)
+[ -n "${erow:-}" ] || fail "no link cell on the map"
+mouse down-left "$erow" "$ecol"
+mouse up-left "$erow" "$ecol"
+e2e_wait "┌ link " 10 || fail "no link card"
+e2e_pane | grep -Eq "#[0-9]+ (blocks|closes|is the parent of) #[0-9]+" || fail "link card lacks the relation"
+read -r prow pcol < <(card_spot end)
+mouse down-left "$prow" "$pcol"
+mouse up-left "$prow" "$pcol"
+e2e_wait "[open ↵]" 10 || fail "an end card did not show its node card"
+e2e_key Escape
+sleep 1
+e2e_pane | grep -qF "[next link e]" && fail "Esc left the card open"
 e2e_send '{"type":"quit"}'
 echo "PASS graph map"

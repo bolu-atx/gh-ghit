@@ -107,3 +107,19 @@ fn hub_ids_never_collide_with_numbers() {
     assert!(hub_id("v1") > u64::from(u32::MAX));
     assert_ne!(hub_id("v1"), hub_id("v2"));
 }
+
+#[test]
+fn relations_read_as_words() {
+    let (items, mut links) = fixture();
+    links.push(link(1, 4, LinkKind::Parent));
+    let graph = build_map(&items, &links, Some(2), MapScope::Repo);
+    let edge = |a: u64, b: u64| graph.edge_between(a, b).unwrap();
+    assert_eq!(graph.relation(edge(1, 2), &links), "#1 blocks #2");
+    assert_eq!(graph.relation(edge(20, 2), &links), "#20 closes #2");
+    assert_eq!(graph.relation(edge(1, 4), &links), "#1 is the parent of #4");
+    assert_eq!(graph.relation(edge(9, hub_id("Later")), &links), "#9 is in milestone Later");
+    assert_eq!(graph.edge_between(2, 1), None, "edges have a direction");
+    let one = graph.index_of(1).unwrap();
+    let touching: Vec<String> = graph.edges_of(one).into_iter().map(|e| graph.relation(e, &links)).collect();
+    assert_eq!(touching, vec!["#1 blocks #2", "#1 is the parent of #4", "#3 blocks #1", "#1 is in milestone Ship it"]);
+}

@@ -23,6 +23,25 @@ pub struct BoardItem {
 }
 
 impl BoardItem {
+    /// An issue or PR as a board card, so other views share the card text
+    /// helpers. `status` is its project status, when it has one.
+    pub fn from_issue(issue: &IssueData, status: Option<&str>) -> Self {
+        let logins: Vec<&str> = issue.assignees.iter().map(|a| a.login.as_str()).collect();
+        BoardItem {
+            title: issue.title.clone(),
+            number: Some(issue.number),
+            status: status.map(str::to_string),
+            labels: issue.labels.clone(),
+            repo: None,
+            milestone: issue.milestone.clone(),
+            content: serde_json::json!({
+                "type": if issue.is_pr { "PullRequest" } else { "Issue" },
+                "url": issue.url,
+                "assignees": logins,
+            }),
+        }
+    }
+
     /// The card's web URL, when its content carries one.
     pub fn url(&self) -> Option<String> {
         self.content.get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
