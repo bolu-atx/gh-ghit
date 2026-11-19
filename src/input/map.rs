@@ -47,15 +47,12 @@ pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
     }
     let inside = in_rect(area, m.column, m.row);
     let (col, row) = (m.column.saturating_sub(area.x), m.row.saturating_sub(area.y));
-    let node = hit(&app.hits.map_nodes, m.column, m.row).map(|(_, index)| index);
-    // Edges drawn later sit on top, so the search runs from the end.
-    let edges = &app.hits.map_edges;
-    let edge = || edges.iter().rev().find(|(cell, _)| *cell == (m.column, m.row)).map(|&(_, e)| e);
+    let node = hit(&app.hits.map_nodes, m.column, m.row).map(|(_, id)| id);
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) if inside => {
             app.nav.focus = Focus::Main;
             app.nav.pane = Pane::Main;
-            let edge = if node.is_none() { edge() } else { None };
+            let edge = if node.is_none() { app.hits.map_edges.at(m.column, m.row) } else { None };
             app.map_press(node, edge, col, row);
         }
         MouseEventKind::Drag(MouseButton::Left) if app.map.drag.is_some() => {
@@ -67,8 +64,8 @@ pub(super) fn handle_map_mouse(app: &mut App, m: MouseEvent) -> bool {
         MouseEventKind::Down(MouseButton::Right) if inside => {
             app.nav.focus = Focus::Main;
             app.nav.pane = Pane::Main;
-            if let Some(index) = node {
-                app.map.selected = Some(app.map.graph.nodes[index].id);
+            if let Some(id) = node.filter(|&id| app.map.graph.index_of(id).is_some()) {
+                app.map.selected = Some(id);
             }
             menu::open(app, MenuKind::Map, (m.column, m.row));
         }

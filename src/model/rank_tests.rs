@@ -16,7 +16,7 @@ fn graph(states: &[NodeState], blocks: &[(usize, usize)], hubs: &[(usize, usize)
         .chain(hubs.iter().map(|&(a, b)| (a, b, EdgeStyle::Hub)))
         .collect();
     let kinds = edges.iter().map(|e| if e.2 == EdgeStyle::Directed { vec![LinkKind::Blocks] } else { vec![] }).collect();
-    MapGraph { nodes, edges, kinds }
+    MapGraph::new(nodes, edges, kinds)
 }
 
 #[test]

@@ -61,6 +61,7 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         area
     };
     app.hits.map_area = area;
+    app.hits.map_edges.reset(area);
     if area.width < 4 || area.height < 2 {
         return;
     }
@@ -77,6 +78,7 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         put(buf, area, (0, 0), &text, Style::new().fg(muted()));
         return;
     }
+    app.map.refresh_chain();
     let bodies: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
     let camera = app.map.camera;
     let graph = &app.map.graph;
@@ -93,14 +95,14 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let width = Span::raw(text.as_str()).width() as i32;
         Place { x: col - width / 2, y: row, width }
     }).collect();
-    let chain: HashSet<usize> = selected.map(|i| graph.blockers_of(i)).unwrap_or_default();
+    let no_chain = HashSet::new();
+    let chain = app.map.chain().unwrap_or(&no_chain);
     let lit = |i: usize| Some(i) == selected || chain.contains(&i);
 
     // Hub edges first, so links and blocks draw over their dots; the
     // card's edge last, so it reads whole.
     let mut edges: Vec<usize> = (0..graph.edges.len()).collect();
     edges.sort_by_key(|&e| (Some(e) == card_edge, graph.edges[e].2 != EdgeStyle::Hub));
-    let mut edge_hits = vec![];
     for e in edges {
         let (a, b, style) = graph.edges[e];
         let (from, to) = (centers[a], centers[b]);
@@ -116,7 +118,8 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         for &cell in &cells {
             let free = !places[a].holds(cell) && !places[b].holds(cell);
             if free && put_char(buf, area, cell, glyph, pen) {
-                edge_hits.push((screen(area, cell), e));
+                let (x, y) = screen(area, cell);
+                app.hits.map_edges.set(x, y, graph.nodes[a].id, graph.nodes[b].id);
             }
         }
         if style == EdgeStyle::Directed {
@@ -125,12 +128,12 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 let lit_edge = on_chain || Some(e) == card_edge;
                 let head = if lit_edge { pen } else { Style::new().fg(red()) };
                 if put_char(buf, area, cell, arrow(dx, dy), head) {
-                    edge_hits.push((screen(area, cell), e));
+                    let (x, y) = screen(area, cell);
+                    app.hits.map_edges.set(x, y, graph.nodes[a].id, graph.nodes[b].id);
                 }
             }
         }
     }
-    app.hits.map_edges = edge_hits;
 
     // Plain items first, then hubs, then the chain, then the selection.
     let rank = |i: usize| match (Some(i) == selected, chain.contains(&i), graph.nodes[i].state) {
@@ -156,7 +159,7 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         }
         let place = places[i];
         if let Some(rect) = put(buf, area, (place.x, place.y), &labels[i], style) {
-            hits.push((rect, i));
+            hits.push((rect, node.id));
         }
         if Some(i) == selected {
             put_char(buf, area, (place.x - 1, place.y), '▌', Style::new().fg(amber()));
