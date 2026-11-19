@@ -108,6 +108,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::DiffSplit => app.toggle_diff_split(),
         Action::DiffToggleFile => app.toggle_diff_file(),
         Action::DiffExpandAll => app.diff_expand_all(),
+        Action::DiffContext => app.cycle_diff_context(),
         Action::DiffFold => app.set_diff_file(Some(false)),
         Action::DiffUnfold => app.set_diff_file(Some(true)),
         Action::GraphNext => app.map_step(1),

@@ -99,15 +99,16 @@ The essentials:
 | Keys | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Cycle panes in screen order (Issues, PRs, Main, Refs, Filters, History) |
-| `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards (scroll the main pane, pan the map) |
+| `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards (scroll the main pane, pan the map). Diff keys act only while Main has focus |
 | `gg` / `G` | Jump to the top / bottom of any list or scroll area |
 | `Ctrl+D` / `Ctrl+U`, Page Down / Page Up | Half page / full page |
 | `Enter` | Open the selected row, reference, card or map node; apply in dialogs |
 | `Space` | Expand a row, toggle a chip, fold a diff file |
 | `[` / `]` | Previous / next issue from any pane |
-| `h` / `l` | Fold / unfold tree rows and diff files; pan the map; move between board columns; elsewhere step issues |
+| `h` / `l` | Fold / unfold tree rows and diff files; pan the map; move between board columns |
 | `s` / `S` | Cycle / reverse the sort in Issues and PRs (`s` toggles split in the diff) |
-| `a` | In the diff, expand every small file, or fold all when they are open. Large files (over 300 changed lines) stay folded |
+| `a` | In the diff, expand every small file, or fold all when they are open. Large files (over 300 changed lines) stay folded. The choice sticks: other PRs open the same way |
+| `x` | In the diff, cycle the context lines around changes: 3, 5, 25, 100, all. Above 3, ghit fetches the head side of each open file |
 | `Ctrl+S` | Submit the pending review |
 | `1` / `2` | Details / Visual tab |
 | `:` / `/` | Command bar / find. With a sidebar pane focused, `/` filters rows and `n` / `N` step between hits. With Main focused, `/` searches the content (Details, Diff): matches highlight as you type, `Enter` keeps them, smart case |

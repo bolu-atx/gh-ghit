@@ -387,6 +387,7 @@ fn compose_on_diff_line_targets_file_and_line() {
     ]);
     app.diff.expanded_files.insert((9, "a.rs".into()));
     app.set_tab(Tab::Visual);
+    app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
     // Header, hunk, deletion, then the addition the comment lands on.
     for _ in 0..3 {
@@ -417,6 +418,7 @@ fn compose_on_thread_block_targets_the_reply() {
     ]);
     app.diff.expanded_files.insert((9, "a.rs".into()));
     app.set_tab(Tab::Visual);
+    app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
     // Header, hunk, deletion, addition, then the thread header the reply lands in.
     for _ in 0..4 {

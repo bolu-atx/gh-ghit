@@ -1,6 +1,7 @@
 //! Tests for model::diff.
 
 use super::*;
+use super::diff::patch_new_lines;
 
 #[test]
 fn diff_lines_tag_hunks_adds_and_dels() {
@@ -150,4 +151,45 @@ fn cursor_skips_thread_and_blank_rows() {
         .iter().map(|s| s.to_string()).collect();
     assert_eq!(line_target_at_cursor(&section, 4, patch), Some(1));
     assert_eq!(line_target_at_cursor(&section, 5, patch), Some(2));
+}
+
+fn numbered(n: usize) -> Vec<String> {
+    (1..=n).map(|i| format!("l{i}")).collect()
+}
+
+#[test]
+fn widen_patch_adds_context_from_the_head_file() {
+    // Line 10 changed; GitHub sent 3 lines of context each side.
+    let mut head = numbered(30);
+    head[9] = "new".into();
+    let patch = "@@ -7,7 +7,7 @@ fn f\n l7\n l8\n l9\n-old\n+new\n l11\n l12\n l13";
+    let wide = widen_patch(patch, &head, 5);
+    let want = "@@ -5,11 +5,11 @@\n l5\n l6\n l7\n l8\n l9\n-old\n+new\n l11\n l12\n l13\n l14\n l15";
+    assert_eq!(wide, want);
+    // 3 is what GitHub sent: the same rows come back.
+    assert_eq!(diff_lines(&widen_patch(patch, &head, 3)).len(), diff_lines(patch).len());
+}
+
+#[test]
+fn widen_patch_clamps_at_file_edges_and_merges_hunks() {
+    let mut head = numbered(20);
+    head[1] = "B".into();
+    head[17] = "S".into();
+    let patch = "@@ -1,5 +1,5 @@\n l1\n-b\n+B\n l3\n l4\n l5\n@@ -15,6 +15,6 @@\n l15\n l16\n l17\n-s\n+S\n l19\n l20";
+    let all = widen_patch(patch, &head, usize::MAX);
+    let rows = diff_lines(&all);
+    assert_eq!(rows.iter().filter(|(k, _)| *k == DiffKind::Hunk).count(), 1, "windows touch, so hunks merge");
+    assert!(all.starts_with("@@ -1,20 +1,20 @@"), "{all}");
+    let news: Vec<Option<u64>> = patch_new_lines(&all);
+    assert_eq!(news.last().copied().flatten(), Some(20));
+    // A small context keeps the hunks apart.
+    let five = widen_patch(patch, &head, 5);
+    assert_eq!(diff_lines(&five).iter().filter(|(k, _)| *k == DiffKind::Hunk).count(), 2);
+}
+
+#[test]
+fn widen_patch_keeps_new_files_and_bad_patches() {
+    let added = "@@ -0,0 +1,2 @@\n+a\n+b";
+    assert_eq!(widen_patch(added, &["a".into(), "b".into()], 25), "@@ -0,0 +1,2 @@\n+a\n+b");
+    assert_eq!(widen_patch("garbage", &[], 25), "garbage");
 }

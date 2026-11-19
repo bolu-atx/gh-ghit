@@ -20,7 +20,7 @@ pub use sections::{
 
 use crate::model::{self, Author, BoardDetail, Comment, DiffFile, IssueData, Label, SubSummary};
 use client::{
-    client, get, graphql_auth_failure, RATE_LIMIT_FIELD, graphql_url, http_fail, patch_json, post_json, rest_base,
+    client, get, get_raw, graphql_auth_failure, RATE_LIMIT_FIELD, graphql_url, http_fail, patch_json, post_json, rest_base,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -300,6 +300,45 @@ pub async fn pull_files(repo: &str, number: u64, bearer: &str) -> Result<Vec<Dif
         page += 1;
     }
     Ok(out)
+}
+
+/// Head-side file bodies of PR `number`, one `(filename, body)` per
+/// name, for widening diff context. Reads the head SHA once, then the
+/// files eight at a time. A file that fails keeps its own error.
+pub async fn head_files(repo: &str, number: u64, names: Vec<String>, bearer: &str) -> Result<Vec<(String, Result<String, String>)>, String> {
+    let base = rest_base();
+    let client = client();
+    let pr = get(&client, &format!("{base}/repos/{repo}/pulls/{number}"), bearer).await?;
+    let sha = parse_head_sha(&pr)?;
+    let mut out = Vec::with_capacity(names.len());
+    for chunk in names.chunks(8) {
+        let mut tasks = tokio::task::JoinSet::new();
+        for name in chunk {
+            let (client, bearer, name) = (client.clone(), bearer.to_owned(), name.clone());
+            let url = format!("{base}/repos/{repo}/contents/{}?ref={sha}", encode_path(&name));
+            tasks.spawn(async move {
+                let body = get_raw(&client, &url, &bearer).await;
+                (name, body)
+            });
+        }
+        while let Some(done) = tasks.join_next().await {
+            out.push(done.map_err(|e| format!("file fetch failed: {e}"))?);
+        }
+    }
+    Ok(out)
+}
+
+/// Percent-encode a repo path for a URL, keeping `/` separators.
+fn encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// Optional progress sink for multi-page fetches: called with
@@ -640,6 +679,7 @@ mod tests {
         assert_eq!(review_reply_payload("re", 99), json!({"body": "re", "in_reply_to": 99}));
         // The head SHA comes off the REST PR payload, not a GraphQL id.
         assert_eq!(parse_head_sha(&json!({"head": {"sha": "abc123"}})).unwrap(), "abc123");
+        assert_eq!(encode_path("src/a b#c.rs"), "src/a%20b%23c.rs");
         assert!(parse_head_sha(&json!({"head": {}})).is_err());
         assert!(parse_head_sha(&json!({})).is_err());
     }

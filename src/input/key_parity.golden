@@ -14,9 +14,7 @@ issues | 'c' | compose: None/false -> Some(("", 0, ""))/false
 issues | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 issues | 'f' | format: false/false/false -> true/false/false
 issues | 'g' | pending: None -> Some('g')
-issues | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 issues | 'k' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
-issues | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 issues | 'n' | message:  -> no search: press /
 issues | 'o' | message:  -> opened #8 in browser
 issues | 'q' | quit: false -> true
@@ -89,10 +87,8 @@ prs | 'c' | compose: None/false -> Some(("", 0, ""))/false
 prs | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 prs | 'f' | format: false/false/false -> true/false/false
 prs | 'g' | pending: None -> Some('g')
-prs | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 prs | 'j' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9)
 prs | 'k' | current: Some(8) -> Some(10) ; requested: Some(8) -> Some(10)
-prs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 prs | 'n' | message:  -> no search: press /
 prs | 'o' | message:  -> opened #8 in browser
 prs | 'q' | quit: false -> true
@@ -128,9 +124,7 @@ main-details | 'c' | compose: None/false -> Some(("", 0, ""))/false
 main-details | 'e' | message:  -> right pane: hidden ; refs: true/None -> false/None
 main-details | 'f' | format: false/false/false -> true/false/false
 main-details | 'g' | pending: None -> Some('g')
-main-details | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 main-details | 'j' | scroll: 0 -> 3
-main-details | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 main-details | 'n' | message:  -> no search: press /
 main-details | 'o' | message:  -> opened #8 in browser
 main-details | 'q' | quit: false -> true
@@ -165,6 +159,7 @@ main-diff | 'n' | message:  -> no search: press /
 main-diff | 'o' | message:  -> opened #9 in browser
 main-diff | 'q' | quit: false -> true
 main-diff | 's' | message:  -> diff: split ; diff: None/false/false/[] -> None/false/true/[]
+main-diff | 'x' | message:  -> diff context: 5 lines
 main-diff | ctrl-c | quit: false -> true
 main-diff | ctrl-i | message:  -> no newer issue
 main-diff | ctrl-o | message:  -> no older issue
@@ -246,10 +241,8 @@ refs | 'c' | compose: None/false -> Some(("", 0, ""))/false
 refs | 'e' | pane: Refs -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 refs | 'f' | format: false/false/false -> true/false/false
 refs | 'g' | pending: None -> Some('g')
-refs | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 refs | 'j' | refs: true/None -> true/Some(7)
 refs | 'k' | refs: true/None -> true/Some(9)
-refs | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 refs | 'n' | message:  -> no search: press /
 refs | 'o' | message:  -> opened #8 in browser
 refs | 'q' | quit: false -> true
@@ -286,9 +279,7 @@ labels | 'c' | compose: None/false -> Some(("", 0, ""))/false
 labels | 'e' | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 labels | 'f' | format: false/false/false -> true/false/false
 labels | 'g' | pending: None -> Some('g')
-labels | 'h' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 labels | 'j' | labels-cursor: 0 -> 1
-labels | 'l' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 labels | 'n' | message:  -> no search: press /
 labels | 'o' | message:  -> opened #8 in browser
 labels | 'q' | quit: false -> true
@@ -320,9 +311,7 @@ history | 'c' | compose: None/false -> Some(("", 0, ""))/false
 history | 'e' | pane: History -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 history | 'f' | format: false/false/false -> true/false/false
 history | 'g' | pending: None -> Some('g')
-history | 'h' | current: Some(9) -> Some(8) ; requested: Some(9) -> Some(8) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
 history | 'k' | history: [8, 7]/[]/0 -> [8, 7]/[]/1
-history | 'l' | current: Some(9) -> Some(10) ; requested: Some(9) -> Some(10) ; history: [8, 7]/[]/0 -> [8, 7, 9]/[]/0
 history | 'n' | message:  -> no search: press /
 history | 'o' | message:  -> opened #9 in browser
 history | 'q' | quit: false -> true

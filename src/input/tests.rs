@@ -461,40 +461,40 @@ fn history_pane_keys_walk_and_go_back() {
 }
 
 #[test]
-fn hl_steps_between_neighbors_on_main() {
+fn brackets_steps_between_neighbors_on_main() {
     let mut app = step_app();
-    handle_key(&mut app, plain_key(KeyCode::Char('l')));
-    assert_eq!(app.nav.current, Some(8), "l opens the next issue");
+    handle_key(&mut app, plain_key(KeyCode::Char(']')));
+    assert_eq!(app.nav.current, Some(8), "] opens the next issue");
     assert_eq!(app.sidebar.issue_state.selected(), Some(2));
-    handle_key(&mut app, plain_key(KeyCode::Char('h')));
-    assert_eq!(app.nav.current, Some(7), "h opens the previous issue");
+    handle_key(&mut app, plain_key(KeyCode::Char('[')));
+    assert_eq!(app.nav.current, Some(7), "[ opens the previous issue");
     assert_eq!(app.sidebar.issue_state.selected(), Some(1));
     assert_eq!(app.nav.step_pending, None, "cached steps never linger");
 }
 
 #[test]
-fn hl_steps_from_every_pane() {
+fn brackets_steps_from_every_pane() {
     // The neighbor step works from every pane: nothing else claims
-    // h/l outside Graph.
+    // [/] outside Graph.
     let mut app = step_app();
     for pane in [Pane::Main, Pane::Issues, Pane::PRs, Pane::Refs] {
         app.nav.pane = pane;
         app.message.clear();
-        handle_key(&mut app, plain_key(KeyCode::Char('l')));
-        assert_eq!(app.nav.current, Some(8), "l steps from {pane:?}");
+        handle_key(&mut app, plain_key(KeyCode::Char(']')));
+        assert_eq!(app.nav.current, Some(8), "] steps from {pane:?}");
         assert_eq!(app.nav.step_pending, None, "cached steps never linger");
-        handle_key(&mut app, plain_key(KeyCode::Char('h')));
-        assert_eq!(app.nav.current, Some(7), "h steps back from {pane:?}");
+        handle_key(&mut app, plain_key(KeyCode::Char('[')));
+        assert_eq!(app.nav.current, Some(7), "[ steps back from {pane:?}");
         assert!(app.message.is_empty(), "no toast on a live neighbor");
     }
 }
 
 #[test]
-fn hl_on_main_without_an_issue_toasts() {
+fn brackets_on_main_without_an_issue_toasts() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.nav.pane = Pane::Main;
-    handle_key(&mut app, plain_key(KeyCode::Char('h')));
+    handle_key(&mut app, plain_key(KeyCode::Char('[')));
     assert_eq!(app.message, "view an issue first");
     assert!(app.issues.pending.is_empty(), "no fetch without an issue");
 }

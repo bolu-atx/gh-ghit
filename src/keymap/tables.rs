@@ -65,8 +65,6 @@ const GLOBAL: &[Binding] = &[
     key(KeyCode::Up, Action::MoveUp, "Select previous", "Move", ALIAS),
     key(ch('['), Action::StepPrev, "Previous issue number", "Move", MENU),
     key(ch(']'), Action::StepNext, "Next issue number", "Move", MENU),
-    key(ch('h'), Action::StepPrev, "Previous issue number", "Move", ALIAS),
-    key(ch('l'), Action::StepNext, "Next issue number", "Move", ALIAS),
     key(ch('g'), Action::JumpTop, "Jump to top", "Move", SCROLL).after('g'),
     key(ch('G'), Action::JumpBottom, "Jump to bottom", "Move", SCROLL),
     key(ch('d'), Action::HalfPageDown, "Half page down", "Move", SCROLL).ctrl(),
@@ -144,6 +142,7 @@ const DIFF: &[Binding] = &[
     key(ch('s'), Action::DiffSplit, "Split view", "Diff", TITLE).hint(4),
     key(ch(' '), Action::DiffToggleFile, "Expand or fold file", "Diff", Gesture::Click).hint(3),
     key(ch('a'), Action::DiffExpandAll, "Expand or fold all files", "Diff", TITLE).hint(5),
+    key(ch('x'), Action::DiffContext, "Cycle context lines", "Diff", TITLE).hint(6),
 ];
 
 const GRAPH: &[Binding] = &[

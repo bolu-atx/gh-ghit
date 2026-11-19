@@ -221,7 +221,7 @@ fn global_keys_resolve_to_their_actions() {
         (key(KeyCode::PageDown), Action::PageDown),
         (key(KeyCode::Char('[')), Action::StepPrev),
         (key(KeyCode::Char(']')), Action::StepNext),
-        (key(KeyCode::Char('h')), Action::StepPrev),
+        (key(KeyCode::Char('[')), Action::StepPrev),
         (key(KeyCode::Down), Action::MoveDown),
         (key(KeyCode::Char('q')), Action::Quit),
         (ctrl('c'), Action::Quit),

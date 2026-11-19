@@ -266,6 +266,22 @@ pub(super) async fn get(client: &reqwest::Client, url: &str, bearer: &str) -> Re
         .map_err(|e| format!("bad GitHub response: {e}"))
 }
 
+/// GET a file body as raw text (the contents API raw media type).
+pub(super) async fn get_raw(client: &reqwest::Client, url: &str, bearer: &str) -> Result<String, String> {
+    let res = client
+        .get(url)
+        .bearer_auth(bearer)
+        .header("Accept", "application/vnd.github.raw+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub request failed: {e}"))?;
+    note_rate_limit(&res);
+    if res.status().is_client_error() || res.status().is_server_error() {
+        return Err(http_fail("GitHub request failed", url, res).await);
+    }
+    res.text().await.map_err(|e| format!("bad GitHub response: {e}"))
+}
+
 pub(super) async fn post_json(client: &reqwest::Client, url: &str, bearer: &str, body: &Value) -> Result<Value, String> {
     let value = send_json(client.post(url), url, bearer, body).await?;
     note_graphql_cost(&value, body);

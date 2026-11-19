@@ -85,6 +85,7 @@ fn tools(app: &App) -> Vec<Tool> {
         let (icon, label) =
             if app.diff_will_expand() { (theme::TOOL_EXPAND, "expand") } else { (theme::TOOL_FOLD, "fold") };
         tools.push(Tool { icon, label, action: Action::DiffExpandAll });
+        tools.push(Tool { icon: theme::TOOL_CONTEXT, label: app.diff_context_label(), action: Action::DiffContext });
     }
     if app.visual_graph() {
         let label = match app.map.scope {

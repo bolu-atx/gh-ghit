@@ -723,6 +723,14 @@ pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<mode
     Ok(files)
 }
 
+/// Head-side bodies of `names` in PR `number`, for diff context. Not
+/// stored: the app keeps them for the session only.
+pub async fn fetch_head_files(repo: &str, number: u64, names: Vec<String>) -> Result<Vec<(String, Result<String, String>)>, String> {
+    require_repo(repo)?;
+    let token = require_token()?;
+    api::head_files(repo, number, names, &token).await
+}
+
 /// Post a thread comment on an issue/PR. Failures are strings for the
 /// status line, never panics; auth and repo resolve first so misuse
 /// never reaches the network.
