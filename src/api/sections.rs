@@ -4,7 +4,7 @@ use crate::model::{Author, BoardDetail, IssueData, Label, SubSummary};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-const PR_FIELDS: &str = r#"
+pub(super) const PR_FIELDS: &str = r#"
  number title state author { login } labels(first: 20) { nodes { name } }
  assignees(first: 10) { nodes { login } } createdAt updatedAt url
  milestone { title }
@@ -14,7 +14,7 @@ const PR_FIELDS: &str = r#"
  ... on ProjectV2ItemFieldSingleSelectValue { name } } } }
 "#;
 
-const ISSUE_FIELDS: &str = r#"
+pub(super) const ISSUE_FIELDS: &str = r#"
  number title state author { login } labels(first: 20) { nodes { name } }
  assignees(first: 10) { nodes { login } } createdAt updatedAt url
  milestone { title }
@@ -173,7 +173,7 @@ fn parse_rows(pages: &[Value], now: chrono::DateTime<chrono::Utc>, hours: u64) -
 }
 
 /// One sections node (Issue or PullRequest fields) as a slim listing row.
-fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> Result<Row, String> {
+pub(super) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> Result<Row, String> {
     let string = |k: &str| n.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
     let number = n.get("number").and_then(Value::as_u64).ok_or("missing row number")?;
     let labels = n.pointer("/labels/nodes").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("name")?.as_str().map(|s| Label { name: s.to_owned() })).collect();

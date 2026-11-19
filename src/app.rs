@@ -7,6 +7,7 @@
 //! never blocks.
 
 
+mod backfill;
 mod board;
 mod compose;
 mod confirm;
@@ -408,6 +409,8 @@ impl App {
             message_visible: self.message_visible(),
             issue_progress: if self.issues.progress.is_empty() { None } else { Some((done, total)) },
             section_progress: self.sections.progress,
+            backfill: self.backfill_state().0,
+            backfill_progress: self.backfill_state().1,
         }
     }
 
@@ -479,6 +482,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     let had_fetch = app.sections.rx.is_some();
     app.auto_refresh_recent(Instant::now());
     landed |= had_fetch != app.sections.rx.is_some();
+    landed |= app.drive_backfill(Instant::now());
     landed |= poll_issues(app);
     landed |= poll_diffs(app);
     landed |= poll_graphs(app);

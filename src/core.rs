@@ -209,6 +209,7 @@ pub enum LoadSource {
     Details,
     Board,
     Sections,
+    Backfill,
 }
 
 /// Plain fetch state the status bar derives from. Counts are pending-set
@@ -226,6 +227,9 @@ pub struct FetchState {
     pub message_visible: bool,
     pub issue_progress: Option<(usize, usize)>,
     pub section_progress: Option<(usize, usize)>,
+    /// The store backfill runs, with `(fetched, total)` once known.
+    pub backfill: bool,
+    pub backfill_progress: Option<(usize, usize)>,
 }
 
 /// One bar segment: what is fetching, plus determinate progress if known.
@@ -276,6 +280,12 @@ pub fn loading(s: &FetchState) -> Vec<LoadingItem> {
         out.push(LoadingItem {
             source: LoadSource::Sections,
             progress: s.section_progress.filter(|(d, t)| progress_label(*d, *t).is_some()),
+        });
+    }
+    if s.backfill {
+        out.push(LoadingItem {
+            source: LoadSource::Backfill,
+            progress: s.backfill_progress.filter(|(d, t)| progress_label(*d, *t).is_some()),
         });
     }
     out
@@ -331,6 +341,7 @@ pub fn loading_label(items: &[LoadingItem]) -> String {
                 LoadSource::Details => "details",
                 LoadSource::Board => "board",
                 LoadSource::Sections => "sections",
+                LoadSource::Backfill => "backfill",
             };
             match item.progress.and_then(|(d, t)| progress_label(d, t)) {
                 Some(p) => format!("{name} {p}"),
@@ -909,6 +920,16 @@ mod tests {
             ..FetchState::default()
         };
         assert_eq!(loading(&state), vec![]);
+    }
+
+    #[test]
+    fn backfill_label_shows_progress_while_running_only() {
+        let running = FetchState { backfill: true, backfill_progress: Some((300, 5000)), ..FetchState::default() };
+        assert_eq!(loading_label(&loading(&running)), "backfill 300/5000");
+        let unknown = FetchState { backfill: true, ..FetchState::default() };
+        assert_eq!(loading_label(&loading(&unknown)), "backfill");
+        let done = FetchState { backfill_progress: Some((300, 5000)), ..FetchState::default() };
+        assert_eq!(loading(&done), vec![], "hidden when not running");
     }
 
     #[test]

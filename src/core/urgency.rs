@@ -11,6 +11,8 @@ pub enum Kind {
     Sections,
     /// Labels, milestones, sub-issue children, the board.
     Other,
+    /// One page of the store backfill. Runs only when nothing else waits.
+    Backfill,
 }
 
 /// Start order, highest first. The sections fetch is one API call for
@@ -24,6 +26,8 @@ pub enum Tier {
     Sections,
     /// Everything else: refs, pins, history, hidden tabs, children, meta.
     Background,
+    /// The store backfill: behind every user-visible fetch.
+    Idle,
 }
 
 /// Tier of one request. `is_current` means the request belongs to the
@@ -34,6 +38,7 @@ pub fn urgency(kind: Kind, is_current: bool, tab_shown: bool) -> Tier {
         Kind::Diff | Kind::Graph if is_current && tab_shown => Tier::Current,
         Kind::Sections => Tier::Sections,
         Kind::Details | Kind::Diff | Kind::Graph | Kind::Other => Tier::Background,
+        Kind::Backfill => Tier::Idle,
     }
 }
 
@@ -61,5 +66,11 @@ mod tests {
         assert_eq!(urgency(Kind::Sections, false, false), Tier::Sections);
         assert!(Tier::Current < Tier::Sections && Tier::Sections < Tier::Background);
         assert_eq!(urgency(Kind::Other, true, true), Tier::Background);
+    }
+
+    #[test]
+    fn backfill_is_last() {
+        assert_eq!(urgency(Kind::Backfill, true, true), Tier::Idle);
+        assert!(Tier::Background < Tier::Idle);
     }
 }

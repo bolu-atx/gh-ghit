@@ -499,3 +499,22 @@ fn auto_refresh_landing_preserves_view() {
         assert_eq!(app.nav.hover, Some(7));
     }
 }
+
+#[test]
+fn only_the_lease_holder_queues_a_backfill_page() {
+    let (_guard, _dir, saved) = temp_xdg();
+    let mut holder = linked_app();
+    let mut other = linked_app();
+    assert!(holder.sync_holder() && !other.sync_holder());
+    for app in [&mut holder, &mut other] {
+        app.sections.backfill.months = 12;
+        app.drive_backfill(Instant::now() + Duration::from_secs(10));
+    }
+    assert!(holder.sections.backfill.rx.is_some(), "the holder backfills");
+    assert!(other.sections.backfill.rx.is_none(), "a non-holder never does");
+    // No store link, no backfill, even though such an app syncs on its own.
+    let mut bare = sidebar_app(&[]);
+    bare.drive_backfill(Instant::now() + Duration::from_secs(10));
+    assert!(bare.sections.backfill.rx.is_none());
+    restore_xdg(saved);
+}

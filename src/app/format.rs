@@ -282,6 +282,7 @@ impl App {
         self.sidebar.show_open_issues = prefs.show_open_issues;
         self.sidebar.show_closed_issues = prefs.show_closed_issues;
         self.sections.merged_window_hours = prefs.merged_window_hours;
+        self.sections.backfill.months = prefs.backfill_months;
         self.sidebar.row_issue = prefs.row_issue;
         self.sidebar.row_pr = prefs.row_pr;
         self.sidebar.group_by = prefs.group_by;

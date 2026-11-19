@@ -141,6 +141,10 @@ fn prefs_path() -> PathBuf {
     base_dir().join("prefs.json")
 }
 
+fn default_backfill_months() -> u32 {
+    12
+}
+
 fn default_window() -> u64 {
     crate::core::DEFAULT_WINDOW_HOURS
 }
@@ -218,6 +222,10 @@ pub struct Prefs {
     pub sort: crate::core::SideSort,
     #[serde(default)]
     pub sort_desc: bool,
+    /// Age limit of the store backfill, in months: closed issues and
+    /// merged or closed PRs updated within it. 0 = all history.
+    #[serde(default = "default_backfill_months")]
+    pub backfill_months: u32,
 }
 
 impl Default for Prefs {
@@ -235,7 +243,8 @@ impl Default for Prefs {
             group_by: crate::model::GroupBy::None,
             sub_issue_tree: false,
             sort: crate::core::SideSort::Default,
-            sort_desc: false }
+            sort_desc: false,
+            backfill_months: default_backfill_months() }
     }
 }
 

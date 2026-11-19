@@ -2,9 +2,12 @@
 //!
 //! Missing auth or repo is a status-line error, never silent behavior.
 
+mod backfill;
+
 use crate::{api, cache, model, store};
 use crate::model::IssueData;
 
+pub use backfill::{backfill_step, BackfillStep};
 pub use crate::api::{Row, REQUIRED_SCOPES, forget_token, is_auth_error, rate_limited, reauth_command, token};
 
 /// `(issue, [(project title, status|None)])`.
