@@ -1,5 +1,5 @@
 use super::{Row, SectionRows};
-use super::client::{client, graphql_auth_failure, graphql_url, post_json, RATE_LIMIT_FIELD};
+use super::client::{client, graphql_auth_failure, graphql_url, http_fail, note_rate_limit, post_json, rest_base, RATE_LIMIT_FIELD};
 use crate::model::{Author, BoardDetail, IssueData, Label, SubSummary};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -358,92 +358,87 @@ fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chrono::U
     sections.into_iter().flatten().take(MAX_SECTION_ROWS).collect()
 }
 
-/// Search-index lag margin: the change-only search reaches back this far
-/// before the last fetch start.
+/// Clock-skew margin: the change-only read reaches back this far before
+/// the last fetch start.
 const DELTA_OVERLAP: chrono::TimeDelta = chrono::TimeDelta::minutes(2);
 
-/// A cached payload whose fetch start is older than this takes the full
-/// walk instead of the change-only search.
-const DELTA_MAX_AGE_SECS: i64 = 3600;
-
-/// Delta vs full: the cached fetch start to search from, or `None` for the
-/// full walk (forced, no cache, missing or bad timestamp, or too old).
-pub fn delta_since(
-    started: Option<&str>,
-    now: chrono::DateTime<chrono::Utc>,
-    full: bool,
-) -> Option<chrono::DateTime<chrono::Utc>> {
+/// Delta vs full: the last sync's fetch start to read changes from, or
+/// `None` for the full walk (forced, no sync, or a bad timestamp). A sync
+/// of any age takes the delta path.
+pub fn delta_since(started: Option<&str>, full: bool) -> Option<chrono::DateTime<chrono::Utc>> {
     if full {
         return None;
     }
-    let at = chrono::DateTime::parse_from_rfc3339(started?).ok()?.with_timezone(&chrono::Utc);
-    let age = now - at;
-    (age >= chrono::TimeDelta::zero() && age < chrono::TimeDelta::seconds(DELTA_MAX_AGE_SECS))
-        .then_some(at)
+    chrono::DateTime::parse_from_rfc3339(started?).ok().map(|at| at.with_timezone(&chrono::Utc))
 }
 
-/// Issue-search text for every issue and PR changed since `started`, minus
-/// the index-lag overlap.
-fn delta_search_query(repo: &str, started: chrono::DateTime<chrono::Utc>) -> String {
-    let since = (started - DELTA_OVERLAP).format("%Y-%m-%dT%H:%M:%SZ");
-    format!("repo:{repo} updated:>={since} sort:updated-desc")
+/// Query of one `GET /repos/{o}/{r}/issues` page: every issue and PR
+/// updated since `started` minus the overlap, newest first.
+fn delta_params(started: chrono::DateTime<chrono::Utc>, page: u32) -> [(&'static str, String); 6] {
+    let since = (started - DELTA_OVERLAP).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    [
+        ("state", "all".to_string()),
+        ("since", since),
+        ("sort", "updated".to_string()),
+        ("direction", "desc".to_string()),
+        ("per_page", DELTA_PAGE.to_string()),
+        ("page", page.to_string()),
+    ]
 }
 
-/// Change-only search: same row fields as the sections lists, either kind.
-fn delta_query() -> String {
-    format!("query($q: String!, $after: String) {{\n search(type: ISSUE, query: $q, first: 50, after: $after) {{ nodes {{ __typename ... on Issue {{ {ISSUE_FIELDS} }} ... on PullRequest {{ {PR_FIELDS} }} }} pageInfo {{ hasNextPage endCursor }} }}\n {RATE_LIMIT_FIELD} }}")
+const DELTA_PAGE: usize = 100;
+
+/// One REST issue item as a sidebar row. The window anchor matches
+/// `parse_rows`: `merged_at` for merged PRs, `updated_at` for closed
+/// issues, none otherwise.
+fn delta_row(item: &Value) -> Result<Row, String> {
+    let mut row = super::search_row(item)?;
+    row.window_at = match (row.issue.is_pr, row.issue.state.as_str()) {
+        (true, "MERGED") => item.pointer("/pull_request/merged_at").and_then(Value::as_str).map(str::to_owned),
+        (false, "CLOSED") => Some(row.issue.updated_at.clone()),
+        _ => None,
+    };
+    Ok(row)
 }
 
-/// Rows plus `(hasNextPage, endCursor)` for one change-only search page.
-/// The window anchor matches `parse_rows`: `mergedAt` for merged PRs,
-/// `updatedAt` for closed issues, none otherwise.
-fn parse_delta_page(value: &Value) -> Result<(Vec<Row>, bool, Option<String>), String> {
-    if let Some(e) = graphql_auth_failure(value) {
-        return Err(e);
+/// Add one page's rows to `rows`; returns the page's item count (a page
+/// under `DELTA_PAGE` is the last).
+fn absorb_delta_page(page: &Value, rows: &mut Vec<Row>) -> Result<usize, String> {
+    let items = page.as_array().ok_or_else(|| format!("GitHub issues list: {page}"))?;
+    for item in items {
+        rows.push(delta_row(item)?);
     }
-    let search = value.pointer("/data/search").filter(|v| v.is_object())
-        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
-    let mut rows = Vec::new();
-    for n in search.get("nodes").and_then(Value::as_array).into_iter().flatten() {
-        let is_pr = match n.get("__typename").and_then(Value::as_str) {
-            Some("PullRequest") => true,
-            Some("Issue") => false,
-            _ => continue,
-        };
-        let anchor = match (is_pr, n.get("state").and_then(Value::as_str)) {
-            (true, Some("MERGED")) => Some("mergedAt"),
-            (false, Some("CLOSED")) => Some("updatedAt"),
-            _ => None,
-        };
-        let window_at = anchor.and_then(|k| n.get(k)?.as_str()).map(str::to_owned);
-        rows.push(parse_node(n, is_pr, window_at)?);
-    }
-    let info = search.get("pageInfo");
-    let more = info.and_then(|v| v.get("hasNextPage")).and_then(Value::as_bool).unwrap_or(false);
-    let cursor = info.and_then(|v| v.get("endCursor")).and_then(Value::as_str).map(str::to_owned);
-    Ok((rows, more, cursor))
+    Ok(items.len())
 }
 
 /// Every issue and PR in `repo` updated since `started` (minus the
-/// overlap), one search page at a time up to the row cap.
+/// overlap), paged until a short page. Any page error fails the call, so
+/// the caller never records a partial sync.
 pub async fn changed_rows(
     repo: &str,
     started: chrono::DateTime<chrono::Utc>,
     bearer: &str,
 ) -> Result<Vec<Row>, String> {
-    let url = graphql_url();
+    let url = format!("{}/repos/{repo}/issues", rest_base());
     let client = client();
-    let query = delta_query();
-    let q = delta_search_query(repo, started);
-    let mut after: Option<String> = None;
     let mut rows = Vec::new();
-    loop {
-        let body = json!({"query": query, "variables": {"q": q, "after": after}});
-        let value = post_json(&client, &url, bearer, &body).await?;
-        let (page, more, cursor) = parse_delta_page(&value)?;
-        rows.extend(page);
-        if !more || cursor.is_none() || rows.len() >= MAX_SECTION_ROWS { break; }
-        after = cursor;
+    for page in 1.. {
+        let res = client
+            .get(&url)
+            .bearer_auth(bearer)
+            .header("Accept", "application/vnd.github+json")
+            .query(&delta_params(started, page))
+            .send()
+            .await
+            .map_err(|e| format!("GitHub issues list failed: {e}"))?;
+        note_rate_limit(&res);
+        if res.status().is_client_error() || res.status().is_server_error() {
+            return Err(http_fail("GitHub issues list failed", &url, res).await);
+        }
+        let value: Value = res.json().await.map_err(|e| format!("bad GitHub response: {e}"))?;
+        if absorb_delta_page(&value, &mut rows)? < DELTA_PAGE {
+            break;
+        }
     }
     Ok(rows)
 }
@@ -950,57 +945,57 @@ mod tests {
         });
         assert!(parse_rows(&[denied], now, 24).is_err());
     }
-    #[test]
-    fn delta_search_query_names_repo_and_reaches_back_two_minutes() {
-        let started = test_now();
-        let q = delta_search_query("o/r", started);
-        assert_eq!(q, "repo:o/r updated:>=2026-11-10T11:58:00Z sort:updated-desc");
-        let gql = delta_query();
-        for field in ["search(type: ISSUE, query: $q, first: 50, after: $after)", "... on Issue {",
-            "... on PullRequest {", "__typename", "pageInfo { hasNextPage endCursor }",
-            "subIssuesSummary", "mergedAt", "statusCheckRollup", RATE_LIMIT_FIELD] {
-            assert!(gql.contains(field), "delta query missing: {field}");
+    fn rest_item(number: u64, state: &str, pr_merged: Option<Option<&str>>) -> Value {
+        let mut v = json!({"number": number, "title": "t", "state": state, "user": {"login": "bo"},
+            "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-10T11:10:00Z", "html_url": "u"});
+        if let Some(m) = pr_merged {
+            v["pull_request"] = json!({"merged_at": m});
         }
+        v
     }
     #[test]
-    fn delta_or_full_follows_cache_age_and_timestamp() {
-        let now = test_now();
-        let at = |s: &str| delta_since(Some(s), now, false);
-        assert_eq!(at("2026-11-10T11:30:00Z"), Some(now - chrono::TimeDelta::minutes(30)));
-        assert!(at("2026-11-10T11:00:01Z").is_some(), "just under an hour old");
-        assert_eq!(at("2026-11-10T11:00:00Z"), None, "an hour old takes the full walk");
-        assert_eq!(at("2026-11-10T13:00:00Z"), None, "a future timestamp is not trusted");
+    fn delta_params_reach_back_two_minutes_and_page() {
+        let p = delta_params(test_now(), 3);
+        assert_eq!(p.to_vec(), vec![
+            ("state", "all".to_string()),
+            ("since", "2026-11-10T11:58:00Z".to_string()),
+            ("sort", "updated".to_string()),
+            ("direction", "desc".to_string()),
+            ("per_page", "100".to_string()),
+            ("page", "3".to_string()),
+        ]);
+    }
+    #[test]
+    fn delta_paging_stops_on_a_short_page_and_errors_surface() {
+        let page = |start: u64, n: u64| Value::Array((start..start + n).map(|i| rest_item(i, "open", None)).collect());
+        let mut rows = vec![];
+        assert_eq!(absorb_delta_page(&page(1, 100), &mut rows), Ok(DELTA_PAGE), "a full page asks for the next");
+        assert_eq!(absorb_delta_page(&page(101, 5), &mut rows), Ok(5), "a short page is the last");
+        assert_eq!(rows.len(), 105, "no row cap");
+        // A mid-way failure is an Err the caller propagates before it writes started_at.
+        assert!(absorb_delta_page(&json!({"message": "rate limited"}), &mut rows).is_err());
+        assert!(absorb_delta_page(&Value::Array(vec![json!({"title": "no number"})]), &mut rows).is_err());
+    }
+    #[test]
+    fn delta_rows_map_state_and_window_anchor() {
+        let merged = delta_row(&rest_item(1, "closed", Some(Some("2026-11-10T11:00:00Z")))).unwrap();
+        assert!(merged.issue.is_pr);
+        assert_eq!(merged.issue.state, "MERGED");
+        assert_eq!(merged.window_at.as_deref(), Some("2026-11-10T11:00:00Z"), "merged anchors on merged_at");
+        let closed_pr = delta_row(&rest_item(2, "closed", Some(None))).unwrap();
+        assert_eq!((closed_pr.issue.state.as_str(), closed_pr.window_at.clone()), ("CLOSED", None));
+        let closed = delta_row(&rest_item(3, "closed", None)).unwrap();
+        assert_eq!(closed.window_at.as_deref(), Some("2026-11-10T11:10:00Z"), "closed issue anchors on updated_at");
+        let open = delta_row(&rest_item(4, "open", Some(None))).unwrap();
+        assert_eq!((open.issue.state.as_str(), open.window_at), ("OPEN", None));
+    }
+    #[test]
+    fn delta_or_full_follows_the_timestamp_not_its_age() {
+        let at = |s: &str| delta_since(Some(s), false);
+        assert!(at("2026-11-10T11:30:00Z").is_some());
+        assert_eq!(at("2020-01-01T00:00:00Z").unwrap().to_rfc3339(), "2020-01-01T00:00:00+00:00", "any age takes the delta path");
         assert_eq!(at("garbage"), None, "a bad timestamp takes the full walk");
-        assert_eq!(delta_since(None, now, false), None, "no timestamp takes the full walk");
-        assert_eq!(delta_since(Some("2026-11-10T11:30:00Z"), now, true), None, "forced full");
-    }
-    #[test]
-    fn delta_page_parses_issues_and_prs_into_section_rows() {
-        let v = json!({"data": {"search": {
-            "nodes": [
-                {"__typename": "PullRequest", "number": 1, "title": "pr", "state": "MERGED",
-                 "mergedAt": "2026-11-10T11:00:00Z", "updatedAt": "2026-11-10T11:05:00Z",
-                 "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}},
-                {"__typename": "Issue", "number": 2, "title": "bug", "state": "CLOSED",
-                 "updatedAt": "2026-11-10T11:10:00Z", "parent": {"number": 9},
-                 "labels": {"nodes": [{"name": "bug"}]}},
-                {"__typename": "Issue", "number": 3, "title": "open", "state": "OPEN",
-                 "updatedAt": "2026-11-10T11:20:00Z"},
-                {"__typename": "PullRequest", "number": 4, "title": "draft", "state": "OPEN"},
-                {}],
-            "pageInfo": {"hasNextPage": true, "endCursor": "c1"}}}});
-        let (rows, more, cursor) = parse_delta_page(&v).unwrap();
-        assert!(more);
-        assert_eq!(cursor.as_deref(), Some("c1"));
-        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
-        let row = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap();
-        assert!(row(1).issue.is_pr && !row(2).issue.is_pr && row(4).issue.is_pr);
-        assert_eq!(row(1).window_at.as_deref(), Some("2026-11-10T11:00:00Z"), "merged anchors on mergedAt");
-        assert_eq!(row(2).window_at.as_deref(), Some("2026-11-10T11:10:00Z"), "closed anchors on updatedAt");
-        assert_eq!(row(3).window_at, None);
-        assert_eq!(row(1).issue.checks, Some(crate::model::CheckState::Pass));
-        assert_eq!(row(2).issue.parent, Some(9));
-        assert_eq!(row(2).issue.labels[0].name, "bug");
-        assert!(parse_delta_page(&json!({"errors": [{"message": "boom"}]})).is_err());
+        assert_eq!(delta_since(None, false), None, "no sync takes the full walk");
+        assert_eq!(delta_since(Some("2026-11-10T11:30:00Z"), true), None, "forced full");
     }
 }

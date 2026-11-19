@@ -240,7 +240,22 @@ fn overlay(stored: Vec<api::Row>, fetched: &[api::Row]) -> Vec<api::Row> {
     stored.into_iter().filter(|r| !fresh.contains(&r.issue.number)).chain(fetched.iter().cloned()).collect()
 }
 
-/// How a sections refresh runs: a change-only search (`Delta`), the same
+/// REST rows lack the CI rollup, project status and sub-issue parent:
+/// each fetched row keeps its stored row's `checks`, `statuses`, `parent`
+/// and, when REST sends none, `sub_summary`. The status pass refreshes them.
+fn keep_stored_fields(stored: &[api::Row], fetched: &mut [api::Row]) {
+    let old: std::collections::HashMap<u64, &api::Row> = stored.iter().map(|r| (r.issue.number, r)).collect();
+    for row in fetched {
+        if let Some(prev) = old.get(&row.issue.number) {
+            row.issue.checks = prev.issue.checks;
+            row.statuses = prev.statuses.clone();
+            row.issue.parent = prev.issue.parent;
+            row.issue.sub_summary = row.issue.sub_summary.or(prev.issue.sub_summary);
+        }
+    }
+}
+
+/// How a sections refresh runs: a change-only REST read (`Delta`), the same
 /// plus a CI/project status refresh of the open rows (`Status`), or a
 /// full walk of every list (`Full`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -259,9 +274,9 @@ pub enum Refresh {
 /// The sync itself is per repo: it covers all four lists and
 /// `sync_hours(hours)`, so every instance's window and mask filter the
 /// same stored rows. Only the store's sync lease holder calls this. A
-/// sync under an hour old refreshes through one change-only search
-/// (`api::changed_rows`); `Refresh::Full`, no sync, or an older one walks
-/// the lists head-first and stops on overlap with the stored rows.
+/// sync of any age refreshes through one change-only REST read
+/// (`api::changed_rows`); `Refresh::Full` or no sync walks the lists
+/// head-first and stops on overlap with the stored rows.
 /// `progress` re-tags the page counts onto the caller's existing section
 /// channel. `Refresh::Status` also refetches CI and project status of the
 /// open rows (best effort) after its change-only search.
@@ -277,11 +292,15 @@ pub async fn fetch_recent_sections(
     let started = chrono::Utc::now();
     let read_repo = repo.to_string();
     let (last, stored) = tokio::task::spawn_blocking(move || load_rows(&read_repo)).await.unwrap_or_default();
-    let since = api::delta_since(last.as_deref(), started, refresh == Refresh::Full);
+    let since = api::delta_since(last.as_deref(), refresh == Refresh::Full);
     let mut walked = false;
     let mut capped = false;
     let fetched = match since {
-        Some(since) => api::changed_rows(repo, since, &token).await?,
+        Some(since) => {
+            let mut rows = api::changed_rows(repo, since, &token).await?;
+            keep_stored_fields(&stored, &mut rows);
+            rows
+        }
         None => {
             let stored_numbers: Option<std::collections::HashSet<u64>> =
                 (!stored.is_empty()).then(|| stored.iter().map(|r| r.issue.number).collect());
@@ -738,6 +757,26 @@ mod tests {
         row
     }
 
+    #[test]
+    fn rest_rows_keep_stored_checks_statuses_and_parent() {
+        let mut prev = row(1, true, "OPEN", None);
+        prev.issue.checks = Some(model::CheckState::Pass);
+        prev.issue.parent = Some(9);
+        prev.issue.sub_summary = Some(model::SubSummary { total: 2, completed: 1 });
+        let mut rest = row(1, true, "MERGED", None);
+        rest.statuses = vec![];
+        let mut new = row(2, false, "OPEN", None);
+        new.statuses = vec![];
+        let mut fetched = vec![rest, new];
+        keep_stored_fields(&[prev.clone()], &mut fetched);
+        assert_eq!(fetched[0].issue.state, "MERGED", "REST owns the state");
+        assert_eq!(fetched[0].issue.checks, Some(model::CheckState::Pass));
+        assert_eq!(fetched[0].issue.parent, Some(9));
+        assert_eq!(fetched[0].issue.sub_summary, prev.issue.sub_summary);
+        assert_eq!(fetched[0].statuses, prev.statuses);
+        assert!(fetched[1].statuses.is_empty() && fetched[1].issue.checks.is_none(), "unstored rows stay bare");
+    }
+
     /// Parity pin for the sidebar rows: a cold walk, a persisted round
     /// trip, a change-only sync over the persisted rows, and startup
     /// hydration, the way `fetch_recent_sections` chains them. Since #244
@@ -766,7 +805,7 @@ mod tests {
             // Change-only sync: #1 retitled stays in place, #3 moves list,
             // #6 is new, #7 is a closed (unmerged) PR no list shows.
             let (last, stored) = load_rows(repo);
-            assert!(api::delta_since(last.as_deref(), now, false).is_some(), "a fresh sync takes the delta path");
+            assert!(api::delta_since(last.as_deref(), false).is_some(), "a fresh sync takes the delta path");
             let mut retitled = walked[1].clone();
             retitled.issue.title = "renamed".to_string();
             let mut closed = dated(3, false, "CLOSED", now, 0);
