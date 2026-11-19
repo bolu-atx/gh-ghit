@@ -260,3 +260,48 @@ fn a_store_reread_keeps_the_selection_and_a_new_center_takes_it() {
     let moved = &app.map.layout.bodies()[app.map.graph.index_of(8).unwrap()];
     assert!((moved.x - eight.x).abs() < 5.0, "one component keeps its layout");
 }
+
+#[test]
+fn an_unchanged_reread_keeps_the_map_still_and_a_change_wakes_it() {
+    let mut app = map_app();
+    app.settle_map();
+    let before: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+    let (items, links) = (app.map.items.clone(), app.map.links.clone());
+    app.set_map_data(items.clone(), links.clone());
+    assert!(!app.map_tick(), "equal data neither rebuilds nor steps");
+    let after: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+    assert_eq!(before, after, "nothing moved");
+    let mut renamed = items;
+    renamed[1].title = "Waits on seven, renamed".to_string();
+    app.set_map_data(renamed, links);
+    assert!(app.map_tick() && app.map.moving(), "a changed title rebuilds and wakes the layout");
+    assert_eq!(app.map.graph.nodes[app.map.graph.index_of(8).unwrap()].title, "Waits on seven, renamed");
+}
+
+#[test]
+fn a_drag_follows_its_node_through_a_rebuild_and_ends_when_it_vanishes() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    let (x, y) = node_cell(&app, 8);
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
+    // A new lowest number shifts every node index by one.
+    let (mut items, mut links) = (app.map.items.clone(), app.map.links.clone());
+    items.push(item(1, "OPEN", "New blocker", None));
+    links.push(MapLink { src: 1, dst: 7, kind: LinkKind::Blocks });
+    app.set_map_data(items.clone(), links.clone());
+    app.map_tick();
+    handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x - 10, y + 3));
+    let eight = app.map.graph.index_of(8).unwrap();
+    let body = &app.map.layout.bodies()[eight];
+    let area = app.hits.map_area;
+    let cell = app.map.camera.cell(body.x, body.y, area.width, area.height);
+    assert_eq!(cell, (i32::from(x - 10 - area.x), i32::from(y + 3 - area.y)), "#8 still follows the pointer");
+    assert!(!app.map.layout.bodies()[app.map.graph.index_of(1).unwrap()].pinned, "the shifted index is not moved");
+    items.retain(|item| item.number != 8);
+    links.retain(|link| link.dst != 8);
+    app.set_map_data(items, links);
+    app.map_tick();
+    handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x - 4, y + 1));
+    assert_eq!(app.map.drag, None, "the drag ends once #8 is gone");
+}

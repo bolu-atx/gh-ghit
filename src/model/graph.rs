@@ -2,7 +2,7 @@
 //! links as edges. Pure: built from the local copy's items and links,
 //! then laid out by `physics`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::physics::EdgeStyle;
 
@@ -133,18 +133,25 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, scop
             None => HashSet::new(),
         },
     };
+    // Blocks links indexed both ways, so each node checks only its own.
+    let mut blocks: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut blocked_by: HashMap<u64, Vec<u64>> = HashMap::new();
+    for link in links.iter().filter(|link| link.kind == LinkKind::Blocks) {
+        blocks.entry(link.src).or_default().push(link.dst);
+        blocked_by.entry(link.dst).or_default().push(link.src);
+    }
     let open = |n: u64| by_number.get(&n).is_some_and(|item| item.state == "OPEN");
     let visible = |n: u64| {
         open(n)
             || Some(n) == center
-            || links.iter().any(|l| l.kind == LinkKind::Blocks && l.src == n && in_scope.contains(&l.dst) && open(l.dst))
+            || blocks.get(&n).is_some_and(|dsts| dsts.iter().any(|&dst| in_scope.contains(&dst) && open(dst)))
     };
     let mut numbers: Vec<u64> = in_scope.iter().copied().filter(|&n| visible(n)).collect();
     numbers.sort_unstable();
 
     let mut nodes: Vec<MapNode> = numbers.iter().map(|&n| {
         let item = by_number[&n];
-        let blocked = links.iter().any(|l| l.kind == LinkKind::Blocks && l.dst == n && open(l.src));
+        let blocked = blocked_by.get(&n).is_some_and(|srcs| srcs.iter().any(|&src| open(src)));
         let state = match (open(n), item.is_pr, blocked) {
             (false, _, _) => NodeState::Closed,
             (true, true, _) => NodeState::Pr,
@@ -166,31 +173,33 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, scop
     edges.sort_by_key(|&(src, dst, _)| (src, dst));
     edges.dedup_by_key(|edge| (edge.0, edge.1));
 
-    let mut milestones: Vec<&str> = numbers.iter().filter_map(|n| by_number[n].milestone.as_deref()).collect();
-    milestones.sort_unstable();
-    milestones.dedup();
-    for title in milestones {
+    let mut milestones: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, n) in numbers.iter().enumerate() {
+        if let Some(title) = by_number[n].milestone.as_deref() {
+            milestones.entry(title).or_default().push(i);
+        }
+    }
+    for (title, members) in milestones {
         let hub = nodes.len();
         nodes.push(MapNode { id: hub_id(title), number: None, title: title.to_string(), state: NodeState::Hub });
-        for (i, n) in numbers.iter().enumerate() {
-            if by_number[n].milestone.as_deref() == Some(title) {
-                edges.push((i, hub, EdgeStyle::Hub));
-            }
-        }
+        edges.extend(members.into_iter().map(|i| (i, hub, EdgeStyle::Hub)));
     }
     MapGraph { nodes, edges }
 }
 
 /// Numbers linked to `center` through any chain of links, either way.
 fn component(links: &[MapLink], center: u64) -> HashSet<u64> {
+    let mut neighbors: HashMap<u64, Vec<u64>> = HashMap::new();
+    for link in links {
+        neighbors.entry(link.src).or_default().push(link.dst);
+        neighbors.entry(link.dst).or_default().push(link.src);
+    }
     let mut seen = HashSet::from([center]);
     let mut queue = vec![center];
     while let Some(node) = queue.pop() {
-        for link in links.iter().filter(|link| link.src == node || link.dst == node) {
-            for next in [link.src, link.dst] {
-                if seen.insert(next) {
-                    queue.push(next);
-                }
+        for &next in neighbors.get(&node).into_iter().flatten() {
+            if seen.insert(next) {
+                queue.push(next);
             }
         }
     }

@@ -23,9 +23,10 @@ const NUDGE_CELLS: i32 = 2;
 /// A held left button on the map.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum MapDrag {
-    /// Pressed on node `index`. A release with no motion on the node that
-    /// was already selected opens it.
-    Node { index: usize, moved: bool, was_selected: bool },
+    /// Pressed on the node with layout id `id`. An id, not an index, so a
+    /// rebuild mid-drag never moves another node. A release with no motion
+    /// on the node that was already selected opens it.
+    Node { id: u64, moved: bool, was_selected: bool },
     /// Pressed on empty space: the view follows the pointer from this cell.
     Pan { col: u16, row: u16 },
 }
@@ -98,8 +99,13 @@ impl MapView {
 }
 
 impl App {
-    /// Replace the stored items and links the map draws from.
+    /// Replace the stored items and links the map draws from. Data equal
+    /// to what the map holds changes nothing, so a sync that touched no
+    /// map field leaves the layout at rest.
     pub(crate) fn set_map_data(&mut self, items: Vec<MapItem>, links: Vec<MapLink>) {
+        if self.map.loaded && items == self.map.items && links == self.map.links {
+            return;
+        }
         self.map.items = items;
         self.map.links = links;
         self.map.loaded = true;
@@ -269,7 +275,7 @@ impl App {
                 let id = self.map.graph.nodes[index].id;
                 let was_selected = self.map.selected == Some(id);
                 self.map.selected = Some(id);
-                MapDrag::Node { index, moved: false, was_selected }
+                MapDrag::Node { id, moved: false, was_selected }
             }
             None => MapDrag::Pan { col, row },
         });
@@ -278,11 +284,16 @@ impl App {
     /// The held button moved to view cell `(col, row)`.
     pub(crate) fn map_drag_to(&mut self, col: u16, row: u16) {
         match self.map.drag {
-            Some(MapDrag::Node { index, was_selected, .. }) => {
+            Some(MapDrag::Node { id, was_selected, .. }) => {
+                // A rebuild dropped the grabbed node: the drag ends.
+                let Some(index) = self.map.graph.index_of(id) else {
+                    self.map.drag = None;
+                    return;
+                };
                 // The view holds still under a dragged node.
                 self.map.follow = false;
                 self.map_place(index, i32::from(col), i32::from(row));
-                self.map.drag = Some(MapDrag::Node { index, moved: true, was_selected });
+                self.map.drag = Some(MapDrag::Node { id, moved: true, was_selected });
             }
             Some(MapDrag::Pan { col: from_col, row: from_row }) => {
                 let (dc, dr) = (f64::from(from_col) - f64::from(col), f64::from(from_row) - f64::from(row));
@@ -296,8 +307,10 @@ impl App {
 
     /// The button came up: a still press on the selected node opens it.
     pub(crate) fn map_release(&mut self) {
-        if let Some(MapDrag::Node { moved: false, was_selected: true, .. }) = self.map.drag.take() {
-            self.map_open();
+        if let Some(MapDrag::Node { id, moved: false, was_selected: true }) = self.map.drag.take() {
+            if self.map.selected == Some(id) && self.map.graph.index_of(id).is_some() {
+                self.map_open();
+            }
         }
     }
 }

@@ -238,7 +238,7 @@ impl Store {
     /// Every stored item, as the dependency map needs it.
     pub fn map_items(&self) -> Result<Vec<MapItem>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
-        let mut stmt = self.conn.prepare("SELECT number, kind, state, title, milestone FROM items").map_err(fail)?;
+        let mut stmt = self.conn.prepare("SELECT number, kind, state, title, milestone FROM items ORDER BY number").map_err(fail)?;
         let items = stmt
             .query_map([], |r| {
                 Ok(MapItem {
