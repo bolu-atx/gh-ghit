@@ -112,45 +112,76 @@ pub async fn fetch_number(
 ) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let iname = cache::Key::Issue { repo: repo.to_string(), number }.name();
-    let sname = cache::Key::Status { repo: repo.to_string(), number }.name();
-
     if !force {
-        let iname_c = iname.clone();
-        let sname_c = sname.clone();
-        let hit: Option<IssueBundle> = tokio::task::spawn_blocking(move || {
-            match (cache::cache_get(&iname_c), cache::cache_get(&sname_c)) {
-                (Some(data), Some(statuses)) => Some((data, statuses)),
-                _ => None,
-            }
-        })
-        .await
-        .map_err(|e| format!("cache read failed: {e}"))?;
+        let repo_c = repo.to_string();
+        let hit = tokio::task::spawn_blocking(move || stored_bundle(&repo_c, number))
+            .await
+            .map_err(|e| format!("store read failed: {e}"))?;
         if let Some(bundle) = hit {
             return Ok(bundle);
         }
     }
-    let comments_name = cache::Key::Comments { repo: repo.to_string(), number }.name();
-    let cached_comments = if force { None } else {
-        let name = comments_name.clone();
-        tokio::task::spawn_blocking(move || cache::cache_get(&name)).await.unwrap_or(None)
-    };
-    let comments_fetched = cached_comments.is_none();
     let report = |done: usize, total: usize| {
         if let Some(tx) = &progress {
             let _ = tx.send((number, IssueEvent::Progress { done, total }));
         }
     };
-    let (data, statuses) =
-        api::issue(repo, number, &token, cached_comments, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await?;
-    let (data_c, statuses_c) = (data.clone(), statuses.clone());
-    let _ = tokio::task::spawn_blocking(move || {
-        if comments_fetched { cache::cache_put(&comments_name, &data_c.comments); }
-        cache::cache_put(&iname, &data_c);
-        cache::cache_put(&sname, &statuses_c);
-    })
-    .await;
-    Ok((data, statuses))
+    let fetched = api::issue(repo, number, &token, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await;
+    let repo_c = repo.to_string();
+    match &fetched {
+        Ok(bundle) => {
+            let bundle_c = bundle.clone();
+            let _ = tokio::task::spawn_blocking(move || save_bundle(&repo_c, number, &bundle_c)).await;
+        }
+        Err(e) if is_not_found(e) => {
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Ok(mut store) = store::open(&repo_c) {
+                    let _ = store.drop_item(number);
+                }
+            })
+            .await;
+        }
+        Err(_) => {}
+    }
+    fetched
+}
+
+/// A 404 from the item fetch: deleted or transferred.
+fn is_not_found(error: &str) -> bool {
+    error.contains("404 Not Found")
+}
+
+/// The stored issue bundle when it is fresh against the latest sync.
+/// Project statuses come from the synced row, not the stored copy.
+/// Blocking: call from the blocking pool.
+fn stored_bundle(repo: &str, number: u64) -> Option<IssueBundle> {
+    let store = store::open(repo).ok()?;
+    let (data, statuses): IssueBundle = store.fresh_detail(store::Detail::Issue, number, false)?;
+    Some((data, store.item_statuses(number).unwrap_or(statuses)))
+}
+
+/// Store a fetched issue bundle at its own `updated_at`. Best effort.
+/// Blocking.
+fn save_bundle(repo: &str, number: u64, bundle: &IssueBundle) {
+    if let Ok(store) = store::open(repo) {
+        let _ = store.put_detail(store::Detail::Issue, number, &bundle.0.updated_at, bundle);
+    }
+}
+
+/// Stored diff or graph payload when fresh, else `None`. Blocking.
+fn stored_detail<T: serde::de::DeserializeOwned>(repo: &str, kind: store::Detail, number: u64) -> Option<T> {
+    store::open(repo).ok()?.fresh_detail(kind, number, false)
+}
+
+/// Store a diff or graph payload at the item's synced `updated_at`; an
+/// item no sync listed stores nothing, since an open could not serve it.
+/// Best effort. Blocking.
+fn save_detail<T: serde::Serialize>(repo: &str, kind: store::Detail, number: u64, value: &T) {
+    if let Ok(store) = store::open(repo) {
+        if let Some(updated_at) = store.item_updated_at(number) {
+            let _ = store.put_detail(kind, number, &updated_at, value);
+        }
+    }
 }
 
 /// Stored rows that can stand in for this window and list mask, with
@@ -413,39 +444,34 @@ pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<m
 pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let name = cache::Key::Comments { repo: repo.to_string(), number }.name();
-    let read_name = name.clone();
-    let comments = tokio::task::spawn_blocking(move || cache::cache_get(&read_name)).await.unwrap_or(None);
-    let comments_fetched = comments.is_none();
-    let (data, _) = api::issue(repo, number, &token, comments, None).await?;
-    let saved_comments = data.comments.clone();
-    if comments_fetched {
-        let _ = tokio::task::spawn_blocking(move || cache::cache_put(&name, &saved_comments)).await;
+    let repo_c = repo.to_string();
+    if let Ok(Some((data, _))) = tokio::task::spawn_blocking(move || stored_bundle(&repo_c, number)).await {
+        return Ok(model::BoardDetail::from_issue(&data));
     }
+    let bundle = api::issue(repo, number, &token, None).await?;
+    let (repo_c, bundle_c) = (repo.to_string(), bundle.clone());
+    let _ = tokio::task::spawn_blocking(move || save_bundle(&repo_c, number, &bundle_c)).await;
+    let data = bundle.0;
     Ok(model::BoardDetail::from_issue(&data))
 }
 
-/// Dependency graph for one issue, cached like single issues.
+/// Dependency graph for one issue, stored like single issues.
 pub async fn fetch_graph(repo: &str, number: u64, force: bool) -> Result<model::GraphData, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let name = cache::Key::Graph { repo: repo.to_string(), number }.name();
     if !force {
-        let name_c = name.clone();
+        let repo_c = repo.to_string();
         let hit: Option<model::GraphData> =
-            tokio::task::spawn_blocking(move || cache::cache_get(&name_c))
+            tokio::task::spawn_blocking(move || stored_detail(&repo_c, store::Detail::Graph, number))
                 .await
-                .map_err(|e| format!("cache read failed: {e}"))?;
+                .map_err(|e| format!("store read failed: {e}"))?;
         if let Some(data) = hit {
             return Ok(data);
         }
     }
     let data = api::graph(repo, number, &token).await?;
-    let (name_c, data_c) = (name, data.clone());
-    let _ = tokio::task::spawn_blocking(move || {
-        cache::cache_put(&name_c, &data_c);
-    })
-    .await;
+    let (repo_c, data_c) = (repo.to_string(), data.clone());
+    let _ = tokio::task::spawn_blocking(move || save_detail(&repo_c, store::Detail::Graph, number, &data_c)).await;
     Ok(data)
 }
 
@@ -458,27 +484,23 @@ pub async fn fetch_sub_issues(repo: &str, number: u64) -> Result<Vec<model::Issu
     api::sub_issues(repo, number, &token).await
 }
 
-/// Changed files for one PR, cached like single issues.
+/// Changed files for one PR, stored like single issues.
 pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<model::DiffFile>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    let name = cache::Key::Diff { repo: repo.to_string(), number }.name();
     if !force {
-        let name_c = name.clone();
+        let repo_c = repo.to_string();
         let hit: Option<Vec<model::DiffFile>> =
-            tokio::task::spawn_blocking(move || cache::cache_get(&name_c))
+            tokio::task::spawn_blocking(move || stored_detail(&repo_c, store::Detail::Diff, number))
                 .await
-                .map_err(|e| format!("cache read failed: {e}"))?;
+                .map_err(|e| format!("store read failed: {e}"))?;
         if let Some(files) = hit {
             return Ok(files);
         }
     }
     let files = api::pull_files(repo, number, &token).await?;
-    let (name_c, files_c) = (name, files.clone());
-    let _ = tokio::task::spawn_blocking(move || {
-        cache::cache_put(&name_c, &files_c);
-    })
-    .await;
+    let (repo_c, files_c) = (repo.to_string(), files.clone());
+    let _ = tokio::task::spawn_blocking(move || save_detail(&repo_c, store::Detail::Diff, number, &files_c)).await;
     Ok(files)
 }
 
@@ -650,5 +672,39 @@ mod tests {
         assert!(fetch_diff("", 1, false).await.is_err());
         assert!(fetch_graph("", 1, false).await.is_err());
         assert!(fetch_sub_issues("", 1).await.is_err());
+    }
+
+    /// A stored detail whose `updated_at` matches the synced row opens
+    /// with no request (the unit-test client panics on any), and its
+    /// project statuses come from the synced row.
+    #[test]
+    fn unchanged_item_opens_from_the_store_with_zero_requests() {
+        let _guard = cache::test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved = (std::env::var("XDG_DATA_HOME").ok(), std::env::var("GH_TOKEN").ok());
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        std::env::set_var("GH_TOKEN", "test");
+        let mut listed = row(5, false, "OPEN", None);
+        listed.issue.updated_at = "t1".to_string();
+        let sync = store::Sync { started_at: chrono::Utc::now().to_rfc3339(), hours: 24, show: [true; 4] };
+        save_sections("o/r", &sync, &[listed], Vec::new());
+        let data = IssueData { number: 5, body: "stored body".to_string(), updated_at: "t1".to_string(), ..Default::default() };
+        save_bundle("o/r", 5, &(data, vec![("Board".to_string(), Some("Old".to_string()))]));
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let (got, statuses) = runtime.block_on(fetch_number("o/r", 5, false, None)).unwrap();
+        for (key, value) in [("XDG_DATA_HOME", saved.0), ("GH_TOKEN", saved.1)] {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        assert_eq!(got.body, "stored body");
+        assert_eq!(statuses, vec![("Board".to_string(), Some("Todo".to_string()))], "statuses come from the sync");
+    }
+
+    #[test]
+    fn only_a_404_is_not_found() {
+        assert!(is_not_found("GitHub request failed: 404 Not Found for https://api.github.com/repos/o/r/issues/9: {}"));
+        assert!(!is_not_found("GitHub request failed: 500 for https://api.github.com/repos/o/r/issues/404"));
     }
 }

@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use crate::api::Row;
 use crate::cache;
 
-const SCHEMA_VERSION: &str = "1";
+const SCHEMA_VERSION: &str = "2";
 
 /// How long a write waits for another process's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -40,6 +40,13 @@ CREATE TABLE items (
     window_at TEXT,
     position INTEGER,
     row_json TEXT NOT NULL
+);
+CREATE TABLE details (
+    number INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (number, kind)
 );
 ";
 
@@ -244,6 +251,98 @@ impl Store {
     }
 }
 
+/// The detail payloads a store keeps per item number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Detail {
+    /// Issue body, comments and review threads, with project statuses.
+    Issue,
+    /// Changed files of a PR.
+    Diff,
+    /// Dependency graph.
+    Graph,
+}
+
+impl Detail {
+    fn name(self) -> &'static str {
+        match self {
+            Detail::Issue => "issue",
+            Detail::Diff => "diff",
+            Detail::Graph => "graph",
+        }
+    }
+}
+
+/// True when an open serves a stored detail with no request: no force,
+/// and the detail was fetched at the `updated_at` the latest sync holds.
+/// An item no sync has listed (`current` is `None`) always fetches.
+pub fn serve_stored(force: bool, stored: Option<&str>, current: Option<&str>) -> bool {
+    !force && matches!((stored, current), (Some(a), Some(b)) if a == b)
+}
+
+impl Store {
+    /// `updated_at` of the item as the latest sync listed it.
+    pub fn item_updated_at(&self, number: u64) -> Option<String> {
+        self.conn
+            .query_row("SELECT updated_at FROM items WHERE number = ?1", [number as i64], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+    }
+
+    /// Project statuses of the item as the latest sync listed them.
+    pub fn item_statuses(&self, number: u64) -> Option<Vec<(String, Option<String>)>> {
+        let json: String = self
+            .conn
+            .query_row("SELECT project_status FROM items WHERE number = ?1", [number as i64], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()?;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// The stored detail when it is fresh for an open (`serve_stored`).
+    pub fn fresh_detail<T: serde::de::DeserializeOwned>(&self, kind: Detail, number: u64, force: bool) -> Option<T> {
+        let (stored_at, payload): (String, String) = self
+            .conn
+            .query_row(
+                "SELECT updated_at, payload FROM details WHERE number = ?1 AND kind = ?2",
+                params![number as i64, kind.name()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .ok()
+            .flatten()?;
+        let current = self.item_updated_at(number);
+        if !serve_stored(force, Some(&stored_at), current.as_deref()) {
+            return None;
+        }
+        // A payload that no longer parses is a miss; the fetch rewrites it.
+        serde_json::from_str(&payload).ok()
+    }
+
+    /// Store a detail with the `updated_at` it was fetched at.
+    pub fn put_detail<T: serde::Serialize>(&self, kind: Detail, number: u64, updated_at: &str, value: &T) -> Result<(), String> {
+        let payload = serde_json::to_string(value).map_err(|e| format!("store: {e}"))?;
+        self.conn
+            .execute(
+                "INSERT INTO details (number, kind, updated_at, payload) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (number, kind) DO UPDATE SET updated_at = excluded.updated_at, payload = excluded.payload",
+                params![number as i64, kind.name(), updated_at, payload],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("store: {e}"))
+    }
+
+    /// Drop an item and its details: it was deleted or transferred.
+    pub fn drop_item(&mut self, number: u64) -> Result<(), String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
+        tx.execute("DELETE FROM items WHERE number = ?1", [number as i64]).map_err(fail)?;
+        tx.execute("DELETE FROM details WHERE number = ?1", [number as i64]).map_err(fail)?;
+        tx.commit().map_err(fail)
+    }
+}
+
 /// `closed_at` stays NULL: the listing fields carry no `closedAt`.
 const UPSERT: &str = "
 INSERT INTO items (number, kind, state, title, author, labels, assignees, milestone,
@@ -374,5 +473,56 @@ mod tests {
         assert!(!synced.covers(24, [false, false, true, false]), "a list it hid");
         let unbounded = Sync { hours: 0, ..synced };
         assert!(unbounded.covers(0, [true, false, false, false]) && unbounded.covers(24, [true, false, false, false]));
+    }
+
+    #[test]
+    fn serve_stored_needs_equal_updated_at_and_no_force() {
+        assert!(serve_stored(false, Some("t1"), Some("t1")));
+        assert!(!serve_stored(false, Some("t1"), Some("t2")), "a newer sync refetches");
+        assert!(!serve_stored(false, Some("t1"), None), "an unlisted item fetches");
+        assert!(!serve_stored(false, None, Some("t1")), "nothing stored fetches");
+        assert!(!serve_stored(true, Some("t1"), Some("t1")), "force refetches");
+    }
+
+    #[test]
+    fn details_round_trip_per_kind_and_follow_the_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
+        let mut listed = row(5, "OPEN");
+        listed.issue.updated_at = "t1".to_string();
+        listed.statuses = vec![("Board".to_string(), Some("Todo".to_string()))];
+        store.write(&sync("s"), &[listed], &[]).unwrap();
+        assert_eq!(store.item_updated_at(5).as_deref(), Some("t1"));
+        assert_eq!(store.item_statuses(5), Some(vec![("Board".to_string(), Some("Todo".to_string()))]));
+        assert_eq!(store.item_updated_at(6), None);
+
+        let issue = crate::model::IssueData { number: 5, body: "b".to_string(), updated_at: "t1".to_string(), ..Default::default() };
+        let files = vec![crate::model::DiffFile { filename: "a.rs".to_string(), ..Default::default() }];
+        let graph = crate::model::GraphData::default();
+        store.put_detail(Detail::Issue, 5, "t1", &issue).unwrap();
+        store.put_detail(Detail::Diff, 5, "t1", &files).unwrap();
+        store.put_detail(Detail::Graph, 5, "t1", &graph).unwrap();
+        assert_eq!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).unwrap().body, "b");
+        assert_eq!(store.fresh_detail::<Vec<crate::model::DiffFile>>(Detail::Diff, 5, false).unwrap()[0].filename, "a.rs");
+        assert_eq!(store.fresh_detail::<crate::model::GraphData>(Detail::Graph, 5, false), Some(graph));
+        assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, true).is_none(), "force skips the store");
+
+        // A sync that reports a newer updated_at makes every detail stale.
+        let mut newer = row(5, "OPEN");
+        newer.issue.updated_at = "t2".to_string();
+        store.write(&sync("s2"), &[newer], &[]).unwrap();
+        assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
+
+        // A refetch replaces the stored copy.
+        let fixed = crate::model::IssueData { body: "new".to_string(), updated_at: "t2".to_string(), ..issue.clone() };
+        store.put_detail(Detail::Issue, 5, "t2", &fixed).unwrap();
+        assert_eq!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).unwrap().body, "new");
+
+        // A 404 drops the item and its details.
+        store.drop_item(5).unwrap();
+        assert!(numbers(&store).is_empty() && store.item_updated_at(5).is_none());
+        assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
+        let left: i64 = store.conn.query_row("SELECT count(*) FROM details", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
     }
 }

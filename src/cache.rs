@@ -94,11 +94,6 @@ pub fn prefs_owner_key(owner: &str) -> String {
 /// Enterprise repo never shares entries with a github.com repo of the
 /// same slug.
 pub enum Key {
-    Issue { repo: String, number: u64 },
-    Status { repo: String, number: u64 },
-    Comments { repo: String, number: u64 },
-    Diff { repo: String, number: u64 },
-    Graph { repo: String, number: u64 },
     Board { owner: String },
     Labels { repo: String },
     Milestones { repo: String },
@@ -108,11 +103,6 @@ impl Key {
     pub fn name(&self) -> String {
         let h = host();
         match self {
-            Key::Issue { repo, number } => format!("issue-{h}-{}-{number}", slug(repo)),
-            Key::Status { repo, number } => format!("status-{h}-{}-{number}", slug(repo)),
-            Key::Comments { repo, number } => format!("comments-{h}-{}-{number}", slug(repo)),
-            Key::Diff { repo, number } => format!("diff-{h}-{}-{number}", slug(repo)),
-            Key::Graph { repo, number } => format!("graph-{h}-{}-{number}", slug(repo)),
             Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
             Key::Labels { repo } => format!("labels-{h}-{}", slug(repo)),
             Key::Milestones { repo } => format!("milestones-{h}-{}", slug(repo)),
@@ -340,11 +330,6 @@ mod tests {
         let saved = std::env::var("GH_HOST").ok();
         let variants = |repo: &str| {
             [
-                Key::Issue { repo: repo.to_string(), number: 7 }.name(),
-                Key::Status { repo: repo.to_string(), number: 7 }.name(),
-                Key::Comments { repo: repo.to_string(), number: 7 }.name(),
-                Key::Diff { repo: repo.to_string(), number: 7 }.name(),
-                Key::Graph { repo: repo.to_string(), number: 7 }.name(),
                 Key::Board { owner: "octo".to_string() }.name(),
                 Key::Labels { repo: repo.to_string() }.name(),
                 Key::Milestones { repo: repo.to_string() }.name(),
