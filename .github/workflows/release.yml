@@ -94,9 +94,34 @@ jobs:
           name: gh-ghit-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
 
+  vsix:
+    name: vscode extension
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      # The extension version tracks the release tag (preflight checked
+      # it equals Cargo.toml), so Marketplace uploads always increase.
+      - name: Package .vsix
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          version="$(grep '^version' ../../Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          mkdir -p ../../dist
+          npm ci
+          npm version "$version" --no-git-tag-version --allow-same-version
+          npm test
+          npx @vscode/vsce package --no-dependencies --out ../../dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ghit-vscode-vsix
+          path: dist/*.vsix
+
   publish:
     name: publish
-    needs: build
+    needs: [build, vsix]
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
