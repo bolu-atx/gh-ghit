@@ -477,10 +477,19 @@ impl App {
 }
 
 /// The board modal is up, whether still fetching or fully loaded.
-/// Draw one frame: fit the columns to the terminal width, then render.
+/// Draw one frame: fit the columns to the terminal width and the map camera
+/// to the graph, then render.
 pub(crate) fn draw_frame(f: &mut ratatui::Frame, app: &mut App) {
     app.apply_width(f.area().width);
+    app.map_before_draw();
     crate::ui::render(f, app);
+    // The map's area is known only once it drew. A new area or a pending
+    // reveal moves the camera here, and the frame draws again, so no frame
+    // shows a stale view.
+    if app.map_after_draw() {
+        f.buffer_mut().reset();
+        crate::ui::render(f, app);
+    }
 }
 
 /// Every background lander, once per loop pass. The terminal and drive

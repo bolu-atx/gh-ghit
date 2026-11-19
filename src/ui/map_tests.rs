@@ -499,3 +499,21 @@ fn a_milestone_card_lists_its_items_and_a_click_selects_one() {
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
     assert_eq!((app.map.selected, app.map.card), (Some(8), Some(crate::app::MapCard::Node)));
 }
+
+#[test]
+fn a_following_camera_fits_the_area_the_map_drew_in_even_after_a_card_docks() {
+    let mut app = map_app();
+    app.settle_map();
+    let fit = |app: &App| {
+        let bodies: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+        let area = app.hits.map_area;
+        crate::core::map::Camera::fit(&bodies, area.width, area.height)
+    };
+    draw_buffer(&mut app);
+    assert_eq!(app.map.camera, fit(&app), "the first frame is already fitted");
+    let wide = app.hits.map_area.width;
+    app.map_toggle_card();
+    draw_buffer(&mut app);
+    assert!(app.hits.map_area.width < wide, "the card takes room from the map");
+    assert_eq!(app.map.camera, fit(&app), "the camera fits the narrower map in the same frame");
+}

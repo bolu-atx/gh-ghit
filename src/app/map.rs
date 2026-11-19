@@ -5,6 +5,8 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::layout::Rect;
+
 use crate::app::App;
 use crate::core::map::{Camera, ZOOM_STEP};
 use crate::github;
@@ -92,7 +94,9 @@ pub(crate) struct MapView {
     pub(crate) card: Option<MapCard>,
     pub(crate) detail: Option<CardDetail>,
     /// The next frame brings the card's subject into view.
-    pub(crate) reveal: bool,
+    reveal: bool,
+    /// Map area the camera last fit for.
+    view: Rect,
     /// Steps still owed before the layout may rest.
     wake: usize,
 }
@@ -116,6 +120,7 @@ impl Default for MapView {
             card: None,
             detail: None,
             reveal: false,
+            view: Rect::default(),
             wake: 0,
         }
     }
@@ -208,6 +213,71 @@ impl App {
             changed = true;
         }
         changed
+    }
+
+    /// While the camera follows, fit the whole graph in the map's last
+    /// drawn area. True when the camera moved.
+    fn fit_map_view(&mut self) -> bool {
+        let area = self.hits.map_area;
+        self.map.view = area;
+        if !self.map.follow || !map_drawable(area) || self.map.graph.nodes.is_empty() {
+            return false;
+        }
+        let bodies: Vec<(f64, f64)> = self.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
+        let camera = Camera::fit(&bodies, area.width, area.height);
+        std::mem::replace(&mut self.map.camera, camera) != camera
+    }
+
+    /// Before a render: while the camera follows, fit the graph as it is
+    /// now in the map's last drawn area.
+    pub(crate) fn map_before_draw(&mut self) {
+        if self.visual_graph() {
+            self.fit_map_view();
+        }
+    }
+
+    /// After a render, which records the map's area: fit a new area and
+    /// bring a pending card subject into view. True when the camera moved,
+    /// so the frame draws again.
+    pub(crate) fn map_after_draw(&mut self) -> bool {
+        if !self.visual_graph() {
+            return false;
+        }
+        let mut moved = false;
+        if self.hits.map_area != self.map.view {
+            moved |= self.fit_map_view();
+        }
+        let area = self.hits.map_area;
+        if self.map.reveal && map_drawable(area) && !self.map.graph.nodes.is_empty() {
+            self.map.reveal = false;
+            if !self.map.follow {
+                moved |= self.reveal_card_subject(area);
+            }
+        }
+        moved
+    }
+
+    /// Center the view on the card's subject when it sits outside `area`:
+    /// the selected node, or the middle of the shown edge. True when the
+    /// camera moved.
+    fn reveal_card_subject(&mut self, area: Rect) -> bool {
+        let bodies = self.map.layout.bodies();
+        let target = match self.map.card_edge() {
+            Some(e) => {
+                let (a, b, _) = self.map.graph.edges[e];
+                ((bodies[a].x + bodies[b].x) / 2.0, (bodies[a].y + bodies[b].y) / 2.0)
+            }
+            None => match self.map.selected_index() {
+                Some(i) => (bodies[i].x, bodies[i].y),
+                None => return false,
+            },
+        };
+        let (col, row) = self.map.camera.cell(target.0, target.1, area.width, area.height);
+        if col < 1 || row < 0 || col >= i32::from(area.width) - 1 || row >= i32::from(area.height) - 1 {
+            (self.map.camera.x, self.map.camera.y) = target;
+            return true;
+        }
+        false
     }
 
     /// Step the layout until `budget` elapses: at least one step, at most
@@ -320,9 +390,14 @@ impl App {
         }
     }
 
-    /// Move the view by whole cells; it stops following the graph.
+    /// Move the view by pan steps; it stops following the graph.
     pub(crate) fn map_pan(&mut self, cols: f64, rows: f64) {
-        self.map.camera.pan(cols * PAN_CELLS, rows * PAN_CELLS / 2.0);
+        self.map_scroll(cols * PAN_CELLS, rows * PAN_CELLS / 2.0);
+    }
+
+    /// Move the view by `cols` x `rows` cells; it stops following the graph.
+    pub(crate) fn map_scroll(&mut self, cols: f64, rows: f64) {
+        self.map.camera.pan(cols, rows);
         self.map.follow = false;
     }
 
@@ -424,8 +499,7 @@ impl App {
                     return;
                 }
                 let (dc, dr) = (f64::from(from_col) - f64::from(col), f64::from(from_row) - f64::from(row));
-                self.map.camera.pan(dc, dr);
-                self.map.follow = false;
+                self.map_scroll(dc, dr);
                 self.map.drag = Some(MapDrag::Pan { col, row, edge, moved: true });
             }
             None => {}
@@ -501,4 +575,9 @@ impl App {
             }
         }
     }
+}
+
+/// The map has room to draw in `area`.
+fn map_drawable(area: Rect) -> bool {
+    area.width >= 4 && area.height >= 2
 }

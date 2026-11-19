@@ -13,7 +13,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
 use crate::app::App;
-use crate::core::map::{arrow, line, stroke, Camera, LabelDetail};
+use crate::core::map::{arrow, line, stroke, LabelDetail};
 use crate::model::physics::EdgeStyle;
 use crate::model::{self, MapScope, NodeState};
 use crate::theme::{amber, green, muted, paper, pr_ref, red, teal};
@@ -65,12 +65,6 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         return;
     }
     let bodies: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
-    if app.map.follow {
-        app.map.camera = Camera::fit(&bodies, area.width, area.height);
-    }
-    if std::mem::take(&mut app.map.reveal) && !app.map.follow {
-        reveal(app, &bodies, area);
-    }
     let camera = app.map.camera;
     let graph = &app.map.graph;
     let card_edge = app.map.card_edge();
@@ -179,25 +173,6 @@ pub(super) fn node_color(state: NodeState) -> Color {
         NodeState::Pr => pr_ref(),
         NodeState::Closed => muted(),
         NodeState::Hub => amber(),
-    }
-}
-
-/// Center the view on the card's subject when it sits outside `area`:
-/// the selected node, or the middle of the shown edge.
-fn reveal(app: &mut App, bodies: &[(f64, f64)], area: Rect) {
-    let target = match app.map.card_edge() {
-        Some(e) => {
-            let (a, b, _) = app.map.graph.edges[e];
-            ((bodies[a].0 + bodies[b].0) / 2.0, (bodies[a].1 + bodies[b].1) / 2.0)
-        }
-        None => match app.map.selected_index() {
-            Some(i) => bodies[i],
-            None => return,
-        },
-    };
-    let (col, row) = app.map.camera.cell(target.0, target.1, area.width, area.height);
-    if col < 1 || row < 0 || col >= i32::from(area.width) - 1 || row >= i32::from(area.height) - 1 {
-        (app.map.camera.x, app.map.camera.y) = target;
     }
 }
 

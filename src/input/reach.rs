@@ -65,10 +65,7 @@ fn board(app: &mut App, to: Reach) {
 fn graph(app: &mut App, to: Reach) {
     match to.rows(app.hits.map_area.height as usize) {
         None => app.map_select_end(to.toward_end()),
-        Some(rows) => {
-            app.map.camera.pan(0.0, rows as f64);
-            app.map.follow = false;
-        }
+        Some(rows) => app.map_scroll(0.0, rows as f64),
     }
 }
 
