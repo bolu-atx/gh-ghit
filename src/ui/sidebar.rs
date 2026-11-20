@@ -420,19 +420,32 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if on_labels + on_milestones > 0 {
         title.spans[2] = Span::styled(format!("{} on", on_labels + on_milestones),
             Style::new().fg(amber()));
-        controls::clear_all_control(app, area, &mut title);
-    }
-    if milestones > 0 {
-        controls::done_milestones_control(app, area, &mut title);
     }
     let footer = if items.is_empty() { String::new() } else {
         format!("milestones ({}/{milestones}) · labels ({on_labels}/{})",
             on_milestones, items.len() - milestones)
     };
-    let block = theme::pane_block(focused).title(title).title_bottom(footer_line(&footer));
+    // Buttons sit on the bottom border in place of the counts footer.
+    let mut buttons = vec![];
+    // Only real milestones can be done; "(no milestone)" alone needs no button.
+    if !app.sidebar.milestones.is_empty() {
+        let label = if app.sidebar.hide_done_milestones { "show done" } else { "hide done" };
+        buttons.push((label, Action::ToggleDoneMilestones));
+    }
+    if on_labels + on_milestones > 0 {
+        buttons.push(("clear all", Action::ClearLabels));
+    }
+    let mut block = theme::pane_block(focused).title(title);
+    if buttons.is_empty() {
+        block = block.title_bottom(footer_line(&footer));
+    }
     let inner = block.inner(area);
     f.render_widget(block, area);
     app.hits.labels_area = area;
+    if !buttons.is_empty() {
+        let row = Rect::new(area.x + 1, area.bottom() - 1, area.width.saturating_sub(2), 1);
+        controls::button_row(f, app, row, &buttons, crate::core::Pane::Labels);
+    }
     if items.is_empty() {
         let line = if app.sidebar.meta_rx.is_some() || !app.sidebar.meta_loaded {
             Line::styled("  loading …", Style::new().bg(ink()).fg(muted()))
@@ -442,8 +455,15 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         f.render_widget(Paragraph::new(line).style(theme::base()).wrap(Wrap { trim: false }), inner);
         return;
     }
-    // Display lines: a group header before each group, `Some(index)` for items.
+    // Display lines: a group header before each group, `Some(index)` for
+    // items, and `Some(NOTE)` for the hidden-milestones note.
+    const NOTE: usize = usize::MAX;
+    // Pills are the shown titles plus "(no milestone)".
+    let hidden = (app.sidebar.milestones.len() + 1).saturating_sub(milestones);
     let mut lines: Vec<Option<usize>> = vec![None];
+    if app.sidebar.hide_done_milestones && hidden > 0 && milestones > 0 {
+        lines.push(Some(NOTE));
+    }
     for index in 0..items.len() {
         if index == milestones {
             lines.push(None);
@@ -459,13 +479,21 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     } else if cursor_line >= offset + height {
         offset = cursor_line + 1 - height;
     }
-    // Keep the group header with the first row of its group.
-    if offset == cursor_line && cursor_line > 0 && lines[cursor_line - 1].is_none() {
-        offset -= 1;
+    // Keep the group header (and the note under it) with the group's first row.
+    if offset == cursor_line {
+        while offset > 0 && matches!(lines[offset - 1], None | Some(NOTE)) {
+            offset -= 1;
+        }
     }
     app.labels.offset = offset;
     for (row, line_index) in lines.iter().enumerate().skip(offset).take(height) {
         let rect = Rect::new(inner.x, inner.y + (row - offset) as u16, inner.width, 1);
+        if *line_index == Some(NOTE) {
+            let noun = if hidden == 1 { "milestone" } else { "milestones" };
+            let line = Line::styled(format!("    {hidden} done {noun} hidden"), Style::new().bg(ink()).fg(muted()).italic());
+            f.render_widget(Paragraph::new(line).style(theme::base()), rect);
+            continue;
+        }
         let Some(index) = *line_index else {
             // Nerd Font Font Awesome fa-flag / fa-tag.
             let (icon, name, accent) = if row == 0 {

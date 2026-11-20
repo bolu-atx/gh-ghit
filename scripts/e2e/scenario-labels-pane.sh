@@ -2,7 +2,8 @@
 # Fixture: only issue #9 carries the `bug` label, and PR #24 closes #9, so
 # the right column shows Refs plus the Labels pane. Tab x4 reaches Labels,
 # space on `bug` must drop the unlabelled recent PR #25 from the sidebar
-# (requested #19 and #24 stay), X must restore it.
+# (requested #19 and #24 stay), X must restore it. While a filter is on,
+# the clear all button takes the counts footer's place on the border.
 # fixtures: labels
 source "$(dirname "$0")/lib.sh"
 e2e_start
@@ -17,8 +18,8 @@ e2e_pane | grep -q "bug" || fail "bug label row missing"
 e2e_pane | grep -q "Pull requests 3" || fail "expected 3 PRs before filter"
 # Rows: (no milestone), bug, docs. Move onto bug and toggle it.
 e2e_key j Space
-e2e_wait "labels \(1/2\)" 10 || fail "bug never checked"
-e2e_wait "1 on" 10 || fail "active count missing"
+e2e_wait "1 on" 10 || fail "bug never checked"
+e2e_wait "X clear all" 10 || fail "clear all button missing"
 e2e_shot labels-bug
 e2e_pane | grep -q "Precompiled" || fail "labelled issue #9 vanished"
 e2e_pane | grep -q "Pull requests 2" || fail "unlabelled PR #25 survived the filter"
