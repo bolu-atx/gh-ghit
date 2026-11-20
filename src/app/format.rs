@@ -20,8 +20,12 @@ impl App {
         if !self.sidebar.meta_loaded {
             return vec![];
         }
-        let mut titles: Vec<String> =
-            self.sidebar.milestones.iter().map(|m| m.title.clone()).collect();
+        // Hidden done milestones stay while a filter selects them, so
+        // the filter can still be seen and cleared.
+        let hide = self.sidebar.hide_done_milestones;
+        let mut titles: Vec<String> = self.sidebar.milestones.iter()
+            .filter(|m| !(hide && m.done()) || self.sidebar.milestone_filter.contains(&Some(m.title.clone())))
+            .map(|m| m.title.clone()).collect();
         titles.sort();
         let mut out: Vec<Option<String>> = titles.into_iter().map(Some).collect();
         out.push(None);
@@ -119,6 +123,14 @@ impl App {
     pub(crate) fn move_filter_cursor(&mut self, delta: isize) {
         let last = self.filter_items().len().saturating_sub(1);
         self.labels.cursor = self.labels.cursor.saturating_add_signed(delta).min(last);
+    }
+
+    /// `d` on the Filters pane: show or hide done milestones.
+    pub(crate) fn toggle_done_milestones(&mut self) {
+        self.sidebar.hide_done_milestones = !self.sidebar.hide_done_milestones;
+        self.move_filter_cursor(0);
+        self.notify(if self.sidebar.hide_done_milestones { "done milestones hidden" } else { "done milestones shown" }.to_string());
+        self.persist_prefs();
     }
 
     pub(crate) fn clear_filter_items(&mut self) {
@@ -227,6 +239,7 @@ impl App {
         prefs.show_merged_prs = self.sidebar.show_merged_prs;
         prefs.show_open_issues = self.sidebar.show_open_issues;
         prefs.show_closed_issues = self.sidebar.show_closed_issues;
+        prefs.hide_done_milestones = self.sidebar.hide_done_milestones;
         prefs.merged_window_hours = self.sections.merged_window_hours;
         prefs.group_by = self.sidebar.group_by;
         prefs.sub_issue_tree = self.sidebar.sub_issue_tree;
@@ -282,6 +295,7 @@ impl App {
         self.sidebar.show_merged_prs = prefs.show_merged_prs;
         self.sidebar.show_open_issues = prefs.show_open_issues;
         self.sidebar.show_closed_issues = prefs.show_closed_issues;
+        self.sidebar.hide_done_milestones = prefs.hide_done_milestones;
         self.sections.merged_window_hours = prefs.merged_window_hours;
         self.sections.backfill.months = prefs.backfill_months;
         self.sidebar.row_issue = prefs.row_issue;

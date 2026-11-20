@@ -223,7 +223,7 @@ fn pinned_and_requested_rows_skip_filters_and_grouping() {
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
     app.sidebar.milestones =
-        vec![model::Milestone { title: "v1".to_string(), due_on: None }];
+        vec![model::Milestone { title: "v1".to_string(), due_on: None, ..Default::default() }];
     assert_eq!(
         app.issue_rows(),
         vec![
@@ -248,7 +248,7 @@ fn sort_runs_inside_each_milestone_group() {
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
     app.sidebar.milestones =
-        vec![model::Milestone { title: "v1".to_string(), due_on: None }];
+        vec![model::Milestone { title: "v1".to_string(), due_on: None, ..Default::default() }];
     app.cycle_sort();
     assert_eq!(
         app.issue_rows(),
@@ -270,9 +270,9 @@ fn milestone_groups_order_dated_then_undated_then_none() {
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
     app.sidebar.milestones = vec![
-        model::Milestone { title: "later".to_string(), due_on: Some("2026-06-01T00:00:00Z".to_string()) },
-        model::Milestone { title: "sooner".to_string(), due_on: Some("2026-02-01T00:00:00Z".to_string()) },
-        model::Milestone { title: "backlog".to_string(), due_on: None },
+        model::Milestone { title: "later".to_string(), due_on: Some("2026-06-01T00:00:00Z".to_string()), ..Default::default() },
+        model::Milestone { title: "sooner".to_string(), due_on: Some("2026-02-01T00:00:00Z".to_string()), ..Default::default() },
+        model::Milestone { title: "backlog".to_string(), due_on: None, ..Default::default() },
     ];
     let dividers: Vec<String> = app.issue_rows().into_iter()
         .filter_map(|row| match row {
@@ -303,7 +303,7 @@ fn stale_saved_pills_prune_when_picker_lists_land() {
     app.sidebar.format_focus = 99;
     app.land_repo_meta(Ok((
         vec!["bug".to_string()],
-        vec![model::Milestone { title: "v1".to_string(), due_on: None }],
+        vec![model::Milestone { title: "v1".to_string(), due_on: None, ..Default::default() }],
     )));
     assert!(app.sidebar.meta_loaded);
     assert_eq!(app.sidebar.label_filter, ["bug".to_string()].into_iter().collect());

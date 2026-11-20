@@ -227,4 +227,25 @@ pub struct Milestone {
     pub title: String,
     #[serde(default)]
     pub due_on: Option<String>,
+    /// Open and closed item counts from the REST listing.
+    #[serde(default)]
+    pub open_items: u32,
+    #[serde(default)]
+    pub closed_items: u32,
+    /// The milestone itself is closed on GitHub.
+    #[serde(default)]
+    pub closed: bool,
+}
+
+impl Milestone {
+    /// Share of items closed, 0..=100. `None` with no items.
+    pub fn percent(&self) -> Option<u32> {
+        let total = self.open_items + self.closed_items;
+        (total > 0).then(|| self.closed_items * 100 / total)
+    }
+
+    /// Closed, or every item in it is closed.
+    pub fn done(&self) -> bool {
+        self.closed || (self.open_items == 0 && self.closed_items > 0)
+    }
 }

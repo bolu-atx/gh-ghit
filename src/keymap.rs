@@ -61,7 +61,7 @@ actions! {
     CloseMapFilter, MapFilterDown, MapFilterUp, MapFilterToggle, MapFilterScope, MapFilterClosed,
     MapFilterPrs, MapFilterHubs, MapFilterReset,
     // Shortcuts, confirm, compose.
-    CloseHelp, HelpDown, HelpUp, HelpFilter, HelpFilterDone, HelpFilterBackspace, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
+    CloseHelp, HelpDown, HelpUp, HelpFilter, HelpFilterDone, HelpFilterBackspace, ToggleDoneMilestones, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
     ComposeSend, ComposeTogglePreview, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
     ComposeUp, ComposeDown, ComposeBackspace, ComposeDelete, ComposeKillEnd, ComposeKillStart,
     ComposeDeleteWordBack, ComposeYank, ComposeTranspose, ComposeNewline, ComposeTab,

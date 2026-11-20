@@ -233,6 +233,9 @@ pub struct Prefs {
     pub show_open_issues: bool,
     #[serde(default = "default_true")]
     pub show_closed_issues: bool,
+    /// Filters pane and Format dialog hide done milestones.
+    #[serde(default)]
+    pub hide_done_milestones: bool,
     #[serde(default = "default_window")]
     pub merged_window_hours: u64,
     #[serde(default)]
@@ -265,7 +268,7 @@ impl Default for Prefs {
             row_issue: crate::model::RowFields::default(),
             row_pr: crate::model::RowFields::default(),
             show_open_prs: true, show_merged_prs: true,
-            show_open_issues: true, show_closed_issues: true,
+            show_open_issues: true, show_closed_issues: true, hide_done_milestones: false,
             merged_window_hours: default_window(),
             queries: std::collections::HashMap::new(),
             saved_queries: Vec::new(),
