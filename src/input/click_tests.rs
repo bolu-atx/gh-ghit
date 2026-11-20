@@ -81,9 +81,13 @@ fn sidebar_click_focuses_recent_before_opening() {
         assert!(!app.nav.visited.contains(&9));
         assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);
 
+        // The second press enters the item: Main takes focus, the row
+        // stays in its group.
         handle_mouse(&mut app, click);
-        assert!(app.nav.visited.contains(&9));
+        assert!(!app.nav.visited.contains(&9));
         assert_eq!(app.nav.current, Some(9));
-        assert_eq!(app.side_counts(is_pr), (0, 1 + usize::from(!is_pr), 0));
+        assert_eq!(app.nav.pane, Pane::Main);
+        assert_eq!(app.nav.return_pane, Some(pane));
+        assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);
     }
 }

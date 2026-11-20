@@ -46,6 +46,9 @@ pub(crate) struct Nav {
     /// History pane cursor: steps back from the current issue. Zero is
     /// the current row; `history_steps` clamps it to the rows drawn.
     pub(crate) history_cursor: usize,
+    /// Sidebar list that Enter left for the Main pane. Esc on Main
+    /// returns focus there.
+    pub(crate) return_pane: Option<Pane>,
 }
 
 impl Nav {
@@ -53,7 +56,7 @@ impl Nav {
         Self { current: None, requested: None, step_pending: None, visited: vec![],
             recent: vec![], history: vec![], future: vec![], pinned: HashSet::new(),
             pin_order: vec![], tab: Tab::Details, focus: Focus::Main, pane: Pane::Issues,
-            scroll: 0, hover: None, history_cursor: 0 }
+            scroll: 0, hover: None, history_cursor: 0, return_pane: None }
     }
 }
 
@@ -68,6 +71,28 @@ impl App {
         self.nav.history = core::history_push(&self.nav.history, self.nav.current, number);
         self.nav.future.clear();
         self.file_visited(number);
+    }
+
+    /// Enter (or a second click) on a sidebar row: show it and focus the
+    /// Main pane, so j/k scroll its content instead of switching items.
+    /// The row stays in its group; history records the move for Ctrl+O.
+    /// Esc returns focus to `from`.
+    pub(crate) fn enter_item(&mut self, number: u64, from: Pane) {
+        self.nav.history = core::history_push(&self.nav.history, self.nav.current, number);
+        self.nav.future.clear();
+        if self.nav.current != Some(number) {
+            self.request_issue(number);
+        }
+        self.nav.hover = None;
+        self.focus_content(from);
+    }
+
+    /// Move focus to the Main pane after opening an item from a list.
+    /// Esc on Main returns to `from`.
+    pub(crate) fn focus_content(&mut self, from: Pane) {
+        self.nav.focus = Focus::Main;
+        self.nav.pane = Pane::Main;
+        self.nav.return_pane = Some(from);
     }
 
     /// File `number` under requested rows without touching history.
@@ -326,11 +351,12 @@ impl App {
     }
 
     /// Enter or click on a History row: go back to it, like `Ctrl+O`
-    /// repeated. The current row is a no-op.
+    /// repeated, and focus its content. Esc returns to History.
     pub(crate) fn open_history_row(&mut self) {
         let steps = self.history_steps();
         self.go_back_n(steps);
         self.nav.history_cursor = 0;
+        self.focus_content(Pane::History);
     }
 
     /// Top layer plus the active pane beneath it.
@@ -403,6 +429,11 @@ impl App {
                 self.bar.clear();
                 self.sidebar.search.clear();
                 self.search.clear();
+            }
+            // Esc on Main after Enter goes back to the list, unless a
+            // content search is live: that clears first.
+            Layer::Base if self.nav.pane == Pane::Main && self.nav.return_pane.is_some() && !self.search.active() => {
+                self.nav.pane = self.nav.return_pane.take().unwrap_or(Pane::Issues);
             }
             Layer::Base => {
                 self.bar.clear();

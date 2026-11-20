@@ -48,7 +48,7 @@ fn shown(row: &str) -> usize {
 #[test]
 fn bar_hints_follow_the_focused_context_and_shed_when_narrow() {
     let cases: [Case; 3] = [
-        ("issues", issues_app, &["enter open row", "x evict row", "s cycle sort", "j select next", "p pin"]),
+        ("issues", issues_app, &["enter focus content", "x evict row", "s cycle sort", "j select next", "p pin"]),
         ("diff", diff_app, &["J next file", "K previous file", "space expand or fold file", "s split view"]),
         ("filters", filters_app, &["space toggle filter", "X clear all filters"]),
     ];

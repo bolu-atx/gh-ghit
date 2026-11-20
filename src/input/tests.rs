@@ -649,16 +649,42 @@ fn help_opens_from_the_board_and_its_filter_form() {
 }
 
 #[test]
-fn enter_opens_the_selected_row_and_files_it() {
+fn enter_focuses_the_content_and_esc_returns_to_the_list() {
     let mut app = step_app();
     app.nav.pane = Pane::Issues;
     app.nav.visited.clear();
     app.nav.recent = vec![7, 8];
     app.show_issue(8);
-    assert!(!app.nav.visited.contains(&8), "a preview does not file the row");
     handle_key(&mut app, plain_key(KeyCode::Enter));
     assert_eq!(app.nav.current, Some(8));
-    assert!(app.nav.visited.contains(&8), "Enter files the row like a second click");
+    assert_eq!(app.nav.pane, Pane::Main, "Enter focuses the content");
+    assert!(!app.nav.visited.contains(&8), "the row stays in its group");
+    // j scrolls the content now; it does not switch items.
+    handle_key(&mut app, plain_key(KeyCode::Char('j')));
+    assert_eq!(app.nav.current, Some(8));
+    assert_eq!(app.nav.scroll, 3);
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Issues, "Esc returns to the list");
+    assert!(app.nav.return_pane.is_none());
+    handle_key(&mut app, plain_key(KeyCode::Char('k')));
+    assert!(app.nav.current == Some(7) || app.nav.requested == Some(7), "k walks the list again");
+}
+
+#[test]
+fn enter_in_refs_and_history_focuses_the_content_too() {
+    let mut app = step_app();
+    app.show_issue(8);
+    app.nav.pane = Pane::Refs;
+    app.refs.highlight = Some(7);
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    assert_eq!(app.nav.pane, Pane::Main);
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Refs, "Esc returns to Refs");
+    app.nav.pane = Pane::History;
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    assert_eq!(app.nav.pane, Pane::Main);
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::History, "Esc returns to History");
 }
 
 #[test]

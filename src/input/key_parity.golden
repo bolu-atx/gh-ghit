@@ -27,6 +27,7 @@ issues | ctrl-o | message:  -> no older issue
 issues | ctrl-p | finder: None -> Some(("", 0))
 issues | ctrl-s | message:  -> no pending comments to submit
 issues | ctrl-u | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
+issues | enter | pane: Issues -> Main
 issues | tab | pane: Issues -> PRs
 issues | backtab | pane: Issues -> Refs
 issues | up | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7)
@@ -66,6 +67,7 @@ issues-tree | ctrl-i | message:  -> no newer issue
 issues-tree | ctrl-o | message:  -> no older issue
 issues-tree | ctrl-p | finder: None -> Some(("", 0))
 issues-tree | ctrl-s | message:  -> no pending comments to submit
+issues-tree | enter | pane: Issues -> Main
 issues-tree | tab | pane: Issues -> PRs
 issues-tree | backtab | pane: Issues -> Refs
 issues-tree | down | current: Some(7) -> Some(8) ; requested: Some(7) -> Some(8)
@@ -332,6 +334,7 @@ history | ctrl-o | current: Some(9) -> Some(7) ; requested: Some(9) -> Some(7) ;
 history | ctrl-p | finder: None -> Some(("", 0))
 history | ctrl-s | message:  -> no pending comments to submit
 history | ctrl-u | history: [8, 7]/[]/0 -> [8, 7]/[]/1
+history | enter | pane: History -> Main
 history | tab | pane: History -> Issues
 history | backtab | pane: History -> Refs
 history | up | history: [8, 7]/[]/0 -> [8, 7]/[]/1

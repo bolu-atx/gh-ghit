@@ -177,10 +177,17 @@ pub(super) fn right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     let h = &app.hits;
-    let kind = if sidebar_hit(h.side_issue_area, &h.side_issue_rows, &h.side_issue_heights, x, y).is_some()
-        || sidebar_hit(h.side_pr_area, &h.side_pr_rows, &h.side_pr_heights, x, y).is_some()
-    {
-        handle_left(app, x, y, false);
+    let issue_row = sidebar_hit(h.side_issue_area, &h.side_issue_rows, &h.side_issue_heights, x, y);
+    let pr_row = sidebar_hit(h.side_pr_area, &h.side_pr_rows, &h.side_pr_heights, x, y);
+    let kind = if let Some(n) = issue_row.or(pr_row) {
+        // A right press on the open row only focuses its list: a left
+        // press there would enter the item and move focus to Main.
+        if app.nav.current == Some(n) {
+            app.nav.focus = Focus::Main;
+            app.nav.pane = if pr_row.is_some() { Pane::PRs } else { Pane::Issues };
+        } else {
+            handle_left(app, x, y, false);
+        }
         MenuKind::Issue
     } else if in_rect(h.side_issue_area, x, y) || in_rect(h.side_pr_area, x, y) {
         app.nav.focus = Focus::Main;
