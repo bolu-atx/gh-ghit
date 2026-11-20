@@ -4,7 +4,7 @@
 use crossterm::event::KeyCode;
 
 use super::{
-    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, main_returnable, help_typing, content_search_live, main_pane, query_live, side_pane,
+    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, can_go_back, help_typing, content_search_live, main_pane, query_live, side_pane,
     sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
 };
 use crate::core::{Dialog, Pane, TextInput};
@@ -90,14 +90,14 @@ const GLOBAL: &[Binding] = &[
     key(ch('E'), Action::ToggleSidebar, "Toggle sidebar", "View", MENU),
     key(ch(' '), Action::ToggleRow, "Expand row", "View", MENU),
     key(ch('w'), Action::MergedWindow, "Cycle merged window", "View", MENU),
-    // Esc pops one layer wherever nothing nearer claims it.
-    key(KeyCode::Esc, Action::Back, "Back", "Session", DISMISS),
+    // Esc pops one layer wherever nothing nearer claims it; at the base
+    // it returns where Enter left (`App::pop_back`).
+    key(KeyCode::Esc, Action::Back, "Back", "Session", DISMISS).hint_if(1, can_go_back),
 ];
 
 /// With the Main pane focused, search keys act on its content. The
 /// sidebar panes keep the row search from `GLOBAL`.
 const MAIN: &[Binding] = &[
-    key(KeyCode::Esc, Action::Back, "Back to the list", "Move", DISMISS).hint_if(1, main_returnable),
     key(ch('/'), Action::ContentFind, "Find in content", "Search", MENU),
     key(ch('n'), Action::ContentNext, "Next match", "Search", TITLE).hint_if(13, content_search_live),
     key(ch('N'), Action::ContentPrev, "Previous match", "Search", TITLE).hint_if(14, content_search_live),
@@ -360,6 +360,7 @@ const BOARD: &[Binding] = &[
     key(ch('t'), Action::CycleTheme, "Cycle theme", "Board", ALIAS),
     key(ch(' '), Action::BoardExpand, "Expand card", "Board", HINT).hint(3),
     key(KeyCode::Enter, Action::BoardOpen, "Open card", "Board", Gesture::SecondClick).hint(4),
+    key(ch('o'), Action::OpenBrowser, "Open card in browser", "Board", MENU),
 ];
 
 const BOARD_FILTER: &[Binding] = &[

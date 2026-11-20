@@ -232,8 +232,8 @@ impl App {
     /// and focus its content. Esc returns to Refs.
     pub(crate) fn open_selected_ref(&mut self) {
         let Some(n) = self.refs.highlight else { return };
+        self.focus_content(Pane::Refs, Some(n));
         self.open_issue(n);
-        self.focus_content(Pane::Refs);
     }
 
     /// Flip the right refs pane, keeping the current issue in place.

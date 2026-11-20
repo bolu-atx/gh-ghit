@@ -87,7 +87,7 @@ fn sidebar_click_focuses_recent_before_opening() {
         assert!(!app.nav.visited.contains(&9));
         assert_eq!(app.nav.current, Some(9));
         assert_eq!(app.nav.pane, Pane::Main);
-        assert_eq!(app.nav.return_pane, Some(pane));
+        assert_eq!(app.nav.back.iter().map(|f| f.pane).collect::<Vec<_>>(), vec![pane]);
         assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);
     }
 }

@@ -219,8 +219,8 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         if drag {
             app.refs.highlight = Some(n);
         } else if app.refs.paired.contains(&n) {
+            app.focus_content(Pane::Refs, Some(n));
             app.open_issue(n);
-            app.focus_content(Pane::Refs);
         } else {
             app.select_ref(n);
         }

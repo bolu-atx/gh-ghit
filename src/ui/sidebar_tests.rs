@@ -128,6 +128,25 @@ fn d_hides_done_milestones_but_keeps_selected_ones() {
 }
 
 #[test]
+fn o_opens_the_highlighted_filter_not_the_current_item() {
+    use crate::core::Pane;
+    let mut app = labels_app();
+    app.repo_slug = Some("o/r".to_string());
+    frame_text(&mut app);
+    app.nav.pane = Pane::Labels;
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened milestone:\"v1\" in browser");
+    // Rows: v1, (no milestone), bug, docs.
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened no:milestone in browser");
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened label:\"bug\" in browser");
+    assert_eq!(crate::app::encode_query("label:\"a b\""), "label%3A%22a%20b%22");
+}
+
+#[test]
 fn labels_pane_keys_move_toggle_and_clear() {
     use crate::core::Pane;
     let mut app = labels_app();

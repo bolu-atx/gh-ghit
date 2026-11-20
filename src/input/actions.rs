@@ -5,7 +5,7 @@
 //! `InputSubmit`, `InputBackspace`) read the top focus layer.
 
 use crate::app::{App, FilterRow, Focus, QueryAction, Slot, Tab, board_move, board_selected_number};
-use crate::core::{self, Dialog, Layer, TextInput};
+use crate::core::{self, Dialog, Layer, Pane, TextInput};
 use crate::keymap::Action;
 
 use super::menu;
@@ -74,10 +74,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ContentPrev => app.step_content_match(-1),
         Action::NextHit => jump_search_hit(app, 1),
         Action::PrevHit => jump_search_hit(app, -1),
-        Action::OpenBrowser => match app.nav.current {
-            Some(n) => app.open_number(n),
-            None => app.notify("view an issue first".to_string()),
-        },
+        Action::OpenBrowser => open_focused(app),
         Action::Refresh => app.refresh_current(),
         Action::Reauth => app.reopen_reauth(),
         Action::Pin => app.toggle_pin(),
@@ -377,5 +374,28 @@ fn backspace_input(app: &mut App) {
             app.sidebar.query_draft.pop();
         }
         _ => {}
+    }
+}
+
+/// `o`: open in the browser what the focus points at: the board card,
+/// the highlighted filter, reference or History row, the selected map
+/// node, else the current item.
+fn open_focused(app: &mut App) {
+    let target = if app.focus().layer == Layer::Dialog(Dialog::Board) {
+        board_selected_number(app)
+    } else {
+        match app.nav.pane {
+            Pane::Labels => return app.open_filter_item(),
+            Pane::Refs => app.refs.highlight.or(app.nav.current),
+            Pane::History => app.history_row_number(),
+            Pane::Main if app.map_shown() => app.map.selected_index()
+                .and_then(|i| app.map.graph.nodes[i].number)
+                .or(app.nav.current),
+            _ => app.nav.current,
+        }
+    };
+    match target {
+        Some(n) => app.open_number(n),
+        None => app.notify("view an issue first".to_string()),
     }
 }

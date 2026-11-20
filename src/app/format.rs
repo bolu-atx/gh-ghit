@@ -119,6 +119,23 @@ impl App {
         self.labels.cursor = index;
     }
 
+    /// Open GitHub's issue search for the Labels row under the cursor.
+    pub(crate) fn open_filter_item(&mut self) {
+        let Some(item) = self.filter_items().into_iter().nth(self.labels.cursor) else { return };
+        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else {
+            self.notify("no repo to open".to_string());
+            return;
+        };
+        let query = match &item {
+            FilterItem::Milestone(Some(title)) => format!("milestone:\"{title}\""),
+            FilterItem::Milestone(None) => "no:milestone".to_string(),
+            FilterItem::Label(name) => format!("label:\"{name}\""),
+        };
+        let url = format!("https://github.com/{repo}/issues?q={}", encode_query(&query));
+        crate::app::open_in_browser(&url).ok();
+        self.notify(format!("opened {query} in browser"));
+    }
+
     /// Move the Labels cursor, clamped to the rows.
     pub(crate) fn move_filter_cursor(&mut self, delta: isize) {
         let last = self.filter_items().len().saturating_sub(1);
@@ -320,4 +337,13 @@ impl App {
             }
         }
     }
+}
+
+/// Percent-encodes a search query for a URL: unreserved bytes stay, the
+/// rest become `%XX`.
+pub(crate) fn encode_query(query: &str) -> String {
+    query.bytes().map(|b| match b {
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+        _ => format!("%{b:02X}"),
+    }).collect()
 }
