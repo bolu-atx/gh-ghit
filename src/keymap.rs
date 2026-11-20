@@ -548,6 +548,11 @@ fn board_text_focused(app: &App) -> bool {
     app.board.filter_focus == 0
 }
 
+/// Enter left a sidebar list for Main, so Esc goes back to it.
+fn main_returnable(app: &App) -> bool {
+    app.nav.pane == Pane::Main && app.nav.return_pane.is_some() && !app.search.active()
+}
+
 fn help_browsing(app: &App) -> bool {
     !app.help_typing
 }

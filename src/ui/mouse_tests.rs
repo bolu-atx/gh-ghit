@@ -137,7 +137,7 @@ fn right_click_on_a_row_selects_it_and_lists_the_row_actions() {
     assert_eq!(app.nav.pane, Pane::Issues);
     assert_eq!(app.nav.current, Some(7));
     let labels = menu_labels(&app);
-    for wanted in ["Open row", "Pin", "Copy", "Open in browser", "Comment", "Evict row"] {
+    for wanted in ["Focus content", "Pin", "Copy", "Open in browser", "Comment", "Evict row"] {
         assert!(labels.contains(&wanted), "{wanted} missing from {labels:?}");
     }
 }
@@ -396,7 +396,7 @@ fn the_menu_frame_shows_actions_with_keys_and_one_focus() {
     let row_text = |y: u16| -> String { (popup.x..popup.right()).map(|x| buf[(x, y)].symbol()).collect() };
     let rows: Vec<String> = (popup.y..popup.bottom()).map(row_text).collect();
     let joined = rows.join("\n");
-    assert!(rows.iter().any(|r| r.contains("█ Open row") && r.contains("enter")), "{joined}");
+    assert!(rows.iter().any(|r| r.contains("█ Focus content") && r.contains("enter")), "{joined}");
     assert!(rows.iter().any(|r| r.contains("Pin") && r.contains(" p ")), "{joined}");
     assert!(rows.iter().any(|r| r.contains("Evict row") && r.contains(" x ")), "{joined}");
     let doubles = buf.content().iter().filter(|c| c.symbol() == "╔").count();

@@ -102,7 +102,7 @@ The essentials:
 | `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards (scroll the main pane, pan the map). Diff keys act only while Main has focus |
 | `gg` / `G` | Jump to the top / bottom of any list or scroll area |
 | `Ctrl+D` / `Ctrl+U`, Page Down / Page Up | Half page / full page |
-| `Enter` | Open the selected row, reference, card or map node; apply in dialogs |
+| `Enter` | In Issues, PRs, Refs and History, show the selected item and focus its content, so `j` / `k` scroll it. `Esc` returns to the list. Also opens a card or map node, and applies in dialogs |
 | `Space` | Expand a row, toggle a chip, fold a diff file |
 | `[` / `]` | Previous / next issue from any pane |
 | `h` / `l` | Fold / unfold tree rows and diff files; pan the map; move between board columns |
@@ -133,7 +133,7 @@ After `g`, the status bar shows `g…` until the next key.
 Every action works with the keyboard, and every action has a mouse gesture too.
 The only keyboard-only keys are text editing, aliases of another key, and scroll keys the wheel already covers.
 
-- **Click** a pane to focus it, or a row to select it. Click the selected row again, or press `Enter`, to open it.
+- **Click** a pane to focus it, or a row to select it. Click the selected row again, or press `Enter`, to focus its content.
 - **Right-click** a row, reference, card or the Main body for a menu of its actions, with their keys. The repo name in the status bar opens a global menu: refresh, theme, board, help and quit.
 - **Wheel** scrolls the pane under the pointer. In the Format dialog and the board filter it moves between fields.
 - **Pane titles and footers** are controls: click the sort word to change the sort, its arrow to reverse it, or the list state to open Format.

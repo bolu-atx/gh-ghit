@@ -4,7 +4,7 @@
 use crossterm::event::KeyCode;
 
 use super::{
-    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, help_typing, content_search_live, main_pane, query_live, side_pane,
+    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, main_returnable, help_typing, content_search_live, main_pane, query_live, side_pane,
     sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
 };
 use crate::core::{Dialog, Pane, TextInput};
@@ -97,6 +97,7 @@ const GLOBAL: &[Binding] = &[
 /// With the Main pane focused, search keys act on its content. The
 /// sidebar panes keep the row search from `GLOBAL`.
 const MAIN: &[Binding] = &[
+    key(KeyCode::Esc, Action::Back, "Back to the list", "Move", DISMISS).hint_if(1, main_returnable),
     key(ch('/'), Action::ContentFind, "Find in content", "Search", MENU),
     key(ch('n'), Action::ContentNext, "Next match", "Search", TITLE).hint_if(13, content_search_live),
     key(ch('N'), Action::ContentPrev, "Previous match", "Search", TITLE).hint_if(14, content_search_live),
@@ -106,7 +107,7 @@ const SIDEBAR: &[Binding] = &[
     key(ch('s'), Action::CycleSort, "Cycle sort", "Rows", TITLE).hint(3),
     key(ch('S'), Action::ReverseSort, "Reverse sort", "Rows", TITLE),
     key(ch('x'), Action::Evict, "Evict row", "Rows", MENU).hint(2),
-    key(KeyCode::Enter, Action::OpenRow, "Open row", "Rows", Gesture::SecondClick).hint(1),
+    key(KeyCode::Enter, Action::OpenRow, "Focus content", "Rows", Gesture::SecondClick).hint(1),
 ];
 
 const TREE: &[Binding] = &[

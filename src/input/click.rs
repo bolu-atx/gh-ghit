@@ -133,8 +133,8 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             &app.hits.side_issue_heights,
             n,
         );
-        // A press on the already-visible row files it under requested
-        // (first press previews, second promotes); a drag only hovers.
+        // A press on the already-visible row enters it like Enter (first
+        // press previews, second focuses Main); a drag only hovers.
         // The focus/pane guard reads pre-click state, as before.
         if !drag
             && app.nav.focus == Focus::Main
@@ -142,7 +142,11 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             && app.nav.current == Some(n)
             && app.effective(&app.hits.side_issue_rows) == Some(n)
         {
-            app.ensure_visited(n);
+            app.enter_item(n, Pane::Issues);
+            if let Some(rect) = flash {
+                app.note_click(rect);
+            }
+            return;
         }
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::Issues;
@@ -176,7 +180,11 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             && app.nav.current == Some(n)
             && app.effective(&app.hits.side_pr_rows) == Some(n)
         {
-            app.ensure_visited(n);
+            app.enter_item(n, Pane::PRs);
+            if let Some(rect) = flash {
+                app.note_click(rect);
+            }
+            return;
         }
         app.nav.focus = Focus::Main;
         app.nav.pane = Pane::PRs;
@@ -212,6 +220,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             app.refs.highlight = Some(n);
         } else if app.refs.paired.contains(&n) {
             app.open_issue(n);
+            app.focus_content(Pane::Refs);
         } else {
             app.select_ref(n);
         }

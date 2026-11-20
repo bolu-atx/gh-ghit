@@ -228,12 +228,12 @@ impl App {
 
     /// Enter on a refs row: paired rows open like sidebar rows; mention
     /// rows stay highlight-only, so they are a no-op here.
+    /// Enter in Refs: open the highlighted reference, paired or mention,
+    /// and focus its content. Esc returns to Refs.
     pub(crate) fn open_selected_ref(&mut self) {
         let Some(n) = self.refs.highlight else { return };
-        if !self.refs.paired.contains(&n) {
-            return;
-        }
         self.open_issue(n);
+        self.focus_content(Pane::Refs);
     }
 
     /// Flip the right refs pane, keeping the current issue in place.

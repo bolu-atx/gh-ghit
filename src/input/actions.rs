@@ -267,8 +267,7 @@ fn open_row(app: &mut App) {
     else {
         return;
     };
-    app.request_issue(n);
-    app.ensure_visited(n);
+    app.enter_item(n, app.nav.pane);
 }
 
 /// `Z`: fold every parent, or unfold all when any is folded.
