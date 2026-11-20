@@ -41,6 +41,10 @@ the human approved the plan. The script then:
    pushes it. The push fires the [release workflow](../.github/workflows/release.yml),
    which fails fast if the tag and `Cargo.toml` disagree.
 3. Watches the workflow and prints the release URL plus assets.
+   The `marketplace` job then publishes the `.vsix` to the VS Code
+   Marketplace through trusted publishing (OIDC, no token). It skips
+   prerelease tags. If it fails, the GitHub release still stands; re-run
+   only that job.
 
 Manual fallback: `gh workflow run release --ref main -f tag=vX.Y.Z
 -f tldr="..."` re-runs publishing for an existing tag, with the

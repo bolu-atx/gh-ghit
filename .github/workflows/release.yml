@@ -176,3 +176,25 @@ jobs:
             gh release edit "$tag" --notes-file notes.md
           fi
           gh release upload "$tag" dist/* --clobber
+
+  # Marketplace upload via trusted publishing (OIDC), no PAT. The
+  # Marketplace policy trusts only release.yml in the `marketplace`
+  # environment, which admits only v* tags and main (manual dispatch). Prerelease
+  # tags skip it. Runs after `publish` so the GitHub release exists
+  # first; a Marketplace failure leaves the release intact.
+  marketplace:
+    name: marketplace
+    needs: publish
+    if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ghit-vscode-vsix
+          path: dist
+      # Pinned: --oidc needs vsce 4.1+ (4.0.0 sent the wrong token format).
+      - name: Publish to VS Code Marketplace
+        run: npx --yes @vscode/vsce@4.1.0 publish --oidc --packagePath dist/*.vsix
