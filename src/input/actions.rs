@@ -5,7 +5,7 @@
 //! `InputSubmit`, `InputBackspace`) read the top focus layer.
 
 use crate::app::{App, FilterRow, Focus, QueryAction, Slot, Tab, board_move, board_selected_number};
-use crate::core::{self, Dialog, Layer, TextInput};
+use crate::core::{self, Dialog, Layer, Pane, TextInput};
 use crate::keymap::Action;
 
 use super::menu;
@@ -74,9 +74,12 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ContentPrev => app.step_content_match(-1),
         Action::NextHit => jump_search_hit(app, 1),
         Action::PrevHit => jump_search_hit(app, -1),
-        Action::OpenBrowser => match app.nav.current {
-            Some(n) => app.open_number(n),
-            None => app.notify("view an issue first".to_string()),
+        // `o` opens what the focused pane points at: the highlighted
+        // filter or reference, else the current item.
+        Action::OpenBrowser => match (app.nav.pane, app.refs.highlight, app.nav.current) {
+            (Pane::Labels, ..) => app.open_filter_item(),
+            (Pane::Refs, Some(n), _) | (_, _, Some(n)) => app.open_number(n),
+            _ => app.notify("view an issue first".to_string()),
         },
         Action::Refresh => app.refresh_current(),
         Action::Reauth => app.reopen_reauth(),

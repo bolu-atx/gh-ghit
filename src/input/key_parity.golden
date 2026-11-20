@@ -293,7 +293,7 @@ labels | 'f' | format: false/false/false -> true/false/false
 labels | 'g' | pending: None -> Some('g')
 labels | 'j' | labels-cursor: 0 -> 1
 labels | 'n' | message:  -> no search: press /
-labels | 'o' | message:  -> opened #8 in browser
+labels | 'o' | message:  -> opened label:"bug" in browser
 labels | 'q' | quit: false -> true
 labels | ctrl-c | quit: false -> true
 labels | ctrl-d | labels-cursor: 0 -> 1

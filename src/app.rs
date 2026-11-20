@@ -17,6 +17,8 @@ mod diff;
 mod fetch_queue;
 mod finder;
 mod format;
+#[cfg(test)]
+pub(crate) use format::encode_query;
 mod issue;
 mod map;
 mod map_filter;
