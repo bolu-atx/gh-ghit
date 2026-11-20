@@ -46,10 +46,21 @@ pub(crate) struct Nav {
     /// History pane cursor: steps back from the current issue. Zero is
     /// the current row; `history_steps` clamps it to the rows drawn.
     pub(crate) history_cursor: usize,
-    /// Back stack of places Enter left, newest last: the pane and the
-    /// tab shown there. Esc at the base layer pops one. Each pane shows
-    /// at most once; pushing a pane again drops the frames above it.
-    pub(crate) back: Vec<(Pane, Tab)>,
+    /// Back stack of places Enter left, newest last. Esc at the base
+    /// layer pops one. Each pane shows at most once; pushing a pane again
+    /// drops the frames above it.
+    pub(crate) back: Vec<BackFrame>,
+}
+
+/// One place Enter left: the pane, the tab, the item shown there, and
+/// the item Enter opened. Esc restores `item` only while `opened` is
+/// still shown; showing any other item clears `opened` for good.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BackFrame {
+    pub(crate) pane: Pane,
+    pub(crate) tab: Tab,
+    pub(crate) item: Option<u64>,
+    pub(crate) opened: Option<u64>,
 }
 
 impl Nav {
@@ -79,29 +90,62 @@ impl App {
     /// The row stays in its group; history records the move for Ctrl+O.
     /// Esc returns focus to `from`.
     pub(crate) fn enter_item(&mut self, number: u64, from: Pane) {
+        self.focus_content(from, Some(number));
+        self.revisit(number);
+    }
+
+    /// Show `number` without filing its row under requested; history
+    /// records the move for Ctrl+O.
+    fn revisit(&mut self, number: u64) {
         self.nav.history = core::history_push(&self.nav.history, self.nav.current, number);
         self.nav.future.clear();
-        if self.nav.current != Some(number) {
+        // A load in flight for another item counts as shown: requesting
+        // `number` replaces it.
+        if self.nav.requested.or(self.nav.current) != Some(number) {
             self.request_issue(number);
         }
         self.nav.hover = None;
-        self.focus_content(from);
     }
 
-    /// Move focus to the Main pane after opening an item from a list.
-    /// Esc returns to `from`.
-    pub(crate) fn focus_content(&mut self, from: Pane) {
-        self.push_back(from, self.nav.tab);
+    /// Undo a History jump: walk the forward chain up to `item`, so
+    /// Ctrl+O / Ctrl+I keep the chain they had before the jump. A plain
+    /// revisit when `item` is not ahead.
+    fn forward_to(&mut self, item: u64) {
+        let Some(i) = self.nav.future.iter().rposition(|&n| n == item) else { return self.revisit(item) };
+        let mut cur = self.nav.current;
+        while self.nav.future.len() > i {
+            let next = self.nav.future.pop().expect("len > i");
+            self.nav.history = core::history_push(&self.nav.history, cur, next);
+            cur = Some(next);
+        }
+        self.file_visited(item);
+        self.load_issue(item, false);
+    }
+
+    /// Move focus to the Main pane before opening `opened` from `from`.
+    /// Esc returns to `from` and the item shown now. Call it before the
+    /// open, so the frame records the item being left.
+    pub(crate) fn focus_content(&mut self, from: Pane, opened: Option<u64>) {
+        self.push_back(from, self.nav.tab, opened);
         self.nav.focus = Focus::Main;
         self.nav.pane = Pane::Main;
     }
 
-    /// Record `pane` on `tab` as the place Esc returns to.
-    pub(crate) fn push_back(&mut self, pane: Pane, tab: Tab) {
-        if let Some(i) = self.nav.back.iter().position(|(p, _)| *p == pane) {
+    /// Record `pane` on `tab`, with the current item, as the place Esc
+    /// returns to after opening `opened`.
+    pub(crate) fn push_back(&mut self, pane: Pane, tab: Tab, opened: Option<u64>) {
+        if let Some(i) = self.nav.back.iter().position(|f| f.pane == pane) {
             self.nav.back.truncate(i);
         }
-        self.nav.back.push((pane, tab));
+        self.nav.back.push(BackFrame { pane, tab, item: self.nav.current, opened });
+    }
+
+    /// The item Esc restores from `frame`: the one it left, while the
+    /// item it opened is still shown or loading. Restoring also cancels
+    /// that load, so it cannot land after Esc.
+    fn restores(&self, frame: &BackFrame) -> Option<u64> {
+        let shown = self.nav.requested.or(self.nav.current);
+        frame.item.filter(|&item| frame.opened.is_some() && frame.opened == shown && Some(item) != shown)
     }
 
     /// Index of the frame Esc would return to: the newest one that is
@@ -111,9 +155,12 @@ impl App {
         if self.search.active() || !self.sidebar.search.is_empty() {
             return None;
         }
+        // A frame that restores its item counts as visible: the pane
+        // showed for that item.
         let visible = self.visible_panes();
-        self.nav.back.iter().rposition(|&(pane, tab)| {
-            visible.contains(&pane) && (pane, tab) != (self.nav.pane, self.nav.tab)
+        self.nav.back.iter().rposition(|f| {
+            let restores = self.restores(f).is_some();
+            (visible.contains(&f.pane) || restores) && (restores || (f.pane, f.tab) != (self.nav.pane, self.nav.tab))
         })
     }
 
@@ -121,13 +168,25 @@ impl App {
     /// and every frame above it. False when there is none.
     fn pop_back(&mut self) -> bool {
         let Some(i) = self.back_target() else { return false };
-        let (pane, tab) = self.nav.back[i];
+        let frame = self.nav.back[i];
+        let restore = self.restores(&frame);
         self.nav.back.truncate(i);
-        if self.nav.pane == Pane::Refs && pane != Pane::Refs {
+        if self.nav.pane == Pane::Refs && frame.pane != Pane::Refs {
             self.refs.highlight = None;
         }
-        self.nav.pane = pane;
-        self.request_tab(tab);
+        if let Some(item) = restore {
+            if frame.pane == Pane::History {
+                self.forward_to(item);
+            } else {
+                self.revisit(item);
+            }
+            // Refs keeps its cursor on the reference that was opened.
+            if frame.pane == Pane::Refs {
+                self.refs.highlight = frame.opened;
+            }
+        }
+        self.nav.pane = frame.pane;
+        self.request_tab(frame.tab);
         true
     }
 
@@ -175,6 +234,13 @@ impl App {
     }
 
     pub(crate) fn show_issue(&mut self, n: u64) {
+        // Showing another item ends every back frame's restore: once you
+        // move on, Esc keeps where you are, even if you come back.
+        for frame in &mut self.nav.back {
+            if frame.opened != Some(n) {
+                frame.opened = None;
+            }
+        }
         self.nav.requested = Some(n);
         if self.issues.partial.contains(&n) { self.load_issue(n, false); }
         self.nav.current = Some(n);
@@ -398,9 +464,9 @@ impl App {
     /// repeated, and focus its content. Esc returns to History.
     pub(crate) fn open_history_row(&mut self) {
         let steps = self.history_steps();
+        self.focus_content(Pane::History, self.history_row_number());
         self.go_back_n(steps);
         self.nav.history_cursor = 0;
-        self.focus_content(Pane::History);
     }
 
     /// Top layer plus the active pane beneath it.

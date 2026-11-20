@@ -120,7 +120,7 @@ The essentials:
 | `u` | Undo the last evict or saved-query delete (within 4 s) |
 | `m` | Actions menu for the focused row (same as right-click) |
 | `Ctrl+O` / `Ctrl+I` | Back / forward in history |
-| `Esc` | Back: closes one layer. At the base it clears a live find first, then returns where `Enter` came from, one step at a time (map node → map, Refs → Main → list). With nowhere to go back to, it clears the highlight |
+| `Esc` | Back: closes one layer. At the base it clears a live find first, then returns where `Enter` came from, one step at a time (map node → map, Refs → Main → list). If the item `Enter` opened is still showing, the item you left comes back too; once you move on, only the pane does. With nowhere to go back to, it clears the highlight |
 | `o` | Open in the browser what the focus points at: the highlighted filter (as a GitHub search), reference or History row, the selected map node or board card, else the open item |
 | `q` | Close the top dialog; at the base, quit |
 | `?` | Shortcuts |

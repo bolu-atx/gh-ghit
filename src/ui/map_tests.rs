@@ -906,6 +906,8 @@ fn o_opens_the_selected_node_and_esc_returns_from_its_details() {
     assert_eq!(app.message, "opened #8 in browser");
     handle_key(&mut app, key(KeyCode::Enter));
     assert_eq!(app.nav.tab, Tab::Details, "Enter opens the node's details");
+    assert_eq!(app.nav.requested, Some(8), "#8 is loading");
     handle_key(&mut app, key(KeyCode::Esc));
     assert_eq!((app.nav.pane, app.nav.tab), (Pane::Main, Tab::Map), "Esc comes back to the map");
+    assert_eq!((app.nav.current, app.nav.requested), (Some(7), Some(7)), "centered where it was; the #8 load is dropped");
 }

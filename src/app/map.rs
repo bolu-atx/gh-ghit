@@ -485,8 +485,8 @@ impl App {
         let Some(node) = self.map.selected_index().map(|i| &self.map.graph.nodes[i]) else { return };
         let (number, title) = (node.number, node.title.clone());
         if number.is_some() {
-            // Esc on Details comes back to the map.
-            self.push_back(Pane::Main, Tab::Map);
+            // Esc on Details comes back to the map and its center.
+            self.push_back(Pane::Main, Tab::Map, number);
         }
         match number {
             Some(n) if Some(n) == self.nav.current => self.request_tab(Tab::Details),

@@ -24,9 +24,9 @@ row=$(e2e_pane | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); st
 cols=${E2E_GEO%x*}
 e2e_key -l "$(printf '\033[<0;%s;%sM' "$((cols - 34))" "$row")"
 e2e_wait "/issues/9" 20 || fail "history click never returned to #9"
-e2e_key Escape '[105;5u'
+e2e_key '[105;5u'
 e2e_wait "/pull/24" 20 || fail "ctrl-i never replayed #24 after click"
-e2e_key Escape '[105;5u'
+e2e_key '[105;5u'
 e2e_wait "/pull/19" 20 || fail "ctrl-i never replayed #19 after click"
 # Back and redo with the keyboard.
 e2e_key C-o
