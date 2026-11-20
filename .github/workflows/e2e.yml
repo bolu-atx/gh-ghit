@@ -8,6 +8,11 @@ permissions:
   pull-requests: read
   checks: read
 jobs:
+  # A change that touches only docs (Markdown, docs/, the VS Code
+  # extension, the demo GIF) skips lint, unit tests, and e2e. The skip is
+  # per job, not paths-ignore: a workflow that never starts leaves the
+  # required tmux-drive check pending, while a skipped job counts as passed.
+  #
   # A push to main that is a squash-merge of a green PR may re-test a
   # tree that already passed. Skip only when the merged PR's head has
   # the exact same tree and every check on it passed. The last "(#N)"
@@ -19,10 +24,23 @@ jobs:
       skip: ${{ steps.tip.outputs.skip }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - id: tip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
+          DOCS='^(.*\.md|docs/.*|editors/vscode/.*|demo\.gif|LICENSE)$'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(gh api --paginate "repos/${{ github.repository }}/pulls/$PR/files" --jq '.[].filename' || true)
+          else
+            FILES=$(git diff --name-only HEAD^ HEAD 2>/dev/null || true)
+          fi
+          if [ -n "$FILES" ] && ! grep -qvE "$DOCS" <<<"$FILES"; then
+            echo "Docs-only change:"; echo "$FILES"
+            echo "skip=true" >>"$GITHUB_OUTPUT"; exit 0
+          fi
           if [ "${{ github.event_name }}" != "push" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
           NUM=$(git log -1 --format=%s | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | tail -1)
           if [ -z "$NUM" ]; then echo "skip=false" >>"$GITHUB_OUTPUT"; exit 0; fi
