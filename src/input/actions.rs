@@ -24,6 +24,8 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::ShowHelp => {
             app.open(crate::app::Entry::Shortcuts);
             app.help_scroll = 0;
+            app.help_filter.clear();
+            app.help_typing = false;
         }
         Action::Quit => app.request_quit(),
         Action::Undo => app.undo_last(),
@@ -158,6 +160,12 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::CloseHelp => { app.close(Slot::Shortcuts); }
         Action::HelpDown => app.help_scroll = app.help_scroll.saturating_add(1),
         Action::HelpUp => app.help_scroll = app.help_scroll.saturating_sub(1),
+        Action::HelpFilter => app.help_typing = true,
+        Action::HelpFilterDone => app.help_typing = false,
+        Action::HelpFilterBackspace => {
+            app.help_filter.pop();
+            app.help_scroll = 0;
+        }
         Action::ConfirmFirst => app.confirm_choose(0),
 
         Action::ComposeSend => app.submit_compose(),

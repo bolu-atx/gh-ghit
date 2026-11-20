@@ -369,6 +369,12 @@ impl App {
         use crate::core::{Dialog, TextInput};
         use crate::app::{Slot, FormatEdit};
         match self.focus().layer {
+            // Esc clears an active filter first, then closes.
+            Layer::Dialog(Dialog::Shortcuts) if self.help_typing || !self.help_filter.is_empty() => {
+                self.help_filter.clear();
+                self.help_typing = false;
+                self.help_scroll = 0;
+            }
             Layer::Dialog(Dialog::Shortcuts) => { self.close(Slot::Shortcuts); }
             Layer::Dialog(Dialog::Confirm) => self.confirm_cancel(),
             Layer::Dialog(Dialog::Compose) => self.request_discard_compose(),

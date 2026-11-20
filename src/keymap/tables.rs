@@ -4,7 +4,7 @@
 use crossterm::event::KeyCode;
 
 use super::{
-    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, content_search_live, main_pane, query_live, side_pane,
+    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, help_typing, content_search_live, main_pane, query_live, side_pane,
     sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
 };
 use crate::core::{Dialog, Pane, TextInput};
@@ -239,14 +239,18 @@ const FINDER: &[Binding] = &[
 
 const SHORTCUTS: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Close", "Help", OUTSIDE).hint(1),
-    key(ch('?'), Action::CloseHelp, "Close", "Help", ALIAS),
-    key(ch('q'), Action::CloseHelp, "Close", "Help", ALIAS),
-    key(ch('j'), Action::HelpDown, "Scroll down", "Help", Gesture::Wheel).hint(2),
+    // While the filter is typing, letters type; only these keys stay bound.
+    key(ch('/'), Action::HelpFilter, "Filter shortcuts", "Help", HINT).hint(4).when(help_browsing),
+    key(KeyCode::Enter, Action::HelpFilterDone, "Keep filter", "Help", EDIT).when(help_typing),
+    key(KeyCode::Backspace, Action::HelpFilterBackspace, "Delete character", "Help", EDIT).when(help_typing),
+    key(ch('?'), Action::CloseHelp, "Close", "Help", ALIAS).when(help_browsing),
+    key(ch('q'), Action::CloseHelp, "Close", "Help", ALIAS).when(help_browsing),
+    key(ch('j'), Action::HelpDown, "Scroll down", "Help", Gesture::Wheel).hint(2).when(help_browsing),
     key(KeyCode::Down, Action::HelpDown, "Scroll down", "Help", ALIAS),
-    key(ch('k'), Action::HelpUp, "Scroll up", "Help", Gesture::Wheel).hint(3),
+    key(ch('k'), Action::HelpUp, "Scroll up", "Help", Gesture::Wheel).hint(3).when(help_browsing),
     key(KeyCode::Up, Action::HelpUp, "Scroll up", "Help", ALIAS),
-    key(ch('g'), Action::JumpTop, "Jump to top", "Help", SCROLL).after('g'),
-    key(ch('G'), Action::JumpBottom, "Jump to bottom", "Help", SCROLL),
+    key(ch('g'), Action::JumpTop, "Jump to top", "Help", SCROLL).after('g').when(help_browsing),
+    key(ch('G'), Action::JumpBottom, "Jump to bottom", "Help", SCROLL).when(help_browsing),
     key(ch('d'), Action::HalfPageDown, "Half page down", "Help", SCROLL).ctrl(),
     key(ch('u'), Action::HalfPageUp, "Half page up", "Help", SCROLL).ctrl(),
     key(KeyCode::PageDown, Action::PageDown, "Page down", "Help", SCROLL),

@@ -309,6 +309,10 @@ pub(crate) struct App {
     pub(crate) bar: String,
     /// First visible line of the help screen. Render clamps it.
     pub(crate) help_scroll: u16,
+    /// Help screen filter: rows whose keys, label or section contain it.
+    pub(crate) help_filter: String,
+    /// `/` on the help screen: typed keys edit `help_filter`.
+    pub(crate) help_typing: bool,
     pub(crate) message: String,
     /// First key of a two-key sequence such as `gg`, while it waits.
     pub(crate) pending_prefix: Option<char>,
@@ -342,6 +346,8 @@ impl App {
             bar: String::new(),
             sidebar: Sidebar::new(),
             help_scroll: 0,
+            help_filter: String::new(),
+            help_typing: false,
             message: String::new(),
             pending_prefix: None,
             message_at: None,

@@ -61,6 +61,10 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
         Layer::Input(TextInput::Query | TextInput::BoardQuery) => app.sidebar.query_draft.push(c),
         Layer::Input(TextInput::Name) => app.sidebar.name_draft.push(c),
         Layer::Dialog(Dialog::Finder) if !chord => app.finder_type(c),
+        Layer::Dialog(Dialog::Shortcuts) if app.help_typing && !chord => {
+            app.help_filter.push(c);
+            app.help_scroll = 0;
+        }
         // The editor never types a control chord into the draft.
         Layer::Dialog(Dialog::Compose) if !chord => app.compose_insert(c),
         Layer::Dialog(Dialog::Confirm) => {

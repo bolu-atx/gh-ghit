@@ -126,3 +126,53 @@ fn help_scrolls_and_clamps_at_both_ends() {
     handle_key(&mut app, key(KeyCode::Char('?')));
     assert_eq!(app.help_scroll, 0);
 }
+
+#[test]
+fn slash_filters_shortcuts_and_esc_clears_then_closes() {
+    let mut app = loaded_app();
+    handle_key(&mut app, key(KeyCode::Char('?')));
+    assert!(frame_text(&mut app).contains("Back in history"));
+    handle_key(&mut app, key(KeyCode::Char('/')));
+    // While typing, bound letters (q, j, k) type instead of acting.
+    for c in "theme".chars() {
+        handle_key(&mut app, key(KeyCode::Char(c)));
+    }
+    assert!(app.shortcuts_open());
+    let text = frame_text(&mut app);
+    assert!(text.contains("/theme"), "{text}");
+    assert!(text.to_lowercase().contains("theme"), "{text}");
+    assert!(!text.contains("Back in history"), "{text}");
+    // Enter keeps the filter; j scrolls again.
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert!(!app.help_typing);
+    assert_eq!(app.help_filter, "theme");
+    // Esc clears the filter, then a second Esc closes.
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert!(app.shortcuts_open());
+    assert!(app.help_filter.is_empty());
+    assert!(frame_text(&mut app).contains("Back in history"));
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert!(!app.shortcuts_open());
+}
+
+#[test]
+fn help_filter_backspace_and_no_match() {
+    let mut app = loaded_app();
+    handle_key(&mut app, key(KeyCode::Char('?')));
+    handle_key(&mut app, key(KeyCode::Char('/')));
+    for c in "zzqx".chars() {
+        handle_key(&mut app, key(KeyCode::Char(c)));
+    }
+    assert!(frame_text(&mut app).contains("no shortcut matches"));
+    for _ in 0..4 {
+        handle_key(&mut app, key(KeyCode::Backspace));
+    }
+    assert!(app.help_filter.is_empty());
+    assert!(frame_text(&mut app).contains("Back in history"));
+    // Reopening starts unfiltered.
+    handle_key(&mut app, key(KeyCode::Char('x')));
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_key(&mut app, key(KeyCode::Char('?')));
+    assert!(app.help_filter.is_empty() && !app.help_typing);
+}
