@@ -83,7 +83,7 @@ fn list_state_and_footer_open_format() {
 }
 
 #[test]
-fn filters_title_clears_every_filter() {
+fn filters_button_clears_every_filter() {
     let mut app = loaded_app();
     app.refs.numbers = vec![9];
     app.sidebar.meta_loaded = true;

@@ -44,24 +44,26 @@ pub(super) fn side_controls(app: &mut App, area: Rect, title: &Line<'static>, wa
     }
 }
 
-/// Adds a muted "clear all" to the Filters title and records its rect.
-pub(super) fn clear_all_control(app: &mut App, area: Rect, title: &mut Line<'static>) {
-    title.spans.push(Span::styled(" · ", Style::new().fg(muted())));
-    title.spans.push(Span::styled("clear all", Style::new().fg(muted())));
-    let x = area.x + 1 + (title.width() - 9) as u16;
-    if let Some(rect) = clipped(area, x, area.y, 9) {
-        app.hits.controls.push((rect, Action::ClearLabels, Pane::Labels));
-    }
-}
-
-/// Filters title control: hide or show done milestones (`d`).
-pub(super) fn done_milestones_control(app: &mut App, area: Rect, title: &mut Line<'static>) {
-    let label = if app.sidebar.hide_done_milestones { "show done" } else { "hide done" };
-    title.spans.push(Span::styled(" · ", Style::new().fg(muted())));
-    title.spans.push(Span::styled(label, Style::new().fg(muted())));
-    let x = area.x + 1 + (title.width() - label.len()) as u16;
-    if let Some(rect) = clipped(area, x, area.y, label.len() as u16) {
-        app.hits.controls.push((rect, Action::ToggleDoneMilestones, Pane::Labels));
+/// Pane buttons drawn over a border row, left-aligned: an amber key and
+/// a label on a raised background. Only the button cells are drawn, so
+/// the border shows between and after them. Each runs its action on click.
+pub(super) fn button_row(f: &mut ratatui::Frame, app: &mut App, row: Rect, buttons: &[(&str, Action)], pane: Pane) {
+    use crate::theme::line_hl;
+    let mut x = row.x + 1;
+    for (label, action) in buttons {
+        let key = crate::keymap::describe(*action).map(|b| b.key_name()).unwrap_or_default();
+        let width = (key.chars().count() + label.chars().count() + 3) as u16;
+        if x + width > row.right() {
+            break;
+        }
+        let rect = Rect::new(x, row.y, width, 1);
+        let line = Line::from(vec![
+            Span::styled(format!(" {key}"), Style::new().bg(line_hl()).fg(amber()).bold()),
+            Span::styled(format!(" {label} "), Style::new().bg(line_hl()).fg(paper())),
+        ]);
+        f.render_widget(Paragraph::new(line), rect);
+        app.hits.controls.push((rect, *action, pane));
+        x += width + 1;
     }
 }
 

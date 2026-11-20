@@ -70,7 +70,7 @@ fn labels_pane_lists_milestones_then_labels_inside_120x40() {
         .iter().map(|name| text.find(name).expect(name)).collect();
     assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "group order: {text}");
     assert!(!text.contains('\u{f14a}'), "nothing selected yet: {text}");
-    assert!(text.contains("milestones (0/2) · labels (0/2)"), "{text}");
+    assert!(text.contains(" d hide done "), "buttons replace the counts footer: {text}");
     assert_eq!(app.hits.labels_rows.len(), 4);
     let (refs, labels) = (app.hits.refs_area, app.hits.labels_area);
     assert_eq!(refs.bottom(), labels.y, "panes stack without a gap");
@@ -117,11 +117,14 @@ fn d_hides_done_milestones_but_keeps_selected_ones() {
     let text = frame_text(&mut app);
     assert!(text.contains("show done") && text.contains("v1"), "{text}");
     assert!(!text.contains("shipped") && !text.contains("retired"), "{text}");
+    assert!(text.contains("2 done milestones hidden"), "{text}");
     // A selected done milestone stays visible so it can be cleared.
     app.sidebar.milestone_filter.insert(Some("shipped".to_string()));
     assert!(frame_text(&mut app).contains("shipped"));
+    assert!(frame_text(&mut app).contains("1 done milestone hidden"));
     handle_key(&mut app, key(KeyCode::Char('d')));
-    assert!(frame_text(&mut app).contains("retired"));
+    let text = frame_text(&mut app);
+    assert!(text.contains("retired") && !text.contains("hidden"), "{text}");
 }
 
 #[test]
