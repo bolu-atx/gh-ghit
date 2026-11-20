@@ -895,6 +895,7 @@ board | 'f' | format: false/false/false -> true/false/false
 board | 'g' | pending: None -> Some('g')
 board | 'j' | board: true/0/0/None/0 -> true/0/1/None/0
 board | 'l' | board: true/0/0/None/0 -> true/1/0/None/0
+board | 'o' | message:  -> opened #7 in browser
 board | 'q' | board: true/0/0/None/0 -> false/0/0/None/0
 board | ctrl-d | board: true/0/0/None/0 -> true/0/1/None/0
 board | enter | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0 ; board: true/0/0/None/0 -> false/0/0/None/0

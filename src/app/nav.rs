@@ -46,9 +46,10 @@ pub(crate) struct Nav {
     /// History pane cursor: steps back from the current issue. Zero is
     /// the current row; `history_steps` clamps it to the rows drawn.
     pub(crate) history_cursor: usize,
-    /// Sidebar list that Enter left for the Main pane. Esc on Main
-    /// returns focus there.
-    pub(crate) return_pane: Option<Pane>,
+    /// Back stack of places Enter left, newest last: the pane and the
+    /// tab shown there. Esc at the base layer pops one. Each pane shows
+    /// at most once; pushing a pane again drops the frames above it.
+    pub(crate) back: Vec<(Pane, Tab)>,
 }
 
 impl Nav {
@@ -56,7 +57,7 @@ impl Nav {
         Self { current: None, requested: None, step_pending: None, visited: vec![],
             recent: vec![], history: vec![], future: vec![], pinned: HashSet::new(),
             pin_order: vec![], tab: Tab::Details, focus: Focus::Main, pane: Pane::Issues,
-            scroll: 0, hover: None, history_cursor: 0, return_pane: None }
+            scroll: 0, hover: None, history_cursor: 0, back: vec![] }
     }
 }
 
@@ -88,11 +89,46 @@ impl App {
     }
 
     /// Move focus to the Main pane after opening an item from a list.
-    /// Esc on Main returns to `from`.
+    /// Esc returns to `from`.
     pub(crate) fn focus_content(&mut self, from: Pane) {
+        self.push_back(from, self.nav.tab);
         self.nav.focus = Focus::Main;
         self.nav.pane = Pane::Main;
-        self.nav.return_pane = Some(from);
+    }
+
+    /// Record `pane` on `tab` as the place Esc returns to.
+    pub(crate) fn push_back(&mut self, pane: Pane, tab: Tab) {
+        if let Some(i) = self.nav.back.iter().position(|(p, _)| *p == pane) {
+            self.nav.back.truncate(i);
+        }
+        self.nav.back.push((pane, tab));
+    }
+
+    /// Index of the frame Esc would return to: the newest one that is
+    /// visible and not where the user already is. Content and row
+    /// searches clear first, so they hide it.
+    pub(crate) fn back_target(&self) -> Option<usize> {
+        if self.search.active() || !self.sidebar.search.is_empty() {
+            return None;
+        }
+        let visible = self.visible_panes();
+        self.nav.back.iter().rposition(|&(pane, tab)| {
+            visible.contains(&pane) && (pane, tab) != (self.nav.pane, self.nav.tab)
+        })
+    }
+
+    /// Esc at the base layer: go back to the newest frame, dropping it
+    /// and every frame above it. False when there is none.
+    fn pop_back(&mut self) -> bool {
+        let Some(i) = self.back_target() else { return false };
+        let (pane, tab) = self.nav.back[i];
+        self.nav.back.truncate(i);
+        if self.nav.pane == Pane::Refs && pane != Pane::Refs {
+            self.refs.highlight = None;
+        }
+        self.nav.pane = pane;
+        self.request_tab(tab);
+        true
     }
 
     /// File `number` under requested rows without touching history.
@@ -343,6 +379,14 @@ impl App {
         self.nav.history_cursor.min(self.history_rows_back())
     }
 
+    /// Item on the History row under the cursor.
+    pub(crate) fn history_row_number(&self) -> Option<u64> {
+        match self.history_steps() {
+            0 => self.nav.current,
+            steps => self.nav.history.get(self.nav.history.len() - steps).copied(),
+        }
+    }
+
     /// `j`/`k` in History: `j` moves toward the current issue.
     pub(crate) fn history_step(&mut self, delta: isize) {
         self.nav.history_cursor = self.history_steps()
@@ -430,11 +474,9 @@ impl App {
                 self.sidebar.search.clear();
                 self.search.clear();
             }
-            // Esc on Main after Enter goes back to the list, unless a
-            // content search is live: that clears first.
-            Layer::Base if self.nav.pane == Pane::Main && self.nav.return_pane.is_some() && !self.search.active() => {
-                self.nav.pane = self.nav.return_pane.take().unwrap_or(Pane::Issues);
-            }
+            // Esc after Enter goes back where Enter left, unless a search
+            // is live: that clears first.
+            Layer::Base if self.pop_back() => {}
             Layer::Base => {
                 self.bar.clear();
                 self.sidebar.searching = false;

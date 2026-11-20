@@ -894,3 +894,18 @@ fn a_press_on_a_node_a_rebuild_dropped_starts_a_pan() {
     assert_eq!(app.map.selected, None);
     assert!(format!("{:?}", app.map.drag).starts_with("Some(Pan"), "{:?}", app.map.drag);
 }
+
+#[test]
+fn o_opens_the_selected_node_and_esc_returns_from_its_details() {
+    let mut app = map_app();
+    pin_layout(&mut app);
+    draw_buffer(&mut app);
+    handle_key(&mut app, key(KeyCode::Char('.')));
+    assert_eq!(app.map.selected, Some(8));
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened #8 in browser");
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.nav.tab, Tab::Details, "Enter opens the node's details");
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert_eq!((app.nav.pane, app.nav.tab), (Pane::Main, Tab::Map), "Esc comes back to the map");
+}

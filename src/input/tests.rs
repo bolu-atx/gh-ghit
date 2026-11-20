@@ -665,7 +665,7 @@ fn enter_focuses_the_content_and_esc_returns_to_the_list() {
     assert_eq!(app.nav.scroll, 3);
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Issues, "Esc returns to the list");
-    assert!(app.nav.return_pane.is_none());
+    assert!(app.nav.back.is_empty());
     handle_key(&mut app, plain_key(KeyCode::Char('k')));
     assert!(app.nav.current == Some(7) || app.nav.requested == Some(7), "k walks the list again");
 }
@@ -678,6 +678,7 @@ fn enter_in_refs_and_history_focuses_the_content_too() {
     app.refs.highlight = Some(7);
     handle_key(&mut app, plain_key(KeyCode::Enter));
     assert_eq!(app.nav.pane, Pane::Main);
+    app.refs.numbers = vec![8];
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Refs, "Esc returns to Refs");
     app.nav.pane = Pane::History;
@@ -685,6 +686,71 @@ fn enter_in_refs_and_history_focuses_the_content_too() {
     assert_eq!(app.nav.pane, Pane::Main);
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::History, "Esc returns to History");
+}
+
+#[test]
+fn esc_walks_the_back_stack_one_frame_at_a_time() {
+    let mut app = step_app();
+    app.nav.pane = Pane::Issues;
+    app.show_issue(8);
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    // A lateral move to Refs keeps the stack; Enter there pushes Refs.
+    app.nav.pane = Pane::Refs;
+    app.refs.highlight = Some(7);
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    assert_eq!(app.nav.pane, Pane::Main);
+    assert!(app.back_target().is_some(), "Esc can go back");
+    app.refs.numbers = vec![8];
+    app.refs.highlight = Some(7);
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Refs);
+    assert_eq!(app.refs.highlight, Some(7), "the Refs cursor stays");
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Issues, "the next Esc reaches the list");
+    // A pane that went hidden is skipped.
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    app.nav.pane = Pane::Refs;
+    app.refs.highlight = Some(7);
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    assert_eq!((app.nav.pane, app.nav.back.len()), (Pane::Main, 2));
+    app.refs.numbers.clear();
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Issues, "hidden Refs is skipped");
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Issues, "an empty stack stays put");
+    // Entering the same pane twice keeps one frame for it.
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    app.nav.pane = Pane::Issues;
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    assert_eq!(app.nav.back.len(), 1);
+}
+
+#[test]
+fn esc_clears_a_content_search_before_going_back() {
+    let mut app = step_app();
+    app.nav.pane = Pane::Issues;
+    app.show_issue(8);
+    handle_key(&mut app, plain_key(KeyCode::Enter));
+    app.search.query = "x".to_string();
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Main, "the first Esc clears the search");
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert_eq!(app.nav.pane, Pane::Issues);
+}
+
+#[test]
+fn o_opens_the_history_row_under_the_cursor() {
+    let mut app = step_app();
+    app.ensure_visited(7);
+    app.load_issue(7, false);
+    app.ensure_visited(8);
+    app.load_issue(8, false);
+    app.nav.pane = Pane::History;
+    press(&mut app, 'o');
+    assert_eq!(app.message, "opened #8 in browser");
+    app.history_step(-1);
+    press(&mut app, 'o');
+    assert_eq!(app.message, "opened #7 in browser");
 }
 
 #[test]

@@ -102,7 +102,7 @@ The essentials:
 | `j` / `k`, `↓` / `↑` | Move: rows, diff lines, cards (scroll the main pane, pan the map). Diff keys act only while Main has focus |
 | `gg` / `G` | Jump to the top / bottom of any list or scroll area |
 | `Ctrl+D` / `Ctrl+U`, Page Down / Page Up | Half page / full page |
-| `Enter` | In Issues, PRs, Refs and History, show the selected item and focus its content, so `j` / `k` scroll it. `Esc` returns to the list. Also opens a card or map node, and applies in dialogs |
+| `Enter` | In Issues, PRs, Refs and History, show the selected item and focus its content, so `j` / `k` scroll it. `Esc` goes back. Also opens a card or map node, and applies in dialogs |
 | `Space` | Expand a row, toggle a chip, fold a diff file |
 | `[` / `]` | Previous / next issue from any pane |
 | `h` / `l` | Fold / unfold tree rows and diff files; pan the map; move between board columns |
@@ -120,7 +120,8 @@ The essentials:
 | `u` | Undo the last evict or saved-query delete (within 4 s) |
 | `m` | Actions menu for the focused row (same as right-click) |
 | `Ctrl+O` / `Ctrl+I` | Back / forward in history |
-| `Esc` | Back: closes one layer; at the base it clears find and highlight |
+| `Esc` | Back: closes one layer. At the base it clears a live find first, then returns where `Enter` came from, one step at a time (map node → map, Refs → Main → list). With nowhere to go back to, it clears the highlight |
+| `o` | Open in the browser what the focus points at: the highlighted filter (as a GitHub search), reference or History row, the selected map node or board card, else the open item |
 | `q` | Close the top dialog; at the base, quit |
 | `?` | Shortcuts |
 
