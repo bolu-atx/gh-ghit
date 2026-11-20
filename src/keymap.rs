@@ -61,7 +61,7 @@ actions! {
     CloseMapFilter, MapFilterDown, MapFilterUp, MapFilterToggle, MapFilterScope, MapFilterClosed,
     MapFilterPrs, MapFilterHubs, MapFilterReset,
     // Shortcuts, confirm, compose.
-    CloseHelp, HelpDown, HelpUp, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
+    CloseHelp, HelpDown, HelpUp, HelpFilter, HelpFilterDone, HelpFilterBackspace, ConfirmFirst, CloseMenu, MenuDown, MenuUp, MenuRun,
     ComposeSend, ComposeTogglePreview, ComposeEditor, ComposeLineStart, ComposeLineEnd, ComposeLeft, ComposeRight,
     ComposeUp, ComposeDown, ComposeBackspace, ComposeDelete, ComposeKillEnd, ComposeKillStart,
     ComposeDeleteWordBack, ComposeYank, ComposeTranspose, ComposeNewline, ComposeTab,
@@ -546,6 +546,14 @@ fn board_row_focused(app: &App) -> bool {
 
 fn board_text_focused(app: &App) -> bool {
     app.board.filter_focus == 0
+}
+
+fn help_browsing(app: &App) -> bool {
+    !app.help_typing
+}
+
+fn help_typing(app: &App) -> bool {
+    app.help_typing
 }
 
 #[cfg(test)]

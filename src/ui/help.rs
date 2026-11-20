@@ -25,9 +25,14 @@ const BANNER: [&str; 4] = [
 
 /// Every help line, sections in order. Pure of layout, so tests can read it.
 pub(super) fn help_lines(app: &App) -> Vec<Line<'static>> {
+    let needle = app.help_filter.to_lowercase();
     let sections: Vec<_> = keymap::help_sections(app).into_iter()
-        .map(|(context, current)| (context, current, keymap::help_rows(context)))
+        .map(|(context, current)| (context, current, filter_rows(context, &needle)))
+        .filter(|(_, _, rows)| !rows.is_empty())
         .collect();
+    if sections.is_empty() {
+        return vec![Line::styled(format!("  no shortcut matches \"{}\"", app.help_filter), Style::new().bg(ink()).fg(muted()))];
+    }
     let key_width = sections.iter().flat_map(|(_, _, rows)| rows)
         .map(|row| row.keys.chars().count())
         .max().unwrap_or(0).min(KEY_COLUMN_MAX) + 2;
@@ -59,15 +64,34 @@ pub(super) fn help_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
+/// A section's rows that match the filter. A match on the section title
+/// keeps the whole section; otherwise a row matches on its keys, label,
+/// group or mouse gesture. Case-insensitive; an empty filter keeps all.
+fn filter_rows(context: Context, needle: &str) -> Vec<keymap::HelpRow> {
+    let rows = keymap::help_rows(context);
+    if needle.is_empty() || context.title().to_lowercase().contains(needle) {
+        return rows;
+    }
+    rows.into_iter().filter(|row| {
+        [row.keys.as_str(), row.label, row.group, row.mouse.unwrap_or("")]
+            .iter().any(|field| field.to_lowercase().contains(needle))
+    }).collect()
+}
+
 pub(super) fn render_shortcuts(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let width = area.width.saturating_sub(4).clamp(1, 84);
     let height = area.height.saturating_sub(2).clamp(1, 40);
     let popup = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
     app.hits.popup = popup;
     f.render_widget(Clear, popup);
+    let title = match (app.help_typing, app.help_filter.is_empty()) {
+        (true, _) => format!(" Shortcuts · /{}▏ ", app.help_filter),
+        (false, false) => format!(" Shortcuts · /{} ", app.help_filter),
+        (false, true) => " Shortcuts ".to_string(),
+    };
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(ink()).fg(muted()))
-        .style(base()).title(" Shortcuts ");
+        .style(base()).title(title);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
