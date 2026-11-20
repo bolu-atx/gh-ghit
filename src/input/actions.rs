@@ -104,6 +104,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::OpenRef => app.open_selected_ref(),
         Action::ToggleLabel => app.toggle_filter_item(app.labels.cursor),
         Action::ClearLabels => app.clear_filter_items(),
+        Action::ToggleDoneMilestones => app.toggle_done_milestones(),
         Action::OpenHistoryRow => app.open_history_row(),
         Action::OpenRow => open_row(app),
 

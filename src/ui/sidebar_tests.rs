@@ -17,7 +17,7 @@ fn labels_app() -> App {
     app.sidebar.labels = vec!["bug".to_string(), "docs".to_string()];
     app.sidebar.milestones = vec![crate::model::Milestone {
         title: "v1".to_string(),
-        due_on: None,
+        due_on: None, ..Default::default()
     }];
     app
 }
@@ -75,6 +75,53 @@ fn labels_pane_lists_milestones_then_labels_inside_120x40() {
     let (refs, labels) = (app.hits.refs_area, app.hits.labels_area);
     assert_eq!(refs.bottom(), labels.y, "panes stack without a gap");
     assert!(labels.height >= 8, "no truncation at 120x40: {labels:?}");
+}
+
+fn milestone(title: &str, open: u32, closed: u32, state_closed: bool) -> crate::model::Milestone {
+    crate::model::Milestone { title: title.to_string(), open_items: open, closed_items: closed,
+        closed: state_closed, ..Default::default() }
+}
+
+#[test]
+fn milestone_percent_and_done() {
+    assert_eq!(milestone("a", 0, 0, false).percent(), None);
+    assert_eq!(milestone("a", 1, 3, false).percent(), Some(75));
+    assert!(!milestone("a", 1, 3, false).done());
+    assert!(milestone("a", 0, 3, false).done(), "every item closed");
+    assert!(milestone("a", 2, 0, true).done(), "closed on GitHub");
+    assert!(!milestone("a", 0, 0, false).done(), "empty is not done");
+}
+
+#[test]
+fn labels_pane_shows_milestone_progress() {
+    let mut app = labels_app();
+    app.sidebar.milestones = vec![milestone("v1", 1, 3, false), milestone("v2", 0, 0, false)];
+    let text = frame_text(&mut app);
+    assert!(text.contains("▰▰▰▰▱  75%"), "{text}");
+    assert!(text.contains("v2"), "{text}");
+    assert_eq!(text.matches('%').count(), 1, "no bar without items: {text}");
+}
+
+#[test]
+fn d_hides_done_milestones_but_keeps_selected_ones() {
+    use crate::core::Pane;
+    let mut app = labels_app();
+    app.sidebar.milestones = vec![
+        milestone("v1", 2, 1, false), milestone("shipped", 0, 4, false), milestone("retired", 1, 0, true),
+    ];
+    let text = frame_text(&mut app);
+    assert!(text.contains("hide done") && text.contains("shipped") && text.contains("retired"), "{text}");
+    app.nav.pane = Pane::Labels;
+    handle_key(&mut app, key(KeyCode::Char('d')));
+    assert!(app.sidebar.hide_done_milestones);
+    let text = frame_text(&mut app);
+    assert!(text.contains("show done") && text.contains("v1"), "{text}");
+    assert!(!text.contains("shipped") && !text.contains("retired"), "{text}");
+    // A selected done milestone stays visible so it can be cleared.
+    app.sidebar.milestone_filter.insert(Some("shipped".to_string()));
+    assert!(frame_text(&mut app).contains("shipped"));
+    handle_key(&mut app, key(KeyCode::Char('d')));
+    assert!(frame_text(&mut app).contains("retired"));
 }
 
 #[test]
@@ -599,11 +646,11 @@ fn milestone_groups_render_in_order_and_clicks_match_rows() {
     app.sidebar.milestones = vec![
         crate::model::Milestone {
             title: "v1".to_string(),
-            due_on: Some("2026-03-01T00:00:00Z".to_string()),
+            due_on: Some("2026-03-01T00:00:00Z".to_string()), ..Default::default()
         },
         crate::model::Milestone {
             title: "v0.6".to_string(),
-            due_on: Some("2026-02-01T00:00:00Z".to_string()),
+            due_on: Some("2026-02-01T00:00:00Z".to_string()), ..Default::default()
         },
     ];
     assert_eq!(

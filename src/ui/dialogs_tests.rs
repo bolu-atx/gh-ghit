@@ -247,7 +247,7 @@ fn format_dialog_lists_pills_and_space_toggles_them() {
     app.sidebar.labels = vec!["bug".to_string(), "docs".to_string()];
     app.sidebar.milestones = vec![crate::model::Milestone {
         title: "v1".to_string(),
-        due_on: None,
+        due_on: None, ..Default::default()
     }];
     app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     app.sidebar.format_focus = 6;

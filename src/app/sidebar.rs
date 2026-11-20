@@ -84,6 +84,8 @@ pub(crate) struct Sidebar {
     pub(crate) show_merged_prs: bool,
     pub(crate) show_open_issues: bool,
     pub(crate) show_closed_issues: bool,
+    /// `d` on the Filters pane: hide closed or fully done milestones.
+    pub(crate) hide_done_milestones: bool,
     pub(crate) query_draft: String,
     pub(crate) query_active: String,
     /// Numbers a GitHub-run query returned. `Some` means the view shows
@@ -127,7 +129,7 @@ impl Sidebar {
     pub(crate) fn new() -> Self {
         Self { show: true, search: String::new(), searching: false, sort: core::SideSort::Default,
             sort_desc: false, show_open_prs: true, show_merged_prs: true,
-            show_open_issues: true, show_closed_issues: true,
+            show_open_issues: true, show_closed_issues: true, hide_done_milestones: false,
             query_draft: String::new(), query_active: String::new(), query_github: None,
             saved_queries: Vec::new(), name_draft: String::new(),
             group_by: model::GroupBy::None, sub_issue_tree: false,

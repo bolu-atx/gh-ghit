@@ -265,6 +265,9 @@ pub async fn repo_milestones(repo: &str, bearer: &str) -> Result<Vec<model::Mile
             Some(model::Milestone {
                 title: title.to_owned(),
                 due_on: v.get("due_on").and_then(Value::as_str).map(str::to_owned),
+                open_items: v.get("open_issues").and_then(Value::as_u64).unwrap_or(0) as u32,
+                closed_items: v.get("closed_issues").and_then(Value::as_u64).unwrap_or(0) as u32,
+                closed: v.get("state").and_then(Value::as_str) == Some("closed"),
             })
         })
         .collect())

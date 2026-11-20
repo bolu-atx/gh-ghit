@@ -285,6 +285,7 @@ labels | 'N' | message:  -> no search: press /
 labels | '[' | current: Some(8) -> Some(7) ; requested: Some(8) -> Some(7) ; history: []/[]/0 -> [8]/[]/0
 labels | ']' | current: Some(8) -> Some(9) ; requested: Some(8) -> Some(9) ; history: []/[]/0 -> [8]/[]/0
 labels | 'c' | compose: None/false -> Some(("", 0, ""))/false
+labels | 'd' | message:  -> done milestones hidden
 labels | 'e' | pane: Labels -> Main ; message:  -> right pane: hidden ; refs: true/None -> false/None
 labels | 'f' | format: false/false/false -> true/false/false
 labels | 'g' | pending: None -> Some('g')

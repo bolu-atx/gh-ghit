@@ -54,6 +54,17 @@ pub(super) fn clear_all_control(app: &mut App, area: Rect, title: &mut Line<'sta
     }
 }
 
+/// Filters title control: hide or show done milestones (`d`).
+pub(super) fn done_milestones_control(app: &mut App, area: Rect, title: &mut Line<'static>) {
+    let label = if app.sidebar.hide_done_milestones { "show done" } else { "hide done" };
+    title.spans.push(Span::styled(" · ", Style::new().fg(muted())));
+    title.spans.push(Span::styled(label, Style::new().fg(muted())));
+    let x = area.x + 1 + (title.width() - label.len()) as u16;
+    if let Some(rect) = clipped(area, x, area.y, label.len() as u16) {
+        app.hits.controls.push((rect, Action::ToggleDoneMilestones, Pane::Labels));
+    }
+}
+
 /// One toolbar button: its glyph, short label and action.
 struct Tool {
     icon: &'static str,

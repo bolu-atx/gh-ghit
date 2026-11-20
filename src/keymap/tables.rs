@@ -126,6 +126,7 @@ const LABELS: &[Binding] = &[
     key(KeyCode::Enter, Action::ToggleLabel, "Toggle filter", "Filters", Gesture::Click),
     key(ch(' '), Action::ToggleLabel, "Toggle filter", "Filters", ALIAS).hint(1),
     key(ch('X'), Action::ClearLabels, "Clear all filters", "Filters", TITLE).hint(2),
+    key(ch('d'), Action::ToggleDoneMilestones, "Hide or show done milestones", "Filters", TITLE).hint(3),
 ];
 
 const HISTORY: &[Binding] = &[

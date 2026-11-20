@@ -422,6 +422,9 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Style::new().fg(amber()));
         controls::clear_all_control(app, area, &mut title);
     }
+    if milestones > 0 {
+        controls::done_milestones_control(app, area, &mut title);
+    }
     let footer = if items.is_empty() { String::new() } else {
         format!("milestones ({}/{milestones}) · labels ({on_labels}/{})",
             on_milestones, items.len() - milestones)
@@ -495,16 +498,48 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         } else {
             Style::new().bg(bg).fg(paper())
         };
-        let room = (inner.width as usize).saturating_sub(5);
-        let line = Line::from(vec![
+        let percent = match &items[index] {
+            FilterItem::Milestone(Some(title)) => app.sidebar.milestones.iter()
+                .find(|m| &m.title == title).and_then(model::Milestone::percent),
+            _ => None,
+        };
+        // Progress bar only when the row has room for a readable name.
+        let bar = percent.filter(|_| inner.width >= 24).map(|p| progress_spans(p, bg));
+        let bar_width = if bar.is_some() { PROGRESS_WIDTH } else { 0 };
+        let room = (inner.width as usize).saturating_sub(5 + bar_width);
+        let slug = model::slug(&name, room);
+        let mut spans = vec![
             Span::styled(marker, marker_style.bg(bg)),
             Span::styled(if on { "\u{f14a} " } else { "\u{f096} " },
                 Style::new().bg(bg).fg(if on { amber() } else { muted() })),
-            Span::styled(model::slug(&name, room), name_style),
-        ]);
+        ];
+        if let Some(bar) = bar {
+            let pad = room.saturating_sub(slug.chars().count());
+            spans.push(Span::styled(slug, name_style));
+            spans.push(Span::styled(" ".repeat(pad), Style::new().bg(bg)));
+            spans.extend(bar);
+        } else {
+            spans.push(Span::styled(slug, name_style));
+        }
+        let line = Line::from(spans);
         f.render_widget(Paragraph::new(line).style(Style::new().bg(bg)), rect);
         app.hits.labels_rows.push((rect, index));
     }
+}
+
+/// Cells a milestone progress bar takes: a space, five bar cells, and a
+/// right-aligned percentage (" ▰▰▰▱▱ 60%").
+const PROGRESS_WIDTH: usize = 11;
+
+/// A milestone's share of closed items as a five-cell bar and a percent.
+fn progress_spans(percent: u32, bg: ratatui::style::Color) -> Vec<Span<'static>> {
+    use crate::theme::{muted, teal};
+    let filled = ((percent as usize * 5) + 50) / 100;
+    vec![
+        Span::styled(format!(" {}", "▰".repeat(filled)), Style::new().bg(bg).fg(teal())),
+        Span::styled("▱".repeat(5 - filled), Style::new().bg(bg).fg(muted())),
+        Span::styled(format!("{percent:>4}%"), Style::new().bg(bg).fg(muted())),
+    ]
 }
 
 /// Last visits under Refs: up to four back entries above the current
