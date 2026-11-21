@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, MenuKind};
 use crate::core::Pane;
 use crate::keymap::Action;
 use crate::theme::{self, amber, ink, muted, paper};
@@ -81,9 +81,18 @@ impl Tool {
     }
 
     /// Cells the button takes: key, icon, and the label when `labeled`.
+    /// Without an icon (plain mode) the label always shows.
     fn width(&self, labeled: bool) -> u16 {
-        let label = if labeled { 1 + self.label.chars().count() } else { 0 };
-        (self.key().chars().count() + 1 + 1 + label) as u16
+        let icon = if self.icon.is_empty() { 0 } else { 2 };
+        let label = if labeled || self.icon.is_empty() { 1 + self.label.chars().count() } else { 0 };
+        (self.key().chars().count() + icon + label) as u16
+    }
+
+    /// The text after the key: ` icon`, ` label`, or both.
+    fn text(&self, labeled: bool) -> String {
+        let icon = if self.icon.is_empty() { String::new() } else { format!(" {}", self.icon) };
+        let label = if labeled || self.icon.is_empty() { format!(" {}", self.label) } else { String::new() };
+        format!("{icon}{label}")
     }
 }
 
@@ -93,27 +102,27 @@ impl Tool {
 fn tools(app: &App) -> Vec<Tool> {
     let mut tools = vec![];
     if app.visual_diff() {
-        tools.push(Tool { icon: theme::TOOL_SPLIT, label: "split", action: Action::DiffSplit });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_SPLIT, ""), label: "split", action: Action::DiffSplit });
         let (icon, label) =
-            if app.diff_will_expand() { (theme::TOOL_EXPAND, "expand") } else { (theme::TOOL_FOLD, "fold") };
+            if app.diff_will_expand() { (theme::nf(theme::TOOL_EXPAND, ""), "expand") } else { (theme::nf(theme::TOOL_FOLD, ""), "fold") };
         tools.push(Tool { icon, label, action: Action::DiffExpandAll });
-        tools.push(Tool { icon: theme::TOOL_CONTEXT, label: app.diff_context_label(), action: Action::DiffContext });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_CONTEXT, ""), label: app.diff_context_label(), action: Action::DiffContext });
     }
     if app.map_shown() {
         let label = if app.map.center().is_some() { "linked" } else { "repo" };
-        tools.push(Tool { icon: theme::TOOL_SCOPE, label, action: Action::GraphScope });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_SCOPE, ""), label, action: Action::GraphScope });
         // On the map, `OpenFormat` opens the map filter.
-        tools.push(Tool { icon: theme::TOOL_FILTER, label: "filter", action: Action::OpenFormat });
-        tools.push(Tool { icon: theme::TOOL_FIT, label: "fit", action: Action::GraphFit });
-        tools.push(Tool { icon: theme::TOOL_PHYSICS, label: "physics", action: Action::GraphPhysics });
-        tools.push(Tool { icon: theme::TOOL_RANK, label: "ranks", action: Action::GraphStrip });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_FILTER, ""), label: "filter", action: Action::OpenFormat });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_FIT, ""), label: "fit", action: Action::GraphFit });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_PHYSICS, ""), label: "physics", action: Action::GraphPhysics });
+        tools.push(Tool { icon: theme::nf(theme::TOOL_RANK, ""), label: "ranks", action: Action::GraphStrip });
     }
     let Some(data) = app.nav.current.and_then(|n| app.issues.data.get(&n)) else { return tools };
-    tools.push(Tool { icon: theme::TOOL_COMMENT, label: "comment", action: Action::Comment });
+    tools.push(Tool { icon: theme::nf(theme::TOOL_COMMENT, ""), label: "comment", action: Action::Comment });
     match data.state.as_str() {
         "MERGED" => {}
-        "CLOSED" => tools.push(Tool { icon: theme::TOOL_REOPEN, label: "reopen", action: Action::CloseItem }),
-        _ => tools.push(Tool { icon: theme::TOOL_CLOSE, label: "close", action: Action::CloseItem }),
+        "CLOSED" => tools.push(Tool { icon: theme::nf(theme::TOOL_REOPEN, ""), label: "reopen", action: Action::CloseItem }),
+        _ => tools.push(Tool { icon: theme::nf(theme::TOOL_CLOSE, ""), label: "close", action: Action::CloseItem }),
     }
     tools
 }
@@ -148,7 +157,7 @@ pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
     let lead = counter.as_ref().map_or(0, |c| c.chars().count() as u16 + STEP_WIDTH + 1);
     // Titles have no pad cells, only a one-cell divider between them, so
     // one more cell keeps the last title off the first button.
-    let titles = crate::app::TABS.map(|(_, title)| title);
+    let titles = crate::app::tabs().map(|(_, title)| title);
     let used = titles.iter().map(|t| t.chars().count() as u16).sum::<u16>() + titles.len() as u16;
     let room = tabs.width.saturating_sub(used + 1);
     let room_for_tools = room.saturating_sub(if lead > 0 { lead + TOOL_GAP } else { 0 });
@@ -173,7 +182,7 @@ pub(super) fn toolbar(f: &mut ratatui::Frame, tabs: Rect, app: &mut App) {
     }
     for tool in &tools {
         let rect = Rect::new(x, tabs.y, tool.width(labeled), 1);
-        let text = if labeled { format!(" {} {}", tool.icon, tool.label) } else { format!(" {}", tool.icon) };
+        let text = tool.text(labeled);
         let line = Line::from(vec![Span::styled(tool.key(), Style::new().bg(ink()).fg(amber())), Span::styled(text, style)]);
         f.render_widget(Paragraph::new(line), rect);
         x += rect.width + TOOL_GAP;
@@ -193,11 +202,18 @@ pub(super) fn render_menu(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let key_w = menu.entries.iter().map(|e| e.key.chars().count()).max().unwrap_or(0);
     let width = ((2 + label_w + 2 + key_w + 1 + 2) as u16).min(area.width);
     let height = (menu.entries.len() as u16 + 2).min(area.height);
-    let x = menu.anchor.0.min(area.right().saturating_sub(width));
-    let y = menu.anchor.1.min(area.bottom().saturating_sub(height));
+    let main = menu.kind == MenuKind::Main;
+    let (x, y) = if main {
+        (area.x + (area.width.saturating_sub(width)) / 2, area.y + (area.height.saturating_sub(height)) / 2)
+    } else {
+        (menu.anchor.0.min(area.right().saturating_sub(width)), menu.anchor.1.min(area.bottom().saturating_sub(height)))
+    };
     let popup = Rect::new(x, y, width, height);
     // The menu is the focused layer, so it wears the focused-pane frame.
-    let block = theme::pane_block(true);
+    let mut block = theme::pane_block(true);
+    if main {
+        block = block.title(Span::styled(" Menu ", Style::new().fg(amber()).bold()));
+    }
     let inner = block.inner(popup);
     f.render_widget(Clear, popup);
     f.render_widget(block, popup);

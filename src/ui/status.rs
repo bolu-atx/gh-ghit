@@ -66,17 +66,17 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let mut repo_segment = None;
     if let Some(repo) = app.repo_key().filter(|s| !s.is_empty()) {
         repo_segment = Some(segments.len());
-        segments.push((format!("\u{f1d3} {repo}"), false));
+        segments.push((format!("{}{repo}", crate::theme::nf("\u{f1d3} ", "")), false));
     }
     let mut source_segment = None;
     if !app.sidebar.query_active.trim().is_empty() {
         source_segment = Some(segments.len());
-        segments.push((format!("\u{f002} {}", app.query_source()), false));
+        segments.push((format!("{}{}", crate::theme::nf("\u{f002} ", ""), app.query_source()), false));
     }
     if let Some(statuses) = app.nav.current.and_then(|n| app.issues.statuses.get(&n)) {
         for (title, status) in statuses.iter().filter(|(title, _)| !title.is_empty()) {
             let suffix = status.as_ref().filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default();
-            segments.push((format!("\u{f0db} {title}{suffix}"), false));
+            segments.push((format!("{}{title}{suffix}", crate::theme::nf("\u{f0db} ", "")), false));
         }
     }
     // Loading spinner between project and message: muted, with
@@ -99,7 +99,7 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         segments.push((format!("{prefix}…"), true));
     }
     if app.message_visible() && !app.message.is_empty() {
-        segments.push((format!("\u{f071} {}", app.message), true));
+        segments.push((format!("{}{}", crate::theme::nf("\u{f071} ", ""), app.message), true));
     }
     let segment_rect = |at: usize| {
         let before: usize = segments[..at].iter().map(|(s, _)| s.chars().count() + 3).sum();

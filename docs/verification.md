@@ -11,7 +11,7 @@ Coordinator only, on layout, theme, or new modal changes.
 2. Launch the live-drive session from routers.md (200x50).
 3. Loaded issue: wait for fetch, take PNG #1.
 4. Board modal: press `b`, take PNG #2.
-5. Press `t` (toggle palette), repeat 3–4. Both palettes must pass.
+5. Open Settings (Esc, then `s`) and pick another theme, repeat 3–4. Every palette must pass. Set icons to plain and check no tofu or stray spaces.
 6. Small screen: relaunch at 120x40, check truncation with
    `capture-pane -p`. Text suffices here; no PNG needed.
 

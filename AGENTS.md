@@ -46,7 +46,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | ---- | ---- |
 | `src/main.rs` | Thin entry: parse `cli`, run `app` |
 | `src/cli.rs` | Clap `Args` + numeric startup parsing |
-| `src/app.rs` + `src/app/{nav,sidebar,finder,format,issue,diff,map,board,compose,confirm,poll,menu,dialogs}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `finder` the Ctrl+P finder state and ranked results, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/review threads, `map` the dependency map (data, layout, camera, drag, cards), `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu state (entries from the keymap), `dialogs` the one stored dialog stack (which dialogs and text rows are open, in order) plus the `layer_stack` derivation, `poll` per-frame landing. Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
+| `src/app.rs` + `src/app/{nav,sidebar,finder,format,issue,diff,map,board,compose,confirm,poll,menu,dialogs}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `finder` the Ctrl+P finder state and ranked results, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/review threads, `map` the dependency map (data, layout, camera, drag, cards), `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu and main-menu state (entries from the keymap), `settings` the Settings dialog (theme, icons, backfill limit), `dialogs` the one stored dialog stack (which dialogs and text rows are open, in order) plus the `layer_stack` derivation, `poll` per-frame landing. Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
 | `src/app/fetch_queue.rs` | Fetch scheduler: priority queue; current-issue fetches start at once, the rest at most 4 in flight; tier picked at start time; only tier 1 while rate limited |
 | `src/core.rs` | Pure business rules (`parse_bar`, selection, board cursor, pins, window) |
 | `src/core/fuzzy.rs` | Fuzzy scorer for the Ctrl+P finder: subsequence match, score and matched char indices |
@@ -63,7 +63,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `src/keymap.rs` + `src/keymap/` | The key table: one binding list per focus context. Input, `?` help and hints read it. Change a key here, not in `input` |
 | `src/input.rs` + `src/input/` | Looks keys up in `keymap`, runs actions (`input/actions.rs`), maps mouse into `App` calls (`input/mouse.rs` wheel and entry, `input/click.rs` left-click routing); reads `ui` hit areas, never draws |
 | `src/ui.rs` | All rendering + frame tests; reads `App`, never fetches |
-| `src/theme.rs` | Palettes (ayu mirage, ayu dark), `GhitSheet` markdown stylesheet, `cycle()` |
+| `src/theme.rs` | Palettes (ayu mirage, ayu dark), `GhitSheet` markdown stylesheet, `set()` |
 
 Key patterns:
 
@@ -74,7 +74,9 @@ Key patterns:
   after `draw` is the post-swap blank buffer. `click-to-open` refs depend on
   `body_rows` captured from the frame being drawn.
 - **Theme through functions.** Never hardcode colors in render code; use
-  `theme::ink()` etc. so `t` (toggle) repaints everything.
+  `theme::ink()` etc. so the Settings dialog (Esc at the base, then `s`) repaints everything. It also
+  switches Nerd Font icons;
+  route glyphs through `theme::nf(nerd, plain)`.
 - **Stateful lists scroll themselves.** Board columns render statefully so the
   selected card stays visible; record click areas from `ListState::offset()`.
 

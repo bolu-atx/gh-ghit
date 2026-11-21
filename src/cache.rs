@@ -141,6 +141,23 @@ pub fn save_theme(name: &str) {
     let _ = std::fs::write(theme_path(), format!("{name}\n"));
 }
 
+fn nerd_font_path() -> PathBuf {
+    base_dir().join("nerd-font")
+}
+
+/// Nerd Font icon mode. A missing or garbled file means on.
+pub fn load_nerd_font() -> bool {
+    std::fs::read_to_string(nerd_font_path()).map_or(true, |raw| raw.trim() != "off")
+}
+
+pub fn save_nerd_font(on: bool) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let _ = std::fs::write(nerd_font_path(), if on { "on\n" } else { "off\n" });
+}
+
 fn physics_path() -> PathBuf {
     base_dir().join("map-physics.json")
 }

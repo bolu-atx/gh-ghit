@@ -262,6 +262,7 @@ impl App {
         prefs.sub_issue_tree = self.sidebar.sub_issue_tree;
         prefs.sort = self.sidebar.sort;
         prefs.sort_desc = self.sidebar.sort_desc;
+        prefs.backfill_months = self.sections.backfill.months;
         if let Some(repo) = self.repo_key() {
             let key = github::prefs_repo_key(&repo);
             prefs.queries.insert(key.clone(), self.sidebar.query_active.clone());

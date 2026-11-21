@@ -12,7 +12,7 @@ e2e_wait "/pull/24" 20 || fail "show #24"
 e2e_key C-o
 e2e_wait "/issues/9" 20 || fail "ctrl-o never returned to #9"
 e2e_shot history-back
-e2e_key Escape '[105;5u'
+e2e_key '[105;5u'
 e2e_wait "/pull/24" 20 || fail "ctrl-i never redid #24"
 e2e_shot history-forward
 # A history click skips back to 9; Ctrl+I replays the skipped issue.
@@ -33,9 +33,9 @@ e2e_key C-o
 e2e_wait "/pull/24" 20 || fail "ctrl-o never returned to #24"
 e2e_key C-o
 e2e_wait "/issues/9" 20 || fail "ctrl-o never returned to #9"
-e2e_key Escape '[105;5u'
+e2e_key '[105;5u'
 e2e_wait "/pull/24" 20 || fail "ctrl-i never redid #24"
-e2e_key Escape '[105;5u'
+e2e_key '[105;5u'
 e2e_wait "/pull/19" 20 || fail "ctrl-i never redid #19"
 e2e_shot history-redo
 echo "PASS issue history"

@@ -62,7 +62,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
             focus_line = lines.len();
         }
         let on = app.board.milestone_draft.contains(pill);
-        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+        let box_glyph = if on { crate::theme::nf("\u{f14a}", "■") } else { crate::theme::nf("\u{f096}", "□") };
         let name = pill.clone().unwrap_or_else(|| "(no milestone)".to_string());
         lines.push(Line::from(vec![
             marker(app.board.filter_focus == i + 1),
@@ -79,7 +79,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
             focus_line = lines.len();
         }
         let on = app.board.fields.shown(i).unwrap_or(false);
-        let box_glyph = if on { "\u{f14a}" } else { "\u{f096}" };
+        let box_glyph = if on { crate::theme::nf("\u{f14a}", "■") } else { crate::theme::nf("\u{f096}", "□") };
         lines.push(Line::from(vec![
             marker(app.board.filter_focus == pills.len() + 1 + i),
             Span::styled(
@@ -100,7 +100,7 @@ pub(super) fn render_board_filter(f: &mut ratatui::Frame, area: Rect, app: &mut 
         .border_style(Style::new().bg(ink()).fg(muted()))
         .style(base())
         .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Format ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled(format!(" {}Format ", crate::theme::nf("\u{f0b0} ", "")), Style::new().bg(ink()).fg(amber()).bold()),
             Span::styled("· board cards ", Style::new().bg(ink()).fg(muted())),
         ]));
     let inner = block.inner(popup);
@@ -189,7 +189,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // and already color-coded, so glyphs would add noise, not signal.
     let title = match &app.board.data {
         Some(b) => Line::from(vec![
-            Span::styled(" \u{f0db} ", Style::new().bg(ink()).fg(muted())),
+            Span::styled(format!(" {}", crate::theme::nf("\u{f0db} ", "")), Style::new().bg(ink()).fg(muted())),
             Span::styled(format!("{} ", b.title), Style::new().bg(ink()).fg(amber()).bold()),
             Span::styled(
                 format!("{} cards", b.items.len()),
@@ -197,7 +197,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             ),
         ]),
         None => Line::from(vec![
-            Span::styled(" \u{f0db} Fetching board … ", Style::new().bg(ink()).fg(amber()).bold()),
+            Span::styled(format!(" {}Fetching board … ", crate::theme::nf("\u{f0db} ", "")), Style::new().bg(ink()).fg(amber()).bold()),
         ]),
     };
     let block = Block::default()
@@ -351,7 +351,7 @@ fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-flag: the repo milestones page.
     if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
         links.push((
-            "\u{f024}".to_string(),
+            crate::theme::nf("\u{f024}", "⚑").to_string(),
             format!("https://github.com/{repo}/milestones"),
         ));
     }
@@ -360,7 +360,7 @@ fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
     // until the board refetches).
     if let Some(url) = app.board.data.as_ref().map(|b| b.url.clone()) {
         if !url.is_empty() {
-            links.push(("\u{f08e}".to_string(), url));
+            links.push((crate::theme::nf("\u{f08e}", "↗").to_string(), url));
         }
     }
     if links.is_empty() || popup.width < 12 {

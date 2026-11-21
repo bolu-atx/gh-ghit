@@ -17,9 +17,8 @@ use crate::model::{
 const GOLDEN: &str = include_str!("key_parity.golden");
 
 /// Keys that touch the network, the clipboard or disk. The keymap
-/// tests check their routing instead. `t` cycles the process-wide
-/// theme, which would race the frame tests.
-const SKIP: [char; 5] = ['y', 'p', 'r', 'w', 't'];
+/// tests check their routing instead.
+const SKIP: [char; 4] = ['y', 'p', 'r', 'w'];
 
 fn issue(number: u64, is_pr: bool) -> IssueData {
     IssueData {

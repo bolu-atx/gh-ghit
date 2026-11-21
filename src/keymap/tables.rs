@@ -4,7 +4,7 @@
 use crossterm::event::KeyCode;
 
 use super::{
-    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, can_go_back, help_typing, content_search_live, main_pane, query_live, side_pane,
+    Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, esc_has_target, main_menu, help_typing, content_search_live, main_pane, query_live, side_pane,
     sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
 };
 use crate::core::{Dialog, Pane, TextInput};
@@ -53,7 +53,7 @@ const GLOBAL: &[Binding] = &[
     key(ch('1'), Action::TabDetails, "Details tab", "View", Gesture::Click).hint_if(7, main_pane),
     key(ch('2'), Action::TabVisual, "Diff tab", "View", Gesture::Click).hint_if(8, main_pane),
     key(ch('3'), Action::TabMap, "Map tab", "View", Gesture::Click).hint(8),
-    key(ch('t'), Action::CycleTheme, "Cycle theme", "View", MENU),
+    key(ch(';'), Action::OpenSettings, "Settings", "Session", MENU),
     key(ch('b'), Action::OpenBoard, "Open board", "Open", HINT).hint(10),
     key(ch('p'), Action::OpenFinder, "Go to issue or PR", "Open", MENU).ctrl(),
     key(ch('c'), Action::Comment, "Comment", "Open", HINT).hint(6),
@@ -91,8 +91,8 @@ const GLOBAL: &[Binding] = &[
     key(ch(' '), Action::ToggleRow, "Expand row", "View", MENU),
     key(ch('w'), Action::MergedWindow, "Cycle merged window", "View", MENU),
     // Esc pops one layer wherever nothing nearer claims it; at the base
-    // it returns where Enter left (`App::pop_back`).
-    key(KeyCode::Esc, Action::Back, "Back", "Session", DISMISS).hint_if(1, can_go_back),
+    // it returns where Enter left (`App::pop_back`), else opens the menu.
+    key(KeyCode::Esc, Action::Back, "Back or menu", "Session", DISMISS).hint_if(1, esc_has_target),
 ];
 
 /// With the Main pane focused, search keys act on its content. The
@@ -184,6 +184,23 @@ const GRAPH: &[Binding] = &[
         .when(map_strip_open),
 ];
 
+const SETTINGS: &[Binding] = &[
+    key(KeyCode::Esc, Action::Back, "Close", "Dialog", OUTSIDE).hint(1),
+    key(ch('?'), Action::ShowHelp, "Show shortcuts", "Dialog", ALIAS),
+    key(ch(';'), Action::CloseSettings, "Close", "Dialog", ALIAS),
+    key(ch('q'), Action::CloseSettings, "Close", "Dialog", ALIAS),
+    key(ch('j'), Action::SettingsDown, "Next row", "Move", Gesture::Click).hint(2),
+    key(ch('k'), Action::SettingsUp, "Previous row", "Move", Gesture::Click).hint(3),
+    key(KeyCode::Down, Action::SettingsDown, "Next row", "Move", ALIAS),
+    key(KeyCode::Up, Action::SettingsUp, "Previous row", "Move", ALIAS),
+    key(ch('h'), Action::SettingsPrev, "Previous value", "Value", Gesture::Click).hint(4),
+    key(ch('l'), Action::SettingsNext, "Next value", "Value", Gesture::Click).hint(5),
+    key(KeyCode::Left, Action::SettingsPrev, "Previous value", "Value", Gesture::Wheel),
+    key(KeyCode::Right, Action::SettingsNext, "Next value", "Value", Gesture::Wheel),
+    key(KeyCode::Enter, Action::SettingsNext, "Next value", "Value", ALIAS),
+    key(ch(' '), Action::SettingsNext, "Next value", "Value", ALIAS),
+];
+
 const PHYSICS: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Close", "Dialog", OUTSIDE).hint(1),
     key(ch('?'), Action::ShowHelp, "Show shortcuts", "Dialog", ALIAS),
@@ -221,6 +238,9 @@ const MAP_FILTER: &[Binding] = &[
 
 const MENU_KEYS: &[Binding] = &[
     key(KeyCode::Esc, Action::Back, "Close", "Menu", OUTSIDE).hint(1),
+    key(ch('s'), Action::OpenSettings, "Settings", "Menu", ALIAS).when(main_menu),
+    key(ch('?'), Action::ShowHelp, "Shortcuts", "Menu", ALIAS).when(main_menu),
+    // In the main menu `q` quits, as it names the Quit entry.
     key(ch('q'), Action::CloseMenu, "Close", "Menu", ALIAS),
     key(ch('j'), Action::MenuDown, "Next action", "Menu", Gesture::Wheel).hint(2),
     key(KeyCode::Down, Action::MenuDown, "Next action", "Menu", ALIAS),
@@ -357,7 +377,6 @@ const BOARD: &[Binding] = &[
     key(KeyCode::Left, Action::BoardLeft, "Previous column", "Move", ALIAS),
     key(ch('l'), Action::BoardRight, "Next column", "Move", Gesture::Click).hint(2),
     key(KeyCode::Right, Action::BoardRight, "Next column", "Move", ALIAS),
-    key(ch('t'), Action::CycleTheme, "Cycle theme", "Board", ALIAS),
     key(ch(' '), Action::BoardExpand, "Expand card", "Board", HINT).hint(3),
     key(KeyCode::Enter, Action::BoardOpen, "Open card", "Board", Gesture::SecondClick).hint(4),
     key(ch('o'), Action::OpenBrowser, "Open card in browser", "Board", MENU),
@@ -426,6 +445,7 @@ pub(super) fn tables(context: Context) -> &'static [&'static [Binding]] {
         Context::Dialog(Dialog::Menu) => &[MENU_KEYS],
         Context::Dialog(Dialog::Finder) => &[FINDER],
         Context::Dialog(Dialog::Format) => &[FORMAT],
+        Context::Dialog(Dialog::Settings) => &[SETTINGS],
         Context::Dialog(Dialog::Physics) => &[PHYSICS],
         Context::Dialog(Dialog::MapFilter) => &[MAP_FILTER],
         Context::Dialog(Dialog::Board) => &[BOARD],

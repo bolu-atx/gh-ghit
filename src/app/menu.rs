@@ -17,6 +17,8 @@ pub(crate) enum MenuKind {
     Map,
     Board,
     Global,
+    /// Esc at the base: Settings, Shortcuts, Quit. Drawn centered.
+    Main,
 }
 
 pub(crate) struct MenuEntry {
@@ -26,6 +28,7 @@ pub(crate) struct MenuEntry {
 }
 
 pub(crate) struct MenuState {
+    pub(crate) kind: MenuKind,
     pub(crate) entries: Vec<MenuEntry>,
     pub(crate) cursor: usize,
     /// Top-left cell the popup wants; render clamps it into the frame.
@@ -55,9 +58,10 @@ fn kind_actions(kind: MenuKind, app: &App) -> Vec<Action> {
         ],
         MenuKind::Board => vec![BoardOpen, BoardExpand, BoardFilter, BoardClearFilter, CloseBoard],
         MenuKind::Global => vec![
-            Refresh, CycleTheme, OpenBoard, OpenFinder, OpenFormat, QuerySearch, FindBar, ToggleSidebar, ToggleRefs,
+            Refresh, OpenSettings, OpenBoard, OpenFinder, OpenFormat, QuerySearch, FindBar, ToggleSidebar, ToggleRefs,
             MergedWindow, HistoryBack, HistoryForward, ShowHelp, Reauth, Quit,
         ],
+        MenuKind::Main => vec![OpenSettings, ShowHelp, Quit],
     }
 }
 
@@ -71,11 +75,30 @@ impl MenuState {
                 binding.when.is_none_or(|test| test(app)).then(|| MenuEntry {
                     action,
                     label: binding.label,
-                    key: binding.key_name(),
+                    key: if kind == MenuKind::Main { keymap::main_menu_key(action) } else { binding.key_name() },
                 })
             })
             .collect();
-        Self { entries, cursor: 0, anchor }
+        Self { kind, entries, cursor: 0, anchor }
+    }
+}
+
+impl App {
+    pub(crate) fn open_main_menu(&mut self) {
+        let menu = MenuState::new(MenuKind::Main, self, (0, 0));
+        self.open(crate::app::Entry::Menu(menu));
+    }
+
+    pub(crate) fn main_menu_open(&self) -> bool {
+        self.menu().is_some_and(|menu| menu.kind == MenuKind::Main)
+    }
+
+    /// Close the menu when it is the main menu. Its hotkeys call this so
+    /// the menu never stays under the dialog they open.
+    pub(crate) fn close_main_menu(&mut self) {
+        if self.main_menu_open() {
+            self.close(crate::app::Slot::Menu);
+        }
     }
 }
 
@@ -88,7 +111,7 @@ mod tests {
         let app = App::new(Some("o/r".to_string()));
         for kind in [
             MenuKind::Issue, MenuKind::Ref, MenuKind::History, MenuKind::Labels,
-            MenuKind::Body, MenuKind::Map, MenuKind::Board, MenuKind::Global,
+            MenuKind::Body, MenuKind::Map, MenuKind::Board, MenuKind::Global, MenuKind::Main,
         ] {
             for action in kind_actions(kind, &app) {
                 assert!(keymap::describe(action).is_some(), "{kind:?} lists {action:?} with no key");

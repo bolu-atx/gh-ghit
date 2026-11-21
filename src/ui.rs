@@ -1,6 +1,6 @@
 //! Look-and-feel: all rendering. Reads `App`, never fetches.
 //!
-//! Colors come only from `theme::` functions so `t` repaints everything.
+//! Colors come only from `theme::` functions so a theme switch repaints everything.
 //! Hit areas (`body_rows`, sidebar rects, board cells) are recorded here
 //! during `render`; `input` consumes them on the next event.
 
@@ -239,6 +239,10 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
         dim_background(f, 0.35);
         render_filter(f, f.area(), app);
     }
+    if app.settings_focus().is_some() {
+        dim_background(f, 0.35);
+        dialogs::render_settings(f, f.area(), app);
+    }
     if app.physics_focus().is_some() {
         dim_background(f, 0.35);
         dialogs::render_physics(f, f.area(), app);
@@ -322,7 +326,9 @@ fn section_title<'a>(name: &str, detail: &str, icon: &str, active: bool) -> Line
     } else {
         (muted(), Style::new().fg(muted()))
     };
-    let icon_span = Span::styled(format!(" {icon} "), Style::new().fg(icon_fg));
+    // An empty icon (plain mode) leaves one leading space, not two.
+    let icon_text = if icon.is_empty() { " ".to_string() } else { format!(" {icon} ") };
+    let icon_span = Span::styled(icon_text, Style::new().fg(icon_fg));
     let name_span = Span::styled(format!("{name} "), name_style);
     let detail_span = Span::styled(detail.to_string(), Style::new().fg(muted()));
     Line::from(vec![icon_span, name_span, detail_span])

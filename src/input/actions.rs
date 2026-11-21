@@ -17,22 +17,35 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::HistoryBack => app.go_back(),
         Action::HistoryForward => app.go_forward(),
         Action::OpenMenu => menu::open_for_focus(app),
+        Action::CloseMenu if app.main_menu_open() => perform(app, Action::Quit),
         Action::CloseMenu => { app.close(Slot::Menu); }
         Action::MenuDown => menu::step(app, 1),
         Action::MenuUp => menu::step(app, -1),
         Action::MenuRun => menu::run(app),
+        Action::OpenSettings => {
+            app.close_main_menu();
+            app.open_settings();
+        }
+        Action::CloseSettings => { app.close(Slot::Settings); }
+        Action::SettingsDown => app.settings_step(1),
+        Action::SettingsUp => app.settings_step(-1),
+        Action::SettingsPrev => app.settings_nudge(-1),
+        Action::SettingsNext => app.settings_nudge(1),
         Action::ShowHelp => {
+            app.close_main_menu();
             app.open(crate::app::Entry::Shortcuts);
             app.help_scroll = 0;
             app.help_filter.clear();
             app.help_typing = false;
         }
-        Action::Quit => app.request_quit(),
+        Action::Quit => {
+            app.close_main_menu();
+            app.request_quit();
+        }
         Action::Undo => app.undo_last(),
         Action::TabDetails => app.set_tab(Tab::Details),
         Action::TabVisual => app.set_tab(Tab::Visual),
         Action::TabMap => app.set_tab(Tab::Map),
-        Action::CycleTheme => app.notify(format!("theme: {}", crate::theme::cycle())),
         Action::OpenBoard => app.open_board(),
         Action::OpenFinder => app.open_finder(),
         Action::FinderDown => app.finder_step(1),

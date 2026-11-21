@@ -427,6 +427,7 @@ compose | 'n' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello 
 compose | 'o' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlod\nx", 11, ""))/false
 compose | 'q' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlqd\nx", 11, ""))/false
 compose | 's' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlsd\nx", 11, ""))/false
+compose | 't' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worltd\nx", 11, ""))/false
 compose | 'u' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlud\nx", 11, ""))/false
 compose | 'v' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlvd\nx", 11, ""))/false
 compose | 'x' | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello worlxd\nx", 11, ""))/false
@@ -451,6 +452,7 @@ compose | ctrl-m | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hel
 compose | ctrl-n | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 13, ""))/false
 compose | ctrl-o | message:  -> no $EDITOR set: export EDITOR to edit comments outside ghit
 compose | ctrl-s | message:  -> sending comment…
+compose | ctrl-t | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello wordl\nx", 11, ""))/false
 compose | ctrl-u | compose: Some(("hello world\nx", 10, ""))/false -> Some(("d\nx", 0, "hello worl"))/false
 compose | ctrl-S | message:  -> sending comment…
 compose | alt-F | compose: Some(("hello world\nx", 10, ""))/false -> Some(("hello world\nx", 11, ""))/false
@@ -563,6 +565,7 @@ finder | 'n' | finder: Some(("", 0)) -> Some(("n", 0))
 finder | 'o' | finder: Some(("", 0)) -> Some(("o", 0))
 finder | 'q' | finder: Some(("", 0)) -> Some(("q", 0))
 finder | 's' | finder: Some(("", 0)) -> Some(("s", 0))
+finder | 't' | finder: Some(("", 0)) -> Some(("t", 0))
 finder | 'u' | finder: Some(("", 0)) -> Some(("u", 0))
 finder | 'v' | finder: Some(("", 0)) -> Some(("v", 0))
 finder | 'x' | finder: Some(("", 0)) -> Some(("x", 0))
@@ -682,6 +685,7 @@ format-query | 'n' | drafts: ""/"" -> "n"/""
 format-query | 'o' | drafts: ""/"" -> "o"/""
 format-query | 'q' | drafts: ""/"" -> "q"/""
 format-query | 's' | drafts: ""/"" -> "s"/""
+format-query | 't' | drafts: ""/"" -> "t"/""
 format-query | 'u' | drafts: ""/"" -> "u"/""
 format-query | 'v' | drafts: ""/"" -> "v"/""
 format-query | 'x' | drafts: ""/"" -> "x"/""
@@ -726,6 +730,8 @@ format-query | ctrl-q | drafts: ""/"" -> "q"/""
 format-query | alt-q | drafts: ""/"" -> "q"/""
 format-query | ctrl-s | drafts: ""/"" -> "s"/""
 format-query | alt-s | drafts: ""/"" -> "s"/""
+format-query | ctrl-t | drafts: ""/"" -> "t"/""
+format-query | alt-t | drafts: ""/"" -> "t"/""
 format-query | ctrl-u | drafts: ""/"" -> "u"/""
 format-query | alt-u | drafts: ""/"" -> "u"/""
 format-query | ctrl-v | drafts: ""/"" -> "v"/""
@@ -826,6 +832,7 @@ format-name | 'n' | drafts: ""/"" -> ""/"n"
 format-name | 'o' | drafts: ""/"" -> ""/"o"
 format-name | 'q' | drafts: ""/"" -> ""/"q"
 format-name | 's' | drafts: ""/"" -> ""/"s"
+format-name | 't' | drafts: ""/"" -> ""/"t"
 format-name | 'u' | drafts: ""/"" -> ""/"u"
 format-name | 'v' | drafts: ""/"" -> ""/"v"
 format-name | 'x' | drafts: ""/"" -> ""/"x"
@@ -870,6 +877,8 @@ format-name | ctrl-q | drafts: ""/"" -> ""/"q"
 format-name | alt-q | drafts: ""/"" -> ""/"q"
 format-name | ctrl-s | drafts: ""/"" -> ""/"s"
 format-name | alt-s | drafts: ""/"" -> ""/"s"
+format-name | ctrl-t | drafts: ""/"" -> ""/"t"
+format-name | alt-t | drafts: ""/"" -> ""/"t"
 format-name | ctrl-u | drafts: ""/"" -> ""/"u"
 format-name | alt-u | drafts: ""/"" -> ""/"u"
 format-name | ctrl-v | drafts: ""/"" -> ""/"v"
@@ -986,6 +995,7 @@ board-filter | 'n' | format: true/false/false -> true/true/false ; drafts: ""/""
 board-filter | 'o' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "o"/""
 board-filter | 'q' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "q"/""
 board-filter | 's' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "s"/""
+board-filter | 't' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "t"/""
 board-filter | 'u' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "u"/""
 board-filter | 'v' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "v"/""
 board-filter | 'x' | format: true/false/false -> true/true/false ; drafts: ""/"" -> "x"/""
@@ -1098,6 +1108,7 @@ board-query | 'n' | drafts: ""/"" -> "n"/""
 board-query | 'o' | drafts: ""/"" -> "o"/""
 board-query | 'q' | drafts: ""/"" -> "q"/""
 board-query | 's' | drafts: ""/"" -> "s"/""
+board-query | 't' | drafts: ""/"" -> "t"/""
 board-query | 'u' | drafts: ""/"" -> "u"/""
 board-query | 'v' | drafts: ""/"" -> "v"/""
 board-query | 'x' | drafts: ""/"" -> "x"/""
@@ -1142,6 +1153,8 @@ board-query | ctrl-q | drafts: ""/"" -> "q"/""
 board-query | alt-q | drafts: ""/"" -> "q"/""
 board-query | ctrl-s | drafts: ""/"" -> "s"/""
 board-query | alt-s | drafts: ""/"" -> "s"/""
+board-query | ctrl-t | drafts: ""/"" -> "t"/""
+board-query | alt-t | drafts: ""/"" -> "t"/""
 board-query | ctrl-u | drafts: ""/"" -> "u"/""
 board-query | alt-u | drafts: ""/"" -> "u"/""
 board-query | ctrl-v | drafts: ""/"" -> "v"/""
@@ -1244,6 +1257,7 @@ bar | 'n' | bar: "ab" -> "abn"
 bar | 'o' | bar: "ab" -> "abo"
 bar | 'q' | bar: "ab" -> "abq"
 bar | 's' | bar: "ab" -> "abs"
+bar | 't' | bar: "ab" -> "abt"
 bar | 'u' | bar: "ab" -> "abu"
 bar | 'v' | bar: "ab" -> "abv"
 bar | 'x' | bar: "ab" -> "abx"
@@ -1288,6 +1302,8 @@ bar | ctrl-q | bar: "ab" -> "abq"
 bar | alt-q | bar: "ab" -> "abq"
 bar | ctrl-s | bar: "ab" -> "abs"
 bar | alt-s | bar: "ab" -> "abs"
+bar | ctrl-t | bar: "ab" -> "abt"
+bar | alt-t | bar: "ab" -> "abt"
 bar | ctrl-u | bar: "ab" -> "abu"
 bar | alt-u | bar: "ab" -> "abu"
 bar | ctrl-v | bar: "ab" -> "abv"
@@ -1391,6 +1407,7 @@ search-bar | 'n' | search: "ab"/true -> "abn"/true
 search-bar | 'o' | search: "ab"/true -> "abo"/true
 search-bar | 'q' | search: "ab"/true -> "abq"/true
 search-bar | 's' | search: "ab"/true -> "abs"/true
+search-bar | 't' | search: "ab"/true -> "abt"/true
 search-bar | 'u' | search: "ab"/true -> "abu"/true
 search-bar | 'v' | search: "ab"/true -> "abv"/true
 search-bar | 'x' | search: "ab"/true -> "abx"/true
@@ -1435,6 +1452,8 @@ search-bar | ctrl-q | search: "ab"/true -> "abq"/true
 search-bar | alt-q | search: "ab"/true -> "abq"/true
 search-bar | ctrl-s | search: "ab"/true -> "abs"/true
 search-bar | alt-s | search: "ab"/true -> "abs"/true
+search-bar | ctrl-t | search: "ab"/true -> "abt"/true
+search-bar | alt-t | search: "ab"/true -> "abt"/true
 search-bar | ctrl-u | search: "ab"/true -> "abu"/true
 search-bar | alt-u | search: "ab"/true -> "abu"/true
 search-bar | ctrl-v | search: "ab"/true -> "abv"/true

@@ -704,11 +704,15 @@ fn esc_walks_the_back_stack_one_frame_at_a_time() {
     // Esc restores #8 and its Refs, the cursor on the opened reference.
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!((app.nav.pane, app.nav.current), (Pane::Refs, Some(8)));
+    assert!(app.menu().is_none(), "a back-stack entry beats the main menu");
     assert_eq!(app.refs.highlight, Some(7), "the Refs cursor stays on #7");
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Issues, "the next Esc reaches the list");
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Issues, "an empty stack stays put");
+    assert!(app.menu().is_some(), "an empty stack opens the main menu");
+    handle_key(&mut app, plain_key(KeyCode::Esc));
+    assert!(app.menu().is_none());
     // Entering the same pane twice keeps one frame for it.
     handle_key(&mut app, plain_key(KeyCode::Enter));
     app.nav.pane = Pane::Issues;
@@ -733,6 +737,7 @@ fn esc_keeps_the_item_once_you_move_on() {
     assert!(app.back_target().is_none(), "hidden Refs is skipped");
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!((app.nav.pane, app.nav.current), (Pane::Main, Some(8)));
+    handle_key(&mut app, plain_key(KeyCode::Esc));
     // Coming back to #7 does not revive the restore.
     press(&mut app, '[');
     assert_eq!(app.nav.current, Some(7));

@@ -519,6 +519,7 @@ impl App {
             Layer::Dialog(Dialog::Format) => { self.close(Slot::Format); }
             Layer::Dialog(Dialog::Physics) => { self.close(Slot::Physics); }
             Layer::Dialog(Dialog::MapFilter) => { self.close(Slot::MapFilter); }
+            Layer::Dialog(Dialog::Settings) => { self.close(Slot::Settings); }
             Layer::Dialog(Dialog::BoardFilter) => {
                 self.close(crate::app::Slot::Format);
                 self.board.filter_focus = 0;
@@ -543,6 +544,7 @@ impl App {
             // Esc after Enter goes back where Enter left, unless a search
             // is live: that clears first.
             Layer::Base if self.pop_back() => {}
+            Layer::Base if self.esc_opens_menu() => self.open_main_menu(),
             Layer::Base => {
                 self.bar.clear();
                 self.sidebar.searching = false;
@@ -551,6 +553,17 @@ impl App {
                 self.refs.highlight = None;
             }
         }
+    }
+
+    /// Esc at the base has nothing to pop, clear or go back to: it opens
+    /// the main menu.
+    pub(crate) fn esc_opens_menu(&self) -> bool {
+        self.back_target().is_none()
+            && self.bar.is_empty()
+            && !self.sidebar.searching
+            && self.sidebar.search.is_empty()
+            && !self.search.active()
+            && self.refs.highlight.is_none()
     }
 
     pub(crate) fn visual_diff(&self) -> bool {

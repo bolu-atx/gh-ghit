@@ -29,6 +29,8 @@ pub(crate) use map_filter::FilterRow;
 #[cfg(test)]
 pub(crate) use map::CardDetail;
 mod menu;
+mod settings;
+pub(crate) use settings::{months_label, BACKFILL_ROW, ICONS_ROW, THEME_ROW};
 pub(crate) use menu::{MenuKind, MenuState};
 pub(crate) use finder::FinderRow;
 mod nav;
@@ -133,17 +135,20 @@ pub(crate) enum Tab {
 }
 
 /// Content tabs in order, each with its title and `1`/`2`/`3` shortcut.
-pub(crate) const TABS: [(Tab, &str); 3] = [
-    (Tab::Details, "\u{f15c}  1 Details"),
-    (Tab::Visual, "\u{f121}  2 Diff"),
-    (Tab::Map, "\u{f279}  3 Map"),
-];
+pub(crate) fn tabs() -> [(Tab, &'static str); 3] {
+    use crate::theme::nf;
+    [
+        (Tab::Details, nf("\u{f15c}  1 Details", "1 Details")),
+        (Tab::Visual, nf("\u{f121}  2 Diff", "2 Diff")),
+        (Tab::Map, nf("\u{f279}  3 Map", "3 Map")),
+    ]
+}
 
 /// The tab a click `rel` columns into the tab line selects: each title
 /// owns its cells plus the divider after it; the last takes the rest.
 pub(crate) fn tab_at(rel: u16) -> Tab {
     let mut end = 0;
-    for (tab, title) in TABS {
+    for (tab, title) in tabs() {
         end += title.chars().count() as u16 + 1;
         if rel < end {
             return tab;
