@@ -358,6 +358,18 @@ fn content_tabs_show_nerd_icons() {
 }
 
 #[test]
+fn plain_mode_frame_has_no_nerd_glyphs() {
+    crate::theme::set_nerd(false);
+    let mut app = loaded_app();
+    let text = frame_text(&mut app);
+    let pua = text.chars().find(|c| ('\u{e000}'..='\u{f8ff}').contains(c));
+    assert_eq!(pua, None, "{text}");
+    assert!(text.contains("1 Details") && text.contains("3 Map"), "{text}");
+    assert!(text.contains("Issues"), "{text}");
+    assert!(!text.contains("  Issues"), "no stray double space: {text}");
+}
+
+#[test]
 fn content_tabs_show_shortcut_numbers() {
     // The titles stay the same for issues, PRs and no open item.
     let mut app = loaded_app();

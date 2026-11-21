@@ -3,10 +3,12 @@
 //! One accent color per theme. Selection is a marker
 //! plus bold type plus a subtle background shade, and only on the
 //! focused pane; blurred panes go fully quiet. The active palette is
-//! global so every widget and the markdown stylesheet stay in sync; `t`
-//! cycles it at runtime. The choice persists in the data dir so restarts
-//! keep the last theme.
-use std::sync::atomic::{AtomicUsize, Ordering};
+//! global so every widget and the markdown stylesheet stay in sync; the
+//! Settings dialog switches it and the Nerd Font icon mode at runtime. The
+//! choices persist in the data dir so restarts keep the last theme and
+//! icon mode.
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
@@ -91,37 +93,84 @@ pub const SYSTEM: Palette = Palette {
 pub const THEMES: &[(&str, Palette)] =
     &[("system", SYSTEM), ("mirage", MIRAGE), ("ayu dark", DARK), ("github light", LIGHT)];
 
+// Global in the app; per thread in tests so a test that switches the
+// theme never races color assertions in parallel tests.
+#[cfg(not(test))]
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+thread_local!(static ACTIVE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) });
+
+fn store_active(idx: usize) {
+    #[cfg(not(test))]
+    ACTIVE.store(idx, Ordering::Relaxed);
+    #[cfg(test)]
+    ACTIVE.with(|a| a.set(idx));
+}
+
+fn load_active() -> usize {
+    #[cfg(not(test))]
+    return ACTIVE.load(Ordering::Relaxed);
+    #[cfg(test)]
+    return ACTIVE.with(|a| a.get());
+}
 
 fn active_idx() -> usize {
-    ACTIVE.load(Ordering::Relaxed) % THEMES.len()
+    load_active() % THEMES.len()
 }
 
 /// Select a theme by name, persisting it. False when the name is unknown.
 pub fn set(name: &str) -> bool {
     let Some(idx) = THEMES.iter().position(|(n, _)| *n == name) else { return false };
-    ACTIVE.store(idx, Ordering::Relaxed);
+    store_active(idx);
     crate::cache::save_theme(name);
     true
 }
 
-/// Restore the persisted theme, if any. Runs once at startup.
+/// Restore the persisted theme and icon mode. Runs once at startup.
 pub fn init() {
     if let Some(saved) = crate::cache::load_theme() {
         set(&saved);
     }
+    set_nerd(crate::cache::load_nerd_font());
 }
 
-/// Switch to the next theme, persisting it; returns its name for the status line.
-pub fn cycle() -> &'static str {
-    let next = (active_idx() + 1) % THEMES.len();
-    ACTIVE.store(next, Ordering::Relaxed);
-    crate::cache::save_theme(THEMES[next].0);
-    THEMES[next].0
-}
-
+// Nerd Font icons, on by default; Settings switches them. Tests keep the flag
+// per thread so a test that turns icons off never races the snapshots.
+#[cfg(not(test))]
+static NERD: AtomicBool = AtomicBool::new(true);
 #[cfg(test)]
-fn name() -> &'static str {
+thread_local!(static NERD: std::cell::Cell<bool> = const { std::cell::Cell::new(true) });
+
+/// True when the UI draws Nerd Font glyphs.
+pub fn nerd() -> bool {
+    #[cfg(not(test))]
+    return NERD.load(Ordering::Relaxed);
+    #[cfg(test)]
+    return NERD.with(|n| n.get());
+}
+
+pub fn set_nerd(on: bool) {
+    #[cfg(not(test))]
+    NERD.store(on, Ordering::Relaxed);
+    #[cfg(test)]
+    NERD.with(|n| n.set(on));
+}
+
+/// Switch Nerd Font icons and persist the choice.
+pub fn choose_nerd(on: bool) {
+    set_nerd(on);
+    crate::cache::save_nerd_font(on);
+}
+
+/// `nerd` when Nerd Font icons are on, else the `plain` fallback.
+/// Plain fallbacks keep to common Unicode, or are empty where a label
+/// already says the same thing.
+pub fn nf(nerd: &'static str, plain: &'static str) -> &'static str {
+    if self::nerd() { nerd } else { plain }
+}
+
+/// Name of the active theme.
+pub fn name() -> &'static str {
     THEMES[active_idx()].0
 }
 
@@ -268,13 +317,13 @@ pub fn check_color(state: &crate::model::CheckState) -> Color {
 }
 
 /// Compact CI rollup glyph, in the same Nerd Font vocabulary as the
-/// column icons. Empty for unknown states, which render nothing.
+/// column icons (plain Unicode when icons are off). Empty for unknown states, which render nothing.
 pub fn check_glyph(state: &crate::model::CheckState) -> &'static str {
     use crate::model::CheckState;
     match state {
-        CheckState::Pass => "\u{f00c}",
-        CheckState::Fail => "\u{f00d}",
-        CheckState::Pending => "\u{f017}",
+        CheckState::Pass => nf("\u{f00c}", "✓"),
+        CheckState::Fail => nf("\u{f00d}", "✗"),
+        CheckState::Pending => nf("\u{f017}", "•"),
         CheckState::Unknown => "",
     }
 }
@@ -292,6 +341,12 @@ pub const TOOL_CONTEXT: &str = "\u{f0c9}";
 pub const TOOL_PHYSICS: &str = "\u{f085}";
 pub const TOOL_RANK: &str = "\u{f0cb}";
 pub const TOOL_FILTER: &str = "\u{f0b0}";
+
+/// Review-comment row marker. `model::diff` finds comment rows in the
+/// rendered text by this same string, so both modes must stay distinct.
+pub fn comment_marker() -> &'static str {
+    nf("\u{f075}", "¶")
+}
 
 /// Swimlane header color, matched by keyword so custom board
 /// vocabularies ("In progress", "In Progress", …) still resolve.
@@ -317,15 +372,15 @@ pub fn column_color(name: &str) -> Color {
 pub fn column_icon(name: &str) -> &'static str {
     let n = name.to_lowercase();
     if n.contains("block") {
-        "\u{f05e}"
+        nf("\u{f05e}", "⊘")
     } else if n.contains("progress") {
-        "\u{f017}"
+        nf("\u{f017}", "◐")
     } else if n.contains("review") {
-        "\u{f06e}"
+        nf("\u{f06e}", "◉")
     } else if n.contains("done") {
-        "\u{f00c}"
+        nf("\u{f00c}", "✓")
     } else if n.contains("todo") {
-        "\u{f10c}"
+        nf("\u{f10c}", "○")
     } else {
         ""
     }
@@ -393,7 +448,7 @@ mod tests {
     use super::*;
     use ratatui::style::Modifier;
 
-    /// Point XDG at a temp dir so `set`/`cycle` persistence never touches
+    /// Point XDG at a temp dir so `set` persistence never touches
     /// real data. Returns the guard plus saved var to restore.
     fn temp_data() -> (std::sync::MutexGuard<'static, ()>, Option<String>, tempfile::TempDir) {
         let guard = crate::cache::test_env_lock();
@@ -413,26 +468,26 @@ mod tests {
     #[test]
     fn headings_glow_amber() {
         let _guard = crate::cache::test_env_lock();
-        ACTIVE.store(1, Ordering::Relaxed);
+        store_active(1);
         let sheet = GhitSheet;
         assert_eq!(sheet.heading(1).fg, Some(amber()));
         assert!(sheet.heading(1).add_modifier.contains(Modifier::BOLD));
         assert_eq!(sheet.link().fg, Some(teal()));
         assert_eq!(sheet.code().bg, Some(code_bg()));
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
     }
 
     #[test]
     fn columns_have_colors() {
         let _guard = crate::cache::test_env_lock();
-        ACTIVE.store(1, Ordering::Relaxed);
+        store_active(1);
         assert_eq!(column_color("Todo"), muted());
         assert_eq!(column_color("In Progress"), amber());
         assert_eq!(column_color("Blocked"), red());
         assert_eq!(column_color("In Review"), teal());
         assert_eq!(column_color("Done"), green());
         assert_eq!(column_color("Something Else"), muted());
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
     }
 
     #[test]
@@ -452,7 +507,7 @@ mod tests {
     #[test]
     fn checks_have_colors_and_glyphs() {
         let _guard = crate::cache::test_env_lock();
-        ACTIVE.store(1, Ordering::Relaxed);
+        store_active(1);
         use crate::model::CheckState;
         assert_eq!(check_color(&CheckState::Pass), green());
         assert_eq!(check_color(&CheckState::Fail), red());
@@ -461,38 +516,55 @@ mod tests {
         assert_eq!(check_glyph(&CheckState::Fail), "\u{f00d}");
         assert_eq!(check_glyph(&CheckState::Pending), "\u{f017}");
         assert_eq!(check_glyph(&CheckState::Unknown), "");
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
+    }
+
+    #[test]
+    fn plain_mode_uses_unicode_fallbacks() {
+        use crate::model::CheckState;
+        set_nerd(false);
+        assert_eq!(nf("\u{f00c}", "x"), "x");
+        assert_eq!(check_glyph(&CheckState::Pass), "✓");
+        assert_eq!(check_glyph(&CheckState::Fail), "✗");
+        assert_eq!(check_glyph(&CheckState::Pending), "•");
+        assert_eq!(column_icon("Todo"), "○");
+        assert_eq!(column_icon("Blocked"), "⊘");
+        assert_eq!(column_icon("—"), "");
+        assert_eq!(comment_marker(), "¶");
+        set_nerd(true);
+        assert_eq!(nf("\u{f00c}", "x"), "\u{f00c}");
     }
 
     #[test]
     fn states_have_colors() {
         let _guard = crate::cache::test_env_lock();
-        ACTIVE.store(1, Ordering::Relaxed);
+        store_active(1);
         assert_eq!(state_color("OPEN"), green());
         assert_eq!(state_color("CLOSED"), red());
         assert_eq!(state_color("MERGED"), violet());
         assert_eq!(state_color("WHATEVER"), muted());
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
     }
 
     #[test]
-    fn toggle_cycles_all_themes() {
+    fn set_selects_a_theme_by_name() {
         let (guard, saved, _dir) = temp_data();
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
         assert_eq!(name(), "system");
-        assert_eq!(cycle(), "mirage");
-        assert_eq!(cycle(), "ayu dark");
-        assert_eq!(cycle(), "github light");
+        for (theme, _) in THEMES {
+            assert!(set(theme));
+            assert_eq!(name(), *theme);
+        }
+        assert!(!set("nope"), "an unknown name changes nothing");
         assert_eq!(name(), "github light");
-        assert_eq!(cycle(), "system");
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
         restore(saved, guard);
     }
 
     #[test]
     fn system_theme_uses_terminal_colors() {
         let _guard = crate::cache::test_env_lock();
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
         assert_eq!(ink(), Color::Reset);
         assert_eq!(paper(), Color::Reset);
         assert_eq!(code_bg(), Color::Reset);
@@ -501,7 +573,7 @@ mod tests {
         assert_eq!(red(), Color::Red);
         assert_eq!(green(), Color::Green);
         assert_eq!(violet(), Color::Magenta);
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
     }
 
     #[test]
@@ -510,21 +582,21 @@ mod tests {
         assert!(set("ayu dark"));
         assert_eq!(name(), "ayu dark");
         // Simulate a restart: reset in-memory, then init from disk.
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
         init();
         assert_eq!(name(), "ayu dark");
         assert!(!set("nope"));
         assert_eq!(name(), "ayu dark");
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
         restore(saved, guard);
     }
 
     #[test]
     fn themed_markdown_has_lines() {
         let _guard = crate::cache::test_env_lock();
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
         let text = render_markdown("# hi\n\n- a\n- b\n");
         assert!(text.height() > 3);
-        ACTIVE.store(0, Ordering::Relaxed);
+        store_active(0);
     }
 }

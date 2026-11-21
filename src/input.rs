@@ -11,6 +11,7 @@ mod map;
 mod menu;
 mod mouse;
 mod reach;
+mod settings;
 
 #[cfg(test)]
 mod parity;

@@ -28,6 +28,8 @@ pub(crate) enum Dialog {
     Finder,
     /// Dependency map physics steppers.
     Physics,
+    /// App-wide prefs: theme, icons, backfill.
+    Settings,
     /// Dependency map filter: scope, toggles and chips.
     MapFilter,
 }

@@ -205,7 +205,7 @@ pub fn thread_at_cursor(
             block = None;
             continue;
         }
-        if stripped.contains('\u{f075}') {
+        if stripped.contains(crate::theme::comment_marker()) {
             let attached: Vec<&ReviewThread> = threads
                 .iter()
                 .filter(|t| t.path == file.filename && thread_patch_row(t, file) == attach)

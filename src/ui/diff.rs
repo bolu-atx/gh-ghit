@@ -67,7 +67,8 @@ pub(super) fn diff_text_aux(
     // wraps exactly as before.
     let mut lines = vec![Line::from(Span::styled(
         format!(
-            "\u{f15c} {} · {} (s: {}) · ↑↓ lines · J/K files · space fold ❯ {}",
+            "{}{} · {} (s: {}) · ↑↓ lines · J/K files · space fold ❯ {}",
+            crate::theme::nf("\u{f15c} ", ""),
             model::diff_summary(files),
             if split { "split" } else { "unified" },
             if split { "unified" } else { "split" },
@@ -82,11 +83,11 @@ pub(super) fn diff_text_aux(
     // Nerd Font status glyphs; the word stays so a missing font degrades
     // to tofu plus readable text.
     let status_icon = |status: &str| match status {
-        "added" => "\u{f067} ",
-        "removed" => "\u{f068} ",
-        "modified" | "changed" => "\u{f040} ",
-        "renamed" | "copied" => "\u{f0c5} ",
-        "unchanged" => "\u{f00c} ",
+        "added" => crate::theme::nf("\u{f067} ", "+ "),
+        "removed" => crate::theme::nf("\u{f068} ", "- "),
+        "modified" | "changed" => crate::theme::nf("\u{f040} ", "~ "),
+        "renamed" | "copied" => crate::theme::nf("\u{f0c5} ", "» "),
+        "unchanged" => crate::theme::nf("\u{f00c} ", "= "),
         _ => "",
     };
     for (fi, f) in files.iter().take(MAX_DIFF_FILES).enumerate() {
@@ -97,7 +98,7 @@ pub(super) fn diff_text_aux(
                 if expanded { "▾ " } else { "▸ " }.to_string(),
                 Style::new().bg(ink()).fg(if at_cursor { amber() } else { muted() }).bold(),
             ),
-            Span::styled("\u{f15c} ", Style::new().bg(ink()).fg(paper())),
+            Span::styled(crate::theme::nf("\u{f15c} ", ""), Style::new().bg(ink()).fg(paper())),
             Span::styled(f.filename.clone(), Style::new().bg(ink()).fg(paper()).bold()),
             Span::styled(
                 format!("  {}{}  ", status_icon(&f.status), f.status),
@@ -190,7 +191,7 @@ pub(super) fn diff_text_aux(
     for path in extra_paths {
         lines.push(Line::from(""));
         lines.push(Line::from(rule.clone()));
-        lines.push(Line::from(Span::styled(format!("  \u{f15c} {path}"), Style::new().bg(ink()).fg(paper()).bold())));
+        lines.push(Line::from(Span::styled(format!("  {}{path}", crate::theme::nf("\u{f15c} ", "")), Style::new().bg(ink()).fg(paper()).bold())));
         append_review_threads(&mut lines, d, &path);
     }
     if files.len() > MAX_DIFF_FILES {
@@ -293,7 +294,7 @@ fn append_review_thread(lines: &mut Vec<Line<'static>>, thread: &model::ReviewTh
     let state = if thread.is_resolved { "resolved" } else { "unresolved" };
     let color = if thread.is_resolved { crate::theme::muted() } else { crate::theme::amber() };
     let pending = if thread.has_pending() { " · pending" } else { "" };
-    lines.push(Line::from(Span::styled(format!("{indent}\u{f075} {line} · {state}{pending}"), Style::new().bg(crate::theme::ink()).fg(color).bold())));
+    lines.push(Line::from(Span::styled(format!("{indent}{} {line} · {state}{pending}", crate::theme::comment_marker()), Style::new().bg(crate::theme::ink()).fg(color).bold())));
     for comment in &thread.comments {
         let author = comment.author.as_ref().map(|a| a.login.as_str()).unwrap_or("unknown");
         let author_label = if comment.is_pending() { format!("{author} · pending") } else { author.to_string() };

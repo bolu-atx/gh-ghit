@@ -285,8 +285,8 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // font degrades to a tofu box plus readable text. The `1`/`2`/`3`
     // prefixes mirror the tab keys; the click router splits on the
     // same titles via `tab_at`.
-    let tabs = Tabs::new(crate::app::TABS.iter().map(|(_, title)| *title).collect::<Vec<_>>())
-        .select(crate::app::TABS.iter().position(|(tab, _)| *tab == app.nav.tab))
+    let tabs = Tabs::new(crate::app::tabs().iter().map(|(_, title)| *title).collect::<Vec<_>>())
+        .select(crate::app::tabs().iter().position(|(tab, _)| *tab == app.nav.tab))
         .style(Style::new().bg(ink()).fg(muted()))
         .highlight_style(Style::new().bg(ink()).fg(amber()).bold().underlined())
         .padding("", "")
@@ -387,7 +387,7 @@ fn text_rows(text: &ratatui::text::Text, width: usize) -> usize {
 fn brand(repo: String) -> Line<'static> {
     use crate::theme::{amber, muted};
     Line::from(vec![
-        Span::styled("\u{f1d3} ghit ", Style::new().fg(amber()).bold()),
+        Span::styled(format!("{}ghit ", crate::theme::nf("\u{f1d3} ", "")), Style::new().fg(amber()).bold()),
         Span::styled(concat!("v", env!("CARGO_PKG_VERSION"), "  "), Style::new().fg(muted())),
         Span::styled(repo, Style::new().fg(muted())),
     ])

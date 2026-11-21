@@ -40,7 +40,7 @@ macro_rules! actions {
 
 actions! {
     // Global.
-    HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, TabMap, CycleTheme,
+    HistoryBack, HistoryForward, OpenMenu, ShowHelp, Quit, Undo, TabDetails, TabVisual, TabMap, OpenSettings,
     OpenBoard, OpenFinder, Comment, CloseItem, OpenFormat, QuerySearch, SearchGithub, MoveDown, MoveUp, StepPrev, StepNext,
     JumpTop, JumpBottom, HalfPageDown, HalfPageUp, PageDown, PageUp, CommandBar, FindBar, NextHit, PrevHit,
     ContentFind, ContentNext, ContentPrev,
@@ -55,6 +55,8 @@ actions! {
     GraphPanDown, GraphMoveLeft, GraphMoveRight, GraphMoveUp, GraphMoveDown, GraphZoomIn, GraphZoomOut,
     GraphFit, GraphUnpin, GraphScope, GraphCard, GraphNextEdge, GraphPrevEdge, GraphCloseCard,
     GraphPhysics, GraphStrip, GraphStripNext, GraphStripPrev,
+    // Settings dialog.
+    CloseSettings, SettingsDown, SettingsUp, SettingsPrev, SettingsNext,
     // Map physics dialog.
     ClosePhysics, PhysicsDown, PhysicsUp, PhysicsLower, PhysicsRaise, PhysicsReset,
     // Map filter dialog.
@@ -295,6 +297,7 @@ impl Context {
             Context::Dialog(Dialog::Menu) => "Actions menu",
             Context::Dialog(Dialog::Finder) => "Finder",
             Context::Dialog(Dialog::Format) => "Format dialog",
+            Context::Dialog(Dialog::Settings) => "Settings",
             Context::Dialog(Dialog::Physics) => "Map physics",
             Context::Dialog(Dialog::MapFilter) => "Map filter",
             Context::Dialog(Dialog::Board) => "Board",
@@ -308,7 +311,7 @@ impl Context {
 }
 
 /// Every context, in help order.
-pub(crate) const ALL_CONTEXTS: [Context; 24] = [
+pub(crate) const ALL_CONTEXTS: [Context; 25] = [
     Context::Global,
     Context::Pane(Pane::Issues),
     Context::Pane(Pane::PRs),
@@ -325,6 +328,7 @@ pub(crate) const ALL_CONTEXTS: [Context; 24] = [
     Context::Dialog(Dialog::Menu),
     Context::Dialog(Dialog::Finder),
     Context::Dialog(Dialog::Format),
+    Context::Dialog(Dialog::Settings),
     Context::Dialog(Dialog::Physics),
     Context::Dialog(Dialog::MapFilter),
     Context::Dialog(Dialog::Board),
@@ -353,6 +357,15 @@ pub(crate) fn describe(action: Action) -> Option<&'static Binding> {
         .flat_map(bindings)
         .filter(move |b| b.action == action);
     all().find(|b| b.mods == Mods::Plain && b.prefix.is_none()).or_else(|| all().next())
+}
+
+/// The key the main menu lists for `action`: its binding in the menu
+/// table, else its normal name. The menu table keys act only while the
+/// main menu is open.
+pub(crate) fn main_menu_key(action: Action) -> String {
+    bindings(Context::Dialog(Dialog::Menu)).find(|b| b.action == action)
+        .or_else(|| describe(action))
+        .map_or_else(String::new, Binding::key_name)
 }
 
 /// Graph keys act only while the Map tab has main focus.
@@ -548,9 +561,13 @@ fn board_text_focused(app: &App) -> bool {
     app.board.filter_focus == 0
 }
 
-/// The back stack has a place for Esc to return to.
-fn can_go_back(app: &App) -> bool {
-    app.back_target().is_some()
+/// Esc at the base has something to do: go back, or open the main menu.
+fn esc_has_target(app: &App) -> bool {
+    app.back_target().is_some() || app.esc_opens_menu()
+}
+
+fn main_menu(app: &App) -> bool {
+    app.main_menu_open()
 }
 
 fn help_browsing(app: &App) -> bool {

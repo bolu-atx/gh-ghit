@@ -17,8 +17,8 @@ fn spin_owed_paces_spinner_repaints() {
 
 #[test]
 fn tab_click_columns_follow_title_widths() {
-    let first = TABS[0].1.chars().count() as u16 + 1;
-    let second = first + TABS[1].1.chars().count() as u16 + 1;
+    let first = tabs()[0].1.chars().count() as u16 + 1;
+    let second = first + tabs()[1].1.chars().count() as u16 + 1;
     assert_eq!(tab_at(0), Tab::Details);
     assert_eq!(tab_at(first - 1), Tab::Details, "the divider after a title selects it");
     assert_eq!(tab_at(first), Tab::Visual);

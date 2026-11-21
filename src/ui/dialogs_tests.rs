@@ -547,3 +547,112 @@ fn filter_dialog_shows_nerd_icons() {
     let text = frame_text(&mut app);
     assert!(text.contains('\u{f096}'), "unchecked: {text}");
 }
+
+#[test]
+fn esc_at_the_base_opens_the_centered_main_menu() {
+    let mut app = loaded_app();
+    assert!(app.back_target().is_none());
+    handle_key(&mut app, key(KeyCode::Esc));
+    let text = frame_text_sized(&mut app, 100, 30);
+    for wanted in ["Menu", "Settings", "Shortcuts", "Quit"] {
+        assert!(text.contains(wanted), "{wanted} in the menu:\n{text}");
+    }
+    let menu = app.menu().expect("menu open");
+    assert_eq!(menu.entries.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), ["s", "?", "q"]);
+    let popup = app.hits.popup;
+    assert!(popup.x > 20 && popup.y > 8 && popup.right() < 80, "popup is centered: {popup:?}");
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert!(app.menu().is_none(), "Esc closes the menu");
+}
+
+#[test]
+fn main_menu_hotkeys_and_clicks_open_their_dialogs() {
+    let _prefs = TempPrefs::new();
+    let mut app = loaded_app();
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_key(&mut app, key(KeyCode::Char('s')));
+    assert!(app.menu().is_none() && app.settings_focus().is_some(), "s opens Settings and closes the menu");
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert!(app.settings_focus().is_none());
+
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_key(&mut app, key(KeyCode::Char('?')));
+    assert!(app.menu().is_none() && app.shortcuts_open(), "? opens Shortcuts");
+    handle_key(&mut app, key(KeyCode::Esc));
+
+    // j and Enter run the cursor row.
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert!(app.shortcuts_open(), "j then Enter runs the second entry");
+    handle_key(&mut app, key(KeyCode::Esc));
+
+    // A click on the first row opens Settings.
+    handle_key(&mut app, key(KeyCode::Esc));
+    let _ = frame_text_sized(&mut app, 100, 30);
+    let (rect, _) = app.hits.menu_rows[0];
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x + 2, rect.y));
+    assert!(app.settings_focus().is_some(), "clicking Settings opens it");
+    handle_key(&mut app, key(KeyCode::Esc));
+
+    // q quits, and a click outside closes the menu.
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    assert!(app.menu().is_none(), "click outside closes");
+    handle_key(&mut app, key(KeyCode::Esc));
+    handle_key(&mut app, key(KeyCode::Char('q')));
+    assert!(app.menu().is_none());
+    assert!(app.quit, "q in the menu quits");
+}
+
+#[test]
+fn settings_dialog_applies_and_saves_each_row() {
+    let _prefs = TempPrefs::new();
+    let mut app = loaded_app();
+    app.prefs_loaded = true;
+    app.sections.backfill.months = 12;
+    app.open_settings();
+    let text = frame_text_sized(&mut app, 100, 30);
+    for wanted in ["Settings", "theme", "mirage", "icons", "nerd font", "plain", "backfill", "12 months"] {
+        assert!(text.contains(wanted), "{wanted} in:\n{text}");
+    }
+    // Theme row: a click on an option applies it live.
+    let mirage = crate::theme::THEMES.iter().position(|(n, _)| *n == "mirage").unwrap();
+    press_cell(&mut app, crate::app::THEME_ROW, Some(mirage));
+    assert_eq!(crate::theme::name(), "mirage");
+    assert_eq!(crate::cache::load_theme().as_deref(), Some("mirage"));
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(crate::theme::name(), "ayu dark", "l steps to the next theme");
+    // Icons row.
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert!(!crate::theme::nerd());
+    assert!(!crate::cache::load_nerd_font(), "saved");
+    let _ = frame_text_sized(&mut app, 100, 30);
+    press_cell(&mut app, crate::app::ICONS_ROW, Some(0));
+    assert!(crate::theme::nerd());
+    // Backfill stepper: keys and clicks, saved to prefs.
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(app.sections.backfill.months, 24);
+    assert_eq!(crate::github::load_prefs().backfill_months, 24);
+    let _ = frame_text_sized(&mut app, 100, 30);
+    press_cell(&mut app, crate::app::BACKFILL_ROW, Some(2));
+    assert_eq!(app.sections.backfill.months, 0, "the top step is all history");
+    press_cell(&mut app, crate::app::BACKFILL_ROW, Some(2));
+    assert_eq!(app.sections.backfill.months, 0, "no step past all history");
+    press_cell(&mut app, crate::app::BACKFILL_ROW, Some(0));
+    assert_eq!(app.sections.backfill.months, 24);
+    assert_eq!(crate::github::load_prefs().backfill_months, 24);
+    // Outside click closes.
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    assert!(app.settings_focus().is_none());
+    crate::theme::set("system");
+}
+
+#[test]
+fn format_dialog_has_no_backfill_row() {
+    let mut app = loaded_app();
+    app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
+    assert!(!frame_text_sized(&mut app, 120, 50).contains("backfill"));
+}

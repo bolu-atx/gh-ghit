@@ -190,7 +190,7 @@ fn section_list(
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
-        let pin = if app.nav.pinned.contains(&n) { "\u{f08d} " } else { "" };
+        let pin = if app.nav.pinned.contains(&n) { theme::nf("\u{f08d} ", "• ") } else { "" };
         let data = app.issues.data.get(&n);
         let outside = matches!(row, SideRow::Tree { outside: true, .. });
         let num_style = if outside {
@@ -311,7 +311,7 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     let inner = |a: Rect| (a.width as usize).saturating_sub(2);
     let now = chrono::Utc::now();
     let issues_focused = app.pane_focused(crate::core::Pane::Issues);
-    let issue_title = side_section_title("Issues", &app.side_subtitle(false), "\u{f06a}", issues_focused, app.query_tag());
+    let issue_title = side_section_title("Issues", &app.side_subtitle(false), theme::nf("\u{f06a}", ""), issues_focused, app.query_tag());
     controls::side_controls(app, panes[0], &issue_title, false, crate::core::Pane::Issues);
     let (il, issue_heights) = section_list(
         SectionFrame {
@@ -338,7 +338,7 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     f.render_stateful_widget(il, panes[0], &mut istate);
     app.sidebar.issue_state = istate;
     let prs_focused = app.pane_focused(crate::core::Pane::PRs);
-    let pr_title = side_section_title("Pull requests", &app.side_subtitle(true), "\u{f126}", prs_focused, app.query_tag());
+    let pr_title = side_section_title("Pull requests", &app.side_subtitle(true), theme::nf("\u{f126}", ""), prs_focused, app.query_tag());
     controls::side_controls(app, panes[1], &pr_title, true, crate::core::Pane::PRs);
     let (pl, pr_heights) = section_list(
         SectionFrame {
@@ -378,7 +378,7 @@ pub(super) fn render_refs(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let (list, heights) = section_list(
         SectionFrame {
             // Nerd Font Font Awesome fa-link.
-            title: spinning(section_title("Refs", &app.refs_subtitle(), "\u{f0c1}", refs_focused), app.pane_loading().refs, app.tick),
+            title: spinning(section_title("Refs", &app.refs_subtitle(), theme::nf("\u{f0c1}", ""), refs_focused), app.pane_loading().refs, app.tick),
             footer: footer_line(&app.refs_footer()),
             fields: app.sidebar.row_issue,
             checks: app.sidebar.row_pr.checks,
@@ -416,7 +416,7 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let items = app.filter_items();
     let milestones = items.iter().filter(|item| matches!(item, FilterItem::Milestone(_))).count();
     // Nerd Font Font Awesome fa-filter.
-    let mut title = section_title("Filters", "", "\u{f0b0}", focused);
+    let mut title = section_title("Filters", "", theme::nf("\u{f0b0}", ""), focused);
     if on_labels + on_milestones > 0 {
         title.spans[2] = Span::styled(format!("{} on", on_labels + on_milestones),
             Style::new().fg(amber()));
@@ -497,12 +497,12 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let Some(index) = *line_index else {
             // Nerd Font Font Awesome fa-flag / fa-tag.
             let (icon, name, accent) = if row == 0 {
-                ("\u{f024}", "Milestones", violet())
+                (theme::nf("\u{f024} ", ""), "Milestones", violet())
             } else {
-                ("\u{f02b}", "Labels", teal())
+                (theme::nf("\u{f02b} ", ""), "Labels", teal())
             };
             let line = Line::from(vec![
-                Span::styled(format!("  {icon} "), Style::new().bg(ink()).fg(accent)),
+                Span::styled(format!("  {icon}"), Style::new().bg(ink()).fg(accent)),
                 Span::styled(name, Style::new().bg(ink()).fg(muted()).bold()),
             ]);
             f.render_widget(Paragraph::new(line).style(theme::base()), rect);
@@ -538,7 +538,7 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let slug = model::slug(&name, room);
         let mut spans = vec![
             Span::styled(marker, marker_style.bg(bg)),
-            Span::styled(if on { "\u{f14a} " } else { "\u{f096} " },
+            Span::styled(if on { theme::nf("\u{f14a} ", "■ ") } else { theme::nf("\u{f096} ", "□ ") },
                 Style::new().bg(bg).fg(if on { amber() } else { muted() })),
         ];
         if let Some(bar) = bar {
@@ -576,7 +576,7 @@ fn progress_spans(percent: u32, bg: ratatui::style::Color) -> Vec<Span<'static>>
 pub(super) fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-history.
     let focused = app.pane_focused(crate::core::Pane::History);
-    let block = theme::pane_block(focused).title(section_title("History", "", "\u{f1da}", focused));
+    let block = theme::pane_block(focused).title(section_title("History", "", theme::nf("\u{f1da}", ""), focused));
     let inner = block.inner(area);
     f.render_widget(block, area);
     app.hits.history_area = area;

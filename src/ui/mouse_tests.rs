@@ -250,7 +250,7 @@ fn repo_segment_opens_the_global_menu_by_either_button() {
         assert!(repo.width > 0, "repo segment drawn");
         press(&mut app, button, repo.x + 1, repo.y);
         let labels = menu_labels(&app);
-        for wanted in ["Refresh", "Cycle theme", "Open board", "Shortcuts", "Toggle sidebar", "Quit"] {
+        for wanted in ["Refresh", "Settings", "Open board", "Shortcuts", "Toggle sidebar", "Quit"] {
             assert!(labels.contains(&wanted), "{wanted} in {labels:?}");
         }
     }

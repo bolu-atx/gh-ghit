@@ -48,9 +48,8 @@ fn a_plain_row_never_shadows_a_chord_row_below_it() {
 /// layers type `?`, so they have no help key.
 #[test]
 fn modal_contexts_have_esc_and_help_except_where_documented() {
-    const NO_HELP_KEY: [Context; 7] = [
+    const NO_HELP_KEY: [Context; 6] = [
         Context::Dialog(Dialog::Compose),
-        Context::Dialog(Dialog::Menu),
         Context::Dialog(Dialog::Finder),
         Context::Input(TextInput::Bar),
         Context::Input(TextInput::Query),
@@ -207,7 +206,6 @@ fn every_menu_entry_has_a_mouse_gesture() {
 fn global_keys_resolve_to_their_actions() {
     let app = app_in(Pane::Main);
     for (event, action) in [
-        (key(KeyCode::Char('t')), Action::CycleTheme),
         (key(KeyCode::Char('y')), Action::Yank),
         (key(KeyCode::Char('p')), Action::Pin),
         (key(KeyCode::Char('r')), Action::Refresh),

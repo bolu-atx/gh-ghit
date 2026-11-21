@@ -111,6 +111,10 @@ pub(crate) fn handle_mouse(app: &mut App, m: MouseEvent) {
         menu::handle_menu_mouse(app, m);
         return;
     }
+    if open(Dialog::Settings) {
+        super::settings::handle_settings_mouse(app, m);
+        return;
+    }
     if open(Dialog::Physics) {
         super::map::handle_physics_mouse(app, m);
         return;

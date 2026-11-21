@@ -244,7 +244,7 @@ impl FormatColumn {
         for (index, on, name) in chips {
             let active = self.focus == index;
             let text = format!("{}{} {name}  ", if active { "▌" } else { " " },
-                if on { "\u{f14a}" } else { "\u{f096}" });
+                if on { theme::nf("\u{f14a}", "■") } else { theme::nf("\u{f096}", "□") });
             let chip_width = Line::raw(text.clone()).width();
             if width > indent && width + chip_width > self.width {
                 self.lines.push(Line::from(std::mem::take(&mut line)));
@@ -429,7 +429,7 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
         .title(Line::from(vec![
-            Span::styled(" \u{f0b0} Format ", Style::new().bg(theme::ink())
+            Span::styled(format!(" {}Format ", theme::nf("\u{f0b0} ", "")), Style::new().bg(theme::ink())
                 .fg(theme::amber()).bold()),
             Span::styled("sidebar ", Style::new().bg(theme::ink()).fg(theme::muted())),
         ]));
@@ -485,6 +485,53 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     }
 }
 
+/// The settings dialog: theme and icon choices and the backfill stepper.
+/// Its popup and click cells share `form_popup` and `form_cells` with the
+/// Format dialog, which is never open at the same time.
+pub(super) fn render_settings(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    app.hits.form_popup = Rect::default();
+    app.hits.form_cells.clear();
+    let focus = app.settings_focus().unwrap_or(0);
+    let column_width = sized_popup(area, 60, 1).width.saturating_sub(4) as usize;
+    let mut column = FormatColumn::new(column_width, focus);
+    column.gutter(&["theme", "icons", "backfill"]);
+    let themes: Vec<(bool, &str)> = theme::THEMES.iter().map(|(name, _)| (*name == theme::name(), *name)).collect();
+    column.choice(crate::app::THEME_ROW, Some("theme"), &themes);
+    column.choice(crate::app::ICONS_ROW, Some("icons"), &[(theme::nerd(), "nerd font"), (!theme::nerd(), "plain")]);
+    column.stepper(crate::app::BACKFILL_ROW, "backfill", &crate::app::months_label(app.sections.backfill.months));
+    column.hint("Changes apply and save at once. Backfill is how far back the local copy fetches \
+        closed issues and merged PRs.");
+    let context = Context::Dialog(Dialog::Settings);
+    let legend_width = sized_popup(area, 60, 1).width.saturating_sub(4);
+    let footer_lines = hints::legend(context, app, legend_width, 3);
+    let footer_height = footer_lines.len().max(1) as u16;
+    let popup = sized_popup(area, 60, column.lines.len() + 3 + footer_height as usize);
+    f.render_widget(Clear, popup);
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
+        .title(Span::styled(format!(" {}Settings ", theme::nf("\u{f013} ", "")),
+            Style::new().bg(theme::ink()).fg(theme::amber()).bold()));
+    let framed = block.inner(popup);
+    f.render_widget(block, popup);
+    let inner = framed.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+    let content = Rect { height: inner.height.saturating_sub(1 + footer_height), ..inner };
+    let scroll = scroll_to(content, column.focus_line.unwrap_or(0), false);
+    app.hits.form_popup = popup;
+    for &(line, x, width, index, option) in &column.cells {
+        let Some(y) = line.checked_sub(scroll as usize).filter(|y| *y < content.height as usize)
+        else { continue };
+        let x = content.x + x as u16;
+        let width = (width as u16).min(content.right().saturating_sub(x));
+        app.hits.form_cells.push((Rect::new(x, content.y + y as u16, width, 1), index, option));
+    }
+    f.render_widget(Paragraph::new(column.lines).style(theme::base()).scroll((scroll, 0)), content);
+    let footer = Rect { y: inner.y + inner.height.saturating_sub(footer_height),
+        height: inner.height.min(footer_height), ..inner };
+    f.render_widget(Paragraph::new(footer_lines).style(Style::new().bg(theme::ink()).fg(theme::muted())), footer);
+    let legend_hits = hints::legend_hits(context, app, legend_width, 3, (footer.x, footer.y));
+    app.hits.legend.extend(legend_hits);
+}
+
 /// The map physics dialog: one `− value +` row per parameter, over the
 /// map. Its popup and click cells share `form_popup` and `form_cells`
 /// with the Format dialog, which is never open at the same time.
@@ -509,7 +556,7 @@ pub(super) fn render_physics(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
         .title(Line::from(vec![
-            Span::styled(format!(" {} Physics ", theme::TOOL_PHYSICS), Style::new().bg(theme::ink())
+            Span::styled(format!(" {}Physics ", if theme::nerd() { "\u{f085} " } else { "" }), Style::new().bg(theme::ink())
                 .fg(theme::amber()).bold()),
             Span::styled("map ", Style::new().bg(theme::ink()).fg(theme::muted())),
         ]));
@@ -594,7 +641,7 @@ pub(super) fn render_map_filter(f: &mut ratatui::Frame, area: Rect, app: &mut Ap
     let block = Block::default().borders(Borders::ALL)
         .border_style(Style::new().bg(theme::ink()).fg(theme::muted())).style(theme::base())
         .title(Line::from(vec![
-            Span::styled(format!(" {} Filter ", theme::TOOL_FILTER),
+            Span::styled(format!(" {}Filter ", theme::nf("\u{f0b0} ", "")),
                 Style::new().bg(theme::ink()).fg(theme::amber()).bold()),
             Span::styled("map ", Style::new().bg(theme::ink()).fg(theme::muted())),
         ]));
