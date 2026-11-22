@@ -53,6 +53,26 @@ fn component_scope_walks_links_from_the_open_issue() {
 }
 
 #[test]
+fn component_scope_pulls_in_the_open_items_milestone_one_hop() {
+    let items = vec![
+        item(1, "OPEN", Some("M9")),
+        item(2, "OPEN", Some("M9")),
+        item(3, "OPEN", Some("M9")),
+        item(4, "OPEN", Some("M10")),
+        item(5, "OPEN", Some("M10")),
+        item(6, "OPEN", None),
+    ];
+    // #3 links to #4 (M10) and #6; #5 shares M10 with #4 but links to nothing.
+    let links = vec![link(3, 4, LinkKind::Blocks), link(6, 3, LinkKind::Parent)];
+    let graph = build_map(&items, &links, Some(1), &scoped(MapScope::Component));
+    assert_eq!(numbers(&graph), vec![1, 2, 3, 4, 6], "M9 members plus their links; M10 does not pull #5");
+    let hubs: Vec<&str> = graph.nodes.iter().filter(|n| n.state == NodeState::Hub).map(|n| n.title.as_str()).collect();
+    assert_eq!(hubs, vec!["M10", "M9"]);
+    let no_hubs = MapFilter { hubs: false, ..scoped(MapScope::Component) };
+    assert_eq!(numbers(&build_map(&items, &links, Some(1), &no_hubs)), vec![1], "hubs off: links only");
+}
+
+#[test]
 fn repo_scope_shows_every_open_item_and_every_hub() {
     let (items, links) = fixture();
     let graph = build_map(&items, &links, Some(2), &scoped(MapScope::Repo));

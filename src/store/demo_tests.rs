@@ -39,7 +39,7 @@ const ITEMS: &[Spec] = &[
     (21, false, "OPEN", "Diff rows since the last sync", Some(3)),
     (22, false, "OPEN", "Detect deleted items", Some(3)),
     (23, false, "OPEN", "Catch every change on refresh", Some(3)),
-    (24, false, "OPEN", "One local copy per repo", Some(0)),
+    (24, false, "OPEN", "One local copy per repo", None),
     (25, false, "OPEN", "Search the local copy", Some(0)),
     (26, false, "OPEN", "Finder reads the store", Some(0)),
     (27, false, "OPEN", "Board reads the store", None),
