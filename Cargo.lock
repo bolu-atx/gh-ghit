@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "ghit"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "clap",
