@@ -47,7 +47,8 @@ pub struct MapLink {
 /// Which items the map shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MapScope {
-    /// The linked component of the open issue, with its milestone hubs.
+    /// The linked component of the open issue and its milestone's
+    /// members, with their milestone hubs.
     #[default]
     Component,
     /// Every item of the repo, pulled together by milestone hubs.
@@ -270,7 +271,16 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filt
         (MapScope::Repo, _) | (MapScope::Component, None) => {
             by_number.keys().copied().filter(|&n| kept(n)).collect()
         }
-        (MapScope::Component, Some(center)) if by_number.contains_key(&center) => component(&links, center),
+        (MapScope::Component, Some(center)) if by_number.contains_key(&center) => {
+            // With hubs on, the open item's milestone pulls in its members
+            // too, one hop: other milestones' hubs only decorate.
+            let milestone = by_number[&center].milestone.as_deref().filter(|_| filter.hubs);
+            let seeds = by_number.values()
+                .filter(|item| item.number == center
+                    || (milestone.is_some() && item.milestone.as_deref() == milestone && kept(item.number)))
+                .map(|item| item.number);
+            component(&links, seeds)
+        }
         (MapScope::Component, Some(_)) => HashSet::new(),
     };
     // Blocks links indexed both ways, so each node checks only its own.
@@ -341,15 +351,15 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filt
     MapGraph::new(nodes, edges, kinds)
 }
 
-/// Numbers linked to `center` through any chain of links, either way.
-fn component(links: &[MapLink], center: u64) -> HashSet<u64> {
+/// Numbers linked to any of `seeds` through any chain of links, either way.
+fn component(links: &[MapLink], seeds: impl Iterator<Item = u64>) -> HashSet<u64> {
     let mut neighbors: HashMap<u64, Vec<u64>> = HashMap::new();
     for link in links {
         neighbors.entry(link.src).or_default().push(link.dst);
         neighbors.entry(link.dst).or_default().push(link.src);
     }
-    let mut seen = HashSet::from([center]);
-    let mut queue = vec![center];
+    let mut seen: HashSet<u64> = seeds.collect();
+    let mut queue: Vec<u64> = seen.iter().copied().collect();
     while let Some(node) = queue.pop() {
         for &next in neighbors.get(&node).into_iter().flatten() {
             if seen.insert(next) {
