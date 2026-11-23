@@ -31,7 +31,7 @@ pub(crate) struct FinderRow {
 impl App {
     pub(crate) fn open_finder(&mut self) {
         // A local SQLite read (a few thousand rows is well under a frame).
-        let stored = self.repo_key().map(|repo| github::finder_candidates(&repo)).unwrap_or_default();
+        let stored = self.session.repo_key().map(|repo| github::finder_candidates(&repo)).unwrap_or_default();
         self.open(Entry::Finder(FinderState { stored, ..Default::default() }));
     }
 
@@ -50,20 +50,20 @@ impl App {
     fn finder_candidates(&self) -> Vec<Candidate> {
         let mut seen = HashSet::new();
         let mut order = vec![];
-        let mut cached: Vec<ItemRef> = self.issues.data.keys().copied().collect();
+        let mut cached: Vec<ItemRef> = self.session.issues.data.keys().copied().collect();
         cached.sort_unstable_by(|a, b| b.cmp(a));
         let sources = [
             self.nav.current.into_iter().collect::<Vec<_>>(),
             self.nav.history.iter().rev().copied().collect(),
             self.issue_numbers(),
             self.pr_numbers(),
-            self.nav.pin_order.clone(),
+            self.session.pins.order.clone(),
             self.nav.visited.clone(),
             self.nav.recent.clone(),
             cached,
         ];
         for n in sources.into_iter().flatten() {
-            let Some(data) = self.issues.data.get(&n) else { continue };
+            let Some(data) = self.session.issues.data.get(&n) else { continue };
             if seen.insert(n) {
                 order.push(Candidate {
                     number: n,
@@ -161,7 +161,7 @@ mod tests {
             let mut data = issue(n, "2026-01-01T00:00:00Z");
             data.title = title.to_string();
             data.is_pr = pr;
-            app.issues.data.insert(n, data);
+            app.session.issues.data.insert(n, data);
         }
         app.open_finder();
         app
@@ -248,7 +248,7 @@ mod tests {
     fn a_missing_store_falls_back_to_memory() {
         let (_guard, _dir, saved) = crate::app::test_support::temp_xdg();
         let mut app = App::new(Some("o/r".to_string()));
-        app.issues.data.insert(
+        app.session.issues.data.insert(
             ItemRef::github(5),
             issue(ItemRef::github(5), "2026-01-01T00:00:00Z"),
         );

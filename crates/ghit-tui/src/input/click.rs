@@ -219,7 +219,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         app.nav.pane = Pane::Refs;
         if drag {
             app.refs.highlight = Some(n);
-        } else if app.refs.paired.contains(&n) {
+        } else if app.session.refs.paired.contains(&n) {
             app.focus_content(Pane::Refs, Some(n));
             app.open_issue(n);
         } else {
@@ -285,7 +285,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
             rows.get(row).cloned()
         };
         if let Some(line) = line {
-            let repo = app.repo_key();
+            let repo = app.session.repo_key();
             let rel_x = (x - area.x) as usize;
             let links = ghit_core::model::links_in_line(&line, repo.as_deref());
             match ghit_core::model::nearest_link(&line, &links, rel_x) {

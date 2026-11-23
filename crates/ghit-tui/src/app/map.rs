@@ -305,7 +305,7 @@ impl App {
         if !self.map_shown() {
             return false;
         }
-        if let Some(link) = self.sections.link.as_ref() {
+        if let Some(link) = self.session.sections.link.as_ref() {
             let seen = if self.map.loaded { self.map.version } else { None };
             if let Some((generation, items, links)) = link.map_data(seen) {
                 self.map.version = Some(generation);
@@ -442,11 +442,11 @@ impl App {
     /// the store changed. True when a new read landed.
     fn read_card_detail(&mut self) -> bool {
         let Some(number) = self.map.card_number() else { return false };
-        let stamp = self.sections.link.as_ref().and_then(|link| link.card_stamp(number));
+        let stamp = self.session.sections.link.as_ref().and_then(|link| link.card_stamp(number));
         if self.map.detail.as_ref().is_some_and(|d| d.number == number && d.stamp == stamp) {
             return false;
         }
-        let read = self.sections.link.as_ref().and_then(|link| link.item_card(number));
+        let read = self.session.sections.link.as_ref().and_then(|link| link.item_card(number));
         let (row, body) = match read {
             Some((row, body)) => (Some(row), body),
             None => (None, None),

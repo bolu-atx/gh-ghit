@@ -57,16 +57,16 @@ fn style_links_colors_refs_across_span_edges() {
 fn main_shows_loading_while_first_issue_loads() {
     let mut app = App::new(Some("o/r".to_string()));
     app.nav.requested = Some(ItemRef::github(7));
-    app.issues.pending.insert(ItemRef::github(7));
+    app.session.issues.pending.insert(ItemRef::github(7));
     let text = frame_text(&mut app);
     assert!(text.contains("Loading #7…") && text.contains("⣾") && !text.contains("No issue loaded"), "main loading: {text}");
-    app.issues.pending.clear();
+    app.session.issues.pending.clear();
     assert!(frame_text(&mut app).contains("No issue loaded"), "idle main");
     // A cached issue keeps its text while another one is fetching.
     let mut app = loaded_app();
     app.tick = 0;
     app.nav.requested = Some(ItemRef::github(12));
-    app.issues.pending.insert(ItemRef::github(12));
+    app.session.issues.pending.insert(ItemRef::github(12));
     let text = frame_text(&mut app);
     assert!(text.contains("Fix the thing ⠋"), "main spinner: {text}");
     assert!(!text.contains("Loading #"), "no loading body over cached text: {text}");
@@ -90,7 +90,7 @@ fn details_header_shows_clickable_paired_line() {
     let mut app = loaded_app();
     let text = frame_text(&mut app);
     assert!(!text.contains("Paired"), "no line without pairs: {text}");
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().paired = vec![PairedRef {
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().paired = vec![PairedRef {
         number: ItemRef::github(9),
         state: "MERGED".to_string(),
     }];
@@ -107,7 +107,7 @@ fn details_header_shows_clickable_paired_line() {
 fn paired_header_click_opens_counterpart_in_main() {
     use ghit_core::core::Pane;
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().paired = vec![PairedRef {
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().paired = vec![PairedRef {
         number: ItemRef::github(9),
         state: "MERGED".to_string(),
     }];
@@ -136,7 +136,7 @@ fn paired_header_click_opens_counterpart_in_main() {
 #[test]
 fn mouse_click_on_refs_row_highlights_source_instead_of_opening() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
         "intro\n\nblocked by #9, see details".to_string();
     app.show_issue(ItemRef::github(7));
     let _ = frame_text(&mut app); // records hit areas
@@ -235,7 +235,7 @@ fn mouse_click_switches_tabs() {
 #[test]
 fn mouse_click_on_ref_opens_issue() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
         "blocked by #9, see details".to_string();
     let _ = frame_text(&mut app);
     let row = app.hits
@@ -251,7 +251,7 @@ fn mouse_click_on_ref_opens_issue() {
 #[test]
 fn mouse_click_opens_nearest_ref_on_row() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "fix #7 then #9 ok".to_string();
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "fix #7 then #9 ok".to_string();
     let _ = frame_text(&mut app);
     let row = app.hits
         .body_rows
@@ -271,7 +271,7 @@ fn mouse_click_opens_nearest_ref_on_row() {
 #[test]
 fn mouse_click_on_url_opens_browser_not_issue() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
         "see https://example.com/a ok".to_string();
     let _ = frame_text(&mut app);
     let row = app.hits
@@ -311,10 +311,10 @@ fn mouse_wheel_scrolls() {
 #[test]
 fn desk_renders_issue() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     let d = sample(ItemRef::github(7));
-    app.issues.data.insert(ItemRef::github(7), d);
-    app.issues.statuses.insert(ItemRef::github(7), vec![]);
+    app.session.issues.data.insert(ItemRef::github(7), d);
+    app.session.issues.statuses.insert(ItemRef::github(7), vec![]);
     app.nav.visited.push(ItemRef::github(7));
     app.show_issue(ItemRef::github(7));
     let text = frame_text(&mut app);
@@ -339,7 +339,7 @@ fn masthead_splits_brand_and_issue_lines() {
 #[test]
 fn main_pane_keeps_a_single_title_line_with_hint() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().title = "Quasar title nine".to_string();
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().title = "Quasar title nine".to_string();
     let text = frame_text(&mut app);
     // Masthead plus the one sidebar row; the header block starts at
     // the meta lines and no longer repeats the title.
@@ -355,7 +355,7 @@ fn main_pane_keeps_a_single_title_line_with_hint() {
 #[test]
 fn desk_renders_empty() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     let text = frame_text(&mut app);
     assert!(text.contains("ghit"));
     assert!(text.contains("No issue loaded"));
@@ -364,7 +364,7 @@ fn desk_renders_empty() {
 #[test]
 fn details_contains_body_before_comments() {
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.body = "body evidence".into();
     d.comments.push(ghit_core::model::Comment { body: "comment evidence".into(), ..Default::default() });
     let text = frame_text(&mut app);
@@ -459,7 +459,7 @@ fn header_url_click_opens() {
     // through the meta lines now: the issue URL line opens its link.
     // (The test `open_url` stub notifies instead of opening a browser.)
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().url =
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().url =
         "https://example.com/note".to_string();
     let _ = frame_text(&mut app);
     let idx = app.hits.header_rows.iter().position(|l| l.contains("example.com")).expect("url row");
@@ -473,7 +473,7 @@ fn header_url_click_opens() {
 fn narrow_header_wraps_without_clipping_labels() {
     use ghit_core::model::Label;
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.labels = vec![Label { name: "modernization".to_string() }, Label { name: "new-modernization".to_string() }];
     let backend = TestBackend::new(70, 40);
     let mut terminal = Terminal::new(backend).expect("test backend");
@@ -514,8 +514,8 @@ fn yank_text_covers_issue_diff_and_refs() {
     assert!(app.yank_text().unwrap().contains("@@ -1 +1 @@"), "{}", app.yank_text().unwrap());
     // Refs context names the raw body line and the ticket.
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "intro\nsee #9 here\n".to_string();
-    app.refs.numbers = vec![ItemRef::github(9)];
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "intro\nsee #9 here\n".to_string();
+    app.session.refs.numbers = vec![ItemRef::github(9)];
     app.nav.pane = Pane::Refs;
     app.refs.highlight = Some(ItemRef::github(9));
     let text = app.yank_text().unwrap();
@@ -532,7 +532,7 @@ fn yank_text_covers_issue_diff_and_refs() {
 fn yank_key_and_empty_state_toast() {
     // `y` reaches `yank`: an empty viewer explains instead of copying.
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     handle_key(&mut app, key(KeyCode::Char('y')));
     assert_eq!(app.message, "view an issue first");
     // A long yank toast still renders with the short hints intact.
@@ -569,7 +569,7 @@ fn number_keys_switch_content_tabs() {
 fn loading_body_spinner_advances_with_the_tick() {
     let mut app = App::new(Some("o/r".to_string()));
     app.nav.requested = Some(ItemRef::github(7));
-    app.issues.pending.insert(ItemRef::github(7));
+    app.session.issues.pending.insert(ItemRef::github(7));
     app.tick = 0;
     let first = frame_text(&mut app);
     app.tick = 1;

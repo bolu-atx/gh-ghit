@@ -10,7 +10,7 @@ use ghit_core::model::ItemRef;
 
 fn wheel_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     let mut pr1 = sample(ItemRef::github(9));
     pr1.is_pr = true;
     let mut pr2 = sample(ItemRef::github(11));
@@ -22,8 +22,8 @@ fn wheel_app() -> App {
         pr2,
     ] {
         let n = d.number;
-        app.issues.data.insert(n, d);
-        app.issues.statuses.insert(n, vec![]);
+        app.session.issues.data.insert(n, d);
+        app.session.issues.statuses.insert(n, vec![]);
         app.nav.visited.push(n);
     }
     app.hits.side_issue_area = Rect::new(0, 0, 30, 20);
@@ -32,7 +32,7 @@ fn wheel_app() -> App {
     app.hits.body_area = Rect::new(30, 0, 60, 40);
     app.show_issue(ItemRef::github(7));
     // `show_issue` recomputes refs from the body, so seed the pane after.
-    app.refs.numbers = vec![ItemRef::github(21), ItemRef::github(22)];
+    app.session.refs.numbers = vec![ItemRef::github(21), ItemRef::github(22)];
     app.nav.pane = ghit_core::core::Pane::Main;
     app.nav.scroll = 0;
     app

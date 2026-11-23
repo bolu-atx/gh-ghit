@@ -117,7 +117,7 @@ fn tools(app: &App) -> Vec<Tool> {
         tools.push(Tool { icon: theme::nf(theme::TOOL_PHYSICS, ""), label: "physics", action: Action::GraphPhysics });
         tools.push(Tool { icon: theme::nf(theme::TOOL_RANK, ""), label: "ranks", action: Action::GraphStrip });
     }
-    let Some(data) = app.nav.current.and_then(|n| app.issues.data.get(&n)) else { return tools };
+    let Some(data) = app.nav.current.and_then(|n| app.session.issues.data.get(&n)) else { return tools };
     tools.push(Tool { icon: theme::nf(theme::TOOL_COMMENT, ""), label: "comment", action: Action::Comment });
     match data.state.as_str() {
         "MERGED" => {}

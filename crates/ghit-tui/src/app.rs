@@ -6,7 +6,6 @@
 //! tokio runtime and lands via channels polled once per frame, so the loop
 //! never blocks.
 
-mod backfill;
 mod board;
 mod compose;
 mod confirm;
@@ -74,8 +73,8 @@ use ratatui::layout::Rect;
 
 use ghit_core::core::{self, Layer, Pane};
 use ghit_core::fetch_queue;
-use ghit_core::{github, model};
-use poll::poll_bootstrap;
+use ghit_core::session::Session;
+use ghit_core::model;
 #[cfg(test)]
 use open as _;
 use ghit_core::model::ItemRef;
@@ -91,30 +90,22 @@ pub(crate) const CLICK_FLASH_MS: u64 = 150;
 /// cadence for the animation, not on every 15ms poll pass.
 pub(crate) const SPIN_FRAME_MS: u64 = 100;
 
-pub(crate) use diff::{poll_review_submit, poll_diffs, poll_head_files, poll_sub_issues};
+pub(crate) use diff::{poll_review_submit, poll_diffs, poll_head_files};
 pub(crate) use board::{board_open, board_columns, board_move, board_selected_number, poll_board};
 pub(crate) use compose::{poll_compose, run_compose_editor};
-pub(crate) use confirm::{poll_auth, poll_set_state, auth_failure, run_reauth};
-pub(crate) use poll::{poll_details, bootstrap, poll_repo_meta, poll_sections, poll_issues};
-pub(crate) use confirm::{AuthState, ConfirmDialog, ConfirmKind, PendingUndo, UndoAction};
+pub(crate) use confirm::{poll_set_state, auth_failure, run_reauth};
+pub(crate) use poll::{apply_session, poll_details, bootstrap, poll_repo_meta};
+#[cfg(test)]
+pub(crate) use poll::poll_session;
+pub(crate) use confirm::{ConfirmDialog, ConfirmKind, PendingUndo, UndoAction};
 pub(crate) use board::BoardView;
 pub(crate) use compose::ComposeSlot;
 #[cfg(test)]
 pub(crate) use compose::{ComposeState, ComposeTarget};
-pub(crate) use diff::{DiffView, SubIssueLoads};
-pub(crate) use sidebar::{FilterItem, LabelsPane, QueryAction, SectionFeed, Sidebar};
-pub(crate) use issue::{IssueStore, RefsPane};
+pub(crate) use diff::DiffView;
+pub(crate) use sidebar::{FilterItem, LabelsPane, QueryAction, Sidebar};
+pub(crate) use issue::RefsPane;
 pub(crate) use nav::Nav;
-
-/// Spawn a background task on the shared runtime. Unit tests never run
-/// it: the task is dropped, so no test can reach the network.
-fn spawn_bg<F: std::future::Future<Output = ()> + Send + 'static>(task: F) {
-    if cfg!(test) {
-        drop(task);
-        return;
-    }
-    ghit_core::runtime::rt().spawn(task);
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tab {
@@ -279,17 +270,14 @@ impl Default for Columns {
 }
 
 pub struct App {
-    pub(crate) issues: IssueStore,
-    pub(crate) sections: SectionFeed,
+    pub(crate) session: Session,
     pub(crate) sidebar: Sidebar,
     pub(crate) nav: Nav,
     pub(crate) board: BoardView,
     pub(crate) diff: DiffView,
     pub(crate) map: MapView,
-    pub(crate) subs: SubIssueLoads,
     pub(crate) refs: RefsPane,
     pub(crate) labels: LabelsPane,
-    pub(crate) auth: AuthState,
     pub(crate) compose: ComposeSlot,
     pub(crate) hits: HitAreas,
     /// `/` search over the Main pane content.
@@ -297,9 +285,6 @@ pub struct App {
     pub(crate) layout: Columns,
     /// Open dialogs and text rows, bottom to top. See `dialogs.rs`.
     pub(crate) dialogs: Vec<Entry>,
-    pub(crate) repo_flag: Option<String>,
-    pub(crate) repo_slug: Option<String>,
-    pub(crate) initial_numbers: Vec<ItemRef>,
     /// True once the startup prefs load has applied. `persist_prefs`
     /// stays silent before that so pre-bootstrap input cannot write
     /// defaults over saved state.
@@ -321,8 +306,6 @@ pub struct App {
     /// Frame counter, bumped once per event-loop pass. Drives the status
     /// bar spinner; cheap because the loop already redraws every pass.
     pub(crate) tick: u64,
-    /// Queue and run-count for every background fetch; see `fetch_queue`.
-    fetches: fetch_queue::Fetches,
 }
 
 impl App {
@@ -330,16 +313,10 @@ impl App {
         let (detail_tx, detail_rx) = std::sync::mpsc::channel();
         let (compose_tx, compose_rx) = std::sync::mpsc::channel();
         let (review_submit_tx, review_submit_rx) = std::sync::mpsc::channel();
-        let (issue_tx, issue_rx) = std::sync::mpsc::channel();
         let (diff_tx, diff_rx) = std::sync::mpsc::channel();
         Self {
-            repo_flag,
-            repo_slug: None,
+            session: Session::new(repo_flag),
             prefs_loaded: false,
-            auth: AuthState::default(),
-            initial_numbers: vec![],
-            sections: SectionFeed::new(),
-            issues: IssueStore::new(issue_tx, issue_rx),
             nav: Nav::new(),
             bar: String::new(),
             sidebar: Sidebar::new(),
@@ -352,11 +329,9 @@ impl App {
             undo: None,
             compose: ComposeSlot::new(compose_tx, compose_rx, review_submit_tx, review_submit_rx),
             tick: 0,
-            fetches: fetch_queue::Fetches::default(),
             board: BoardView::new(detail_tx, detail_rx),
             diff: DiffView::new(diff_tx, diff_rx),
             map: MapView::default(),
-            subs: SubIssueLoads::new(),
             quit: false,
             hits: HitAreas::default(),
             search: ContentSearch::default(),
@@ -374,26 +349,34 @@ impl App {
         self.message_at = Some(std::time::Instant::now());
     }
 
-    /// Queue a background fetch and start whatever fits. Tiers decide the
-    /// start order (`core::urgency`); `fetch_queue` caps what runs at once.
+    /// What the fetch scheduler needs to know about the screen.
+    pub(crate) fn fetch_view(&self) -> fetch_queue::View {
+        fetch_queue::View {
+            current: self.nav.requested.or(self.nav.current),
+            tab_shown: self.nav.tab == Tab::Visual,
+        }
+    }
+
+    /// Queue a background fetch and start whatever fits.
     fn enqueue(
         &mut self,
         kind: core::Kind,
         number: Option<ItemRef>,
         task: impl std::future::Future<Output = ()> + Send + 'static,
     ) {
-        self.fetches.push(kind, number, Box::pin(task));
-        self.pump_fetches();
+        let view = self.fetch_view();
+        self.session.enqueue(kind, number, task, &view);
     }
 
-    /// Start queued fetches while slots are free. While the API quota is
-    /// spent only the current issue's fetches start.
     pub(crate) fn pump_fetches(&mut self) {
-        let view = fetch_queue::View {
-            current: self.nav.requested.or(self.nav.current),
-            tab_shown: self.nav.tab == Tab::Visual,
-        };
-        self.fetches.start(&view, github::rate_limited());
+        let view = self.fetch_view();
+        self.session.pump(&view);
+    }
+
+    /// Per loop pass: land a finished backfill step and queue the next page.
+    pub(super) fn drive_backfill(&mut self, now: Instant) -> bool {
+        let view = self.fetch_view();
+        self.session.drive_backfill(now, &view)
     }
 
     pub(crate) fn message_visible(&self) -> bool {
@@ -438,19 +421,19 @@ impl App {
     /// derivation decides what shows; this only gathers the counts.
     pub(crate) fn fetch_state(&self) -> core::FetchState {
         // Concurrent comment fetches report separately: sum what is known.
-        let (done, total) = self.issues.progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
+        let (done, total) = self.session.issues.progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
         core::FetchState {
-            issues: self.issues.pending.len(),
+            issues: self.session.issues.pending.len(),
             diffs: self.diff.pending.len(),
             details: self.board.detail_pending.len(),
-            sections_live: self.sections.rx.is_some(),
-            bootstrap_live: self.auth.bootstrap_rx.is_some(),
+            sections_live: self.session.sections.rx.is_some(),
+            bootstrap_live: self.session.auth.bootstrap_rx.is_some(),
             board: self.board.loading,
             message_visible: self.message_visible(),
-            issue_progress: if self.issues.progress.is_empty() { None } else { Some((done, total)) },
-            section_progress: self.sections.progress,
-            backfill: self.backfill_state().0,
-            backfill_progress: self.backfill_state().1,
+            issue_progress: if self.session.issues.progress.is_empty() { None } else { Some((done, total)) },
+            section_progress: self.session.sections.progress,
+            backfill: self.session.backfill_state().0,
+            backfill_progress: self.session.backfill_state().1,
         }
     }
 
@@ -458,30 +441,19 @@ impl App {
     pub(crate) fn pane_loading(&self) -> core::PaneLoading {
         let shown = self.nav.current.or(self.nav.requested);
         let refs_pending = self
+            .session
             .refs
             .numbers
             .iter()
-            .chain(self.refs.paired.iter())
-            .any(|n| self.issues.pending.contains(n));
+            .chain(self.session.refs.paired.iter())
+            .any(|n| self.session.issues.pending.contains(n));
         core::pane_loading(&core::PaneInputs {
-            sections_live: self.sections.rx.is_some(),
-            bootstrap_live: self.auth.bootstrap_rx.is_some(),
-            requested_pending: self.nav.requested.is_some_and(|n| self.issues.pending.contains(&n)),
-            shown_cached: shown.is_some_and(|n| self.issues.data.contains_key(&n)),
+            sections_live: self.session.sections.rx.is_some(),
+            bootstrap_live: self.session.auth.bootstrap_rx.is_some(),
+            requested_pending: self.nav.requested.is_some_and(|n| self.session.issues.pending.contains(&n)),
+            shown_cached: shown.is_some_and(|n| self.session.issues.data.contains_key(&n)),
             refs_pending,
         })
-    }
-
-    pub(crate) fn repo_key(&self) -> Option<String> {
-        let r = self
-            .repo_flag
-            .clone()
-            .or_else(|| self.repo_slug.clone())?;
-        Some(r.to_lowercase())
-    }
-
-    fn resolve_repo(&mut self) {
-        self.repo_slug = github::resolve_repo(self.repo_flag.as_deref());
     }
 
     /// Snapshot the visible body text so clicks can land on `#123` refs.
@@ -523,20 +495,19 @@ pub(crate) fn draw_frame(f: &mut ratatui::Frame, app: &mut App) {
 pub(crate) fn poll_all(app: &mut App) -> bool {
     let mut landed = false;
     app.pump_fetches();
-    landed |= poll_bootstrap(app);
-    landed |= poll_auth(app);
-    landed |= poll_sections(app);
+    let feed = app.session.poll_feed();
+    landed |= apply_session(app, feed);
     landed |= poll_repo_meta(app);
     landed |= app.watch_store(Instant::now());
-    let had_fetch = app.sections.rx.is_some();
+    let had_fetch = app.session.sections.rx.is_some();
     app.auto_refresh_recent(Instant::now());
-    landed |= had_fetch != app.sections.rx.is_some();
+    landed |= had_fetch != app.session.sections.rx.is_some();
     landed |= app.drive_backfill(Instant::now());
-    landed |= poll_issues(app);
+    let items = app.session.poll_items();
+    landed |= apply_session(app, items);
     landed |= poll_diffs(app);
     landed |= poll_head_files(app);
     landed |= app.sync_diff();
-    landed |= poll_sub_issues(app);
     landed |= poll_board(app);
     landed |= poll_details(app);
     landed |= poll_compose(app);
@@ -613,7 +584,7 @@ fn event_loop(
             }
         }
         let poll_dirty = poll_all(app);
-        if app.auth.reauth_requested {
+        if app.session.auth.reauth_requested {
             run_reauth(app, terminal);
             input_dirty = true;
         }

@@ -2,13 +2,12 @@
 
 use std::collections::HashSet;
 
-use crate::app::{App, Focus, spawn_bg};
-use ghit_core::runtime::rt;
+use crate::app::{App, Focus};
 use ghit_core::core::self;
 use ghit_core::{github, model};
 use crate::app::auth_failure;
-use crate::app::sidebar::{RECENT_REFRESH_MAX_INTERVAL, auto_refresh_interval_default};
 use ghit_core::model::ItemRef;
+use ghit_core::session::SessionEvent;
 
 /// Fetch missing board card details together without blocking the event loop.
 pub(super) fn kick_off_details(app: &mut App) {
@@ -17,7 +16,7 @@ pub(super) fn kick_off_details(app: &mut App) {
     for item in &board.items {
         let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else { continue };
         if app.board.details.contains_key(&n) || app.board.detail_pending.contains(&n) { continue; }
-        if let Some(d) = app.issues.data.get(&n) {
+        if let Some(d) = app.session.issues.data.get(&n) {
             app.board.details.insert(n, model::BoardDetail::from_issue(d));
             continue;
         }
@@ -65,50 +64,16 @@ pub(crate) fn poll_details(app: &mut App) -> bool {
 /// Shared startup: file the requested numbers and resolve the repo
 /// off the async workers. Both the terminal and drive loops call this.
 pub(crate) fn bootstrap(app: &mut App, numbers: &[ItemRef]) {
-    app.initial_numbers = numbers.to_vec();
-    let repo = app.repo_flag.clone();
-    let (tx, rx) = std::sync::mpsc::channel();
-    app.auth.bootstrap_rx = Some(rx);
-    // `git` and `gh` subprocesses block: keep them off the async workers.
-    rt().spawn_blocking(move || {
-        let mut worker = App::new(repo);
-        worker.resolve_repo();
-        let _ = ghit_core::github::token();
-        let _ = tx.send(worker.repo_slug);
-    });
-    // Early auth probe: one cheap round-trip validates the token so a
-    // dead one prompts before the first real fetch fails into an empty
-    // sidebar. Scopes need a repo and follow in `poll_bootstrap`.
-    let (atx, arx) = std::sync::mpsc::channel();
-    app.auth.rx = Some(arx);
-    spawn_bg(async move {
-        let _ = atx.send(github::check_auth().await);
-    });
+    app.session.start(numbers);
 }
 
-pub(super) fn poll_bootstrap(app: &mut App) -> bool {
-    let Some(result) = app.auth.bootstrap_rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
-    app.auth.bootstrap_rx = None;
-    app.repo_slug = result;
-    // Repo-scoped access probe, once: the boot probe only checks the
-    // token itself, while scopes need a repo to read against.
-    if !app.auth.repo_probed {
-        app.auth.repo_probed = true;
-        if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
-            let (tx, rx) = std::sync::mpsc::channel();
-            app.auth.rx = Some(rx);
-            spawn_bg(async move {
-                let _ = tx.send(github::check_repo_access(&repo).await);
-            });
-        }
-    }
-    let numbers = std::mem::take(&mut app.initial_numbers);
+/// The repo resolved: load prefs and pins, open the requested items and
+/// start the first listing.
+fn land_bootstrap(app: &mut App, numbers: Vec<ItemRef>) {
     app.apply_prefs();
-    if let Some(key) = app.repo_key() {
-        let mut pins = github::load_pins(&key);
-        pins.retain(|n| !numbers.contains(n));
-        app.nav.pinned = pins.iter().copied().collect();
-        app.nav.pin_order = pins.clone();
+    if let Some(key) = app.session.repo_key() {
+        app.session.load_pins(&key, &numbers);
+        let pins = app.session.pins.order.clone();
         // The requested issue goes first; pins wait behind it.
         let opened = !numbers.is_empty();
         for n in numbers {
@@ -118,11 +83,11 @@ pub(super) fn poll_bootstrap(app: &mut App) -> bool {
         for n in pins {
             if !opened {
                 app.load_issue(n, false);
-            } else if !app.issues.data.contains_key(&n) || app.issues.partial.contains(&n) {
+            } else if !app.session.issues.data.contains_key(&n) || app.session.issues.partial.contains(&n) {
                 app.queue_issue(n, false);
             }
         }
-        app.sections.link = github::StoreLink::open(&key);
+        app.session.sections.link = github::StoreLink::open(&key);
         if app.sidebar.query_active.trim().is_empty() {
             app.hydrate_cached_sections();
             // Another process holds the sync lease: its syncs land through
@@ -138,7 +103,6 @@ pub(super) fn poll_bootstrap(app: &mut App) -> bool {
     } else {
         for n in numbers { app.load_issue(n, false); }
     }
-    true
 }
 
 /// Status-line notice for a fetch that stopped at the shared row cap.
@@ -170,40 +134,38 @@ pub(super) async fn probe_says_changed(repo: &str, tx: &std::sync::mpsc::Sender<
     }
 }
 
-pub(crate) fn poll_sections(app: &mut App) -> bool {
-    poll_quiet_sync(app);
-    let Some(event) = app.sections.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
+/// Land what the session finished and turn each event into view changes.
+/// True when anything landed.
+/// Land every finished `Session` fetch at once.
+#[cfg(test)]
+pub(crate) fn poll_session(app: &mut App) -> bool {
+    let events = app.session.poll();
+    apply_session(app, events)
+}
+
+/// Apply `Session` events to view state. Returns whether any landed.
+pub(crate) fn apply_session(app: &mut App, events: Vec<SessionEvent>) -> bool {
+    let landed = !events.is_empty();
+    for event in events {
+        apply_event(app, event);
+    }
+    landed
+}
+
+fn apply_event(app: &mut App, event: SessionEvent) {
     match event {
-        github::SectionEvent::Progress { done, total } => {
-            app.sections.progress = Some((done, total));
-        }
-        // The fetch that hit the cap still lands its rows through Done;
-        // the notice only has to name the cap, once per fetch setting.
-        github::SectionEvent::Capped => {
-            if !app.sections.cap_notified {
-                app.sections.cap_notified = true;
-                app.notify(cap_notice());
-            }
-        }
-        github::SectionEvent::Unchanged => {
-            app.sections.rx = None;
-            app.sections.progress = None;
-            if std::mem::take(&mut app.sections.auto_refresh) {
-                app.sections.auto_refresh_interval = auto_refresh_interval_default();
-            }
-        }
-        github::SectionEvent::Done(result) => {
-            app.sections.rx = None;
-            app.sections.progress = None;
-            let auto = std::mem::take(&mut app.sections.auto_refresh);
-            if auto {
-                app.sections.auto_refresh_interval = if result.is_ok() {
-                    auto_refresh_interval_default()
-                } else {
-                    (app.sections.auto_refresh_interval * 2).min(RECENT_REFRESH_MAX_INTERVAL)
-                };
-            }
-            let replace = std::mem::take(&mut app.sections.replace);
+        SessionEvent::Bootstrapped { numbers } => land_bootstrap(app, numbers),
+        SessionEvent::AuthChecked(result) => match result {
+            Ok(missing) if missing.is_empty() => {}
+            Ok(missing) => app.open_reauth("token lacks scopes ghit needs".to_string(), missing, true),
+            // Only auth-class failures rise to the modal: re-auth can fix
+            // those, while a rate limit or outage just needs a status line.
+            Err(e) if github::is_auth_error(&e) => app.open_reauth(e, vec![], false),
+            Err(e) => app.notify(e),
+        },
+        SessionEvent::SectionsProgress | SessionEvent::SectionsUnchanged | SessionEvent::IssueProgress(_) => {}
+        SessionEvent::SectionsCapped => app.notify(cap_notice()),
+        SessionEvent::SectionsDone { result, replace, auto } => {
             if replace {
                 app.drop_unvisited_background();
             }
@@ -212,31 +174,46 @@ pub(crate) fn poll_sections(app: &mut App) -> bool {
                 Ok(rows) => land_rows(app, rows, replace, auto),
                 // Auto-refresh failures notify too: a silent empty
                 // sidebar is how under-scoped tokens went unnoticed.
-                // The backoff above still bounds the retry rate.
+                // The backoff in the session still bounds the retry rate.
                 Err(e) => { auth_failure(app, &e); app.notify(e); },
             }
         }
-    }
-    true
-}
-
-/// The holder's sync behind a query writes the store and lands no rows.
-/// A finished or dead sync frees the slot for the next cadence tick.
-fn poll_quiet_sync(app: &mut App) {
-    let Some(rx) = app.sections.sync_rx.as_ref() else { return };
-    let mut finished = false;
-    for event in rx.try_iter().collect::<Vec<_>>() {
-        match event {
-            github::SectionEvent::Done(result) => {
-                finished = true;
-                if let Err(e) = result { auth_failure(app, &e); }
+        SessionEvent::SyncFailed(e) => auth_failure(app, &e),
+        SessionEvent::IssueLoaded(number) => {
+            // An h/l step owns this number until it lands.
+            if app.nav.step_pending == Some(number) {
+                app.nav.step_pending = None;
             }
-            github::SectionEvent::Unchanged => finished = true,
-            _ => {}
+            if app.nav.current == Some(number) {
+                app.refresh_refs();
+                if app.visual_diff() { app.load_diff(number, false); }
+            }
+            if app.nav.requested == Some(number) {
+                app.show_issue(number);
+                app.bar.clear();
+                app.nav.focus = Focus::Main;
+                app.message.clear();
+            }
         }
-    }
-    if finished || app.sections.sync_rx.as_ref().is_some_and(|rx| matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected))) {
-        app.sections.sync_rx = None;
+        SessionEvent::IssueFailed { number, error } => {
+            // A stepped-to number that truly does not exist toasts
+            // "no #N" instead of the raw fetch error. reqwest folds the
+            // status into the error text, so a 404 substring marks
+            // absence; any other error keeps the existing error path
+            // and never claims "no more".
+            let stepped = app.nav.step_pending == Some(number);
+            if stepped {
+                app.nav.step_pending = None;
+            }
+            if stepped && error.contains("404") {
+                app.notify(format!("no {number}", number = number.display("")));
+            } else {
+                auth_failure(app, &error);
+                app.notify(error);
+            }
+        }
+        SessionEvent::SubIssuesLoaded(_) => {}
+        SessionEvent::SubIssuesFailed(e) => { auth_failure(app, &e); app.notify(e); }
     }
 }
 
@@ -251,7 +228,7 @@ pub(super) fn land_rows(app: &mut App, rows: Vec<ghit_core::github::Row>, replac
     let mut last = None;
     for row in rows {
         let n = row.issue.number;
-        if let Some(d) = app.issues.data.get_mut(&n) {
+        if let Some(d) = app.session.issues.data.get_mut(&n) {
             // Window listings refresh display fields only.
             // Body, comments, and review threads belong to
             // the full fetch and stay. Search hits carry no
@@ -266,13 +243,13 @@ pub(super) fn land_rows(app: &mut App, rows: Vec<ghit_core::github::Row>, replac
                 d.checks = row.issue.checks;
                 d.labels = row.issue.labels;
                 d.updated_at = row.issue.updated_at;
-                app.issues.statuses.insert(n, row.statuses);
+                app.session.issues.statuses.insert(n, row.statuses);
                 app.board.details.insert(n, row.detail);
             }
         } else {
-            if !row.complete { app.issues.partial.insert(n); }
-            app.issues.data.insert(n, row.issue);
-            app.issues.statuses.insert(n, row.statuses);
+            if !row.complete { app.session.issues.partial.insert(n); }
+            app.session.issues.data.insert(n, row.issue);
+            app.session.issues.statuses.insert(n, row.statuses);
             app.board.details.insert(n, row.detail);
             app.ensure_recent(n);
             last = Some(n);
@@ -294,8 +271,8 @@ fn evict_vanished_rows(app: &mut App, rows: &[ghit_core::github::Row]) {
         .visited
         .iter()
         .copied()
-        .chain(app.nav.pin_order.iter().copied())
-        .chain(app.nav.pinned.iter().copied())
+        .chain(app.session.pins.order.iter().copied())
+        .chain(app.session.pins.set.iter().copied())
         .chain(app.nav.current)
         .chain(app.nav.requested)
         .collect();
@@ -309,70 +286,4 @@ fn evict_vanished_rows(app: &mut App, rows: &[ghit_core::github::Row]) {
     if gone.is_empty() { return; }
     app.nav.recent.retain(|n| !gone.contains(n));
     for n in gone { app.drop_cached(n); }
-}
-
-pub(crate) fn poll_issues(app: &mut App) -> bool {
-    let ready: Vec<_> = app.issues.rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (number, event) in ready {
-        match event {
-            github::IssueEvent::Progress { done, total } => {
-                app.issues.progress.insert(number, (done, total));
-            }
-            github::IssueEvent::Done(result) => {
-                let result = result.map(|bundle| *bundle);
-                app.issues.progress.remove(&number);
-                app.issues.pending.remove(&number);
-                // An h/l step owns this number until it lands: remember
-                // before clearing so a 404 still toasts below.
-                let stepped = app.nav.step_pending == Some(number);
-                if stepped {
-                    app.nav.step_pending = None;
-                }
-                match result {
-                    Ok((data, statuses)) => {
-                        // Completing the full fetch never files the row:
-                        // viewing a recent row must not relocate it to
-                        // requested. Explicit actions file through
-                        // `ensure_visited` at their own site.
-                        app.issues.partial.remove(&number);
-                        // REST `issues/{n}` has no parent link: keep the
-                        // sub-issue fields the sections row already carried.
-                        let mut data = data;
-                        if let Some(old) = app.issues.data.get(&number) {
-                            data.parent = data.parent.or(old.parent);
-                            data.sub_summary = data.sub_summary.or(old.sub_summary);
-                        }
-                        app.issues.data.insert(number, data);
-                        app.issues.statuses.insert(number, statuses);
-                        if app.nav.current == Some(number) {
-                            app.refresh_refs();
-                            if app.visual_diff() { app.load_diff(number, false); }
-                        }
-                        if app.nav.requested == Some(number) {
-                            app.show_issue(number);
-                            app.bar.clear();
-                            app.nav.focus = Focus::Main;
-                            app.message.clear();
-                        }
-                    }
-                    Err(e) => {
-                        // A stepped-to number that truly does not exist
-                        // toasts "no #N" instead of the raw fetch error.
-                        // reqwest folds the status into the error text, so
-                        // a 404 substring marks absence; any other error
-                        // keeps the existing error path unchanged and never
-                        // claims "no more".
-                        if stepped && e.contains("404") {
-                            app.notify(format!("no {number}", number = number.display("")));
-                        } else {
-                            auth_failure(app, &e);
-                            app.notify(e);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    landed
 }
