@@ -4,6 +4,9 @@
 #[path = "jira_tests.rs"]
 mod tests;
 
+mod search;
+mod sync;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;

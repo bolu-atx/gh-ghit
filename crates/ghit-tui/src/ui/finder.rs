@@ -49,11 +49,12 @@ fn highlighted(text: &str, lit: &[usize], base: Style) -> Vec<Span<'static>> {
     spans
 }
 
-fn result_line(row: &FinderRow, active: bool, number_width: usize, width: usize) -> Line<'static> {
+fn result_line(
+    row: &FinderRow, number: &str, active: bool, number_width: usize, width: usize,
+) -> Line<'static> {
     let state = if active { theme::RowState::Active } else { theme::RowState::Plain };
     let bg = theme::row_bg(state, true);
     let (marker, marker_style) = theme::row_marker(state, true, "█ ");
-    let number = row.number.display("");
     let lead = number.chars().count();
     let tag = if row.is_pr { "PR" } else { "" };
     let room = width.saturating_sub(2 + number_width + 2 + 1 + tag.len() + 1);
@@ -66,7 +67,8 @@ fn result_line(row: &FinderRow, active: bool, number_width: usize, width: usize)
     let title_lit: Vec<usize> = row.indices.iter().filter_map(|i| i.checked_sub(lead + 1)).collect();
     let weight = |style: Style| if active { style.bold() } else { style };
     let mut spans = vec![Span::styled(marker, marker_style.bg(bg))];
-    spans.extend(highlighted(&number, &number_lit, Style::new().bg(bg).fg(state_color(&row.state)).bold()));
+    let number_style = Style::new().bg(bg).fg(state_color(&row.state)).bold();
+    spans.extend(highlighted(number, &number_lit, number_style));
     spans.push(Span::styled(" ".repeat(number_width - lead + 2), Style::new().bg(bg)));
     let used = 2 + number_width + 2 + title.chars().count();
     spans.extend(highlighted(&title, &title_lit, weight(Style::new().bg(bg).fg(paper()))));
@@ -123,10 +125,11 @@ pub(super) fn render_finder(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let visible = list.height as usize;
     let offset = (cursor + 1).saturating_sub(visible);
     let number_width = rows.iter().skip(offset).take(visible)
-        .map(|row| row.number.display("").len()).max().unwrap_or(0);
+        .map(|row| app.session.label(row.number).len()).max().unwrap_or(0);
     for (i, row) in rows.iter().enumerate().skip(offset).take(visible) {
         let rect = Rect::new(list.x, list.y + (i - offset) as u16, list.width, 1);
-        let line = result_line(row, i == cursor, number_width, list.width as usize);
+        let number = app.session.label(row.number);
+        let line = result_line(row, &number, i == cursor, number_width, list.width as usize);
         f.render_widget(Paragraph::new(line), rect);
         app.hits.finder_rows.push((rect, i));
     }

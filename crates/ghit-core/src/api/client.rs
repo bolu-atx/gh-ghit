@@ -162,6 +162,12 @@ pub(crate) fn rate_limit_until(
     None
 }
 
+/// Hold every call back until this unix second. Other backends (Jira's 429)
+/// share the one rate-limited state the fetch queue reads.
+pub fn note_rate_limit_until(until: u64) {
+    RATE_LIMIT_UNTIL.fetch_max(until, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Record the rate-limit headers of every reply, so auto-refresh can
 /// stay quiet until the quota resets instead of retrying into a 403.
 pub(super) fn note_rate_limit(res: &reqwest::Response) {

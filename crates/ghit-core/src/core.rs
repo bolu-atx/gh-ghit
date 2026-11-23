@@ -635,7 +635,7 @@ pub fn yank_issue_text(number: ItemRef, title: &str, url: &str) -> String {
     format!(
         "{number} {} — {url}",
         collapse_single_line(title),
-        number = number.display("")
+        number = number.label()
     )
 }
 
@@ -658,7 +658,7 @@ pub fn yank_diff_text(
         file.status,
         file.additions,
         file.deletions,
-        number = number.display("")
+        number = number.label()
     )
 }
 
@@ -674,7 +674,7 @@ pub fn yank_diff_line_text(
         "{number} {} — {filename}: \"{}\" — {url}",
         collapse_single_line(title),
         collapse_single_line(line),
-        number = number.display("")
+        number = number.label()
     )
 }
 
@@ -704,8 +704,8 @@ pub fn yank_ref_text(
             let mut out = format!(
                 "{current} refs {target} (body line {}): \"{snippet}\"",
                 idx + 1,
-                current = current.display(""),
-                target = target.display("")
+                current = current.label(),
+                target = target.label()
             );
             match (target_title, target_url) {
                 (Some(t), Some(u)) if !t.is_empty() && !u.is_empty() => {

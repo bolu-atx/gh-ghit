@@ -222,7 +222,7 @@ impl MapGraph {
     pub fn relation(&self, edge: usize) -> String {
         let (a, b, style) = self.edges[edge];
         let (from, to) = (&self.nodes[a], &self.nodes[b]);
-        let name = |node: &MapNode| node.number.map_or(node.title.clone(), |n| n.display(""));
+        let name = |node: &MapNode| node.number.map_or(node.title.clone(), |n| n.label());
         if style == EdgeStyle::Hub {
             return format!("{} is in milestone {}", name(from), to.title);
         }

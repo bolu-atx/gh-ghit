@@ -332,7 +332,7 @@ impl App {
             ..cur
         };
         if next.number < 1 {
-            self.notify(format!("no {}", next.display("")));
+            self.notify(format!("no {}", self.session.label(next)));
             return;
         }
         self.nav.step_pending = Some(next);
@@ -605,7 +605,7 @@ impl App {
             format!("https://github.com/issues/{n}", n = n.number)
         };
         open_in_browser(&url).ok();
-        self.notify(format!("opened {n} in browser", n = n.display("")));
+        self.notify(format!("opened {n} in browser", n = self.session.label(n)));
     }
 
     pub(crate) fn submit_bar(&mut self) {

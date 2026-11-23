@@ -254,7 +254,7 @@ const LINK_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(
 
 /// Window a sync walk covers: the given instance window, widened to
 /// `SYNC_MIN_HOURS`. 0 (all time) stays unbounded.
-fn sync_hours(window: u64) -> u64 {
+pub(crate) fn sync_hours(window: u64) -> u64 {
     if window == 0 { 0 } else { window.max(SYNC_MIN_HOURS) }
 }
 
@@ -414,7 +414,7 @@ pub fn cached_sections(repo: &str, hours: u64, show: [bool; 4]) -> Option<Vec<ap
 }
 
 fn stored_view(store: &store::Store, hours: u64, show: [bool; 4]) -> Option<Vec<api::Row>> {
-    store.sync_started_at()?;
+    store.sync_stamp()?;
     Some(api::visible_rows(store.rows().ok()?, chrono::Utc::now(), hours, show))
 }
 
@@ -443,7 +443,7 @@ impl StoreLink {
 
     fn new(store: store::Store, holder: String) -> Self {
         let version = store.data_version().unwrap_or_default();
-        let seen = store.sync_started_at();
+        let seen = store.sync_stamp();
         let mut link = Self { store, holder, holding: false, tried: std::time::Instant::now(), version, seen };
         link.claim(false, chrono::Utc::now().timestamp());
         link
@@ -485,11 +485,11 @@ impl StoreLink {
             return false;
         }
         self.version = version;
-        let started = self.store.sync_started_at();
-        if started == self.seen {
+        let stamp = self.store.sync_stamp();
+        if stamp == self.seen {
             return false;
         }
-        self.seen = started;
+        self.seen = stamp;
         true
     }
 
@@ -501,7 +501,7 @@ impl StoreLink {
     /// Every stored row, whatever the window and mask; `None` before the
     /// first sync. Local `/` queries filter these.
     pub fn all_rows(&self) -> Option<Vec<api::Row>> {
-        self.store.sync_started_at()?;
+        self.store.sync_stamp()?;
         self.store.rows().ok()
     }
 

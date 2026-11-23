@@ -108,7 +108,7 @@ pub fn sidebar_lines(
 ) -> (String, String, String, String, String, String) {
     let first = format!(
         "{}{} {}",
-        issue.number.display(""),
+        issue.number.label(),
         if pinned { " 📌" } else { "" },
         slug(&issue.title, 30.min(width))
     );

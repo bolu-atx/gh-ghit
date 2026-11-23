@@ -191,7 +191,7 @@ fn highlight_mentions(lines: &mut [Line<'_>], n: ItemRef, repo: Option<&str>) {
 
 /// Display-only line under the Details header meta: the will-close
 /// counterparts with their state chips. Empty pairs collapse the line.
-fn paired_line(d: &IssueData) -> Option<Line<'static>> {
+fn paired_line(d: &IssueData, session: &ghit_core::session::Session) -> Option<Line<'static>> {
     use crate::theme::{ink, muted, state_color};
     if d.paired.is_empty() {
         return None;
@@ -203,7 +203,7 @@ fn paired_line(d: &IssueData) -> Option<Line<'static>> {
         }
         let color = state_color(&pair.state);
         spans.push(Span::styled(
-            pair.number.display(""),
+            session.label(pair.number),
             Style::new().bg(ink()).fg(color).bold(),
         ));
         if !pair.state.is_empty() {
@@ -234,7 +234,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // The paired line renders with the header block and joins
     // `header_rows`, so clicking `#N` navigates to the counterpart.
     let paired = match (app.nav.tab, app.nav.current.and_then(|n| app.session.item(n))) {
-        (crate::app::Tab::Details, Some(d)) => paired_line(d)
+        (crate::app::Tab::Details, Some(d)) => paired_line(d, &app.session)
             .map(|line| wrap_lines(vec![line], inner_w))
             .unwrap_or_default(),
         _ => vec![],
@@ -266,7 +266,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         Some(d) => {
             let mut title = vec![
                 Span::styled(
-                    format!("{} ", d.number.display("")),
+                    format!("{} ", app.session.label(d.number)),
                     Style::new().fg(muted()),
                 ),
                 Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
@@ -356,7 +356,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         },
         None if app.pane_loading().main => {
             let label = app.nav.requested.map_or("Loading…".to_string(), |n| {
-                format!("Loading {n}…", n = n.display(""))
+                format!("Loading {n}…", n = app.session.label(n))
             });
             ratatui::text::Text::from(loading_body(&label, app.tick, usize::from(rows[4].height)))
         }

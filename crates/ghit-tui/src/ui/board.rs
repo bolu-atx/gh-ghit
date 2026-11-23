@@ -274,7 +274,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 let sel = app.board.col == i && app.board.row == ri;
                 let detail = c.number.and_then(|n| app.session.board_detail(n));
                 let expanded = app.board.expanded == Some((i, ri));
-                board_card(c, sel, expanded, detail, inner_w, &app.board.fields)
+                board_card(c, sel, expanded, detail, inner_w, &app.board.fields, &app.session)
             })
             .collect();
         let active = app.board.col == i;
@@ -418,6 +418,7 @@ fn board_card(
     detail: Option<&model::BoardDetail>,
     inner_width: u16,
     fields: &model::CardFields,
+    session: &ghit_core::session::Session,
 ) -> ListItem<'static> {
     use crate::theme::{amber, column_color, ink, muted, paper, teal};
     // The slug takes what the line leaves after the 2-cell marker and
@@ -428,7 +429,7 @@ fn board_card(
     let show_number = fields.number || expanded;
     let head = match (c.number, show_number) {
         (Some(n), true) => {
-            let prefix = format!("{n} ", n = n.display(""));
+            let prefix = format!("{n} ", n = session.label(n));
             let room = title_width.saturating_sub(prefix.chars().count()).max(1);
             format!("{prefix}{}", model::slug(&c.title, room))
         }

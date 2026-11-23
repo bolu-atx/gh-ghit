@@ -218,7 +218,7 @@ fn section_list(
             first.push(Span::styled(format!("{guide}{glyph} "), Style::new().fg(muted())));
         }
         first.extend(highlighted_spans(
-            format!("{n} ", n = n.display("")),
+            format!("{n} ", n = app.session.label(n)),
             &query,
             num_style,
         ));
@@ -603,7 +603,7 @@ pub(super) fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
         let state = if steps == cursor { theme::RowState::Active } else { theme::RowState::Plain };
         let (marker, marker_style) = theme::row_marker(state, focused, "▌ ");
         let bg = theme::row_bg(state, focused);
-        let head = number.display("");
+        let head = app.session.label(number);
         let room = (inner.width as usize).saturating_sub(2 + head.chars().count() + 1);
         let title = app.session.item(number)
             .filter(|issue| !issue.title.is_empty() && room > 1)
