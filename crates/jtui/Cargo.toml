@@ -1,0 +1,18 @@
+[package]
+name = "jtui"
+version.workspace = true
+edition.workspace = true
+description = "Terminal viewer for Jira issues and GitHub PRs"
+license.workspace = true
+repository.workspace = true
+keywords = ["jira", "github", "issues", "tui"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "jtui"
+path = "src/main.rs"
+
+[dependencies]
+ghit-core.workspace = true
+ghit-tui.workspace = true
+clap.workspace = true

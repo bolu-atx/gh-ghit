@@ -67,7 +67,7 @@ impl Session {
         if refresh == github::Refresh::Full { self.sections.last_full = now; }
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
-        let backend = self.issue_backend;
+        let backend = self.issue_backend.clone();
         self.enqueue(Kind::Sections, None, async move {
             if probe && backend.shares_github_sections()
                 && !probe_says_changed(&repo, &tx).await { return; }
@@ -117,7 +117,7 @@ impl Session {
         let (hours, show) = (self.sections.merged_window_hours, ctx.show);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.sync_rx = Some(rx);
-        let backend = self.issue_backend;
+        let backend = self.issue_backend.clone();
         self.enqueue(Kind::Sections, None, async move {
             if probe && backend.shares_github_sections()
                 && !probe_says_changed(&repo, &tx).await { return; }

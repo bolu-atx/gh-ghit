@@ -71,7 +71,7 @@ impl Session {
         self.subs.state.insert(number, model::LazyChildren::Loading);
         let tx = self.subs.tx.clone();
         let repo = self.repo_arg();
-        let backend = self.issue_backend;
+        let backend = self.issue_backend.clone();
         self.enqueue(Kind::Other, None, async move {
             let _ = tx.send((number, backend.fetch_sub_issues(&repo, number).await));
         }, view);
@@ -122,7 +122,7 @@ impl Session {
                 .and_then(|d| model::thread_reply_comment_id(&d.review_threads, thread_id)),
             _ => None,
         };
-        let backend = self.issue_backend;
+        let backend = self.issue_backend.clone();
         let is_pr = self.is_github_pr(number);
         let tx = self.sends.tx.clone();
         spawn_bg(async move {
@@ -157,7 +157,7 @@ impl Session {
     /// Close (`open` false) or reopen an item on a background thread.
     pub fn set_state(&mut self, number: ItemRef, open: bool) {
         let repo = self.repo_arg();
-        let backend = self.issue_backend;
+        let backend = self.issue_backend.clone();
         let is_pr = self.is_github_pr(number);
         let tx = self.sends.state_tx.clone();
         spawn_bg(async move {

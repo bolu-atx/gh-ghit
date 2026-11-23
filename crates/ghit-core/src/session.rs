@@ -130,6 +130,12 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn with_backend(repo_flag: Option<String>, backend: IssueBackend) -> Self {
+        let mut session = Self::new(repo_flag);
+        session.issue_backend = backend;
+        session
+    }
+
     pub fn new(repo_flag: Option<String>) -> Self {
         Self {
             issue_backend: IssueBackend::GitHub,
@@ -214,7 +220,7 @@ impl Session {
         if !self.issues.pending.insert(number) { return; }
         let tx = self.issues.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        let backend = self.issue_backend;
+        let backend = self.issue_backend.clone();
         let is_pr = self.is_github_pr(number);
         self.enqueue(Kind::Details, Some(number), async move {
             let result = if is_pr {

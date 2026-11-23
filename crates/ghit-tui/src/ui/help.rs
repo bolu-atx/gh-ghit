@@ -102,7 +102,7 @@ pub(super) fn render_shortcuts(f: &mut ratatui::Frame, area: Rect, app: &mut App
     for row in BANNER {
         lines.push(Line::styled(row, Style::new().bg(ink()).fg(amber())));
     }
-    lines.push(Line::styled(format!("ghit v{} · created by bolu-atx", env!("CARGO_PKG_VERSION")), Style::new().bg(ink()).fg(muted())));
+    lines.push(Line::styled(format!("{} v{} · created by bolu-atx", ghit_core::app_name(), env!("CARGO_PKG_VERSION")), Style::new().bg(ink()).fg(muted())));
     lines.push(Line::styled(
         "https://github.com/bolu-atx/gh-ghit",
         Style::new().bg(ink()).fg(teal()).underlined(),
