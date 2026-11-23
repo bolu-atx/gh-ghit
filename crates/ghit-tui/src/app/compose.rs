@@ -74,7 +74,7 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        if !self.session.issues.data.contains_key(&n) {
+        if !self.session.has_item(n) {
             self.notify("still loading: wait for the issue first".to_string());
             return;
         }
@@ -91,7 +91,7 @@ impl App {
             return None;
         }
         let n = self.nav.current?;
-        let files = self.session.diff.files.get(&n)?;
+        let files = self.session.diff_files(n)?;
         let fi = self.diff_file_at_cursor()?;
         let file = files.get(fi)?;
         let abs = self.diff.line?;
@@ -103,7 +103,7 @@ impl App {
         }
         let section: Vec<String> = self.hits.body_rows[header + 1..].to_vec();
         let cursor = vis - (header + 1);
-        let d = self.session.issues.data.get(&n)?;
+        let d = self.session.item(n)?;
         if let Some(thread_id) = model::thread_at_cursor(&section, cursor, file, &d.review_threads, crate::theme::comment_marker()) {
             return Some(ComposeTarget::Reply { thread_id });
         }

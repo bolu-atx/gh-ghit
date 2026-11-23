@@ -51,7 +51,7 @@ pub(super) fn render_compose(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     let body = c.body.clone();
     let cursor = c.cursor.min(body.chars().count());
     let (sending, mut view) = (c.sending, c.view);
-    let item_title = app.session.issues.data.get(&c.number).map(|d| d.title.clone());
+    let item_title = app.session.item(c.number).map(|d| d.title.clone());
     let title = crate::app::target_title(&c.target, c.number, item_title.as_deref());
 
     let popup = popup_rect(area);

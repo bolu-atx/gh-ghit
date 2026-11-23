@@ -11,8 +11,8 @@ fn a_failed_board_load_closes_the_board() {
     let mut app = super::test_support::sidebar_app(&[ItemRef::github(1)]);
     let (tx, rx) = std::sync::mpsc::channel();
     app.open(Entry::Board);
-    app.session.board.loading = true;
-    app.session.board.rx = Some(rx);
+    *app.session.board_test().loading = true;
+    *app.session.board_test().rx = Some(rx);
     tx.send(Err("boom".to_string())).unwrap();
     assert!(poll_session(&mut app));
     assert!(!board_open(&app));

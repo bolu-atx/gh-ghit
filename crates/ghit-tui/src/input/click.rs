@@ -219,7 +219,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
         app.nav.pane = Pane::Refs;
         if drag {
             app.refs.highlight = Some(n);
-        } else if app.session.refs.paired.contains(&n) {
+        } else if app.session.paired().contains(&n) {
             app.focus_content(Pane::Refs, Some(n));
             app.open_issue(n);
         } else {
@@ -265,7 +265,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
                 if let Some(f) = app.diff.row_files.get(row).copied().flatten() {
                     app.diff.cursor = f;
                     let expanded = app.nav.current.and_then(|n| {
-                        app.session.diff.files.get(&n).and_then(|fs| {
+                        app.session.diff_files(n).and_then(|fs| {
                             fs.get(f).map(|file| {
                                 app.diff.expanded_files.contains(&(n, file.filename.clone()))
                             })

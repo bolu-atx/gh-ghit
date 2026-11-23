@@ -240,7 +240,7 @@ impl App {
             }
         }
         self.nav.requested = Some(n);
-        if self.session.issues.partial.contains(&n) { self.load_issue(n, false); }
+        if self.session.is_partial(n) { self.load_issue(n, false); }
         self.nav.current = Some(n);
         if self.nav.step_pending == Some(n) {
             self.nav.step_pending = None;
@@ -364,7 +364,7 @@ impl App {
 
     /// The right refs pane shows only when toggled on and non-empty.
     pub(crate) fn refs_visible(&self) -> bool {
-        self.refs.show && !(self.session.refs.numbers.is_empty() && self.session.refs.paired.is_empty())
+        self.refs.show && !(self.session.mentioned().is_empty() && self.session.paired().is_empty())
     }
 
     /// The Labels pane shows once the repo has labels or milestones, or
@@ -568,7 +568,7 @@ impl App {
     }
 
     pub(crate) fn visual_diff(&self) -> bool {
-        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.session.issues.data.get(&n)).is_some_and(|d| d.is_pr)
+        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.session.item(n)).is_some_and(|d| d.is_pr)
     }
 
     /// The Map tab shows, with or without an open item.
@@ -597,9 +597,9 @@ impl App {
     }
 
     pub(crate) fn open_number(&mut self, n: ItemRef) {
-        let url = if let Some(d) = self.session.issues.data.get(&n) {
+        let url = if let Some(d) = self.session.item(n) {
             d.url.clone()
-        } else if let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) {
+        } else if let Some(repo) = self.session.repo() {
             format!("https://github.com/{repo}/issues/{n}", n = n.number)
         } else {
             format!("https://github.com/issues/{n}", n = n.number)

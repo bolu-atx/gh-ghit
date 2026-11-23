@@ -12,26 +12,31 @@ mod commands;
 mod diff;
 mod issues;
 mod listing;
+mod read;
 mod sections;
 mod sends;
 
 #[cfg(test)]
 mod events_tests;
+#[cfg(any(test, feature = "test-support"))]
+mod test_support;
 
 use std::collections::HashSet;
 use std::time::Instant;
 
-pub use auth::AuthState;
-pub use backfill::{BACKFILL_DELAY, BackfillFeed};
-pub use board::{BoardFeed, DetailResult};
-pub use diff::{DiffData, DiffResult, HeadFiles};
 pub use listing::{Held, Landed, PollCtx};
-pub use issues::{IssueStore, SubIssueLoads, SubIssueResult};
-pub use sends::{ComposeTarget, SendResult, Sends, StateResult};
+pub use sends::ComposeTarget;
 pub use sections::{
-    FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, STATUS_REFRESH_INTERVAL, SectionFeed,
+    FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, STATUS_REFRESH_INTERVAL,
     auto_refresh_interval_default, refresh_interval_from, refresh_plan,
 };
+
+use auth::AuthState;
+use board::BoardFeed;
+use diff::{DiffData, HeadFiles};
+use issues::{IssueStore, SubIssueLoads};
+use sections::SectionFeed;
+use sends::Sends;
 
 use crate::backend::IssueBackend;
 use crate::core::Kind;
@@ -42,18 +47,18 @@ use crate::{core, github};
 
 /// User pins: the set for lookups and the order they list in.
 #[derive(Default)]
-pub struct Pins {
-    pub set: HashSet<ItemRef>,
-    pub order: Vec<ItemRef>,
+pub(crate) struct Pins {
+    pub(crate) set: HashSet<ItemRef>,
+    pub(crate) order: Vec<ItemRef>,
 }
 
 /// Items the open issue refers to: mentions, and the will-close
 /// counterparts listed apart from them.
 #[derive(Default)]
-pub struct Refs {
-    pub numbers: Vec<ItemRef>,
+pub(crate) struct Refs {
+    pub(crate) numbers: Vec<ItemRef>,
     /// Kept disjoint from `numbers` so a row has one behavior.
-    pub paired: Vec<ItemRef>,
+    pub(crate) paired: Vec<ItemRef>,
 }
 
 /// What a poll landed. The front end turns these into view changes.
@@ -107,21 +112,21 @@ pub enum SessionEvent {
 }
 
 pub struct Session {
-    pub issue_backend: IssueBackend,
-    pub issues: IssueStore,
-    pub sections: SectionFeed,
-    pub subs: SubIssueLoads,
-    pub auth: AuthState,
-    pub refs: Refs,
-    pub pins: Pins,
-    pub board: BoardFeed,
-    pub diff: DiffData,
-    pub sends: Sends,
-    pub repo_flag: Option<String>,
-    pub repo_slug: Option<String>,
-    pub initial_numbers: Vec<ItemRef>,
+    issue_backend: IssueBackend,
+    issues: IssueStore,
+    sections: SectionFeed,
+    subs: SubIssueLoads,
+    auth: AuthState,
+    refs: Refs,
+    pins: Pins,
+    board: BoardFeed,
+    diff: DiffData,
+    sends: Sends,
+    repo_flag: Option<String>,
+    repo_slug: Option<String>,
+    initial_numbers: Vec<ItemRef>,
     /// Queue and run-count for every background fetch; see `fetch_queue`.
-    pub fetches: Fetches,
+    fetches: Fetches,
 }
 
 impl Session {
@@ -233,6 +238,19 @@ impl Session {
         pins.retain(|n| !exclude.contains(n));
         self.pins.set = pins.iter().copied().collect();
         self.pins.order = pins;
+    }
+
+    /// Replace the refs the open item shows: its mentions, then the
+    /// will-close counterparts kept apart from them.
+    pub fn set_refs(&mut self, mentioned: Vec<ItemRef>, paired: Vec<ItemRef>) {
+        self.refs.numbers = mentioned;
+        self.refs.paired = paired;
+    }
+
+    /// The open item refers to nothing to list.
+    pub fn clear_refs(&mut self) {
+        self.refs.numbers.clear();
+        self.refs.paired.clear();
     }
 
     /// Flip the pin on `number` and save the list. Returns whether it is

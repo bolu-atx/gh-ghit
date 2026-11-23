@@ -33,18 +33,18 @@ impl App {
             .visited
             .iter()
             .copied()
-            .chain(self.session.pins.order.iter().copied())
-            .chain(self.session.pins.set.iter().copied())
+            .chain(self.session.pins().iter().copied())
+            .chain(self.session.pinned().iter().copied())
             .collect();
         // REST sub-issue rows are a session cache: keep them so the next
         // expand of their parent still renders titles.
-        for state in self.session.subs.state.values() {
+        for state in self.session.sub_states().values() {
             if let model::LazyChildren::Loaded(numbers) = state {
                 keep.extend(numbers.iter().copied());
             }
         }
         self.nav.recent.retain(|n| keep.contains(n));
-        for n in self.session.issues.partial.iter().copied().collect::<Vec<_>>() {
+        for n in self.session.partial_items().collect::<Vec<_>>() {
             if !keep.contains(&n) {
                 self.drop_cached(n);
             }
@@ -53,13 +53,7 @@ impl App {
 
     /// Remove every cached payload for `n` so a revisit fetches again.
     pub(super) fn drop_cached(&mut self, n: ItemRef) {
-        self.session.issues.partial.remove(&n);
-        self.session.issues.progress.remove(&n);
-        self.session.issues.data.remove(&n);
-        self.session.issues.statuses.remove(&n);
-        self.session.board.details.remove(&n);
-        self.session.diff.files.remove(&n);
-        self.session.diff.pending.remove(&n);
+        self.session.drop_cached(n);
     }
 
     /// Evict the highlighted sidebar row: drop it from the pane lists and
@@ -80,7 +74,7 @@ impl App {
             self.notify("no row to evict".to_string());
             return;
         };
-        if self.session.pins.set.contains(&n) || self.session.pins.order.contains(&n) {
+        if self.session.is_pinned(n) || self.session.pins().contains(&n) {
             self.notify(format!(
                 "{n} is pinned — unpin with p first",
                 n = n.display("")
@@ -97,8 +91,8 @@ impl App {
             number: n,
             visited_at: self.nav.visited.iter().position(|x| *x == n),
             recent_at: self.nav.recent.iter().position(|x| *x == n),
-            data: self.session.issues.data.get(&n).cloned().map(Box::new),
-            statuses: self.session.issues.statuses.get(&n).cloned(),
+            data: self.session.item(n).cloned().map(Box::new),
+            statuses: self.session.statuses(n).map(|s| s.to_vec()),
             row_expanded: self.diff.expanded_rows.contains(&n),
         };
         self.nav.visited.retain(|x| *x != n);
@@ -117,8 +111,7 @@ impl App {
             None => {
                 self.nav.current = None;
                 self.nav.requested = None;
-                self.session.refs.numbers.clear();
-                self.session.refs.paired.clear();
+                self.session.clear_refs();
                 self.nav.scroll = 0;
                 self.sync_selection();
             }
@@ -128,7 +121,7 @@ impl App {
 
     pub(crate) fn load_issue(&mut self, number: ItemRef, force: bool) {
         self.nav.requested = Some(number);
-        if !force && self.session.issues.data.contains_key(&number) && !self.session.issues.partial.contains(&number) {
+        if !force && self.session.has_item(number) && !self.session.is_partial(number) {
             self.show_issue(number);
             self.bar.clear();
             self.nav.focus = Focus::Main;
@@ -146,13 +139,13 @@ impl App {
 
     /// Title subtitle for Refs: mention/pair counts (Refs has no sort).
     pub(crate) fn refs_subtitle(&self) -> String {
-        if self.session.refs.paired.is_empty() {
-            format!("{} mentioned", self.session.refs.numbers.len())
+        if self.session.paired().is_empty() {
+            format!("{} mentioned", self.session.mentioned().len())
         } else {
             format!(
                 "{} mentioned · {} paired",
-                self.session.refs.numbers.len(),
-                self.session.refs.paired.len()
+                self.session.mentioned().len(),
+                self.session.paired().len()
             )
         }
     }
@@ -161,8 +154,8 @@ impl App {
     pub(crate) fn refs_footer(&self) -> String {
         format!(
             "mentioned ({}) · paired ({})",
-            self.session.refs.numbers.len(),
-            self.session.refs.paired.len()
+            self.session.mentioned().len(),
+            self.session.paired().len()
         )
     }
 
@@ -185,17 +178,17 @@ impl App {
     /// Display rows for the refs pane: mentioned numbers, then a `Paired`
     /// divider with the will-close counterparts. Empty sections collapse.
     pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
-        let mut rows: Vec<model::SideRow> = self.session.refs.numbers.iter().copied().map(model::SideRow::Item).collect();
-        if !self.session.refs.paired.is_empty() {
+        let mut rows: Vec<model::SideRow> = self.session.mentioned().iter().copied().map(model::SideRow::Item).collect();
+        if !self.session.paired().is_empty() {
             rows.push(model::SideRow::Divider("Paired".to_string()));
-            rows.extend(self.session.refs.paired.iter().copied().map(model::SideRow::Item));
+            rows.extend(self.session.paired().iter().copied().map(model::SideRow::Item));
         }
         rows
     }
 
     /// j/k order for the refs pane, skipping the divider.
     pub(crate) fn ref_order(&self) -> Vec<ItemRef> {
-        self.session.refs.numbers.iter().chain(self.session.refs.paired.iter()).copied().collect()
+        self.session.mentioned().iter().chain(self.session.paired().iter()).copied().collect()
     }
 
     /// Enter on a refs row: paired rows open like sidebar rows; mention
@@ -223,13 +216,11 @@ impl App {
     /// `current`.
     pub(crate) fn refresh_refs(&mut self) {
         let Some(n) = self.nav.current else {
-            self.session.refs.numbers.clear();
-            self.session.refs.paired.clear();
+            self.session.clear_refs();
             return;
         };
-        let Some(d) = self.session.issues.data.get(&n) else {
-            self.session.refs.numbers.clear();
-            self.session.refs.paired.clear();
+        let Some(d) = self.session.item(n) else {
+            self.session.clear_refs();
             return;
         };
         // Pairs win over mentions so each row has one behavior: the
@@ -245,10 +236,9 @@ impl App {
             .into_iter()
             .filter(|m| *m != n && !paired.contains(m))
             .collect();
-        self.session.refs.numbers = nums;
-        self.session.refs.paired = paired;
+        self.session.set_refs(nums, paired);
         for m in self.ref_order() {
-            if !self.session.issues.data.contains_key(&m) {
+            if !self.session.has_item(m) {
                 self.queue_issue(m, false);
             }
         }
@@ -275,8 +265,7 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone());
-        if let Some(owner) = github::board_owner(repo.as_deref()) {
+        if let Some(owner) = github::board_owner(self.session.repo()) {
             github::invalidate(&[github::Key::Board { owner }]);
         }
         self.load_issue(n, true);
@@ -293,7 +282,7 @@ impl App {
     pub(crate) fn refresh_listing(&mut self) {
         if self.sidebar.query_active.trim().is_empty() {
             self.session.take_over_lease();
-            self.session.sections.refresh = github::Refresh::Full;
+            self.session.request_full_listing();
             self.merge_recent_sections();
         } else if !self.reread_github(false) {
             let q = self.sidebar.query_active.clone();
@@ -306,11 +295,11 @@ impl App {
     /// issue/PR. `None` means `yank` should explain instead of copying.
     pub(crate) fn yank_text(&self) -> Option<String> {
         let current = self.nav.current?;
-        let d = self.session.issues.data.get(&current)?;
+        let d = self.session.item(current)?;
         let repo = self.session.repo_key();
         if self.nav.pane == Pane::Refs {
             let t = self.refs.highlight?;
-            let target = self.session.issues.data.get(&t);
+            let target = self.session.item(t);
             if let Some(text) = core::yank_ref_text(
                 current,
                 t,
@@ -327,7 +316,7 @@ impl App {
             return Some(t.display(""));
         }
         if self.nav.tab == Tab::Visual && d.is_pr {
-            let files = self.session.diff.files.get(&current)?;
+            let files = self.session.diff_files(current)?;
             if files.is_empty() {
                 return None;
             }

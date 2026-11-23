@@ -98,7 +98,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::SubmitReview => app.submit_pending_review(),
         Action::ToggleRow => app.toggle_row_expansion(),
         Action::MergedWindow => {
-            app.session.sections.merged_window_hours = core::cycle_window(app.session.sections.merged_window_hours);
+            app.session.set_merged_window(core::cycle_window(app.session.merged_window_hours()));
             app.reload_recent();
             app.persist_prefs();
             app.notify(format!("merged window: {}", app.window_label()));
@@ -214,7 +214,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::WindowAll => app.set_window(0),
         Action::WindowReset => app.reset_recent_default(),
         Action::FormatCycleWindow => {
-            app.set_window(core::cycle_window(app.session.sections.merged_window_hours));
+            app.set_window(core::cycle_window(app.session.merged_window_hours()));
         }
         // List toggles refetch: a hidden list is left out of the sections
         // query. They never edit the query text.
@@ -284,7 +284,7 @@ fn open_row(app: &mut App) {
 /// `Z`: fold every parent, or unfold all when any is folded.
 fn fold_all(app: &mut App) {
     let (_, _, recent) = app.pane_groups(false, true);
-    let all = core::tree_rows(&recent, &app.session.issues.data, &Default::default(), &app.session.subs.state);
+    let all = core::tree_rows(&recent, app.session.items(), &Default::default(), app.session.sub_states());
     let parents: Vec<ItemRef> = all.iter().filter_map(|row| match row {
         ghit_core::model::SideRow::Tree { number, has_children: true, .. } => Some(*number),
         _ => None,
@@ -325,7 +325,7 @@ fn tree_step(app: &mut App, action: Action) {
             app.sidebar.folded_issues.insert(n);
         }
         Action::TreeCollapse if depth > 0 => {
-            if let Some(parent) = app.session.issues.data.get(&n).and_then(|d| d.parent) {
+            if let Some(parent) = app.session.item(n).and_then(|d| d.parent) {
                 app.request_issue(parent);
             }
         }

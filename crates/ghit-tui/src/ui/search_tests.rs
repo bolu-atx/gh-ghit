@@ -11,7 +11,7 @@ fn main_app(body: &str) -> App {
     let mut app = loaded_app();
     let mut d = sample(ItemRef::github(7));
     d.body = body.to_string();
-    app.session.issues.data.insert(ItemRef::github(7), d);
+    app.session.issues_test().data.insert(ItemRef::github(7), d);
     app.nav.pane = Pane::Main;
     app.nav.focus = Focus::Main;
     app
@@ -174,15 +174,15 @@ fn sidebar_focus_keeps_the_row_search() {
 fn diff_app() -> App {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
     let file = |name: &str, patch: &str| DiffFile {
         filename: name.into(), status: "modified".into(), additions: 1, deletions: 0, patch: patch.into(),
     };
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         file("src/a.rs", "@@ -1 +1 @@\n-old\n+new needle"),
         file("src/b.rs", "@@ -1 +1 @@\n-x\n+hidden needle here"),
     ]);

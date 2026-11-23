@@ -327,7 +327,7 @@ fn a_store_reread_keeps_the_selection_and_a_new_center_takes_it() {
         .index_of(NodeId::Item(ItemRef::github(8)))
         .unwrap()]
     .clone();
-    app.session.issues.data.insert(
+    app.session.issues_test().data.insert(
         ItemRef::github(11),
         super::test_support::sample(ItemRef::github(11)),
     );
@@ -889,7 +889,7 @@ fn the_map_is_its_own_view_with_no_item_open() {
     assert!(!tabs.contains("comment"), "no item, so nothing to comment on: {tabs}");
     // A request still loading leaves the map up: it reads only the store.
     app.nav.requested = Some(ItemRef::github(7));
-    app.session.issues.pending.insert(ItemRef::github(7));
+    app.session.issues_test().pending.insert(ItemRef::github(7));
     let text = super::test_support::frame_text(&mut app);
     assert!(text.contains("whole repo") && !text.contains("Loading #7"), "{text}");
 }

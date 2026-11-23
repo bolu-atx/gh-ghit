@@ -6,18 +6,18 @@ use std::sync::mpsc::{Receiver, Sender};
 use crate::model::{BoardData, BoardDetail, ItemRef};
 
 /// One card-detail fetch result.
-pub type DetailResult = (ItemRef, Result<BoardDetail, String>);
+pub(crate) type DetailResult = (ItemRef, Result<BoardDetail, String>);
 
 /// The board payload and its in-flight fetch, plus the per-item card
 /// details (filled from listings, issues or a batch fetch).
-pub struct BoardFeed {
-    pub data: Option<BoardData>,
-    pub loading: bool,
-    pub rx: Option<Receiver<Result<BoardData, String>>>,
-    pub details: HashMap<ItemRef, BoardDetail>,
-    pub detail_pending: HashSet<ItemRef>,
-    pub detail_tx: Sender<DetailResult>,
-    pub detail_rx: Receiver<DetailResult>,
+pub(crate) struct BoardFeed {
+    pub(crate) data: Option<BoardData>,
+    pub(crate) loading: bool,
+    pub(crate) rx: Option<Receiver<Result<BoardData, String>>>,
+    pub(crate) details: HashMap<ItemRef, BoardDetail>,
+    pub(crate) detail_pending: HashSet<ItemRef>,
+    pub(crate) detail_tx: Sender<DetailResult>,
+    pub(crate) detail_rx: Receiver<DetailResult>,
 }
 
 impl BoardFeed {

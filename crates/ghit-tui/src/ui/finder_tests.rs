@@ -23,8 +23,8 @@ fn app() -> App {
         let mut data = sample(ItemRef::github(n));
         data.title = title.to_string();
         data.is_pr = pr;
-        app.session.issues.data.insert(ItemRef::github(n), data);
-        app.session.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.session.issues_test().data.insert(ItemRef::github(n), data);
+        app.session.issues_test().statuses.insert(ItemRef::github(n), vec![]);
     }
     app
 }

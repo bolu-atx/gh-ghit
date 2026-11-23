@@ -12,12 +12,12 @@ use ghit_core::model::ItemRef;
 #[test]
 fn expanded_row_detail_shifts_hits_below() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     for n in [7, 9] {
-        app.session.issues
+        app.session.issues_test()
             .data
             .insert(ItemRef::github(n), sample(ItemRef::github(n)));
-        app.session.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.session.issues_test().statuses.insert(ItemRef::github(n), vec![]);
         app.nav.visited.push(ItemRef::github(n));
     }
     let rows = app.issue_rows();
@@ -75,15 +75,15 @@ fn expanded_row_detail_shifts_hits_below() {
 fn sidebar_click_focuses_recent_before_opening() {
     for (is_pr, pane) in [(false, Pane::Issues), (true, Pane::PRs)] {
         let mut app = App::new(Some("o/r".to_string()));
-        app.session.repo_slug = Some("o/r".to_string());
+        app.session.set_repo_slug("o/r");
         let mut recent = sample(ItemRef::github(9));
         recent.is_pr = is_pr;
-        app.session.issues
+        app.session.issues_test()
             .data
             .insert(ItemRef::github(7), sample(ItemRef::github(7)));
-        app.session.issues.data.insert(ItemRef::github(9), recent);
-        app.session.issues.statuses.insert(ItemRef::github(7), vec![]);
-        app.session.issues.statuses.insert(ItemRef::github(9), vec![]);
+        app.session.issues_test().data.insert(ItemRef::github(9), recent);
+        app.session.issues_test().statuses.insert(ItemRef::github(7), vec![]);
+        app.session.issues_test().statuses.insert(ItemRef::github(9), vec![]);
         app.ensure_visited(ItemRef::github(7));
         app.ensure_recent(ItemRef::github(9));
         app.show_issue(ItemRef::github(7));

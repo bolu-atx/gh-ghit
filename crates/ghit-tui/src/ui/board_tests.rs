@@ -32,13 +32,13 @@ fn board_filter_form_clicks_toggle_fields_and_focus_text() {
     handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 0, 0));
     assert!(app.format_open());
     assert_eq!((app.board.col, app.board.row), pos);
-    assert!(app.session.board.data.is_some());
+    assert!(app.session.board_test().data.is_some());
 }
 
 #[test]
 fn board_loading_shows_while_loading() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.board.loading = true;
+    *app.session.board_test().loading = true;
     app.open(crate::app::Entry::Board);
     let text = frame_text(&mut app);
     assert!(text.contains("Fetching") && text.contains("Loading board…"), "loading body");
@@ -74,7 +74,7 @@ fn board_header_links_milestones_and_project() {
 #[test]
 fn board_headers_show_card_counts() {
     let mut app = board_app(2);
-    let board = app.session.board.data.as_mut().expect("board");
+    let board = app.session.board_mut().expect("board");
     board.order.push("Done".to_string());
     board.items.push(BoardItem {
         title: "Card 2".to_string(),
@@ -93,7 +93,7 @@ fn board_headers_show_card_counts() {
 #[test]
 fn board_columns_fill_a_wide_modal() {
     let mut app = board_app(3);
-    let board = app.session.board.data.as_mut().expect("board");
+    let board = app.session.board_mut().expect("board");
     board.order = vec!["Todo".to_string(), "Doing".to_string(), "Done".to_string()];
     board.items[1].status = Some("Doing".to_string());
     board.items[2].status = Some("Done".to_string());
@@ -118,7 +118,7 @@ fn board_columns_fill_a_wide_modal() {
 #[test]
 fn board_empty_column_shows_empty_state() {
     let mut app = board_app(1);
-    app.session.board.data.as_mut().expect("board").order.push("Done".to_string());
+    app.session.board_mut().expect("board").order.push("Done".to_string());
     let text = frame_text(&mut app);
     assert!(text.contains("Done (0)"), "zero count missing: {text}");
     assert!(text.contains("no cards"), "empty label missing: {text}");
@@ -130,7 +130,7 @@ fn board_filter_narrows_columns_then_x_restores() {
     // Enter/Esc persist the filter, so isolate the data dir.
     let _prefs = TempPrefs::new();
     let mut app = board_app(2);
-    let board = app.session.board.data.as_mut().expect("board");
+    let board = app.session.board_mut().expect("board");
     board.order.push("Done".to_string());
     board.items.push(BoardItem {
         title: "Other card".to_string(),
@@ -180,7 +180,7 @@ fn board_filter_narrows_columns_then_x_restores() {
 #[test]
 fn board_card_fields_render_when_on_and_hide_when_off() {
     let mut app = board_app(1);
-    let board = app.session.board.data.as_mut().expect("board");
+    let board = app.session.board_mut().expect("board");
     board.items[0] = BoardItem {
         title: "Ship board".to_string(),
         number: Some(ItemRef::github(102)),
@@ -193,7 +193,7 @@ fn board_card_fields_render_when_on_and_hide_when_off() {
             "body": "", "assignees": [{"login": "amy"}], "isDraft": true,
         }),
     };
-    app.session.board.details.insert(ItemRef::github(102), BoardDetail {
+    app.session.board_test().details.insert(ItemRef::github(102), BoardDetail {
         created: "2026-11-01".to_string(),
         updated: "2026-11-05".to_string(),
         comments: 2,
@@ -219,7 +219,7 @@ fn board_card_fields_render_when_on_and_hide_when_off() {
     app.board.fields.pr_state = true;
     let text = frame_text(&mut app);
     assert!(text.contains("v1 · Done · @amy · draft"), "meta line: {text}");
-    app.session.board.data.as_mut().expect("board").items[0].content["type"] =
+    app.session.board_mut().expect("board").items[0].content["type"] =
         serde_json::json!("Issue");
     let text = frame_text(&mut app);
     assert!(!text.contains("draft") && !text.contains("ready"), "issues skip pr state: {text}");
@@ -231,7 +231,7 @@ fn board_footer_shows_loading_then_dates() {
     let before = frame_text(&mut app);
     assert!(before.contains("● x"), "{before}");
     assert!(before.contains("…"), "date cell loads in");
-    app.session.board.details.insert(ItemRef::github(100), BoardDetail {
+    app.session.board_test().details.insert(ItemRef::github(100), BoardDetail {
         created: "2026-11-01".to_string(),
         updated: "2026-11-05".to_string(),
         comments: 2,

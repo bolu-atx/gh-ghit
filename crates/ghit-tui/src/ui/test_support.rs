@@ -12,7 +12,7 @@ use ghit_core::model::ItemRef;
 
 pub(super) fn board_app(n_cards: usize) -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     let items: Vec<BoardItem> = (0..n_cards)
         .map(|i| BoardItem {
             title: format!("Card {i}"),
@@ -28,7 +28,7 @@ pub(super) fn board_app(n_cards: usize) -> App {
             }),
         })
         .collect();
-    app.session.board.data = Some(BoardData {
+    *app.session.board_test().data = Some(BoardData {
         title: "Roadmap".to_string(),
         order: vec!["Todo".to_string()],
         items,
@@ -89,13 +89,13 @@ pub(super) fn sample(number: ItemRef) -> IssueData {
 
 pub(super) fn loaded_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     let mut pr = sample(ItemRef::github(9));
     pr.is_pr = true;
     for d in [sample(ItemRef::github(7)), pr] {
         let n = d.number;
-        app.session.issues.data.insert(n, d);
-        app.session.issues.statuses.insert(n, vec![]);
+        app.session.issues_test().data.insert(n, d);
+        app.session.issues_test().statuses.insert(n, vec![]);
         app.nav.visited.push(n);
     }
     app.show_issue(ItemRef::github(7));
@@ -162,9 +162,9 @@ pub(super) fn check_pr(number: ItemRef, checks: Option<ghit_core::model::CheckSt
 
 pub(super) fn check_app(number: ItemRef, checks: Option<ghit_core::model::CheckState>) -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
-    app.session.issues.data.insert(number, check_pr(number, checks));
-    app.session.issues.statuses.insert(number, vec![]);
+    app.session.set_repo_slug("o/r");
+    app.session.issues_test().data.insert(number, check_pr(number, checks));
+    app.session.issues_test().statuses.insert(number, vec![]);
     app.nav.visited.push(number);
     app.show_issue(number);
     app

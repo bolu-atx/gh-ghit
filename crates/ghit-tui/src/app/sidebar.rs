@@ -1,6 +1,7 @@
 //! Sidebar rows: sections fetch and merge, search, filters, sort, saved queries and auto-refresh.
 
 use std::collections::HashSet;
+#[cfg(test)]
 use std::time::Instant;
 
 use ratatui::widgets::ListState;
@@ -205,14 +206,10 @@ impl App {
     /// no request. The active query keeps its text and refetches; the
     /// window only changes the search's `updated:` token.
     pub(crate) fn reload_recent(&mut self) {
-        self.session.sections.cap_notified = false;
+        self.session.reset_cap_notice();
         if self.sidebar.query_active.trim().is_empty() {
             // A search still in flight must not replace the listing later.
-            if std::mem::take(&mut self.session.sections.replace) {
-                self.session.sections.rx = None;
-                self.session.sections.progress = None;
-                self.session.sections.auto_refresh = false;
-            }
+            self.session.cancel_pending_search();
             self.reread_sections();
         } else {
             self.drop_unvisited_background();
@@ -222,7 +219,7 @@ impl App {
 
     /// Set the merged/closed window and reload the active view.
     pub(crate) fn set_window(&mut self, hours: u64) {
-        self.session.sections.merged_window_hours = hours;
+        self.session.set_merged_window(hours);
         self.reload_recent();
         self.persist_prefs();
         self.notify(format!("merged window: {}", self.window_label()));
@@ -234,7 +231,7 @@ impl App {
         self.sidebar.query_active.clear();
         self.sidebar.query_draft.clear();
         self.set_format_edit(crate::app::FormatEdit::None);
-        self.session.sections.merged_window_hours = core::DEFAULT_WINDOW_HOURS;
+        self.session.set_merged_window(core::DEFAULT_WINDOW_HOURS);
         self.reload_recent();
         self.persist_prefs();
         self.notify("recent: default query and window".to_string());
@@ -244,7 +241,7 @@ impl App {
     /// answer lands no rows and names the GitHub action instead of
     /// calling the network.
     pub(crate) fn run_gh_search(&mut self, query: String) {
-        self.session.sections.cap_notified = false;
+        self.session.reset_cap_notice();
         self.sidebar.query_github = None;
         if let Some(rows) = self.session.local_query_rows(&query) {
             self.notify(format!("query: {query} ({} local)", rows.len()));
@@ -282,7 +279,7 @@ impl App {
             self.notify("no query: F writes one, then H searches GitHub".to_string());
             return;
         }
-        self.session.sections.cap_notified = false;
+        self.session.reset_cap_notice();
         self.notify(format!("searching GitHub: {query}"));
         self.search_fetch(query);
     }
@@ -300,11 +297,7 @@ impl App {
     /// Land local query rows as a search result: replace semantics, and any
     /// fetch in flight is abandoned so it cannot land over them.
     fn land_local_query(&mut self, rows: Vec<github::Row>, auto: bool) {
-        self.session.sections.rx = None;
-        self.session.sections.progress = None;
-        self.session.sections.replace = false;
-        self.session.sections.auto_refresh = false;
-        self.session.sections.last_fetch = Instant::now();
+        self.session.settle_local_rows();
         self.drop_unvisited_background();
         let numbers: Vec<ItemRef> = rows.iter().map(|row| row.issue.number).collect();
         self.land_rows(rows, true, auto);
@@ -329,29 +322,29 @@ impl App {
         } else {
             (self.sidebar.show_open_issues, self.sidebar.show_closed_issues)
         };
-        core::pane_loading_label(want_pr, open, done, self.session.sections.merged_window_hours,
+        core::pane_loading_label(want_pr, open, done, self.session.merged_window_hours(),
             &self.sidebar.query_active)
     }
 
     pub(crate) fn window_label(&self) -> String {
-        core::window_label(self.session.sections.merged_window_hours)
+        core::window_label(self.session.merged_window_hours())
     }
 
     /// Sidebar split: pinned | requested | recent, pins never duplicated.
     pub(crate) fn sections(&self) -> (Vec<ItemRef>, Vec<ItemRef>, Vec<ItemRef>) {
-        core::section_split(&self.session.pins.order, &self.nav.visited, &self.nav.recent, &self.session.pins.set)
+        core::section_split(self.session.pins(), &self.nav.visited, &self.nav.recent, self.session.pinned())
     }
 
     /// Row title for search, empty when the row is still loading.
     fn row_title(&self, n: ItemRef) -> String {
-        self.session.issues.data.get(&n).map(|d| d.title.clone()).unwrap_or_default()
+        self.session.item(n).map(|d| d.title.clone()).unwrap_or_default()
     }
 
     /// Client-side `/` row match over already-fetched rows: title,
     /// number, label names, and author login. Rows still loading fall
     /// back to title/number only.
     fn row_matches(&self, n: ItemRef, query: &str) -> bool {
-        match self.session.issues.data.get(&n) {
+        match self.session.item(n) {
             Some(d) => {
                 let labels: Vec<&str> = d.labels.iter().map(|l| l.name.as_str()).collect();
                 core::matches_search(n, &d.title, &labels, &d.author.login, query)
@@ -363,7 +356,7 @@ impl App {
     /// True for issues, false for PRs and rows still loading (filed with
     /// issues until their data arrives and re-files them).
     pub(super) fn is_pr(&self, n: ItemRef) -> bool {
-        self.session.issues.data.get(&n).map(|d| d.is_pr).unwrap_or(false)
+        self.session.item(n).map(|d| d.is_pr).unwrap_or(false)
     }
 
     /// Recent-row visibility under the phase-2 filters: the state
@@ -371,7 +364,7 @@ impl App {
     /// always show: filters thin the firehose, never rows the user
     /// explicitly opened.
     fn recent_visible(&self, n: ItemRef) -> bool {
-        let Some(d) = self.session.issues.data.get(&n) else { return true };
+        let Some(d) = self.session.item(n) else { return true };
         let closed = matches!(d.state.as_str(), "CLOSED" | "MERGED");
         let state_ok = if d.is_pr {
             if closed { self.sidebar.show_merged_prs } else { self.sidebar.show_open_prs }
@@ -425,7 +418,7 @@ impl App {
                 .collect()
         };
         let sorted = |list: Vec<ItemRef>| -> Vec<ItemRef> {
-            core::sort_rows(list, self.sidebar.sort, self.sidebar.sort_desc, &self.session.issues.data)
+            core::sort_rows(list, self.sidebar.sort, self.sidebar.sort_desc, self.session.items())
         };
         let pinned = sorted(pick(p));
         let requested = sorted(pick(v));
@@ -446,26 +439,26 @@ impl App {
                 let milestone_of = |mut n: ItemRef| {
                     let mut seen = HashSet::new();
                     while seen.insert(n) {
-                        match self.session.issues.data.get(&n).and_then(|d| d.parent) {
+                        match self.session.item(n).and_then(|d| d.parent) {
                             Some(parent) if visible.contains(&parent) => n = parent,
                             _ => break,
                         }
                     }
-                    self.session.issues.data.get(&n).and_then(|d| d.milestone.clone())
+                    self.session.item(n).and_then(|d| d.milestone.clone())
                 };
                 let due_of = |title: &str| self.sidebar.milestones.iter()
                     .find(|m| m.title == title).and_then(|m| m.due_on.clone());
                 for (label, rows) in core::milestone_groups(&r, &milestone_of, &due_of) {
                     out.push(model::SideRow::Divider(format!("{label} ({})", rows.len())));
                     out.extend(core::tree_rows(
-                        &rows, &self.session.issues.data, &self.sidebar.folded_issues, &self.session.subs.state));
+                        &rows, self.session.items(), &self.sidebar.folded_issues, self.session.sub_states()));
                 }
             } else {
                 if !out.is_empty() && !r.is_empty() {
                     out.push(model::SideRow::Divider("recent".into()));
                 }
                 out.extend(core::tree_rows(
-                    &r, &self.session.issues.data, &self.sidebar.folded_issues, &self.session.subs.state));
+                    &r, self.session.items(), &self.sidebar.folded_issues, self.session.sub_states()));
             }
             return out;
         }
@@ -473,7 +466,7 @@ impl App {
             return core::pane_order(&p, &v, &r);
         }
         let milestone_of = |n: ItemRef| {
-            self.session.issues.data.get(&n).and_then(|d| d.milestone.clone())
+            self.session.item(n).and_then(|d| d.milestone.clone())
         };
         let due_of = |title: &str| {
             self.sidebar.milestones.iter()
@@ -613,7 +606,7 @@ impl App {
     /// Fetch labels and milestones for the dialog once per repo. The
     /// meta channel carries the result to `poll_repo_meta`.
     pub(crate) fn ensure_repo_meta(&mut self) {
-        let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) else { return };
+        let Some(repo) = self.session.repo().map(str::to_string) else { return };
         if self.sidebar.meta_repo.as_deref() == Some(repo.as_str()) {
             return;
         }

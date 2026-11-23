@@ -22,7 +22,7 @@ fn land_bootstrap(app: &mut App, numbers: Vec<ItemRef>) {
     app.apply_prefs();
     if let Some(key) = app.session.repo_key() {
         app.session.load_pins(&key, &numbers);
-        let pins = app.session.pins.order.clone();
+        let pins = app.session.pins().to_vec();
         // The requested issue goes first; pins wait behind it.
         let opened = !numbers.is_empty();
         for n in numbers {
@@ -32,7 +32,7 @@ fn land_bootstrap(app: &mut App, numbers: Vec<ItemRef>) {
         for n in pins {
             if !opened {
                 app.load_issue(n, false);
-            } else if !app.session.issues.data.contains_key(&n) || app.session.issues.partial.contains(&n) {
+            } else if !app.session.has_item(n) || app.session.is_partial(n) {
                 app.queue_issue(n, false);
             }
         }
@@ -204,8 +204,8 @@ impl App {
             .visited
             .iter()
             .copied()
-            .chain(self.session.pins.order.iter().copied())
-            .chain(self.session.pins.set.iter().copied())
+            .chain(self.session.pins().iter().copied())
+            .chain(self.session.pinned().iter().copied())
             .chain(self.nav.current)
             .chain(self.nav.requested)
             .collect();
