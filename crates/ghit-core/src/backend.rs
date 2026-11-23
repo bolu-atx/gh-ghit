@@ -44,7 +44,7 @@ impl IssueBackend {
     ) -> Result<IssueBundle, String> {
         match self {
             Self::GitHub => github::fetch_number(repo, number, force, progress).await,
-            Self::Jira(_) => Err("Jira issue detail lands in #315".to_string()),
+            Self::Jira(client) => client.fetch_number(repo, number, force, progress).await,
         }
     }
 
@@ -53,21 +53,21 @@ impl IssueBackend {
     ) -> Result<Vec<IssueData>, String> {
         match self {
             Self::GitHub => github::fetch_sub_issues(repo, number).await,
-            Self::Jira(_) => Err("Jira sub-issues land in #315".to_string()),
+            Self::Jira(client) => client.fetch_sub_issues(number).await,
         }
     }
 
     pub async fn set_state(&self, repo: &str, number: ItemRef, open: bool) -> Result<(), String> {
         match self {
             Self::GitHub => github::set_state(repo, number, open).await,
-            Self::Jira(_) => Err("Jira issue state changes land in #315".to_string()),
+            Self::Jira(_) => Err("issue state changes not supported for Jira yet".to_string()),
         }
     }
 
     pub async fn post_comment(&self, repo: &str, number: ItemRef, body: &str) -> Result<(), String> {
         match self {
             Self::GitHub => github::post_thread_comment(repo, number, body).await,
-            Self::Jira(_) => Err("Jira comments land in #315".to_string()),
+            Self::Jira(_) => Err("comments not supported for Jira yet".to_string()),
         }
     }
 

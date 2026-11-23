@@ -4,6 +4,7 @@
 #[path = "jira_tests.rs"]
 mod tests;
 
+mod detail;
 mod search;
 mod sync;
 

@@ -290,3 +290,36 @@ fn main_focus_keeps_sidebar_marker_for_current() {
     }
     assert!(pr_text.contains("█"), "PR marker survives main focus");
 }
+
+#[test]
+fn jira_detail_renders_title_metadata_adf_body_and_comment() {
+    use ghit_core::model::{adf_to_markdown, Author, Comment, Source};
+    let mut app = loaded_app();
+    app.sidebar.show = false;
+    let number = ItemRef { source: Source::Jira, number: 42 };
+    let mut data = sample(number);
+    data.title = "Jira login detail".into();
+    data.issue_type = "Bug".into();
+    data.priority = "High".into();
+    data.author = Author { login: "Grace".into() };
+    data.assignees = vec![Author { login: "Ada".into() }];
+    data.body = adf_to_markdown(&serde_json::json!({"type": "doc", "content": [
+        {"type": "paragraph", "content": [
+            {"type": "text", "text": "Login details", "marks": [{"type": "strong"}]}
+        ]}
+    ]}));
+    data.comments = vec![Comment {
+        author: Author { login: "Lin".into() },
+        body: "Reviewed the login".into(),
+        created_at: "2026-11-02T10:00:00Z".into(),
+    }];
+    app.session.issues_test().data.insert(number, data);
+    app.session.issues_test().statuses.insert(number,
+        vec![("PROJ".into(), Some("In Progress".into()))]);
+    app.show_issue(number);
+    let text = frame_text(&mut app);
+    for expected in ["Jira login detail", "In Progress", "type: Bug", "assignee: Ada",
+        "reporter: Grace", "priority: High", "Login details", "Lin", "Reviewed the login"] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+}

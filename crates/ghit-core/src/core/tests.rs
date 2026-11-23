@@ -576,6 +576,8 @@ fn sort_issue(
         number,
         title: format!("issue {number}", number = number.number),
         state: state.to_string(),
+        issue_type: String::new(),
+        priority: String::new(),
         author: crate::model::Author { login: author.to_string() },
         labels: labels.iter().map(|n| crate::model::Label { name: n.to_string() }).collect(),
         assignees: vec![],

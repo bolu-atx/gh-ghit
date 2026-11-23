@@ -7,6 +7,8 @@ use ghit_core::model::ItemRef;
 
 pub(super) fn issue(number: ItemRef, updated: &str) -> IssueData {
     IssueData {
+        issue_type: String::new(),
+        priority: String::new(),
         number,
         title: format!("issue {number}", number = number.number),
         state: "OPEN".to_string(),

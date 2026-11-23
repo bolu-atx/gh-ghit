@@ -164,7 +164,7 @@ fn is_not_found(error: &str) -> bool {
 /// The stored issue bundle when it is fresh against the latest sync.
 /// Project statuses come from the synced row, not the stored copy.
 /// Blocking: call from the blocking pool.
-fn stored_bundle(repo: &str, number: ItemRef) -> Option<IssueBundle> {
+pub(crate) fn stored_bundle(repo: &str, number: ItemRef) -> Option<IssueBundle> {
     let store = store::open(repo).ok()?;
     let (data, statuses): IssueBundle = store.fresh_detail(store::Detail::Issue, number, false)?;
     Some((data, store.item_statuses(number).unwrap_or(statuses)))
@@ -194,7 +194,9 @@ fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row 
     let mut statuses = statuses.clone();
     if let Some(old) = stored {
         issue.checks = issue.checks.or(old.issue.checks);
-        issue.parent = old.issue.parent;
+        if issue.number.source == model::Source::GitHub {
+            issue.parent = old.issue.parent;
+        }
         issue.sub_summary = old.issue.sub_summary;
         issue.links = old.issue.links.clone();
         if statuses.is_empty() {
@@ -207,7 +209,7 @@ fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row 
 /// Store a fetched issue bundle at its own `updated_at`, and its row
 /// into `items` newer-only so the item joins the local copy. Best
 /// effort. Blocking.
-fn save_bundle(repo: &str, number: ItemRef, bundle: &IssueBundle) {
+pub(crate) fn save_bundle(repo: &str, number: ItemRef, bundle: &IssueBundle) {
     if let Ok(mut store) = store::open(repo) {
         let row = row_from_bundle(bundle, store.row(number).as_ref());
         let _ = store.upsert_rows_newer(&[row]);

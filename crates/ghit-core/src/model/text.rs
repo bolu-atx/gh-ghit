@@ -27,6 +27,18 @@ pub fn meta_spans(d: &IssueData, statuses: &[(String, Option<String>)]) -> Vec<(
     } else {
         d.assignees.iter().map(|x| x.login.clone()).collect::<Vec<_>>().join(", ")
     };
+    if d.number.source == Source::Jira {
+        let status = status_text(statuses);
+        return vec![
+            (MetaKind::State, status),
+            (MetaKind::Dim, format!(" · type: {} · assignee: ", d.issue_type)),
+            (MetaKind::Normal, people),
+            (MetaKind::Dim, format!(" · reporter: {} · priority: ", d.author.login)),
+            (MetaKind::Normal, d.priority.clone()),
+            (MetaKind::Dim, "\n\n".to_string()),
+            (MetaKind::Url, d.url.clone()),
+        ];
+    }
     let kind = if d.is_pr { "PR" } else { "issue" };
     let opened = d.created_at.get(..10).unwrap_or(&d.created_at).to_string();
     let project = {

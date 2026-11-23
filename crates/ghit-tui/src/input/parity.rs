@@ -24,6 +24,8 @@ const SKIP: [char; 4] = ['y', 'p', 'r', 'w'];
 
 fn issue(number: ItemRef, is_pr: bool) -> IssueData {
     IssueData {
+        issue_type: String::new(),
+        priority: String::new(),
         number,
         title: format!("Item {number}", number = number.number),
         state: "OPEN".to_string(),

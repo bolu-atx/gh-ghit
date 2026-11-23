@@ -263,6 +263,8 @@ pub(crate) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> R
             number: ItemRef::github(number),
             title: string("title"),
             state: string("state"),
+            issue_type: String::new(),
+            priority: String::new(),
             author: Author {
                 login: n
                     .pointer("/author/login")
@@ -1027,6 +1029,7 @@ mod tests {
         Row {
             issue: IssueData {
                 number: ItemRef::github(number), title: title.to_owned(), state: state.to_owned(),
+                issue_type: String::new(), priority: String::new(),
                 author: Author::default(), labels: vec![], assignees: vec![],
                 created_at: String::new(), updated_at: String::new(),
                 url: String::new(), body: String::new(), comments: vec![],

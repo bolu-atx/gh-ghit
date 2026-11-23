@@ -438,6 +438,8 @@ mod tests {
     fn driven_app() -> crate::app::App {
         use ghit_core::model::{Author, IssueData};
         let issue = |number: ItemRef| IssueData {
+            issue_type: String::new(),
+            priority: String::new(),
             number,
             title: format!("issue {number}", number = number.number),
             state: "OPEN".to_string(),
