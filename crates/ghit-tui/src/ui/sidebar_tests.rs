@@ -1003,3 +1003,111 @@ fn pinned_row_uses_tack_icon() {
     let text = frame_text(&mut app);
     assert!(text.contains('\u{f08d}'), "{text}");
 }
+
+/// A Jira session: issues from Jira, PRs from GitHub.
+fn jira_app() -> App {
+    let client = ghit_core::jira::JiraClient::new(
+        "example.atlassian.net",
+        "me@example.com".to_string(),
+        "secret-token-value".to_string(),
+        "PROJ".to_string(),
+    );
+    let backend = ghit_core::backend::IssueBackend::Jira(std::sync::Arc::new(client));
+    App::with_backend(Some("o/r".to_string()), backend)
+}
+
+/// The Jira session's Labels pane: `bug` in both sources, `checkout` only
+/// in Jira, `docs` only on GitHub, and the fix version `1.0`.
+fn jira_labels_app() -> App {
+    use ghit_core::model::{NameSource, Source};
+    let mut app = jira_app();
+    *app.session.refs_test().numbers = vec![ItemRef::github(9)];
+    app.sidebar.meta_loaded = true;
+    app.sidebar.labels = vec!["bug".to_string(), "checkout".to_string(), "docs".to_string()];
+    app.sidebar.label_sources = [
+        ("bug".to_string(), NameSource { github: true, jira: true }),
+        ("checkout".to_string(), NameSource::of(Source::Jira)),
+        ("docs".to_string(), NameSource::of(Source::GitHub)),
+    ]
+    .into_iter()
+    .collect();
+    app.sidebar.milestones = vec![ghit_core::model::Milestone {
+        title: "1.0".to_string(),
+        ..Default::default()
+    }];
+    app.sidebar.milestone_sources =
+        [("1.0".to_string(), NameSource::of(Source::Jira))].into_iter().collect();
+    app
+}
+
+#[test]
+fn labels_pane_marks_the_names_that_only_one_source_lists() {
+    let mut app = jira_labels_app();
+    let text = frame_text(&mut app);
+    assert!(text.contains("1.0 jira"), "a fix version is Jira's: {text}");
+    assert!(text.contains("checkout jira"), "a Jira label is marked: {text}");
+    assert!(text.contains("docs github"), "a GitHub label is marked: {text}");
+    assert!(text.contains("bug ") && !text.contains("bug jira") && !text.contains("bug github"),
+        "a shared label carries no marker: {text}");
+    assert_eq!(app.hits.labels_rows.len(), 5, "one row per milestone and label");
+}
+
+#[test]
+fn o_opens_a_jira_only_label_in_jira_and_a_shared_one_on_github() {
+    use ghit_core::core::Pane;
+    let mut app = jira_labels_app();
+    frame_text(&mut app);
+    app.nav.pane = Pane::Labels;
+    // Rows: 1.0, (no milestone), bug, checkout, docs.
+    for _ in 0..2 {
+        handle_key(&mut app, key(KeyCode::Char('j')));
+    }
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened label:\"bug\" in browser", "a shared name opens GitHub");
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened labels = \"checkout\" in browser");
+    handle_key(&mut app, key(KeyCode::Char('k')));
+    handle_key(&mut app, key(KeyCode::Char('k')));
+    handle_key(&mut app, key(KeyCode::Char('k')));
+    handle_key(&mut app, key(KeyCode::Char('o')));
+    assert_eq!(app.message, "opened fixVersion = \"1.0\" in browser");
+}
+
+#[test]
+fn a_jira_label_pill_filters_jira_and_github_rows_alike() {
+    use ghit_core::model::{Author, IssueData, Source};
+    let mut app = jira_labels_app();
+    app.session.issues_test().data.extend([
+        (
+            ItemRef::github(9),
+            IssueData {
+                number: ItemRef::github(9),
+                title: "checkout PR".to_string(),
+                labels: vec![Label { name: "bug".to_string() }],
+                author: Author { login: "bo".to_string() },
+                is_pr: true,
+                ..Default::default()
+            },
+        ),
+        (
+            ItemRef { source: Source::Jira, number: 1 },
+            IssueData {
+                number: ItemRef { source: Source::Jira, number: 1 },
+                title: "checkout retries".to_string(),
+                labels: vec![Label { name: "bug".to_string() }],
+                milestone: Some("1.0".to_string()),
+                author: Author { login: "ada".to_string() },
+                ..Default::default()
+            },
+        ),
+    ]);
+    app.nav.recent = vec![ItemRef::github(9), ItemRef { source: Source::Jira, number: 1 }];
+    app.sidebar.label_filter.insert("bug".to_string());
+    assert_eq!(app.issue_numbers().len(), 1, "the Jira row survives the label pill");
+    assert_eq!(app.pr_numbers().len(), 1, "the GitHub row survives the label pill");
+    app.sidebar.label_filter.clear();
+    app.sidebar.milestone_filter.insert(Some("1.0".to_string()));
+    assert_eq!(app.issue_numbers().len(), 1, "a fix-version pill keeps its Jira issue");
+    assert!(app.pr_numbers().is_empty(), "a PR without the fix version drops out");
+}

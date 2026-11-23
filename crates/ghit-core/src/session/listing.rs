@@ -76,17 +76,20 @@ impl Session {
         }, view);
     }
 
-    /// Start the GitHub search fetch for `query`. False without a repo.
+    /// Start the server search for `query`: the GitHub arm and, for a
+    /// backend with its own issues, that backend's arm. False without a repo.
     pub fn search(&mut self, query: &str, view: &View) -> bool {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return false };
         self.sections.last_fetch = Instant::now();
         self.sections.auto_refresh = false;
         self.sections.replace = true;
         let search = core::search_query(query, self.sections.merged_window_hours, chrono::Utc::now());
+        let arms = core::Arms::of(&search);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
+        let backend = self.issue_backend.clone();
         self.enqueue(Kind::Sections, None, async move {
-            let result = github::search_repo(&repo, &search, Some(tx.clone())).await;
+            let result = search_arms(backend, &repo, &search, arms, tx.clone()).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         }, view);
         true
@@ -451,4 +454,42 @@ fn merge_section_rows(
 ) -> Vec<github::Row> {
     prs.extend(issues);
     prs
+}
+
+/// One search over both arms. A failed arm keeps the other arm's rows and
+/// reports its error through `ArmFailed` first.
+async fn search_arms(
+    backend: IssueBackend,
+    repo: &str,
+    query: &str,
+    arms: core::Arms,
+    tx: std::sync::mpsc::Sender<github::SectionEvent>,
+) -> Result<Vec<github::Row>, String> {
+    if backend.shares_github_sections() {
+        return github::search_repo(repo, query, Some(tx)).await;
+    }
+    let mut rows: Vec<github::Row> = Vec::new();
+    let mut failure: Option<String> = None;
+    if arms.github {
+        match github::search_repo(repo, query, Some(tx.clone())).await {
+            // A backend with its own issues lists no GitHub issues: those
+            // belong to the shared store, not to this view.
+            Ok(hits) => rows.extend(hits.into_iter().filter(|row| row.issue.is_pr)),
+            Err(error) => failure = Some(error),
+        }
+    }
+    if arms.issues {
+        match backend.search(query, Some(tx.clone())).await {
+            Ok(hits) => rows.extend(hits),
+            Err(error) => failure = failure.or(Some(error)),
+        }
+    }
+    match failure {
+        Some(error) if !rows.is_empty() => {
+            let _ = tx.send(github::SectionEvent::ArmFailed(error));
+            Ok(rows)
+        }
+        Some(error) => Err(error),
+        None => Ok(rows),
+    }
 }

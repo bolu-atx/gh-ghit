@@ -1,6 +1,6 @@
 //! Sidebar rows: sections fetch and merge, search, filters, sort, saved queries and auto-refresh.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::time::Instant;
 
@@ -9,7 +9,7 @@ use ratatui::widgets::ListState;
 use crate::app::{App, Focus, UndoAction};
 use ghit_core::core;
 use ghit_core::{github, model};
-use ghit_core::model::ItemRef;
+use ghit_core::model::{ItemRef, NameSource};
 
 /// What a filter-dialog query commit asks the caller to fetch.
 #[derive(Debug, PartialEq, Eq)]
@@ -17,9 +17,6 @@ pub(crate) enum QueryAction {
     Run(String),
     Refetch,
 }
-
-/// Format dialog picker lists: repository labels and milestones.
-pub(crate) type RepoMeta = (Vec<String>, Vec<model::Milestone>);
 
 /// Sidebar state: `/` search text and editing flag, client-side sort,
 /// the `f` format dialog (open toggles, query draft/active, label and
@@ -55,13 +52,20 @@ pub(crate) struct Sidebar {
     pub(crate) milestone_filter: HashSet<Option<String>>,
     /// Repository labels for the Format dialog picker.
     pub(crate) labels: Vec<String>,
+    /// The sources that list each label, for the row markers.
+    pub(crate) label_sources: HashMap<String, NameSource>,
     /// Repository milestones, in REST order, with due dates for grouping.
     pub(crate) milestones: Vec<model::Milestone>,
+    /// The sources that list each milestone, by title.
+    pub(crate) milestone_sources: HashMap<String, NameSource>,
     /// Label/milestone fetch for the dialog; lands in `poll_repo_meta`.
-    pub(crate) meta_rx: Option<std::sync::mpsc::Receiver<Result<RepoMeta, String>>>,
+    pub(crate) meta_rx: Option<std::sync::mpsc::Receiver<Result<model::RepoMeta, String>>>,
     /// Repo whose pickers are loaded or in flight, so reopening the
     /// dialog does not refetch.
     pub(crate) meta_repo: Option<String>,
+    /// A fetch landed while another was in flight: run it again, because
+    /// a Jira session's labels grow with the store.
+    pub(crate) meta_again: bool,
     /// True once a picker fetch landed, so an empty list is trusted.
     pub(crate) meta_loaded: bool,
     /// Row fields per pane, toggled in the dialog Row fields section.
@@ -86,7 +90,8 @@ impl Sidebar {
             folded_issues: HashSet::new(), label_filter: HashSet::new(),
             milestone_filter: HashSet::new(),
             labels: vec![], milestones: vec![],
-            meta_rx: None, meta_repo: None, meta_loaded: false,
+            label_sources: HashMap::new(), milestone_sources: HashMap::new(),
+            meta_rx: None, meta_repo: None, meta_again: false, meta_loaded: false,
             row_issue: model::RowFields::default(), row_pr: model::RowFields::default(),
             format_focus: 0, format_columns: false, format_rows: vec![],
             issue_state: ListState::default(), pr_state: ListState::default() }
@@ -268,7 +273,10 @@ impl App {
 
     /// Where the active query's rows came from, for the status line.
     pub(crate) fn query_source(&self) -> &'static str {
-        if self.sidebar.query_github.is_some() { "GitHub" } else { "local" }
+        if self.sidebar.query_github.is_none() {
+            return "local";
+        }
+        if self.session.issue_source().is_some() { "GitHub + Jira" } else { "GitHub" }
     }
 
     /// Re-run the active query once on GitHub. The hits land in the store
@@ -284,9 +292,10 @@ impl App {
         self.search_fetch(query);
     }
 
-    /// Land GitHub search hits: store them (newer-only, statuses kept),
+    /// Land server search hits: store them (newer-only, statuses kept),
     /// show the stored rows, and remember their numbers so a store change
-    /// keeps the same result set on screen.
+    /// keeps the same result set on screen. In jtui the hits carry the
+    /// GitHub PRs and the Jira issues the two arms returned.
     pub(super) fn land_github(&mut self, hits: Vec<github::Row>) {
         let rows = self.session.save_search(hits);
         let numbers = rows.iter().map(|row| row.issue.number).collect();
@@ -604,35 +613,51 @@ impl App {
     }
 
     /// Fetch labels and milestones for the dialog once per repo. The
-    /// meta channel carries the result to `poll_repo_meta`.
+    /// meta channel carries the result to `poll_repo_meta`. A session with
+    /// its own issues refetches, because its labels ride in the store the
+    /// listing sync fills.
     pub(crate) fn ensure_repo_meta(&mut self) {
         let Some(repo) = self.session.repo().map(str::to_string) else { return };
-        if self.sidebar.meta_repo.as_deref() == Some(repo.as_str()) {
+        let loaded = self.sidebar.meta_repo.as_deref() == Some(repo.as_str());
+        let reload = loaded && self.session.issue_source().is_some();
+        if loaded && !reload {
+            return;
+        }
+        if self.sidebar.meta_rx.is_some() {
+            self.sidebar.meta_again |= reload;
             return;
         }
         self.sidebar.meta_repo = Some(repo.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         self.sidebar.meta_rx = Some(rx);
+        let meta = self.session.meta(&repo);
         self.enqueue(core::Kind::Other, None, async move {
-            let _ = tx.send(github::fetch_repo_meta(&repo).await);
+            let _ = tx.send(meta.await);
         });
     }
 
     /// Land a picker fetch: keep the lists, drop saved pills the repo no
     /// longer has, clamp the focus, and persist the pruned set. A failed
     /// fetch clears `meta_repo` so the next dialog open retries.
-    pub(crate) fn land_repo_meta(&mut self, result: Result<RepoMeta, String>) {
+    pub(crate) fn land_repo_meta(&mut self, result: Result<model::RepoMeta, String>) {
         self.sidebar.meta_rx = None;
-        let (labels, milestones) = match result {
+        let meta = match result {
             Ok(meta) => meta,
             Err(e) => {
                 self.sidebar.meta_repo = None;
                 self.notify(e);
+                self.reload_meta();
                 return;
             }
         };
-        self.sidebar.labels = labels;
-        self.sidebar.milestones = milestones;
+        if let Some(error) = meta.error.clone() {
+            self.notify(error);
+        }
+        self.sidebar.labels = meta.labels.iter().map(|(name, _)| name.clone()).collect();
+        self.sidebar.label_sources = meta.labels.into_iter().collect();
+        self.sidebar.milestones = meta.milestones.iter().map(|(m, _)| m.clone()).collect();
+        self.sidebar.milestone_sources =
+            meta.milestones.into_iter().map(|(m, listed)| (m.title, listed)).collect();
         self.sidebar.meta_loaded = true;
         let live_labels: HashSet<String> = self.sidebar.labels.iter().cloned().collect();
         self.sidebar.label_filter.retain(|l| live_labels.contains(l));
@@ -644,6 +669,15 @@ impl App {
         self.sidebar.format_focus =
             self.sidebar.format_focus.min(self.format_widgets().saturating_sub(1));
         self.persist_prefs();
+        self.reload_meta();
+    }
+
+    /// Run the picker fetch again when one landed while another was in
+    /// flight.
+    fn reload_meta(&mut self) {
+        if std::mem::take(&mut self.sidebar.meta_again) {
+            self.ensure_repo_meta();
+        }
     }
 
     /// Group counts for one sidebar pane, matching the displayed rows.

@@ -24,6 +24,12 @@
       ["PROJ-3", "PROJ-4"]
     ]
   },
+  "versions": {
+    "PROJ": [
+      {"id": "10401", "name": "1.0", "released": false, "archived": false, "releaseDate": "2026-12-01"},
+      {"id": "10402", "name": "2.0", "released": true, "archived": false}
+    ]
+  },
   "issue_details": {
     "PROJ-1": {
       "id": "10101",
@@ -76,7 +82,8 @@
           {"id": "30102", "type": {"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "inwardIssue": {"id": "10103", "key": "PROJ-3", "fields": {"summary": "Retire the legacy token endpoint", "status": {"name": "Done", "statusCategory": {"key": "done"}}}}},
           {"id": "30103", "type": {"id": "10001", "name": "Relates", "inward": "relates to", "outward": "relates to"}, "outwardIssue": {"id": "10104", "key": "PROJ-4", "fields": {"summary": "Show the build number in the footer", "status": {"name": "In Review", "statusCategory": {"key": "indeterminate"}}}}},
           {"id": "30104", "type": {"id": "10001", "name": "Relates", "inward": "relates to", "outward": "relates to"}, "outwardIssue": {"id": "10999", "key": "OTHER-12", "fields": {"summary": "External project issue", "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}}
-        ]
+        ],
+        "fixVersions": [{"id": "10401", "name": "1.0", "released": false}]
       },
       "comments": [
         {
@@ -120,7 +127,8 @@
         "created": "@now-15d",
         "updated": "@now-4h",
         "issuetype": {"name": "Story"},
-        "priority": {"name": "Medium"}
+        "priority": {"name": "Medium"},
+        "fixVersions": [{"id": "10401", "name": "1.0", "released": false}]
       },
       "comments": []
     },
@@ -145,7 +153,8 @@
         "created": "@now-30d",
         "updated": "@now-2h",
         "issuetype": {"name": "Task"},
-        "priority": {"name": "Low"}
+        "priority": {"name": "Low"},
+        "fixVersions": [{"id": "10402", "name": "2.0", "released": true}]
       },
       "comments": [
         {

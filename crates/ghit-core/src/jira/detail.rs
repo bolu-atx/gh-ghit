@@ -14,7 +14,7 @@ use crate::github::{self, IssueBundle, IssueEvent};
 use crate::model::{adf_to_markdown, Author, Comment, IssueData, ItemRef};
 
 const FIELDS: &str = "summary,status,labels,assignee,reporter,created,updated,\
-    issuetype,priority,parent,description,issuelinks";
+    issuetype,priority,parent,description,issuelinks,fixVersions";
 
 fn map_detail(project: &str, base: &str, value: &Value) -> Result<IssueBundle, String> {
     let row = search::map_issue(project, base, value)
@@ -97,7 +97,7 @@ impl JiraClient {
         Ok(found.rows.into_iter().map(|row| row.issue).collect())
     }
 
-    async fn get_detail(&self, path: &str) -> Result<Value, String> {
+    pub(super) async fn get_detail(&self, path: &str) -> Result<Value, String> {
         let url = format!("{}{path}", self.base);
         let response = super::client().get(&url)
             .basic_auth(&self.email, Some(&self.token))

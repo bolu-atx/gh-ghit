@@ -552,20 +552,26 @@ pub(super) fn render_labels(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         // Progress bar only when the row has room for a readable name.
         let bar = percent.filter(|_| inner.width >= 24).map(|p| progress_spans(p, bg));
         let bar_width = if bar.is_some() { PROGRESS_WIDTH } else { 0 };
-        let room = (inner.width as usize).saturating_sub(5 + bar_width);
+        // A name only one source lists carries that source's tag.
+        let tag = app
+            .filter_item_source(&items[index])
+            .map(|source| format!(" {}", source.as_str()));
+        let tag_width = tag.as_ref().map_or(0, |tag| tag.chars().count());
+        let room = (inner.width as usize).saturating_sub(5 + bar_width + tag_width);
         let slug = model::slug(&name, room);
         let mut spans = vec![
             Span::styled(marker, marker_style.bg(bg)),
             Span::styled(if on { theme::nf("\u{f14a} ", "■ ") } else { theme::nf("\u{f096} ", "□ ") },
                 Style::new().bg(bg).fg(if on { amber() } else { muted() })),
+            Span::styled(slug, name_style),
         ];
+        if let Some(tag) = tag {
+            spans.push(Span::styled(tag, Style::new().bg(bg).fg(muted())));
+        }
         if let Some(bar) = bar {
-            let pad = room.saturating_sub(slug.chars().count());
-            spans.push(Span::styled(slug, name_style));
+            let pad = room.saturating_sub(name.chars().count().min(room));
             spans.push(Span::styled(" ".repeat(pad), Style::new().bg(bg)));
             spans.extend(bar);
-        } else {
-            spans.push(Span::styled(slug, name_style));
         }
         let line = Line::from(spans);
         f.render_widget(Paragraph::new(line).style(Style::new().bg(bg)), rect);

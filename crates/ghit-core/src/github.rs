@@ -33,6 +33,9 @@ pub enum SectionEvent {
     Capped,
     /// The change probe found nothing new: no fetch ran, rows stay put.
     Unchanged,
+    /// One arm of a multi-source search failed while the other still lands
+    /// its rows through `Done`.
+    ArmFailed(String),
     Done(Result<Vec<api::Row>, String>),
 }
 

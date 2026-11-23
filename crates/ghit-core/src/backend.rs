@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::github::{self, IssueBundle, IssueEvent, Row, SectionEvent};
 use crate::jira::JiraClient;
-use crate::model::{IssueData, ItemRef};
+use crate::model::{IssueData, ItemRef, RepoMeta, Source};
 
 #[derive(Debug, Clone, Default)]
 pub enum IssueBackend {
@@ -41,6 +41,54 @@ impl IssueBackend {
         match self {
             Self::GitHub => "",
             Self::Jira(client) => client.project(),
+        }
+    }
+
+    /// The source of this backend's issues when they are not GitHub's.
+    pub fn own_source(&self) -> Option<Source> {
+        match self {
+            Self::GitHub => None,
+            Self::Jira(_) => Some(Source::Jira),
+        }
+    }
+
+    /// Label names and milestones for the Format pickers: this backend's
+    /// issue side plus, when the backend brings its own issues, GitHub's
+    /// PR side. An arm that fails keeps the other arm's lists and rides in
+    /// `RepoMeta::error`.
+    pub async fn fetch_meta(&self, repo: &str) -> Result<RepoMeta, String> {
+        match self {
+            Self::GitHub => {
+                let (labels, milestones) = github::fetch_repo_meta(repo).await?;
+                Ok(RepoMeta::side(Source::GitHub, labels, milestones))
+            }
+            Self::Jira(client) => {
+                let issues = client.fetch_meta(repo).await;
+                let prs = github::fetch_repo_meta(repo).await;
+                match (issues, prs) {
+                    (Ok((labels, milestones)), Ok((pr_labels, pr_milestones))) => {
+                        let issues = RepoMeta::side(Source::Jira, labels, milestones);
+                        Ok(issues.merge(RepoMeta::side(Source::GitHub, pr_labels, pr_milestones)))
+                    }
+                    (Ok((labels, milestones)), Err(error)) => {
+                        Ok(RepoMeta::side(Source::Jira, labels, milestones).with_error(error))
+                    }
+                    (Err(error), Ok((labels, milestones))) => {
+                        Ok(RepoMeta::side(Source::GitHub, labels, milestones).with_error(error))
+                    }
+                    (Err(error), Err(_)) => Err(error),
+                }
+            }
+        }
+    }
+
+    /// The server search of a backend with its own issue sections.
+    pub async fn search(
+        &self, query: &str, progress: Option<Sender<SectionEvent>>,
+    ) -> Result<Vec<Row>, String> {
+        match self {
+            Self::GitHub => unreachable!("GitHub search runs through github::search_repo"),
+            Self::Jira(client) => client.search_rows(query, progress.as_ref()).await,
         }
     }
 

@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::Session;
-use crate::model::{BoardData, BoardDetail, DiffFile, IssueData, ItemRef, LazyChildren};
+use crate::model::{BoardData, BoardDetail, DiffFile, IssueData, ItemRef, LazyChildren, Source};
 
 impl Session {
     /// The Jira connection for a Jira session, `None` for GitHub.
@@ -15,6 +15,12 @@ impl Session {
     /// How a list shows `n`: `#N` for GitHub, `<KEY>-N` for Jira.
     pub fn label(&self, n: ItemRef) -> String {
         n.display(&self.issue_backend.project_key().to_ascii_uppercase())
+    }
+
+    /// The source of this session's issues when they are not GitHub's;
+    /// `None` for the plain GitHub session.
+    pub fn issue_source(&self) -> Option<Source> {
+        self.issue_backend.own_source()
     }
 
     /// Every cached item payload, listing rows included.

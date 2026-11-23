@@ -467,7 +467,8 @@ fn stale_saved_pills_prune_when_picker_lists_land() {
     app.sidebar.milestone_filter =
         [Some("v1".to_string()), Some("gone".to_string()), None].into_iter().collect();
     app.sidebar.format_focus = 99;
-    app.land_repo_meta(Ok((
+    app.land_repo_meta(Ok(model::RepoMeta::side(
+        ghit_core::model::Source::GitHub,
         vec!["bug".to_string()],
         vec![model::Milestone { title: "v1".to_string(), due_on: None, ..Default::default() }],
     )));

@@ -32,10 +32,37 @@ pub(crate) enum Term {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalQuery(Vec<Term>);
 
+/// The search arms a `/` query runs: GitHub's and the issue backend's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arms {
+    pub github: bool,
+    pub issues: bool,
+}
+
+impl Arms {
+    /// `is:pr` and `is:merged` ask for GitHub PRs only, `is:issue` for
+    /// issues only; any other terms run both arms.
+    pub fn of(text: &str) -> Self {
+        let mut arms = Self { github: true, issues: true };
+        for (token, _) in tokens(text).unwrap_or_default() {
+            let Some((key, value)) = token.split_once(':') else { continue };
+            if !key.eq_ignore_ascii_case("is") {
+                continue;
+            }
+            match value.to_lowercase().as_str() {
+                "pr" | "merged" => arms.issues = false,
+                "issue" => arms.github = false,
+                _ => {}
+            }
+        }
+        arms
+    }
+}
+
 /// Split on spaces outside double quotes. Quotes drop out of the token, so
 /// `label:"good first"` is one token `label:good first`. The flag says the
 /// token had quotes. `None` for an unterminated quote.
-fn tokens(text: &str) -> Option<Vec<(String, bool)>> {
+pub(crate) fn tokens(text: &str) -> Option<Vec<(String, bool)>> {
     let mut out = Vec::new();
     let (mut cur, mut quoted, mut in_quote) = (String::new(), false, false);
     for c in text.chars() {
@@ -222,6 +249,27 @@ mod tests {
         ] {
             assert!(LocalQuery::parse(text).is_none(), "{text:?} must go to the server");
         }
+    }
+
+    #[test]
+    fn pr_and_issue_terms_pick_the_search_arms() {
+        let both = Arms { github: true, issues: true };
+        assert_eq!(Arms::of("label:bug"), both);
+        assert_eq!(Arms::of(""), both);
+        assert_eq!(Arms::of("is:open label:bug"), both, "state terms run both arms");
+        assert_eq!(Arms::of("is:pr"), Arms { github: true, issues: false });
+        assert_eq!(Arms::of("is:merged"), Arms { github: true, issues: false });
+        assert_eq!(Arms::of("is:issue"), Arms { github: false, issues: true });
+        assert_eq!(
+            Arms::of("IS:ISSUE"),
+            Arms { github: false, issues: true },
+            "keys and values fold case"
+        );
+        assert_eq!(
+            Arms::of("is:pr is:issue"),
+            Arms { github: false, issues: false },
+            "a contradictory query searches nothing"
+        );
     }
 
     #[test]

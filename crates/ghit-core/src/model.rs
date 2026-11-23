@@ -8,6 +8,7 @@ mod graph;
 mod issue;
 mod links;
 pub mod physics;
+mod picker;
 mod rank;
 mod sidebar;
 mod text;
@@ -51,6 +52,7 @@ pub use links::{
     LinkTarget, jira_refs, jira_refs_for_key, link_ranges, linkify, links_in_line, nearest_link,
     referenced_numbers,
 };
+pub use picker::{NameSource, RepoMeta};
 pub use sidebar::{GroupBy, LazyChildren, SideRow, sidebar_lines};
 pub use text::{MetaKind, body_md, build_comments_md, meta_spans, status_text};
 

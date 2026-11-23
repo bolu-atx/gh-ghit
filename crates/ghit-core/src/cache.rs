@@ -103,6 +103,9 @@ pub enum Key {
     Board { owner: String },
     Labels { repo: String },
     Milestones { repo: String },
+    /// A Jira project's fix versions. The site keeps two sites with the
+    /// same project key apart.
+    JiraVersions { site: String, project: String },
 }
 
 impl Key {
@@ -112,6 +115,11 @@ impl Key {
             Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
             Key::Labels { repo } => format!("labels-{h}-{}", slug(repo)),
             Key::Milestones { repo } => format!("milestones-{h}-{}", slug(repo)),
+            Key::JiraVersions { site, project } => {
+                let stem = site.trim_start_matches("https://").trim_start_matches("http://");
+                let stem = slug(stem.trim_end_matches('/'));
+                format!("jira-versions-{stem}-{}", project.to_lowercase())
+            }
         }
     }
 }

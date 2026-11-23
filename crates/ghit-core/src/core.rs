@@ -9,7 +9,7 @@ mod focus;
 mod fuzzy;
 mod layout;
 pub mod map;
-mod query;
+pub(crate) mod query;
 mod search;
 mod tree;
 mod urgency;
@@ -23,7 +23,7 @@ pub use fuzzy::score as fuzzy_score;
 pub use layout::{MAX_DIFF_FILES, SMALL_DIFF_LINES, RIGHT_WIDTH, SIDEBAR_WIDTH, columns};
 #[cfg(any(test, feature = "test-support"))]
 pub use layout::MIN_MAIN_WIDTH;
-pub use query::LocalQuery;
+pub use query::{Arms, LocalQuery};
 pub use search::find_ranges;
 pub use tree::{needs_lazy_children, tree_rows};
 pub use urgency::{Kind, Tier, urgency};

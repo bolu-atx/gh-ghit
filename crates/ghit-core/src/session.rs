@@ -41,7 +41,7 @@ use sends::Sends;
 use crate::backend::IssueBackend;
 use crate::core::Kind;
 use crate::fetch_queue::{Fetches, View};
-use crate::model::{LazyChildren, ItemRef, Source};
+use crate::model::{LazyChildren, ItemRef, RepoMeta, Source};
 use crate::runtime::{rt, spawn_bg};
 use crate::{core, github};
 
@@ -83,6 +83,9 @@ pub enum SessionEvent {
     SectionsCapped,
     /// The change probe found nothing new.
     SectionsUnchanged,
+    /// One arm of a multi-source search failed; the other arm's rows still
+    /// land through `SectionsDone`.
+    SearchFailed(String),
     /// A listing landed (or failed). The session already reset its feed.
     SectionsDone { result: Result<Vec<github::Row>, String>, replace: bool, auto: bool },
     /// The lease holder's quiet sync failed.
@@ -236,6 +239,17 @@ impl Session {
     fn is_github_pr(&self, number: ItemRef) -> bool {
         number.source == Source::GitHub
             && self.issues.data.get(&number).is_some_and(|data| data.is_pr)
+    }
+
+    /// Queue the meta fetch for `repo`: label names and milestones from the
+    /// issue backend and, for a backend with its own issues, the GitHub PR
+    /// side. Owns what it needs, so the caller spawns it on a worker.
+    pub fn meta(
+        &self, repo: &str,
+    ) -> impl std::future::Future<Output = Result<RepoMeta, String>> + Send + 'static {
+        let backend = self.issue_backend.clone();
+        let repo = repo.to_string();
+        async move { backend.fetch_meta(&repo).await }
     }
 
     /// Read the saved pins of the repo, minus `exclude`, into `pins`.
@@ -403,6 +417,9 @@ impl Session {
                     self.sections.auto_refresh_interval = auto_refresh_interval_default();
                 }
                 events.push(SessionEvent::SectionsUnchanged);
+            }
+            github::SectionEvent::ArmFailed(error) => {
+                events.push(SessionEvent::SearchFailed(error));
             }
             github::SectionEvent::Done(result) => {
                 self.sections.rx = None;

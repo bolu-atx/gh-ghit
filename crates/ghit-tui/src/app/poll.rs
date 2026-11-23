@@ -107,6 +107,7 @@ fn apply_event(app: &mut App, event: SessionEvent) {
         SessionEvent::SectionsStarted | SessionEvent::BackfillLanded => {}
         SessionEvent::SectionsProgress | SessionEvent::SectionsUnchanged | SessionEvent::IssueProgress(_) => {}
         SessionEvent::SectionsCapped => app.notify(cap_notice()),
+        SessionEvent::SearchFailed(e) => { auth_failure(app, &e); app.notify(e); }
         SessionEvent::SectionsDone { result, replace, auto } => {
             if replace {
                 app.drop_unvisited_background();
@@ -238,6 +239,11 @@ impl App {
         self.nav.recent.retain(|n| !landed.gone.contains(n));
         for n in &landed.filed {
             self.ensure_recent(*n);
+        }
+        if !landed.filed.is_empty() && self.session.issue_source().is_some() {
+            // A session with its own issues lists the labels its rows
+            // carry, so new rows grow the picker.
+            self.ensure_repo_meta();
         }
         if !auto && self.nav.current.is_none() && self.nav.requested.is_none() {
             if let Some(n) = landed.filed.last().copied() { self.load_issue(n, false); }

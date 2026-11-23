@@ -6,6 +6,8 @@ mod tests;
 
 pub mod auth;
 mod detail;
+mod meta;
+mod query;
 mod search;
 mod sync;
 

@@ -26,10 +26,21 @@ from urllib.parse import urlsplit
 FIXTURE = Path(__file__).parent / "fixtures" / "jira-default.json"
 
 PROJECT_PATH = re.compile(r"^/rest/api/3/project/([A-Za-z][A-Za-z0-9_]*)$")
+PROJECT_VERSIONS = re.compile(r"^/rest/api/3/project/([A-Za-z][A-Za-z0-9_]*)/versions$")
 ISSUE_PATH = re.compile(r"^/rest/api/3/issue/([A-Za-z][A-Za-z0-9_]*-[0-9]+)(/comment)?$")
 SEARCH_PAGE = re.compile(r"^page-(\d+)$")
 PROJECT_JQL = re.compile(r'project\s*=\s*"?([A-Za-z][A-Za-z0-9_]*)"?')
 NOW_FIELD = re.compile(r"^@now(?:([+-])(\d+)([mhd]))?$")
+# A `/` search: the project, then the translated clauses, then the order.
+FILTERED_JQL = re.compile(
+    r'^\s*project\s*=\s*"?([A-Za-z][A-Za-z0-9_]*)"?'
+    r"\s+AND\s+(.+?)\s+ORDER\s+BY\s+updated\s+DESC\s*$",
+    re.IGNORECASE,
+)
+QUOTED = r'"(?:[^"\\]|\\.)*"'
+CLAUSE = re.compile(
+    rf'^(\w+)\s*(=|!=|>=|~)\s*({QUOTED}|[^\s]+)$|^(\w+)\s+is\s+EMPTY$', re.IGNORECASE
+)
 
 
 def jira_stamp(at):
@@ -73,12 +84,83 @@ def issue_entry(entries, key, fields):
     return {"id": detail.get("id", key), "key": key, "fields": wanted}
 
 
+def plain_text(node):
+    """The text of an ADF description, for `text ~` matching."""
+    if isinstance(node, list):
+        return " ".join(plain_text(item) for item in node)
+    if not isinstance(node, dict):
+        return ""
+    if node.get("type") == "text":
+        return str(node.get("text", ""))
+    return plain_text(node.get("content", []))
+
+
+def unquote(value):
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def clause_matches(clause, fields):
+    """One translated JQL clause against one issue's fields."""
+    found = CLAUSE.match(clause.strip())
+    if not found:
+        return False
+    if found.group(4):
+        # `fixVersion is EMPTY`: the issue carries no fix version at all.
+        name = found.group(4)
+        return not fields.get("fixVersions" if name == "fixVersion" else name)
+    field, operator, raw = found.group(1), found.group(2), unquote(found.group(3))
+    if field == "labels":
+        carried = raw in fields.get("labels", [])
+        return carried if operator == "=" else not carried
+    if field == "statusCategory":
+        done = (fields.get("status") or {}).get("statusCategory", {}).get("key") == "done"
+        wants_done = raw.lower() == "done"
+        return done if wants_done and operator == "=" else done != wants_done
+    if field == "fixVersion":
+        names = [version.get("name") for version in fields.get("fixVersions", [])]
+        return raw in names
+    if field in ("reporter", "assignee"):
+        person = (fields.get(field) or {}).get("displayName", "")
+        return person.lower() == raw.lower()
+    if field == "text":
+        return raw.lower() in (
+            fields.get("summary", "") + " " + plain_text(fields.get("description"))
+        ).lower()
+    return field == "updated"
+
+
+def filtered_keys(entries, jql):
+    """The fixture issues `jql` selects, or `None` for the paged listing."""
+    match = FILTERED_JQL.match(jql)
+    if not match or "(" in jql:
+        return None
+    clauses = match.group(2).split(" AND ")
+    if not all(CLAUSE.match(clause.strip()) for clause in clauses):
+        return None
+    keys = []
+    for key, detail in entries["issue_details"].items():
+        if all(clause_matches(clause, detail["fields"]) for clause in clauses):
+            keys.append(key)
+    return sorted(keys)
+
+
 def search(entries, body):
     if not isinstance(body, dict):
         return 400, {"errorMessages": ["unreadable search body"]}
-    match = PROJECT_JQL.search(str(body.get("jql", "")))
+    jql = str(body.get("jql", ""))
+    print(f"mock jql {jql}", flush=True)
+    match = PROJECT_JQL.search(jql)
     if not match or match.group(1) not in entries["projects"]:
         return 400, {"errorMessages": ["unknown project in the JQL"]}
+    fields = [name for name in body.get("fields", []) if isinstance(name, str)]
+    selected = filtered_keys(entries, jql)
+    if selected is not None:
+        return 200, {
+            "issues": [issue_entry(entries, key, fields) for key in selected],
+            "isLast": True,
+        }
     pages = entries["search"]["pages"]
     index = 0
     token = body.get("nextPageToken")
@@ -87,7 +169,6 @@ def search(entries, body):
         if not found or not 1 <= int(found.group(1)) - 1 < len(pages):
             return 400, {"errorMessages": ["unknown nextPageToken"]}
         index = int(found.group(1)) - 1
-    fields = [name for name in body.get("fields", []) if isinstance(name, str)]
     reply = {
         "issues": [issue_entry(entries, key, fields) for key in pages[index]],
         "isLast": index == len(pages) - 1,
@@ -104,6 +185,12 @@ def route(entries, method, path, query, body):
     project = PROJECT_PATH.fullmatch(path)
     if method == "GET" and project:
         found = entries["projects"].get(project.group(1))
+        if found is None:
+            return 404, {"errorMessages": ["No project could be found with key"]}
+        return 200, found
+    versions = PROJECT_VERSIONS.fullmatch(path)
+    if method == "GET" and versions:
+        found = entries.get("versions", {}).get(versions.group(1))
         if found is None:
             return 404, {"errorMessages": ["No project could be found with key"]}
         return 200, found

@@ -2,6 +2,7 @@
 
 use crate::app::{App, FilterItem};
 use ghit_core::core::{self, Pane};
+use ghit_core::model::Source;
 use ghit_core::{github, model};
 use crate::app::{Entry, FormatEdit, board_open};
 
@@ -110,6 +111,18 @@ impl App {
         }
     }
 
+    /// The one source a Labels row belongs to, when the session runs two
+    /// sources and only that one lists the name. `None` shows no marker.
+    pub(crate) fn filter_item_source(&self, item: &FilterItem) -> Option<Source> {
+        self.session.issue_source()?;
+        let listed = match item {
+            FilterItem::Milestone(Some(title)) => self.sidebar.milestone_sources.get(title),
+            FilterItem::Milestone(None) => None,
+            FilterItem::Label(name) => self.sidebar.label_sources.get(name),
+        }?;
+        listed.single()
+    }
+
     pub(crate) fn toggle_filter_item(&mut self, index: usize) {
         match self.filter_items().into_iter().nth(index) {
             Some(FilterItem::Milestone(pill)) => self.toggle_milestone_filter(pill),
@@ -119,9 +132,24 @@ impl App {
         self.labels.cursor = index;
     }
 
-    /// Open GitHub's issue search for the Labels row under the cursor.
+    /// Open a search for the Labels row under the cursor: Jira's issue
+    /// search for a name only Jira lists, else GitHub's.
     pub(crate) fn open_filter_item(&mut self) {
         let Some(item) = self.filter_items().into_iter().nth(self.labels.cursor) else { return };
+        if self.filter_item_source(&item) == Some(Source::Jira) {
+            if let Some(info) = self.session.jira_info() {
+                let clause = match &item {
+                    FilterItem::Milestone(Some(title)) => format!("fixVersion = \"{title}\""),
+                    FilterItem::Milestone(None) => "fixVersion is EMPTY".to_string(),
+                    FilterItem::Label(name) => format!("labels = \"{name}\""),
+                };
+                let query = format!("project = {} AND {clause}", info.project);
+                let url = format!("{}/issues/?jql={}", info.site, encode_query(&query));
+                crate::app::open_in_browser(&url).ok();
+                self.notify(format!("opened {clause} in browser"));
+                return;
+            }
+        }
         let Some(repo) = self.session.repo().map(str::to_string) else {
             self.notify("no repo to open".to_string());
             return;

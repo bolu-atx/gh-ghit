@@ -19,9 +19,9 @@ const PAGE_SIZE: usize = 100;
 /// Seconds to wait after a 429 that carries no usable `Retry-After`.
 const DEFAULT_RETRY_SECS: u64 = 30;
 
-const FIELDS: [&str; 11] = [
+const FIELDS: [&str; 12] = [
     "summary", "status", "labels", "assignee", "reporter", "created", "updated", "issuetype",
-    "priority", "parent", "issuelinks",
+    "priority", "parent", "issuelinks", "fixVersions",
 ];
 
 /// Quote a JQL string value.
@@ -126,6 +126,21 @@ pub(super) fn map_links(project: &str, fields: &Value) -> IssueLinks {
     links
 }
 
+/// The milestone of a Jira issue: its first unreleased fix version, else
+/// the latest one.
+fn fix_version(fields: &Value) -> Option<String> {
+    let versions = fields.get("fixVersions")?.as_array()?;
+    let unreleased = versions
+        .iter()
+        .find(|version| version.get("released").and_then(Value::as_bool) != Some(true));
+    unreleased
+        .or_else(|| versions.last())
+        .and_then(|version| version.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
 /// One Jira issue as a sidebar row. `None` for a key of another project.
 /// The status name rides in the project-status slot under the project key.
 pub(super) fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row> {
@@ -148,6 +163,7 @@ pub(super) fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row>
             .map(|name| Label { name: name.to_string() })
             .collect(),
         assignees: person("/assignee/displayName").into_iter().collect(),
+        milestone: fix_version(fields),
         created_at: text("/created").map(|at| utc(&at)).unwrap_or_default(),
         updated_at: text("/updated").map(|at| utc(&at)).unwrap_or_default(),
         url: format!("{base}/browse/{key}"),
@@ -213,6 +229,23 @@ impl JiraClient {
             }
             token = Some(next);
         }
+    }
+
+    /// The rows a `/` query matches: the query translated to JQL. Empty
+    /// when the query asks for GitHub PRs only.
+    pub(crate) async fn search_rows(
+        &self, query: &str, progress: Option<&Sender<SectionEvent>>,
+    ) -> Result<Vec<Row>, String> {
+        let Some(jql) = super::query::from_search(&self.project, query) else {
+            return Ok(Vec::new());
+        };
+        let found = self.search(&jql, progress).await?;
+        if found.capped {
+            if let Some(tx) = progress {
+                let _ = tx.send(SectionEvent::Capped);
+            }
+        }
+        Ok(found.rows)
     }
 
     async fn post_search(&self, body: &Value) -> Result<Value, String> {
