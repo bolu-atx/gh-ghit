@@ -1,49 +1,18 @@
 //! Issue loading, refs, pins, eviction, yank and open-in-browser.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use ratatui::widgets::ListState;
 
 use crate::app::{App, Tab, Focus, NavIntent, UndoAction};
 use ghit_core::core::{self, Pane};
 use ghit_core::{github, model};
-use ghit_core::model::IssueData;
 use ghit_core::model::ItemRef;
 
-/// Issues owned by the app: fetched payloads plus the fetch channel
-/// triplet (sender, receiver, in-flight set) and per-issue page progress.
-pub(crate) struct IssueStore {
-    pub(crate) data: HashMap<ItemRef, IssueData>,
-    pub(crate) statuses: HashMap<ItemRef, Vec<(String, Option<String>)>>,
-    pub(crate) partial: HashSet<ItemRef>,
-    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, github::IssueEvent)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, github::IssueEvent)>,
-    pub(crate) pending: HashSet<ItemRef>,
-    /// Comment-page progress per issue: pages done vs total. Cleared when
-    /// the terminal result lands.
-    pub(crate) progress: HashMap<ItemRef, (usize, usize)>,
-}
-
-impl IssueStore {
-    pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(ItemRef, github::IssueEvent)>,
-        rx: std::sync::mpsc::Receiver<(ItemRef, github::IssueEvent)>,
-    ) -> Self {
-        Self { data: HashMap::new(), statuses: HashMap::new(), partial: HashSet::new(),
-            tx, rx, pending: HashSet::new(), progress: HashMap::new() }
-    }
-}
-
-/// Refs pane: related issues mentioned in the current body, with its
-/// highlight selection and list state.
+/// Refs pane view state: visibility, the highlight selection and list state.
 pub(crate) struct RefsPane {
-    /// Related issues mentioned in the current body. Hidden when empty.
+    /// Shows the pane. The related items live in `Session::refs`.
     pub(crate) show: bool,
-    pub(crate) numbers: Vec<ItemRef>,
-    /// Will-close counterparts of the current issue/PR, listed under a
-    /// `Paired` divider. Kept disjoint from `numbers` so a row has one
-    /// behavior: paired rows open, mention rows only highlight.
-    pub(crate) paired: Vec<ItemRef>,
     /// Click-selected refs row: highlights its source line instead of opening it.
     pub(crate) highlight: Option<ItemRef>,
     pub(crate) state: ListState,
@@ -51,7 +20,7 @@ pub(crate) struct RefsPane {
 
 impl RefsPane {
     pub(crate) fn new() -> Self {
-        Self { show: true, numbers: vec![], paired: vec![], highlight: None,
+        Self { show: true, highlight: None,
             state: ListState::default() }
     }
 }
@@ -64,18 +33,18 @@ impl App {
             .visited
             .iter()
             .copied()
-            .chain(self.nav.pin_order.iter().copied())
-            .chain(self.nav.pinned.iter().copied())
+            .chain(self.session.pins.order.iter().copied())
+            .chain(self.session.pins.set.iter().copied())
             .collect();
         // REST sub-issue rows are a session cache: keep them so the next
         // expand of their parent still renders titles.
-        for state in self.subs.state.values() {
+        for state in self.session.subs.state.values() {
             if let model::LazyChildren::Loaded(numbers) = state {
                 keep.extend(numbers.iter().copied());
             }
         }
         self.nav.recent.retain(|n| keep.contains(n));
-        for n in self.issues.partial.iter().copied().collect::<Vec<_>>() {
+        for n in self.session.issues.partial.iter().copied().collect::<Vec<_>>() {
             if !keep.contains(&n) {
                 self.drop_cached(n);
             }
@@ -84,10 +53,10 @@ impl App {
 
     /// Remove every cached payload for `n` so a revisit fetches again.
     pub(super) fn drop_cached(&mut self, n: ItemRef) {
-        self.issues.partial.remove(&n);
-        self.issues.progress.remove(&n);
-        self.issues.data.remove(&n);
-        self.issues.statuses.remove(&n);
+        self.session.issues.partial.remove(&n);
+        self.session.issues.progress.remove(&n);
+        self.session.issues.data.remove(&n);
+        self.session.issues.statuses.remove(&n);
         self.board.details.remove(&n);
         self.diff.files.remove(&n);
         self.diff.pending.remove(&n);
@@ -111,7 +80,7 @@ impl App {
             self.notify("no row to evict".to_string());
             return;
         };
-        if self.nav.pinned.contains(&n) || self.nav.pin_order.contains(&n) {
+        if self.session.pins.set.contains(&n) || self.session.pins.order.contains(&n) {
             self.notify(format!(
                 "{n} is pinned — unpin with p first",
                 n = n.display("")
@@ -128,8 +97,8 @@ impl App {
             number: n,
             visited_at: self.nav.visited.iter().position(|x| *x == n),
             recent_at: self.nav.recent.iter().position(|x| *x == n),
-            data: self.issues.data.get(&n).cloned().map(Box::new),
-            statuses: self.issues.statuses.get(&n).cloned(),
+            data: self.session.issues.data.get(&n).cloned().map(Box::new),
+            statuses: self.session.issues.statuses.get(&n).cloned(),
             row_expanded: self.diff.expanded_rows.contains(&n),
         };
         self.nav.visited.retain(|x| *x != n);
@@ -148,8 +117,8 @@ impl App {
             None => {
                 self.nav.current = None;
                 self.nav.requested = None;
-                self.refs.numbers.clear();
-                self.refs.paired.clear();
+                self.session.refs.numbers.clear();
+                self.session.refs.paired.clear();
                 self.nav.scroll = 0;
                 self.sync_selection();
             }
@@ -159,7 +128,7 @@ impl App {
 
     pub(crate) fn load_issue(&mut self, number: ItemRef, force: bool) {
         self.nav.requested = Some(number);
-        if !force && self.issues.data.contains_key(&number) && !self.issues.partial.contains(&number) {
+        if !force && self.session.issues.data.contains_key(&number) && !self.session.issues.partial.contains(&number) {
             self.show_issue(number);
             self.bar.clear();
             self.nav.focus = Focus::Main;
@@ -171,24 +140,19 @@ impl App {
     /// Queue the full fetch for `number` without opening it. No-op while
     /// one is already in flight.
     pub(super) fn queue_issue(&mut self, number: ItemRef, force: bool) {
-        if !self.issues.pending.insert(number) { return; }
-        let tx = self.issues.tx.clone();
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
-        self.enqueue(core::Kind::Details, Some(number), async move {
-            let result = github::fetch_number(&repo, number, force, Some(tx.clone())).await;
-            let _ = tx.send((number, github::IssueEvent::Done(result.map(Box::new))));
-        });
+        let view = self.fetch_view();
+        self.session.load(number, force, &view);
     }
 
     /// Title subtitle for Refs: mention/pair counts (Refs has no sort).
     pub(crate) fn refs_subtitle(&self) -> String {
-        if self.refs.paired.is_empty() {
-            format!("{} mentioned", self.refs.numbers.len())
+        if self.session.refs.paired.is_empty() {
+            format!("{} mentioned", self.session.refs.numbers.len())
         } else {
             format!(
                 "{} mentioned · {} paired",
-                self.refs.numbers.len(),
-                self.refs.paired.len()
+                self.session.refs.numbers.len(),
+                self.session.refs.paired.len()
             )
         }
     }
@@ -197,8 +161,8 @@ impl App {
     pub(crate) fn refs_footer(&self) -> String {
         format!(
             "mentioned ({}) · paired ({})",
-            self.refs.numbers.len(),
-            self.refs.paired.len()
+            self.session.refs.numbers.len(),
+            self.session.refs.paired.len()
         )
     }
 
@@ -221,17 +185,17 @@ impl App {
     /// Display rows for the refs pane: mentioned numbers, then a `Paired`
     /// divider with the will-close counterparts. Empty sections collapse.
     pub(crate) fn refs_rows(&self) -> Vec<model::SideRow> {
-        let mut rows: Vec<model::SideRow> = self.refs.numbers.iter().copied().map(model::SideRow::Item).collect();
-        if !self.refs.paired.is_empty() {
+        let mut rows: Vec<model::SideRow> = self.session.refs.numbers.iter().copied().map(model::SideRow::Item).collect();
+        if !self.session.refs.paired.is_empty() {
             rows.push(model::SideRow::Divider("Paired".to_string()));
-            rows.extend(self.refs.paired.iter().copied().map(model::SideRow::Item));
+            rows.extend(self.session.refs.paired.iter().copied().map(model::SideRow::Item));
         }
         rows
     }
 
     /// j/k order for the refs pane, skipping the divider.
     pub(crate) fn ref_order(&self) -> Vec<ItemRef> {
-        self.refs.numbers.iter().chain(self.refs.paired.iter()).copied().collect()
+        self.session.refs.numbers.iter().chain(self.session.refs.paired.iter()).copied().collect()
     }
 
     /// Enter on a refs row: paired rows open like sidebar rows; mention
@@ -259,13 +223,13 @@ impl App {
     /// `current`.
     pub(crate) fn refresh_refs(&mut self) {
         let Some(n) = self.nav.current else {
-            self.refs.numbers.clear();
-            self.refs.paired.clear();
+            self.session.refs.numbers.clear();
+            self.session.refs.paired.clear();
             return;
         };
-        let Some(d) = self.issues.data.get(&n) else {
-            self.refs.numbers.clear();
-            self.refs.paired.clear();
+        let Some(d) = self.session.issues.data.get(&n) else {
+            self.session.refs.numbers.clear();
+            self.session.refs.paired.clear();
             return;
         };
         // Pairs win over mentions so each row has one behavior: the
@@ -276,15 +240,15 @@ impl App {
             .map(|p| p.number)
             .filter(|m| *m != n)
             .collect();
-        let repo = self.repo_key();
+        let repo = self.session.repo_key();
         let nums: Vec<ItemRef> = model::referenced_numbers(&d.body, repo.as_deref())
             .into_iter()
             .filter(|m| *m != n && !paired.contains(m))
             .collect();
-        self.refs.numbers = nums;
-        self.refs.paired = paired;
+        self.session.refs.numbers = nums;
+        self.session.refs.paired = paired;
         for m in self.ref_order() {
-            if !self.issues.data.contains_key(&m) {
+            if !self.session.issues.data.contains_key(&m) {
                 self.queue_issue(m, false);
             }
         }
@@ -295,22 +259,14 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        let Some(key) = self.repo_key() else {
-            self.notify("pinning needs a repo: use -R or run inside one".to_string());
-            return;
-        };
-        let loaded = github::load_pins(&key);
-        let was_pinned = loaded.contains(&n);
-        let pins = core::toggle_pin(&loaded, n);
-        if was_pinned {
-            self.nav.pinned.remove(&n);
-            self.notify(format!("unpinned {n}", n = n.display("")));
-        } else {
-            self.nav.pinned.insert(n);
-            self.notify(format!("pinned {n}", n = n.display("")));
+        match self.session.toggle_pin(n) {
+            Ok(true) => self.notify(format!("pinned {n}", n = n.display(""))),
+            Ok(false) => self.notify(format!("unpinned {n}", n = n.display(""))),
+            Err(e) => {
+                self.notify(e);
+                return;
+            }
         }
-        self.nav.pin_order = pins.clone();
-        github::save_pins(&key, &pins);
         self.show_issue(n);
     }
 
@@ -319,7 +275,7 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone());
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone());
         if let Some(owner) = github::board_owner(repo.as_deref()) {
             github::invalidate(&[github::Key::Board { owner }]);
         }
@@ -336,10 +292,10 @@ impl App {
     /// any process; the old holder stops syncing on its next renewal.
     pub(crate) fn refresh_listing(&mut self) {
         if self.sidebar.query_active.trim().is_empty() {
-            if let Some(link) = self.sections.link.as_mut() {
+            if let Some(link) = self.session.sections.link.as_mut() {
                 link.take_over();
             }
-            self.sections.refresh = github::Refresh::Full;
+            self.session.sections.refresh = github::Refresh::Full;
             self.merge_recent_sections();
         } else if !self.reread_github(false) {
             let q = self.sidebar.query_active.clone();
@@ -352,11 +308,11 @@ impl App {
     /// issue/PR. `None` means `yank` should explain instead of copying.
     pub(crate) fn yank_text(&self) -> Option<String> {
         let current = self.nav.current?;
-        let d = self.issues.data.get(&current)?;
-        let repo = self.repo_key();
+        let d = self.session.issues.data.get(&current)?;
+        let repo = self.session.repo_key();
         if self.nav.pane == Pane::Refs {
             let t = self.refs.highlight?;
-            let target = self.issues.data.get(&t);
+            let target = self.session.issues.data.get(&t);
             if let Some(text) = core::yank_ref_text(
                 current,
                 t,

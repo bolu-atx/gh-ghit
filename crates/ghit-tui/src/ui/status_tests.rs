@@ -26,11 +26,11 @@ fn frame_text_narrow(app: &mut App, width: u16) -> String {
 fn bar_shows_spinner_while_loading_then_collapses() {
     let mut app = loaded_app();
     app.tick = 0;
-    app.issues.pending.insert(ItemRef::github(7));
+    app.session.issues.pending.insert(ItemRef::github(7));
     let text = frame_text(&mut app);
     assert!(text.contains("⠋ issue"), "spinner plus label: {text}");
     // Determinate progress rides the label where known.
-    app.issues.progress.insert(ItemRef::github(7), (2, 7));
+    app.session.issues.progress.insert(ItemRef::github(7), (2, 7));
     let text = frame_text(&mut app);
     assert!(text.contains("issue 2/7"), "determinate progress: {text}");
     // The spinner animates off the cheap frame tick.
@@ -38,8 +38,8 @@ fn bar_shows_spinner_while_loading_then_collapses() {
     let text = frame_text(&mut app);
     assert!(text.contains("⠙ issue 2/7"), "next frame: {text}");
     // Done means collapsed, not blank space.
-    app.issues.pending.clear();
-    app.issues.progress.clear();
+    app.session.issues.pending.clear();
+    app.session.issues.progress.clear();
     let text = frame_text(&mut app);
     assert!(!text.contains("⠋") && !text.contains("⠙"), "spinner gone: {text}");
 }
@@ -47,7 +47,7 @@ fn bar_shows_spinner_while_loading_then_collapses() {
 #[test]
 fn bar_keeps_auth_badge_after_dismiss_and_clean_probe() {
     let mut app = loaded_app();
-    app.auth.dismissed = true;
+    app.session.auth.dismissed = true;
     crate::app::auth_failure(
         &mut app,
         "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials",
@@ -56,12 +56,12 @@ fn bar_keeps_auth_badge_after_dismiss_and_clean_probe() {
     assert!(text.contains("auth degraded"), "badge shows: {text}");
     assert!(text.contains("R re-auth"), "badge names the key: {text}");
     let (tx, rx) = std::sync::mpsc::channel();
-    app.auth.rx = Some(rx);
+    app.session.auth.rx = Some(rx);
     tx.send(Ok(vec![])).unwrap();
-    crate::app::poll_auth(&mut app);
+    crate::app::poll_session(&mut app);
     let text = frame_text(&mut app);
     assert!(text.contains("auth degraded"), "a clean probe keeps it: {text}");
-    app.auth.degraded = false;
+    app.session.auth.degraded = false;
     let text = frame_text(&mut app);
     assert!(!text.contains("auth degraded"), "a successful re-auth clears it: {text}");
 }
@@ -69,8 +69,8 @@ fn bar_keeps_auth_badge_after_dismiss_and_clean_probe() {
 #[test]
 fn bar_message_wins_over_spinner() {
     let mut app = loaded_app();
-    app.issues.pending.insert(ItemRef::github(7));
-    app.issues.progress.insert(ItemRef::github(7), (2, 7));
+    app.session.issues.pending.insert(ItemRef::github(7));
+    app.session.issues.progress.insert(ItemRef::github(7), (2, 7));
     app.notify("refreshed #7".to_string());
     let text = frame_text(&mut app);
     assert!(text.contains("refreshed #7"), "message shows: {text}");
@@ -80,13 +80,13 @@ fn bar_message_wins_over_spinner() {
 #[test]
 fn bar_loading_fits_the_80_cell_bar() {
     let mut app = loaded_app();
-    app.issues.pending.insert(ItemRef::github(7));
+    app.session.issues.pending.insert(ItemRef::github(7));
     app.diff.pending.insert(ItemRef::github(9));
     app.board.detail_pending.insert(ItemRef::github(100));
     let (tx, rx) = std::sync::mpsc::channel();
-    app.sections.rx = Some(rx);
+    app.session.sections.rx = Some(rx);
     let _ = tx.send(ghit_core::github::SectionEvent::Progress { done: 120, total: 500 });
-    crate::app::poll_sections(&mut app);
+    crate::app::poll_session(&mut app);
     // Narrow render must not panic, and the short hint always survives:
     // the loading label truncates first, never the hint.
     let text = frame_text_narrow(&mut app, 80);
@@ -107,7 +107,7 @@ fn toast_marker_uses_warning_icon() {
 #[test]
 fn status_bar_shows_repo_project_and_pinned_hint() {
     let mut app = loaded_app();
-    app.issues.statuses.insert(
+    app.session.issues.statuses.insert(
         ItemRef::github(7),
         vec![("ghit demo".into(), Some("Todo".into()))],
     );
@@ -169,8 +169,8 @@ fn bar_names_the_query_source_and_the_github_action_only_with_a_query() {
 #[test]
 fn h_key_searches_github_with_the_active_query() {
     let mut app = loaded_app();
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     app.sidebar.query_active = "label:bug".to_string();
     handle_key(&mut app, key(KeyCode::Char('H')));
-    assert!(app.sections.rx.is_some() && app.sections.replace, "one GitHub search is in flight");
+    assert!(app.session.sections.rx.is_some() && app.session.sections.replace, "one GitHub search is in flight");
 }

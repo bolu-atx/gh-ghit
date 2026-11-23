@@ -1,5 +1,6 @@
 //! Tests for persisted view prefs.
 
+use ghit_core::github;
 use super::*;
 use super::test_support::{restore_xdg, temp_xdg};
 use ghit_core::model::BoardData;
@@ -11,10 +12,10 @@ fn format_prefs_survive_across_sessions() {
     // First session: flip toggles, fields, window, query, and the
     // board filter, then persist like the key handlers do.
     let mut first = App::new(Some("o/r".to_string()));
-    first.repo_slug = Some("o/r".to_string());
+    first.session.repo_slug = Some("o/r".to_string());
     first.prefs_loaded = true;
     first.sidebar.show_merged_prs = false;
-    first.sections.merged_window_hours = 1;
+    first.session.sections.merged_window_hours = 1;
     first.sidebar.row_issue.author = true;
     first.sidebar.row_pr.checks = false;
     first.board.fields.milestone = true;
@@ -33,10 +34,10 @@ fn format_prefs_survive_across_sessions() {
     // Second session: startup applies everything except the board
     // filter, which returns when its owner board opens.
     let mut second = App::new(Some("o/r".to_string()));
-    second.repo_slug = Some("o/r".to_string());
+    second.session.repo_slug = Some("o/r".to_string());
     second.apply_prefs();
     assert!(!second.sidebar.show_merged_prs);
-    assert_eq!(second.sections.merged_window_hours, 1);
+    assert_eq!(second.session.sections.merged_window_hours, 1);
     assert!(second.sidebar.row_issue.author);
     assert!(!second.sidebar.row_pr.checks);
     assert!(second.board.fields.milestone);
@@ -116,7 +117,7 @@ fn stale_saved_milestones_prune_when_board_lands() {
 fn the_map_filter_is_saved_per_repo() {
     let (_guard, _dir, saved) = temp_xdg();
     let mut first = App::new(Some("o/r".to_string()));
-    first.repo_slug = Some("o/r".to_string());
+    first.session.repo_slug = Some("o/r".to_string());
     first.prefs_loaded = true;
     first.map_filter_flip(crate::app::FilterRow::Closed);
     first.map_filter_flip(crate::app::FilterRow::Label("bug".to_string()));
@@ -124,11 +125,11 @@ fn the_map_filter_is_saved_per_repo() {
     let want = first.map.filter.clone();
     assert!(want.closed && want.labels.contains("bug") && want.scope == model::MapScope::Repo);
     let mut second = App::new(Some("o/r".to_string()));
-    second.repo_slug = Some("o/r".to_string());
+    second.session.repo_slug = Some("o/r".to_string());
     second.apply_prefs();
     assert_eq!(second.map.filter, want, "every change saved, scope included");
     let mut other = App::new(Some("o/other".to_string()));
-    other.repo_slug = Some("o/other".to_string());
+    other.session.repo_slug = Some("o/other".to_string());
     other.apply_prefs();
     assert_eq!(other.map.filter, model::MapFilter::default(), "another repo keeps its own filter");
     restore_xdg(saved);
@@ -143,7 +144,7 @@ fn prefs_saved_under_another_host_stay_unrestored() {
     std::env::set_var("XDG_DATA_HOME", dir.path());
     std::env::set_var("GH_HOST", "ghe.corp");
     let mut first = App::new(Some("acme/r".to_string()));
-    first.repo_slug = Some("acme/r".to_string());
+    first.session.repo_slug = Some("acme/r".to_string());
     first.prefs_loaded = true;
     first.sidebar.query_active = "label:bug".to_string();
     first.board.filter = "auth".to_string();
@@ -155,7 +156,7 @@ fn prefs_saved_under_another_host_stay_unrestored() {
     // prefs never bleed across hosts.
     std::env::set_var("GH_HOST", "github.com");
     let mut second = App::new(Some("acme/r".to_string()));
-    second.repo_slug = Some("acme/r".to_string());
+    second.session.repo_slug = Some("acme/r".to_string());
     second.apply_prefs();
     assert!(second.sidebar.query_active.is_empty(), "query stays on its host");
     second.restore_board_filter("acme");
@@ -179,7 +180,7 @@ fn persist_before_startup_load_writes_nothing() {
     prefs.board_cards.milestone = true;
     github::save_prefs(&prefs);
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     // Pre-bootstrap input mutates defaults and tries to persist, as
     // `f` then `m` would before the bootstrap lands.
     app.sidebar.show_merged_prs = false;

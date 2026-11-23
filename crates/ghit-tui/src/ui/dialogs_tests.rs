@@ -59,8 +59,8 @@ fn filter_dialog_toggles_hide_recent_rows() {
     let mut merged = sample(ItemRef::github(20));
     merged.is_pr = true;
     merged.state = "MERGED".to_string();
-    app.issues.data.insert(ItemRef::github(20), merged);
-    app.issues.statuses.insert(ItemRef::github(20), vec![]);
+    app.session.issues.data.insert(ItemRef::github(20), merged);
+    app.session.issues.statuses.insert(ItemRef::github(20), vec![]);
     app.nav.recent.push(ItemRef::github(20));
     use ghit_core::model::SideRow::{Divider, Item};
     assert_eq!(
@@ -217,7 +217,7 @@ fn sidebar_format_navigation_and_sort_match_shortcuts() {
     let mut app = loaded_app();
     let mut older = sample(ItemRef::github(11));
     older.updated_at = "2020-01-01T00:00:00Z".into();
-    app.issues.data.insert(ItemRef::github(11), older);
+    app.session.issues.data.insert(ItemRef::github(11), older);
     app.nav.visited.push(ItemRef::github(11));
     app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     frame_text(&mut app);
@@ -262,11 +262,11 @@ fn format_dialog_lists_pills_and_space_toggles_them() {
     let text = frame_text(&mut app);
     assert!(text.contains("bug") && text.contains("docs"), "label pills: {text}");
     assert!(text.contains("v1") && text.contains("(no milestone)"), "milestone pills: {text}");
-    let fetching = app.sections.rx.is_some();
+    let fetching = app.session.sections.rx.is_some();
     handle_key(&mut app, key(KeyCode::Char(' ')));
     assert!(app.sidebar.label_filter.contains("bug"), "space flips the focused label");
     assert!(!app.sidebar.label_filter.contains("docs"));
-    assert_eq!(app.sections.rx.is_some(), fetching, "pills never refetch");
+    assert_eq!(app.session.sections.rx.is_some(), fetching, "pills never refetch");
     // Milestone pills follow the labels: v1, then "(no milestone)".
     app.sidebar.format_focus = 8;
     handle_key(&mut app, key(KeyCode::Char(' ')));
@@ -387,7 +387,7 @@ fn auth_modal_names_scopes_and_command() {
 fn compose_on_diff_line_targets_file_and_line() {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.issues
+    app.session.issues
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
@@ -420,7 +420,7 @@ fn compose_on_thread_block_targets_the_reply() {
     pr.review_threads = vec![
         ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
     ];
-    app.issues.data.insert(ItemRef::github(9), pr);
+    app.session.issues.data.insert(ItemRef::github(9), pr);
     app.show_issue(ItemRef::github(9));
     app.diff.pending.remove(&ItemRef::github(9));
     app.diff.files.insert(ItemRef::github(9), vec![
@@ -506,7 +506,7 @@ fn compose_footer_names_the_editor_key() {
 #[test]
 fn compose_modal_steals_mouse_focus() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
         "blocked by #9, see details".to_string();
     handle_key(&mut app, key(KeyCode::Char('c')));
     assert!(app.compose_open());
@@ -528,7 +528,7 @@ fn compose_modal_steals_mouse_focus() {
 fn pending_nav_dialog_renders_all_three_actions() {
     let mut app = loaded_app();
     app.nav.current = Some(ItemRef::github(9));
-    let d = app.issues.data.get_mut(&ItemRef::github(9)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(9)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![ghit_core::model::ReviewThread {
         id: "t1".into(),
@@ -621,7 +621,7 @@ fn settings_dialog_applies_and_saves_each_row() {
     let _prefs = TempPrefs::new();
     let mut app = loaded_app();
     app.prefs_loaded = true;
-    app.sections.backfill.months = 12;
+    app.session.sections.backfill.months = 12;
     app.open_settings();
     let text = frame_text_sized(&mut app, 100, 30);
     for wanted in ["Settings", "theme", "mirage", "icons", "nerd font", "plain", "backfill", "12 months"] {
@@ -645,15 +645,15 @@ fn settings_dialog_applies_and_saves_each_row() {
     // Backfill stepper: keys and clicks, saved to prefs.
     handle_key(&mut app, key(KeyCode::Char('j')));
     handle_key(&mut app, key(KeyCode::Char('l')));
-    assert_eq!(app.sections.backfill.months, 24);
+    assert_eq!(app.session.sections.backfill.months, 24);
     assert_eq!(ghit_core::github::load_prefs().backfill_months, 24);
     let _ = frame_text_sized(&mut app, 100, 30);
     press_cell(&mut app, crate::app::BACKFILL_ROW, Some(2));
-    assert_eq!(app.sections.backfill.months, 0, "the top step is all history");
+    assert_eq!(app.session.sections.backfill.months, 0, "the top step is all history");
     press_cell(&mut app, crate::app::BACKFILL_ROW, Some(2));
-    assert_eq!(app.sections.backfill.months, 0, "no step past all history");
+    assert_eq!(app.session.sections.backfill.months, 0, "no step past all history");
     press_cell(&mut app, crate::app::BACKFILL_ROW, Some(0));
-    assert_eq!(app.sections.backfill.months, 24);
+    assert_eq!(app.session.sections.backfill.months, 24);
     assert_eq!(ghit_core::github::load_prefs().backfill_months, 24);
     // Outside click closes.
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));

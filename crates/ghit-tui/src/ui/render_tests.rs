@@ -20,7 +20,7 @@ fn frame_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
 /// Issue 7 with a Refs pane, a History stack and a toggled-on sidebar.
 fn wide_content_app() -> App {
     let mut app = loaded_app();
-    app.refs.numbers = vec![ItemRef::github(9)];
+    app.session.refs.numbers = vec![ItemRef::github(9)];
     app.nav.history = vec![ItemRef::github(9)];
     app
 }
@@ -50,8 +50,8 @@ fn title_fg(buf: &ratatui::buffer::Buffer, y: u16, needle: &str) -> Option<ratat
 fn history_alone_and_sidebar_toggle_resize_main() {
     use ghit_core::core::Pane;
     let mut app = loaded_app();
-    app.refs.numbers.clear();
-    app.refs.paired.clear();
+    app.session.refs.numbers.clear();
+    app.session.refs.paired.clear();
     frame_text_sized(&mut app, 160, 40);
     let full_width = app.hits.body_area.width;
     assert!(app.hits.history_rows.is_empty());
@@ -173,8 +173,8 @@ fn jk_stays_in_the_focused_pane() {
     // A second issue to walk between.
     let mut extra = sample(ItemRef::github(5));
     extra.body = String::new();
-    app.issues.data.insert(ItemRef::github(5), extra);
-    app.issues.statuses.insert(ItemRef::github(5), vec![]);
+    app.session.issues.data.insert(ItemRef::github(5), extra);
+    app.session.issues.statuses.insert(ItemRef::github(5), vec![]);
     app.nav.visited.push(ItemRef::github(5));
     app.show_issue(ItemRef::github(7));
     assert_eq!(app.nav.pane, Pane::Issues);

@@ -63,14 +63,14 @@ impl App {
             }
             ICONS_ROW => theme::choose_nerd(option == 0),
             BACKFILL_ROW => {
-                let now = self.sections.backfill.months;
+                let now = self.session.sections.backfill.months;
                 let next = match option {
                     0 => MONTHS.iter().rev().find(|m| span(**m) < span(now)),
                     2 => MONTHS.iter().find(|m| span(**m) > span(now)),
                     _ => None,
                 };
                 if let Some(months) = next {
-                    self.sections.backfill.months = *months;
+                    self.session.sections.backfill.months = *months;
                     self.persist_prefs();
                 }
             }

@@ -20,12 +20,12 @@ fn alt_key(code: KeyCode) -> crossterm::event::KeyEvent {
 #[test]
 fn ctrl_o_and_ctrl_i_walk_history() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     for n in [7, 9] {
-        app.issues
+        app.session.issues
             .data
             .insert(ItemRef::github(n), sample(ItemRef::github(n)));
-        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.session.issues.statuses.insert(ItemRef::github(n), vec![]);
     }
     app.ensure_visited(ItemRef::github(7));
     app.load_issue(ItemRef::github(7), false);
@@ -60,11 +60,11 @@ fn plain_key(code: KeyCode) -> crossterm::event::KeyEvent {
 
 fn compose_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
-    app.issues
+    app.session.repo_slug = Some("o/r".to_string());
+    app.session.issues
         .data
         .insert(ItemRef::github(7), sample(ItemRef::github(7)));
-    app.issues.statuses.insert(ItemRef::github(7), vec![]);
+    app.session.issues.statuses.insert(ItemRef::github(7), vec![]);
     app.nav.visited.push(ItemRef::github(7));
     app.show_issue(ItemRef::github(7));
     app
@@ -75,8 +75,8 @@ fn shift_r_reopens_reauth_only_while_degraded() {
     let mut app = compose_app();
     handle_key(&mut app, plain_key(KeyCode::Char('R')));
     assert!(!app.confirm_open(), "healthy key is a no-op");
-    app.auth.dismissed = true;
-    app.auth.degraded = true;
+    app.session.auth.dismissed = true;
+    app.session.auth.degraded = true;
     handle_key(&mut app, plain_key(KeyCode::Char('R')));
     assert!(
         matches!(app.confirm().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)),
@@ -290,12 +290,12 @@ fn compose_ctrl_o_arms_editor_or_names_a_missing_editor() {
 
 fn pending_dialog_app() -> App {
     let mut app = compose_app();
-    app.issues
+    app.session.issues
         .data
         .insert(ItemRef::github(9), sample(ItemRef::github(9)));
-    app.issues.statuses.insert(ItemRef::github(9), vec![]);
+    app.session.issues.statuses.insert(ItemRef::github(9), vec![]);
     app.nav.visited.push(ItemRef::github(9));
-    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![ghit_core::model::ReviewThread {
         id: "t1".into(),
@@ -344,7 +344,7 @@ fn confirm_dialog_keys_submit_discard_and_cancel() {
 #[test]
 fn ctrl_s_submits_pending_review() {
     let mut app = compose_app();
-    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![ghit_core::model::ReviewThread {
         id: "t1".into(),
@@ -359,12 +359,12 @@ fn ctrl_s_submits_pending_review() {
 
 fn step_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     for n in [7u64, 8] {
-        app.issues
+        app.session.issues
             .data
             .insert(ItemRef::github(n), sample(ItemRef::github(n)));
-        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.session.issues.statuses.insert(ItemRef::github(n), vec![]);
         app.nav.visited.push(ItemRef::github(n));
     }
     app.show_issue(ItemRef::github(7));
@@ -529,11 +529,11 @@ fn brackets_steps_from_every_pane() {
 #[test]
 fn brackets_on_main_without_an_issue_toasts() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     app.nav.pane = Pane::Main;
     handle_key(&mut app, plain_key(KeyCode::Char('[')));
     assert_eq!(app.message, "view an issue first");
-    assert!(app.issues.pending.is_empty(), "no fetch without an issue");
+    assert!(app.session.issues.pending.is_empty(), "no fetch without an issue");
 }
 
 #[test]
@@ -572,7 +572,7 @@ fn auth_prompt_y_requests_reauth_and_n_dismisses() {
         true,
     );
     handle_key(&mut app, plain_key(KeyCode::Char('y')));
-    assert!(app.auth.reauth_requested, "y arms the refresh");
+    assert!(app.session.auth.reauth_requested, "y arms the refresh");
     assert!(app.confirm_open(), "loop clears the modal after running");
     let mut app = step_app();
     app.open_reauth(
@@ -581,7 +581,7 @@ fn auth_prompt_y_requests_reauth_and_n_dismisses() {
         false,
     );
     handle_key(&mut app, plain_key(KeyCode::Char('n')));
-    assert!(!app.auth.reauth_requested, "n never refreshes");
+    assert!(!app.session.auth.reauth_requested, "n never refreshes");
     assert!(!app.confirm_open(), "n dismisses");
     assert!(matches!(app.nav.focus, crate::app::Focus::Main), "hint must render");
     assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
@@ -596,9 +596,9 @@ fn auth_esc_dismisses_like_n() {
         false,
     );
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert!(!app.auth.reauth_requested, "esc never refreshes");
+    assert!(!app.session.auth.reauth_requested, "esc never refreshes");
     assert!(!app.confirm_open(), "esc dismisses");
-    assert!(app.auth.dismissed, "esc counts as dismissed");
+    assert!(app.session.auth.dismissed, "esc counts as dismissed");
     assert!(app.message.contains("gh auth refresh"), "hint: {}", app.message);
 }
 fn press(app: &mut App, c: char) {
@@ -734,7 +734,7 @@ fn enter_in_refs_and_history_focuses_the_content_too() {
     app.refs.highlight = Some(ItemRef::github(7));
     handle_key(&mut app, plain_key(KeyCode::Enter));
     assert_eq!(app.nav.pane, Pane::Main);
-    app.refs.numbers = vec![ItemRef::github(8)];
+    app.session.refs.numbers = vec![ItemRef::github(8)];
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Refs, "Esc returns to Refs");
     app.nav.pane = Pane::History;
@@ -791,8 +791,8 @@ fn esc_keeps_the_item_once_you_move_on() {
     // it, so Esc has nowhere to go.
     press(&mut app, ']');
     assert_eq!(app.nav.current, Some(ItemRef::github(8)));
-    app.refs.numbers.clear();
-    app.refs.paired.clear();
+    app.session.refs.numbers.clear();
+    app.session.refs.paired.clear();
     assert!(app.back_target().is_none(), "hidden Refs is skipped");
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(

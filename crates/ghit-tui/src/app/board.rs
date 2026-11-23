@@ -64,7 +64,7 @@ impl App {
         if board_open(self) {
             return;
         }
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone());
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone());
         let Some(owner) = github::board_owner(repo.as_deref()) else {
             self.notify("board needs a repo: use -R or run inside one".to_string());
             return;

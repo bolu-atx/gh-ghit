@@ -235,7 +235,7 @@ pub(super) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u
     if files.get(fi).map(|f| f.filename.len() + 5 > width as usize).unwrap_or(true) {
         return None;
     }
-    let d = app.issues.data.get(&n)?;
+    let d = app.session.issues.data.get(&n)?;
     let text = diff_text(app, d, width as usize);
     use ratatui::buffer::Buffer;
     use ratatui::widgets::Widget;

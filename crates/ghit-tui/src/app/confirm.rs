@@ -6,7 +6,8 @@ use std::time::Instant;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{App, Focus, NavIntent, spawn_bg};
+use ghit_core::runtime::spawn_bg;
+use crate::app::{App, Focus, NavIntent};
 use ghit_core::github;
 use ghit_core::model::IssueData;
 use ghit_core::model::ItemRef;
@@ -95,27 +96,6 @@ pub(crate) struct ConfirmDialog {
     pub(crate) kind: ConfirmKind,
 }
 
-/// Auth state: the startup bootstrap channel, the re-auth probe channel,
-/// and the dismissal/re-probe bookkeeping. The pending re-auth
-/// question itself lives in the generic confirm modal.
-#[derive(Default)]
-pub(crate) struct AuthState {
-    pub(crate) bootstrap_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
-    /// Early auth probe in flight (`bootstrap` started it).
-    pub(crate) rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
-    /// Set by input; the event loop runs the refresh outside the TUI.
-    pub(crate) reauth_requested: bool,
-    /// The user dismissed the prompt: later auth failures notify only,
-    /// never re-modal. Cleared by a successful re-auth.
-    pub(crate) dismissed: bool,
-    /// An auth problem was seen and no re-auth has fixed it yet. The
-    /// status bar shows a badge while set; only a successful re-auth
-    /// clears it, because a clean probe cannot prove every permission.
-    pub(crate) degraded: bool,
-    /// The repo-scoped access probe fired once the repo resolved.
-    pub(crate) repo_probed: bool,
-}
-
 /// How long `u` can still undo; matches the toast lifetime.
 const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(4);
 
@@ -148,10 +128,10 @@ impl App {
                     self.nav.recent.insert(i.min(self.nav.recent.len()), n);
                 }
                 if let Some(d) = data {
-                    self.issues.data.insert(n, *d);
+                    self.session.issues.data.insert(n, *d);
                 }
                 if let Some(st) = statuses {
-                    self.issues.statuses.insert(n, st);
+                    self.session.issues.statuses.insert(n, st);
                 }
                 if row_expanded {
                     self.diff.expanded_rows.insert(n);
@@ -218,7 +198,7 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        let Some(state) = self.issues.data.get(&n).map(|d| d.state.as_str()) else { return };
+        let Some(state) = self.session.issues.data.get(&n).map(|d| d.state.as_str()) else { return };
         if state == "MERGED" {
             self.notify(format!(
                 "{n} is merged: nothing to close",
@@ -244,7 +224,7 @@ impl App {
 
     /// Send the state change on a background thread.
     fn start_set_state(&mut self, number: ItemRef, open: bool) {
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
         let tx = self.compose.state_tx.clone();
         spawn_bg(async move {
             let result = github::set_state(&repo, number, open).await;
@@ -293,7 +273,7 @@ impl App {
             }
             ConfirmKind::Reauth => match index {
                 0 => {
-                    self.auth.reauth_requested = true;
+                    self.session.auth.reauth_requested = true;
                     self.open_confirm(dialog);
                 }
                 1 => self.dismiss_reauth(),
@@ -316,7 +296,7 @@ impl App {
     /// never re-modal. Names the by-hand command on the status line.
     fn dismiss_reauth(&mut self) {
         let cmd = ghit_core::github::reauth_command();
-        self.auth.dismissed = true;
+        self.session.auth.dismissed = true;
         self.nav.focus = Focus::Main;
         self.notify(format!("auth dismissed — re-auth by hand: {cmd}"));
     }
@@ -367,7 +347,7 @@ impl App {
     /// dialog keeps its turn: the question waits, and the next auth
     /// failure re-raises it.
     pub(crate) fn open_reauth(&mut self, cause: String, missing: Vec<String>, scopes_known: bool) {
-        self.auth.degraded = true;
+        self.session.auth.degraded = true;
         if self.confirm_open() {
             return;
         }
@@ -398,7 +378,7 @@ impl App {
     /// No-op unless degraded with no dialog up, so `R` never steals a
     /// healthy key or stacks a second modal.
     pub(crate) fn reopen_reauth(&mut self) {
-        if !self.auth.degraded || self.confirm_open() {
+        if !self.session.auth.degraded || self.confirm_open() {
             return;
         }
         self.open_reauth("auth still failing after dismissal".to_string(), vec![], false);
@@ -413,26 +393,6 @@ impl App {
         self.open_pending_nav(intent);
         true
     }
-}
-
-/// Land an auth probe: a dead token or missing scopes raises the
-/// re-auth modal; a covered token stays silent.
-pub(crate) fn poll_auth(app: &mut App) -> bool {
-    let Some(result) = app.auth.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
-    app.auth.rx = None;
-    match result {
-        Ok(missing) if missing.is_empty() => {}
-        Ok(missing) => {
-            app.open_reauth("token lacks scopes ghit needs".to_string(), missing, true);
-        }
-        // Only auth-class failures rise to the modal: re-auth can fix
-        // those, while a rate limit or outage just needs a status line.
-        Err(e) if ghit_core::github::is_auth_error(&e) => {
-            app.open_reauth(e, vec![], false);
-        }
-        Err(e) => app.notify(e),
-    }
-    true
 }
 
 /// Land a close or reopen: success refreshes the item and its sidebar
@@ -473,8 +433,8 @@ pub(crate) fn auth_failure(app: &mut App, e: &str) {
     if !ghit_core::github::is_auth_error(e) {
         return;
     }
-    app.auth.degraded = true;
-    if app.auth.dismissed || app.confirm_open() {
+    app.session.auth.degraded = true;
+    if app.session.auth.dismissed || app.confirm_open() {
         return;
     }
     app.open_reauth(e.to_string(), vec![], false);
@@ -499,8 +459,8 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     match status {
         Ok(s) if s.success() => {
             ghit_core::github::forget_token();
-            app.auth.dismissed = false;
-            app.auth.degraded = false;
+            app.session.auth.dismissed = false;
+            app.session.auth.degraded = false;
             app.notify("re-auth ok: re-checking token…".to_string());
         }
         _ => app.notify(format!("re-auth failed — run by hand: {cmd}")),
@@ -511,10 +471,10 @@ pub(crate) fn run_reauth(app: &mut App, terminal: &mut Terminal<CrosstermBackend
     if matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::Reauth)) {
         app.take_confirm();
     }
-    app.auth.reauth_requested = false;
+    app.session.auth.reauth_requested = false;
     // Re-probe so the modal returns if the refresh did not cover it.
     let (atx, arx) = std::sync::mpsc::channel();
-    app.auth.rx = Some(arx);
+    app.session.auth.rx = Some(arx);
     spawn_bg(async move {
         let _ = atx.send(github::check_auth().await);
     });

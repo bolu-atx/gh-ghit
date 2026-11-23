@@ -11,7 +11,7 @@ fn main_app(body: &str) -> App {
     let mut app = loaded_app();
     let mut d = sample(ItemRef::github(7));
     d.body = body.to_string();
-    app.issues.data.insert(ItemRef::github(7), d);
+    app.session.issues.data.insert(ItemRef::github(7), d);
     app.nav.pane = Pane::Main;
     app.nav.focus = Focus::Main;
     app
@@ -174,7 +174,7 @@ fn sidebar_focus_keeps_the_row_search() {
 fn diff_app() -> App {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.issues
+    app.session.issues
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
