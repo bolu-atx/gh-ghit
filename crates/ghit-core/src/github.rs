@@ -198,7 +198,9 @@ fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row 
             issue.parent = old.issue.parent;
         }
         issue.sub_summary = old.issue.sub_summary;
-        issue.links = old.issue.links.clone();
+        if issue.number.source == model::Source::GitHub {
+            issue.links = old.issue.links.clone();
+        }
         if issue.head_ref_name.is_empty() {
             issue.head_ref_name = old.issue.head_ref_name.clone();
         }
@@ -537,7 +539,9 @@ impl StoreLink {
                 store::EdgeKind::Blocks => model::LinkKind::Blocks,
                 store::EdgeKind::Parent => model::LinkKind::Parent,
                 store::EdgeKind::Closes => model::LinkKind::Closes,
+                store::EdgeKind::Relates => model::LinkKind::Relates,
             },
+            label: edge.label,
         }).collect();
         Some((generation, items, links))
     }

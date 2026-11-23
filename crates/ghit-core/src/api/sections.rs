@@ -252,6 +252,7 @@ pub(crate) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> R
     let links = IssueLinks {
         blocked_by: numbers("/blockedBy/nodes"),
         closed_by: numbers("/closedByPullRequestsReferences/nodes"),
+        ..Default::default()
     };
     let summary = n.get("subIssuesSummary").filter(|s| s.is_object());
     let sub_summary = summary.map(|s| SubSummary {

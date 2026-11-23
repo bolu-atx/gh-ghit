@@ -45,6 +45,9 @@ impl App {
             FilterRow::Link(LinkKind::Parent),
             FilterRow::Link(LinkKind::Closes),
         ];
+        if self.session.jira_info().is_some() {
+            rows.push(FilterRow::Link(LinkKind::Relates));
+        }
         rows.extend(milestones.into_iter().map(|title| FilterRow::Milestone(title.to_string())));
         rows.extend(labels.into_iter().map(|name| FilterRow::Label(name.to_string())));
         rows

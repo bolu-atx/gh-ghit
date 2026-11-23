@@ -41,14 +41,18 @@ pub enum LinkKind {
     Parent,
     /// The pull request `src` closes the issue `dst`.
     Closes,
+    /// A Jira link that is not blocks, parent or closes.
+    Relates,
 }
 
 /// One stored link between two item numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapLink {
     pub src: ItemRef,
     pub dst: ItemRef,
     pub kind: LinkKind,
+    /// Link name for a `Relates` link, from `src`'s side.
+    pub label: Option<String>,
 }
 
 /// Which items the map shows.
@@ -78,6 +82,7 @@ pub struct MapFilter {
     pub blocks: bool,
     pub parents: bool,
     pub closes: bool,
+    pub relates: bool,
     /// Only items in one of these milestones show. Empty means any.
     pub milestones: BTreeSet<String>,
     /// Only items with one of these labels show. Empty means any.
@@ -94,6 +99,7 @@ impl Default for MapFilter {
             blocks: true,
             parents: true,
             closes: true,
+            relates: true,
             milestones: BTreeSet::new(),
             labels: BTreeSet::new(),
         }
@@ -107,6 +113,7 @@ impl MapFilter {
             LinkKind::Blocks => &mut self.blocks,
             LinkKind::Parent => &mut self.parents,
             LinkKind::Closes => &mut self.closes,
+            LinkKind::Relates => &mut self.relates,
         }
     }
 
@@ -116,6 +123,7 @@ impl MapFilter {
             LinkKind::Blocks => self.blocks,
             LinkKind::Parent => self.parents,
             LinkKind::Closes => self.closes,
+            LinkKind::Relates => self.relates,
         }
     }
 
@@ -230,6 +238,7 @@ impl MapGraph {
             LinkKind::Blocks => "blocks",
             LinkKind::Parent => "is the parent of",
             LinkKind::Closes => "closes",
+            LinkKind::Relates => "relates to",
         }).collect();
         let verb = if verbs.is_empty() { "links to".to_string() } else { verbs.join(" and ") };
         format!("{} {verb} {}", name(from), name(to))
@@ -273,18 +282,19 @@ pub fn build_map(
         items.iter().map(|item| (item.number, item)).collect();
     let stored: Vec<MapLink> = links
         .iter()
-        .copied()
         .filter(|link| {
             link.src != link.dst
                 && by_number.contains_key(&link.src)
                 && by_number.contains_key(&link.dst)
         })
+        .cloned()
         .collect();
     let kept = |n: ItemRef| {
         Some(n) == center || by_number.get(&n).is_some_and(|item| filter.keeps(item))
     };
-    let links: Vec<MapLink> = stored.iter().copied()
+    let links: Vec<MapLink> = stored.iter()
         .filter(|link| filter.draws(link.kind) && kept(link.src) && kept(link.dst))
+        .cloned()
         .collect();
     let in_scope: HashSet<ItemRef> = match (filter.scope, center) {
         (MapScope::Repo, _) | (MapScope::Component, None) => {
@@ -335,10 +345,13 @@ pub fn build_map(
     let index: HashMap<ItemRef, usize> = numbers.iter().enumerate().map(|(i, &n)| (n, i)).collect();
 
     // One edge per ordered pair, carrying every kind linked that way.
+    // Relates has no direction: both ends' copies share one edge.
     let mut pairs: BTreeMap<(usize, usize), Vec<LinkKind>> = BTreeMap::new();
     for link in &links {
         if let (Some(&src), Some(&dst)) = (index.get(&link.src), index.get(&link.dst)) {
-            pairs.entry((src, dst)).or_default().push(link.kind);
+            let undirected = link.kind == LinkKind::Relates;
+            let key = if undirected { (src.min(dst), src.max(dst)) } else { (src, dst) };
+            pairs.entry(key).or_default().push(link.kind);
         }
     }
     let mut edges = Vec::with_capacity(pairs.len());
@@ -347,7 +360,15 @@ pub fn build_map(
         found.sort_unstable();
         found.dedup();
         let blocks = found.contains(&LinkKind::Blocks);
-        edges.push((src, dst, if blocks { EdgeStyle::Directed } else { EdgeStyle::Link }));
+        let relates = found.contains(&LinkKind::Relates);
+        let style = if blocks {
+            EdgeStyle::Directed
+        } else if relates {
+            EdgeStyle::Relates
+        } else {
+            EdgeStyle::Link
+        };
+        edges.push((src, dst, style));
         kinds.push(found);
     }
 

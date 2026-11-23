@@ -21,6 +21,8 @@ pub enum EdgeStyle {
     Hub,
     /// `a` blocks `b`: a spring plus the growth force pushing `b` ahead of `a`.
     Directed,
+    /// A relates link: a plain spring, drawn muted.
+    Relates,
 }
 
 /// Axis along which blockers sit before what they block.

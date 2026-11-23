@@ -242,6 +242,18 @@ fn section_list(
                 }
             }
         }
+        if let Some(d) = data {
+            if d.number.source == ghit_core::model::Source::Jira
+                && d.links.blocked_by.iter().any(|blocker| {
+                    app.session.item(*blocker).is_some_and(|b| b.state == "OPEN")
+                })
+            {
+                first.push(Span::styled(
+                    " ⊘ blocked",
+                    Style::new().fg(crate::theme::red()).bold(),
+                ));
+            }
+        }
         // Second line: labels · relative updated · project status, plus
         // the author and milestone when their fields are on. Empty
         // segments collapse; the status keeps the board color and glyph.

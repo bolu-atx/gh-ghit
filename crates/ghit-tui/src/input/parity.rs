@@ -119,6 +119,7 @@ fn graph() -> App {
         src,
         dst,
         kind: LinkKind::Blocks,
+        label: None,
     };
     app.set_map_data(
         vec![

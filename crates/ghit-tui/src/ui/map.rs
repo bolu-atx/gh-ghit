@@ -16,7 +16,7 @@ use crate::app::App;
 use ghit_core::core::map::{arrow, line, stroke, LabelDetail};
 use ghit_core::model::physics::EdgeStyle;
 use ghit_core::model::{self, NodeState};
-use crate::theme::{amber, green, muted, paper, pr_ref, red, teal};
+use crate::theme::{amber, green, muted, paper, pr_ref, red, teal, violet};
 
 /// Card width bounds, in cells.
 const CARD_MIN: u16 = 30;
@@ -111,12 +111,23 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let (from, to) = (centers[a], centers[b]);
         let (dx, dy) = (to.0 - from.0, to.1 - from.1);
         let on_chain = style == EdgeStyle::Directed && lit(a) && lit(b);
-        let pen = match (Some(e) == card_edge, on_chain) {
-            (true, _) => Style::new().fg(teal()).add_modifier(Modifier::BOLD),
-            (false, true) => Style::new().fg(amber()).add_modifier(Modifier::BOLD),
-            (false, false) => Style::new().fg(muted()),
+        let pen = match (Some(e) == card_edge, on_chain, style) {
+            (true, _, _) => Style::new().fg(teal()).add_modifier(Modifier::BOLD),
+            (false, true, _) => Style::new().fg(amber()).add_modifier(Modifier::BOLD),
+            (false, false, EdgeStyle::Relates) => {
+                Style::new().fg(violet()).add_modifier(Modifier::DIM)
+            }
+            (false, false, _) => Style::new().fg(muted()),
         };
-        let glyph = if style == EdgeStyle::Hub { '·' } else { stroke(dx, dy) };
+        let glyph = match style {
+            EdgeStyle::Hub => '·',
+            EdgeStyle::Relates => match stroke(dx, dy) {
+                '─' => '┄',
+                '│' => '┆',
+                other => other,
+            },
+            _ => stroke(dx, dy),
+        };
         let cells = line(from, to);
         for &cell in &cells {
             let free = !places[a].holds(cell) && !places[b].holds(cell);

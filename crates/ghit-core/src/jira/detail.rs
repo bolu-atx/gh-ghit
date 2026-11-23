@@ -14,7 +14,7 @@ use crate::github::{self, IssueBundle, IssueEvent};
 use crate::model::{adf_to_markdown, Author, Comment, IssueData, ItemRef};
 
 const FIELDS: &str = "summary,status,labels,assignee,reporter,created,updated,\
-    issuetype,priority,parent,description";
+    issuetype,priority,parent,description,issuelinks";
 
 fn map_detail(project: &str, base: &str, value: &Value) -> Result<IssueBundle, String> {
     let row = search::map_issue(project, base, value)

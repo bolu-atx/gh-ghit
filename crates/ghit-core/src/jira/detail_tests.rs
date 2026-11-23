@@ -40,6 +40,26 @@ fn detail_maps_adf_people_metadata_and_dates() {
 }
 
 #[test]
+fn detail_maps_issue_links() {
+    let mut raw = issue();
+    raw["fields"]["issuelinks"] = json!([
+        {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+         "inwardIssue": {"key": "PROJ-9"}},
+        {"type": {"name": "Relates", "inward": "relates to", "outward": "relates to"},
+         "outwardIssue": {"key": "PROJ-10"}}
+    ]);
+    let (data, _) = map_detail("PROJ", "https://jira.example", &raw).unwrap();
+    assert_eq!(
+        data.links.blocked_by,
+        vec![ItemRef { source: Source::Jira, number: 9 }]
+    );
+    assert_eq!(
+        data.links.related,
+        vec![("relates to".to_string(), ItemRef { source: Source::Jira, number: 10 })]
+    );
+}
+
+#[test]
 fn comments_map_display_names_adf_and_utc_dates() {
     let page = json!({"startAt": 0, "total": 101, "comments": [{
         "author": {"displayName": "Lin"}, "created": "2026-11-02T11:00:00.000+0100",

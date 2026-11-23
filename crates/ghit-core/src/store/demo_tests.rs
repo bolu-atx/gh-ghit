@@ -148,6 +148,7 @@ fn demo_rows() -> Vec<Row> {
                 links: IssueLinks {
                     blocked_by: incoming(BLOCKS).into_iter().map(ItemRef::github).collect(),
                     closed_by: incoming(CLOSES).into_iter().map(ItemRef::github).collect(),
+                    ..Default::default()
                 },
                 ..IssueData::default()
             };

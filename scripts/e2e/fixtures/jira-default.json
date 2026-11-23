@@ -70,7 +70,13 @@
         "created": "@now-20d",
         "updated": "@now-1h",
         "issuetype": {"name": "Bug"},
-        "priority": {"name": "High"}
+        "priority": {"name": "High"},
+        "issuelinks": [
+          {"id": "30101", "type": {"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "outwardIssue": {"id": "10102", "key": "PROJ-2", "fields": {"summary": "Export the audit log", "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}},
+          {"id": "30102", "type": {"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "inwardIssue": {"id": "10103", "key": "PROJ-3", "fields": {"summary": "Retire the legacy token endpoint", "status": {"name": "Done", "statusCategory": {"key": "done"}}}}},
+          {"id": "30103", "type": {"id": "10001", "name": "Relates", "inward": "relates to", "outward": "relates to"}, "outwardIssue": {"id": "10104", "key": "PROJ-4", "fields": {"summary": "Show the build number in the footer", "status": {"name": "In Review", "statusCategory": {"key": "indeterminate"}}}}},
+          {"id": "30104", "type": {"id": "10001", "name": "Relates", "inward": "relates to", "outward": "relates to"}, "outwardIssue": {"id": "10999", "key": "OTHER-12", "fields": {"summary": "External project issue", "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}}
+        ]
       },
       "comments": [
         {

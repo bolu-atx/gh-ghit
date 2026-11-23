@@ -259,8 +259,16 @@ impl App {
             .into_iter()
             .filter(|m| *m != n && !paired.contains(m))
             .collect();
+        let mut link_targets: Vec<ItemRef> = vec![];
+        if d.number.source == model::Source::Jira {
+            link_targets.extend(d.links.blocked_by.iter().copied());
+            link_targets.extend(d.links.blocks.iter().copied());
+            link_targets.extend(d.links.related.iter().map(|(_, target)| *target));
+        }
         self.session.set_refs(nums, paired);
-        for m in self.ref_order() {
+        let mut targets = self.ref_order();
+        targets.extend(link_targets);
+        for m in targets {
             if !self.session.has_item(m) {
                 self.queue_issue(m, false);
             }

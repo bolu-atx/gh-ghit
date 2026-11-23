@@ -640,6 +640,7 @@ pub(super) fn render_map_filter(f: &mut ratatui::Frame, area: Rect, app: &mut Ap
                     LinkKind::Blocks => "blocks",
                     LinkKind::Parent => "parent",
                     LinkKind::Closes => "closes",
+                    LinkKind::Relates => "relates",
                 };
                 links.push((index, filter.draws(kind), name.to_string()));
             }

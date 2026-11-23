@@ -37,7 +37,7 @@ fn with_map(mut app: App) -> App {
         item(ItemRef::github(12), "CLOSED", "Done blocker", None),
         item(ItemRef::github(30), "OPEN", "Elsewhere", None),
     ];
-    let link = |src: ItemRef, dst: ItemRef, kind: LinkKind| MapLink { src, dst, kind };
+    let link = |src: ItemRef, dst: ItemRef, kind: LinkKind| MapLink { src, dst, kind, label: None };
     let links = vec![
         link(ItemRef::github(11), ItemRef::github(7), LinkKind::Blocks),
         link(ItemRef::github(12), ItemRef::github(7), LinkKind::Blocks),
@@ -136,6 +136,41 @@ fn map_draws_edges_arrows_labels_and_hubs() {
     let selected = app.hits.map_nodes.iter().find(|(_, i)| Some(*i) == app.map.selected).unwrap().0;
     assert!(buf[(selected.x, selected.y)].modifier.contains(ratatui::style::Modifier::BOLD), "selection is bold");
     assert_eq!(buf[(selected.x - 1, selected.y)].symbol(), "▌", "selection carries the marker");
+}
+
+#[test]
+fn map_draws_blocks_directed_and_relates_muted() {
+    let mut app = loaded_app();
+    let items = vec![
+        item(ItemRef::github(7), "OPEN", "Center issue", None),
+        item(ItemRef::github(8), "OPEN", "Blocked issue", None),
+        item(ItemRef::github(9), "OPEN", "Related issue", None),
+    ];
+    let relates = MapLink {
+        src: ItemRef::github(7),
+        dst: ItemRef::github(9),
+        kind: LinkKind::Relates,
+        label: Some("relates to".to_string()),
+    };
+    let links = vec![
+        MapLink { src: ItemRef::github(7), dst: ItemRef::github(8),
+            kind: LinkKind::Blocks, label: None },
+        relates,
+    ];
+    app.set_map_data(items, links);
+    app.nav.pane = Pane::Main;
+    app.set_tab(Tab::Map);
+    app.settle_map();
+    let graph = &app.map.graph;
+    let blocks = graph.edge_between(
+        NodeId::Item(ItemRef::github(7)), NodeId::Item(ItemRef::github(8))).unwrap();
+    let relates_edge = graph.edge_between(
+        NodeId::Item(ItemRef::github(7)), NodeId::Item(ItemRef::github(9))).unwrap();
+    assert_eq!(graph.edges[blocks].2, ghit_core::model::physics::EdgeStyle::Directed);
+    assert_eq!(graph.edges[relates_edge].2, ghit_core::model::physics::EdgeStyle::Relates);
+    assert_eq!(graph.relation(relates_edge), "#7 relates to #9");
+    let text = map_rows(&mut app).join("\n");
+    assert!(text.contains('┄') || text.contains('┆'), "relates edge is dashed:\n{text}");
 }
 
 #[test]
@@ -391,6 +426,7 @@ fn a_drag_follows_its_node_through_a_rebuild_and_ends_when_it_vanishes() {
         src: ItemRef::github(1),
         dst: ItemRef::github(7),
         kind: LinkKind::Blocks,
+        label: None,
     });
     app.set_map_data(items.clone(), links.clone());
     app.map_tick();

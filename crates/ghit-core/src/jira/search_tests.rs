@@ -106,6 +106,49 @@ fn keys_of_other_projects_are_rejected() {
 }
 
 #[test]
+fn issue_links_map_each_direction_kind_and_external_target() {
+    let mut raw = issue("PROJ-123", "In Progress", "indeterminate");
+    raw["fields"]["issuelinks"] = json!([
+        {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+         "outwardIssue": {"key": "PROJ-2"}},
+        {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+         "inwardIssue": {"key": "PROJ-3"}},
+        {"type": {"name": "Relates", "inward": "relates to", "outward": "relates to"},
+         "outwardIssue": {"key": "PROJ-4"}},
+        {"type": {"name": "Duplicate", "inward": "is duplicated by", "outward": "duplicates"},
+         "inwardIssue": {"key": "PROJ-5"}},
+        {"type": {"name": "Cloners", "inward": "is cloned by", "outward": "clones"},
+         "outwardIssue": {"key": "PROJ-6"}},
+        {"type": {"name": "Causes", "inward": "is caused by", "outward": "causes"},
+         "outwardIssue": {"key": "PROJ-8"}},
+        {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+         "outwardIssue": {"key": "OTHER-12"}},
+        {"type": {"name": "Relates", "inward": "relates to", "outward": "relates to"},
+         "inwardIssue": {"key": "OTHER-13"}}
+    ]);
+    let row = map_issue("PROJ", "https://x", &raw).unwrap();
+    let jira = |n| ItemRef { source: Source::Jira, number: n };
+    assert_eq!(row.issue.links.blocks, vec![jira(2)]);
+    assert_eq!(row.issue.links.blocked_by, vec![jira(3)]);
+    assert_eq!(
+        row.issue.links.related,
+        vec![
+            ("relates to".to_string(), jira(4)),
+            ("is duplicated by".to_string(), jira(5)),
+            ("clones".to_string(), jira(6)),
+            ("causes".to_string(), jira(8)),
+        ]
+    );
+    assert_eq!(
+        row.issue.links.external,
+        vec![
+            ("blocks".to_string(), "OTHER-12".to_string()),
+            ("relates to".to_string(), "OTHER-13".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn a_sparse_issue_still_maps() {
     let sparse =
         json!({"key": "proj-4", "fields": {"summary": "s", "assignee": null, "labels": []}});

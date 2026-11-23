@@ -17,7 +17,7 @@ fn item(number: ItemRef, state: &str, milestone: Option<&str>) -> MapItem {
 }
 
 fn link(src: ItemRef, dst: ItemRef, kind: LinkKind) -> MapLink {
-    MapLink { src, dst, kind }
+    MapLink { src, dst, kind, label: None }
 }
 
 /// The default filter with `scope`.
@@ -316,6 +316,49 @@ fn blocker_chain_is_transitive() {
         ],
         "parent links are not blockers"
     );
+}
+
+#[test]
+fn a_relates_link_stored_on_both_ends_draws_one_edge() {
+    let items: Vec<MapItem> = (1..=2)
+        .map(|n| item(ItemRef::github(n), "OPEN", None))
+        .collect();
+    let links = vec![
+        link(ItemRef::github(1), ItemRef::github(2), LinkKind::Relates),
+        link(ItemRef::github(2), ItemRef::github(1), LinkKind::Relates),
+    ];
+    let graph = build_map(&items, &links, Some(ItemRef::github(1)), &scoped(MapScope::Repo));
+    assert_eq!(graph.edges.len(), 1);
+    assert_eq!(graph.edges[0].2, EdgeStyle::Relates);
+}
+
+#[test]
+fn relates_links_draw_as_relates_and_hide_with_the_filter() {
+    let items: Vec<MapItem> = (1..=3)
+        .map(|n| item(ItemRef::github(n), "OPEN", None))
+        .collect();
+    let mut relates = link(ItemRef::github(1), ItemRef::github(3), LinkKind::Relates);
+    relates.label = Some("relates to".to_string());
+    let links = vec![
+        link(ItemRef::github(1), ItemRef::github(2), LinkKind::Blocks),
+        relates,
+    ];
+    let graph = build_map(&items, &links, Some(ItemRef::github(1)), &scoped(MapScope::Repo));
+    let at = |n: ItemRef| graph.index_of(NodeId::Item(n)).unwrap();
+    let blocks_edge = graph.edge_between(
+        NodeId::Item(ItemRef::github(1)), NodeId::Item(ItemRef::github(2))).unwrap();
+    let relates_edge = graph.edge_between(
+        NodeId::Item(ItemRef::github(1)), NodeId::Item(ItemRef::github(3))).unwrap();
+    assert_eq!(graph.edges[blocks_edge].2, EdgeStyle::Directed);
+    assert_eq!(graph.edges[relates_edge].2, EdgeStyle::Relates);
+    assert_eq!(graph.kinds[relates_edge], vec![LinkKind::Relates]);
+    assert_eq!(graph.relation(relates_edge), "#1 relates to #3");
+    assert_eq!((at(ItemRef::github(1)), at(ItemRef::github(3))), (0, 2));
+    let mut filter = scoped(MapScope::Repo);
+    filter.relates = false;
+    let graph = build_map(&items, &links, Some(ItemRef::github(1)), &filter);
+    assert!(graph.edge_between(
+        NodeId::Item(ItemRef::github(1)), NodeId::Item(ItemRef::github(3))).is_none());
 }
 
 #[test]

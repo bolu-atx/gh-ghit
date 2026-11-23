@@ -103,6 +103,67 @@ fn details_header_shows_clickable_paired_line() {
     assert!(app.hits.header_rows.iter().any(|l| l.contains("Paired")), "{:?}", app.hits.header_rows);
 }
 
+fn jira_links_app() -> App {
+    let client = ghit_core::jira::JiraClient::new(
+        "example.atlassian.net",
+        "me@example.com".to_string(),
+        "token".to_string(),
+        "PROJ".to_string(),
+    );
+    let backend = ghit_core::backend::IssueBackend::Jira(std::sync::Arc::new(client));
+    let mut app = App::with_backend(Some("o/r".to_string()), backend);
+    app.session.set_repo_slug("o/r");
+    ghit_core::model::set_jira_key("PROJ");
+    let jira = |n: u64| ItemRef { source: ghit_core::model::Source::Jira, number: n };
+    let mut center = sample(jira(1));
+    center.title = "Center Jira issue".to_string();
+    center.url = "https://example.atlassian.net/browse/PROJ-1".to_string();
+    center.links.blocks = vec![jira(2)];
+    center.links.blocked_by = vec![jira(3)];
+    center.links.related = vec![("relates to".to_string(), jira(4))];
+    center.links.external = vec![("relates to".to_string(), "OTHER-12".to_string())];
+    let mut blocked = sample(jira(2));
+    blocked.title = "Blocked target".to_string();
+    let mut blocker = sample(jira(3));
+    blocker.title = "Blocker target".to_string();
+    let mut related = sample(jira(4));
+    related.title = "Related target".to_string();
+    related.state = "CLOSED".to_string();
+    for data in [center, blocked, blocker, related] {
+        let n = data.number;
+        app.session.issues_test().data.insert(n, data);
+        app.session.issues_test().statuses.insert(n, vec![]);
+        app.nav.visited.push(n);
+    }
+    app.show_issue(jira(1));
+    app
+}
+
+#[test]
+fn jira_detail_shows_links_block_grouped_by_name() {
+    let mut app = jira_links_app();
+    let text = frame_text(&mut app);
+    for wanted in ["Links", "blocks", "PROJ-2", "Blocked target", "is blocked by",
+        "PROJ-3", "Blocker target", "relates to", "PROJ-4", "Related target", "CLOSED",
+        "OTHER-12"]
+    {
+        assert!(text.contains(wanted), "missing {wanted}: {text}");
+    }
+    assert!(text.contains("⊘ blocked"), "blocked Jira row is marked: {text}");
+    assert!(app.hits.header_rows.iter().any(|l| l.contains("Links")), "{:?}", app.hits.header_rows);
+    // A click on an in-project link target opens it in the main pane.
+    let idx = app.hits.header_rows.iter()
+        .position(|l| l.contains("PROJ-4")).expect("related row");
+    let col = app.hits.header_area.x
+        + app.hits.header_rows[idx].find("PROJ-4").expect("related ref col") as u16;
+    let row_y = app.hits.header_area.y + idx as u16;
+    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, row_y));
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef { source: ghit_core::model::Source::Jira, number: 4 })
+    );
+}
+
 #[test]
 fn paired_header_click_opens_counterpart_in_main() {
     use ghit_core::core::Pane;

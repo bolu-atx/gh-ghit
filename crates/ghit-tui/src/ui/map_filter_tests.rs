@@ -225,6 +225,7 @@ fn an_edge_card_names_every_kind_the_edge_carries() {
         src: ItemRef::github(7),
         dst: ItemRef::github(8),
         kind: LinkKind::Parent,
+        label: None,
     });
     let items = app.map.items.clone();
     app.set_map_data(items, links);

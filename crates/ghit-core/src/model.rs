@@ -293,9 +293,20 @@ pub struct IssueData {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueLinks {
     /// Issues that block this one.
+    #[serde(default)]
     pub blocked_by: Vec<ItemRef>,
+    /// Issues this one blocks.
+    #[serde(default)]
+    pub blocks: Vec<ItemRef>,
     /// Pull requests that close this issue.
+    #[serde(default)]
     pub closed_by: Vec<ItemRef>,
+    /// Other in-project links, by the name from this issue's side.
+    #[serde(default)]
+    pub related: Vec<(String, ItemRef)>,
+    /// Links to another project's issue, by name and target key.
+    #[serde(default)]
+    pub external: Vec<(String, String)>,
 }
 
 pub fn slug(title: &str, width: usize) -> String {

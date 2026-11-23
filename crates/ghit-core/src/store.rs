@@ -2,7 +2,8 @@
 //! `owner/repo`, shared by every clone, worktree and running ghit.
 //!
 //! The file is a rebuildable copy, so a schema version mismatch drops
-//! every table and starts empty. No migrations.
+//! every table and starts empty. The v6 to v7 step is the one migration:
+//! it adds the edges label column and keeps the stored rows.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,7 +14,7 @@ use crate::api::Row;
 use crate::cache;
 use crate::model::{IssueData, ItemRef, MapItem, PairedRef, Source};
 
-const SCHEMA_VERSION: &str = "6";
+const SCHEMA_VERSION: &str = "7";
 
 /// How long a write waits for another process's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -64,6 +65,7 @@ CREATE TABLE edges (
     dst_source TEXT NOT NULL,
     dst INTEGER NOT NULL,
     kind TEXT NOT NULL,
+    label TEXT,
     PRIMARY KEY (dst_source, dst, src_source, src, kind)
 );
 CREATE INDEX edges_src ON edges (src_source, src);
@@ -104,6 +106,8 @@ pub enum EdgeKind {
     Parent,
     /// The pull request `src` closes the issue `dst`.
     Closes,
+    /// A Jira link that is not blocks, parent or closes.
+    Relates,
 }
 
 impl EdgeKind {
@@ -112,20 +116,25 @@ impl EdgeKind {
             EdgeKind::Blocks => "blocks",
             EdgeKind::Parent => "parent",
             EdgeKind::Closes => "closes",
+            EdgeKind::Relates => "relates",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [EdgeKind::Blocks, EdgeKind::Parent, EdgeKind::Closes].into_iter().find(|kind| kind.name() == name)
+        [EdgeKind::Blocks, EdgeKind::Parent, EdgeKind::Closes, EdgeKind::Relates]
+            .into_iter()
+            .find(|kind| kind.name() == name)
     }
 }
 
 /// One link between two stored item numbers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
     pub src: ItemRef,
     pub dst: ItemRef,
     pub kind: EdgeKind,
+    /// Link name for a `Relates` edge, from `src`'s side.
+    pub label: Option<String>,
 }
 
 /// One open repo store.
@@ -163,6 +172,18 @@ fn open_at(path: &Path) -> Result<Store, String> {
     let mut conn = Connection::open(path).map_err(fail)?;
     conn.busy_timeout(BUSY_TIMEOUT).map_err(fail)?;
     conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get::<_, String>(0)).map_err(fail)?;
+    if schema_version(&conn).as_deref() == Some("6") {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
+        if schema_version(&tx).as_deref() == Some("6") {
+            tx.execute_batch("ALTER TABLE edges ADD COLUMN label TEXT").map_err(fail)?;
+            tx.execute(
+                "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
+                [SCHEMA_VERSION],
+            )
+            .map_err(fail)?;
+        }
+        tx.commit().map_err(fail)?;
+    }
     if schema_version(&conn).as_deref() != Some(SCHEMA_VERSION) {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
         // Another process may have rebuilt it while this one waited.
@@ -241,7 +262,7 @@ impl Store {
     pub fn edges(&self) -> Result<Vec<Edge>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let mut stmt = self.conn.prepare(
-            "SELECT src_source, src, dst_source, dst, kind FROM edges
+            "SELECT src_source, src, dst_source, dst, kind, label FROM edges
              ORDER BY dst_source, dst, src_source, src, kind",
         ).map_err(fail)?;
         let edges = stmt.query_map([], read_edge).map_err(fail)?;
@@ -408,8 +429,9 @@ fn read_item(row: &rusqlite::Row, column: usize) -> rusqlite::Result<ItemRef> {
 /// An edge row; `None` for a kind this build does not know.
 fn read_edge(row: &rusqlite::Row) -> rusqlite::Result<Option<Edge>> {
     let kind: String = row.get(4)?;
+    let label: Option<String> = row.get(5)?;
     let (src, dst) = (read_item(row, 0)?, read_item(row, 2)?);
-    Ok(EdgeKind::from_name(&kind).map(|kind| Edge { src, dst, kind }))
+    Ok(EdgeKind::from_name(&kind).map(|kind| Edge { src, dst, kind, label }))
 }
 
 /// Upsert `rows` inside `tx` with the given upsert statement.
@@ -473,6 +495,13 @@ fn replace_edges(tx: &rusqlite::Transaction, issue: &IssueData) -> rusqlite::Res
          AND NOT (dst_source = 'jira' AND kind = 'closes')",
         params![issue.number.source.as_str(), issue.number.number as i64],
     )?;
+    if issue.number.source == crate::model::Source::Jira {
+        tx.execute(
+            "DELETE FROM edges WHERE src_source = ?1 AND src = ?2
+             AND kind IN ('blocks', 'relates')",
+            params![issue.number.source.as_str(), issue.number.number as i64],
+        )?;
+    }
     if issue.is_pr {
         tx.execute(
             "DELETE FROM edges WHERE src_source = ?1 AND src = ?2
@@ -481,10 +510,11 @@ fn replace_edges(tx: &rusqlite::Transaction, issue: &IssueData) -> rusqlite::Res
         )?;
         for dst in &issue.jira_refs {
             tx.execute(
-                "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind, label)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![issue.number.source.as_str(), issue.number.number as i64,
-                    dst.source.as_str(), dst.number as i64, EdgeKind::Closes.name()],
+                    dst.source.as_str(), dst.number as i64, EdgeKind::Closes.name(),
+                    Option::<String>::None],
             )?;
         }
     }
@@ -494,10 +524,29 @@ fn replace_edges(tx: &rusqlite::Transaction, issue: &IssueData) -> rusqlite::Res
         .chain(issue.links.closed_by.iter().map(|&pr| (pr, EdgeKind::Closes)));
     for (src, kind) in links {
         tx.execute(
-            "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![src.source.as_str(), src.number as i64,
-                issue.number.source.as_str(), issue.number.number as i64, kind.name()],
+                issue.number.source.as_str(), issue.number.number as i64, kind.name(),
+                Option::<String>::None],
+        )?;
+    }
+    for dst in &issue.links.blocks {
+        tx.execute(
+            "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![issue.number.source.as_str(), issue.number.number as i64,
+                dst.source.as_str(), dst.number as i64, EdgeKind::Blocks.name(),
+                Option::<String>::None],
+        )?;
+    }
+    for (name, dst) in &issue.links.related {
+        tx.execute(
+            "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![issue.number.source.as_str(), issue.number.number as i64,
+                dst.source.as_str(), dst.number as i64, EdgeKind::Relates.name(),
+                Some(name.as_str())],
         )?;
     }
     Ok(())
@@ -909,7 +958,8 @@ mod tests {
             vec![Edge {
                 src: github,
                 dst: jira,
-                kind: EdgeKind::Blocks
+                kind: EdgeKind::Blocks,
+                label: None
             }]
         );
         store.drop_item(jira).unwrap();
@@ -931,8 +981,8 @@ mod tests {
         pr.issue.is_pr = true;
         pr.issue.jira_refs = vec![jira];
         store.write("g1", &[pr.clone(), row(jira, "OPEN")]).unwrap();
-        let edge = Edge { src: ItemRef::github(9), dst: jira, kind: EdgeKind::Closes };
-        assert_eq!(store.edges().unwrap(), vec![edge]);
+        let edge = Edge { src: ItemRef::github(9), dst: jira, kind: EdgeKind::Closes, label: None };
+        assert_eq!(store.edges().unwrap(), vec![edge.clone()]);
         assert_eq!(
             store.linked_prs(jira),
             vec![PairedRef { number: ItemRef::github(9), state: "MERGED".to_string() }]
@@ -1416,12 +1466,16 @@ mod tests {
     ) -> Row {
         let mut r = row(number, "OPEN");
         r.issue.parent = parent;
-        r.issue.links = crate::model::IssueLinks { blocked_by: blocked_by.to_vec(), closed_by: closed_by.to_vec() };
+        r.issue.links = crate::model::IssueLinks {
+            blocked_by: blocked_by.to_vec(),
+            closed_by: closed_by.to_vec(),
+            ..Default::default()
+        };
         r
     }
 
     fn edge(src: ItemRef, dst: ItemRef, kind: EdgeKind) -> Edge {
-        Edge { src, dst, kind }
+        Edge { src, dst, kind, label: None }
     }
 
     #[test]
@@ -1505,6 +1559,53 @@ mod tests {
                 ItemRef::github(7),
                 EdgeKind::Parent
             )]
+        );
+    }
+
+    #[test]
+    fn jira_related_and_blocks_edges_carry_labels_and_replace_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("j.sqlite")).unwrap();
+        let jira = |n| ItemRef { source: Source::Jira, number: n };
+        let mut first = row(jira(1), "OPEN");
+        first.issue.links.blocks = vec![jira(2)];
+        first.issue.links.related = vec![("relates to".to_string(), jira(3))];
+        first.issue.updated_at = "t1".into();
+        store.write_jira("j1", &[first.clone()]).unwrap();
+        assert_eq!(
+            store.edges().unwrap(),
+            vec![
+                Edge { src: jira(1), dst: jira(2), kind: EdgeKind::Blocks, label: None },
+                Edge { src: jira(1), dst: jira(3), kind: EdgeKind::Relates,
+                    label: Some("relates to".to_string()) },
+            ]
+        );
+        let mut second = first;
+        second.issue.links = crate::model::IssueLinks::default();
+        second.issue.updated_at = "t2".into();
+        store.write_jira("j2", &[second]).unwrap();
+        assert!(store.edges().unwrap().is_empty(), "removed links leave no edge");
+    }
+
+    #[test]
+    fn schema_v6_migrates_to_v7_keeping_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("m.sqlite");
+        let mut store = open_at(&file).unwrap();
+        store
+            .write("s1", &[linked(ItemRef::github(2), None, &[ItemRef::github(1)], &[])])
+            .unwrap();
+        store.conn.execute_batch("ALTER TABLE edges DROP COLUMN label").unwrap();
+        store
+            .conn
+            .execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'", [])
+            .unwrap();
+        drop(store);
+        let store = open_at(&file).unwrap();
+        assert_eq!(schema_version(&store.conn).as_deref(), Some("7"));
+        assert_eq!(
+            store.edges().unwrap(),
+            [edge(ItemRef::github(1), ItemRef::github(2), EdgeKind::Blocks)]
         );
     }
 

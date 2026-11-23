@@ -12,16 +12,16 @@ use serde_json::{json, Value};
 use super::JiraClient;
 use crate::api::{self, Row, MAX_SECTION_ROWS};
 use crate::github::SectionEvent;
-use crate::model::{Author, BoardDetail, IssueData, ItemRef, Label, Source};
+use crate::model::{Author, BoardDetail, IssueData, IssueLinks, ItemRef, Label, Source};
 
 const PAGE_SIZE: usize = 100;
 
 /// Seconds to wait after a 429 that carries no usable `Retry-After`.
 const DEFAULT_RETRY_SECS: u64 = 30;
 
-const FIELDS: [&str; 10] = [
+const FIELDS: [&str; 11] = [
     "summary", "status", "labels", "assignee", "reporter", "created", "updated", "issuetype",
-    "priority", "parent",
+    "priority", "parent", "issuelinks",
 ];
 
 /// Quote a JQL string value.
@@ -78,6 +78,54 @@ pub(super) fn utc(stamp: &str) -> String {
         .unwrap_or_else(|_| stamp.to_string())
 }
 
+/// Jira `issuelinks` as issue links. A Blocks link fills `blocked_by` or
+/// `blocks` by direction; every other in-project link goes to `related`
+/// under the name from this issue's side. A target in another project
+/// stays as text in `external`, with its key.
+pub(super) fn map_links(project: &str, fields: &Value) -> IssueLinks {
+    let mut links = IssueLinks::default();
+    let list = fields.get("issuelinks").and_then(Value::as_array);
+    for link in list.into_iter().flatten() {
+        let kind = link.get("type");
+        let type_name = kind.and_then(|t| t.get("name")).and_then(Value::as_str).unwrap_or("");
+        let (target, name, outward) = if let Some(issue) = link.get("outwardIssue") {
+            let name = kind.and_then(|t| t.get("outward")).and_then(Value::as_str).unwrap_or("");
+            (issue.get("key").and_then(Value::as_str), name, true)
+        } else if let Some(issue) = link.get("inwardIssue") {
+            let name = kind.and_then(|t| t.get("inward")).and_then(Value::as_str).unwrap_or("");
+            (issue.get("key").and_then(Value::as_str), name, false)
+        } else {
+            continue;
+        };
+        let Some(key) = target else { continue };
+        let name = if name.is_empty() { type_name } else { name };
+        match item_of(project, key) {
+            Some(target) if type_name.eq_ignore_ascii_case("Blocks") => {
+                if outward {
+                    if !links.blocks.contains(&target) {
+                        links.blocks.push(target);
+                    }
+                } else if !links.blocked_by.contains(&target) {
+                    links.blocked_by.push(target);
+                }
+            }
+            Some(target) => {
+                let entry = (name.to_string(), target);
+                if !links.related.contains(&entry) {
+                    links.related.push(entry);
+                }
+            }
+            None => {
+                let entry = (name.to_string(), key.to_string());
+                if !links.external.contains(&entry) {
+                    links.external.push(entry);
+                }
+            }
+        }
+    }
+    links
+}
+
 /// One Jira issue as a sidebar row. `None` for a key of another project.
 /// The status name rides in the project-status slot under the project key.
 pub(super) fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row> {
@@ -104,6 +152,7 @@ pub(super) fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row>
         updated_at: text("/updated").map(|at| utc(&at)).unwrap_or_default(),
         url: format!("{base}/browse/{key}"),
         parent: text("/parent/key").and_then(|parent| item_of(project, &parent)),
+        links: map_links(project, fields),
         ..Default::default()
     };
     Some(Row {

@@ -223,6 +223,95 @@ fn paired_line(d: &IssueData, session: &ghit_core::session::Session) -> Option<L
     Some(Line::from(spans))
 }
 
+/// The Jira issue links under the Details header, grouped by the link
+/// name from this issue's side. In-project targets read as clickable
+/// refs with title and state; another project's target stays as text
+/// with its browse URL, which the header click opens in the browser.
+fn links_lines(
+    d: &IssueData, session: &ghit_core::session::Session,
+) -> Vec<Line<'static>> {
+    use crate::theme::{ink, muted, state_color};
+    if d.number.source != model::Source::Jira {
+        return vec![];
+    }
+    let links = &d.links;
+    if links.blocked_by.is_empty() && links.blocks.is_empty()
+        && links.related.is_empty() && links.external.is_empty()
+    {
+        return vec![];
+    }
+    enum Entry {
+        Ref(ItemRef),
+        External(String, String),
+    }
+    let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
+    let add = |name: &str, entry: Entry, groups: &mut Vec<(String, Vec<Entry>)>| {
+        if let Some(group) = groups.iter_mut().find(|(n, _)| n == name) {
+            group.1.push(entry);
+        } else {
+            groups.push((name.to_string(), vec![entry]));
+        }
+    };
+    for target in &links.blocks {
+        add("blocks", Entry::Ref(*target), &mut groups);
+    }
+    for target in &links.blocked_by {
+        add("is blocked by", Entry::Ref(*target), &mut groups);
+    }
+    for (name, target) in &links.related {
+        add(name, Entry::Ref(*target), &mut groups);
+    }
+    let base = d.url.strip_suffix(&session.label(d.number)).unwrap_or(&d.url);
+    for (name, key) in &links.external {
+        add(name, Entry::External(key.clone(), format!("{base}{key}")), &mut groups);
+    }
+    let mut lines = vec![Line::from(Span::styled(
+        "Links",
+        Style::new().bg(ink()).fg(muted()).bold(),
+    ))];
+    for (name, entries) in groups {
+        let mut spans = vec![Span::styled(
+            format!("  {name}  "),
+            Style::new().bg(ink()).fg(muted()),
+        )];
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
+            }
+            match entry {
+                Entry::Ref(target) => {
+                    let item = session.item(*target);
+                    let state = item.map_or("", |item| item.state.as_str());
+                    let color = state_color(state);
+                    spans.push(Span::styled(
+                        session.label(*target),
+                        Style::new().bg(ink()).fg(color).bold(),
+                    ));
+                    if let Some(item) = item.filter(|item| !item.title.is_empty()) {
+                        spans.push(Span::styled(
+                            format!(" {}", item.title),
+                            Style::new().bg(ink()).fg(crate::theme::paper()),
+                        ));
+                        spans.push(Span::styled(
+                            format!(" {}", item.state),
+                            Style::new().bg(ink()).fg(color),
+                        ));
+                    }
+                }
+                Entry::External(key, url) => {
+                    spans.push(Span::styled(key.clone(), Style::new().bg(ink()).fg(muted())));
+                    spans.push(Span::styled(
+                        format!(" {url}"),
+                        Style::new().bg(ink()).fg(crate::theme::teal()).underlined(),
+                    ));
+                }
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
 pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, paper, base};
     let repo = app.session.repo_key().unwrap_or_default();
@@ -249,7 +338,14 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             .unwrap_or_default(),
         _ => vec![],
     };
-    let header: Vec<Line> = header.into_iter().chain(paired).collect();
+    let links = match (app.nav.tab, app.nav.current.and_then(|n| app.session.item(n))) {
+        (crate::app::Tab::Details, Some(d)) => links_lines(d, &app.session)
+            .into_iter()
+            .flat_map(|line| wrap_lines(vec![line], inner_w))
+            .collect::<Vec<_>>(),
+        _ => vec![],
+    };
+    let header: Vec<Line> = header.into_iter().chain(paired).chain(links).collect();
     app.hits.header_rows = header
         .iter()
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
