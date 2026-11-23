@@ -805,14 +805,34 @@ dependencies = [
 name = "ghit"
 version = "0.14.1"
 dependencies = [
- "chrono",
  "clap",
- "crossterm",
- "open",
- "ratatui",
+ "ghit-core",
+ "ghit-tui",
+]
+
+[[package]]
+name = "ghit-core"
+version = "0.14.1"
+dependencies = [
+ "chrono",
  "regex",
  "reqwest",
  "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "ghit-tui"
+version = "0.14.1"
+dependencies = [
+ "chrono",
+ "crossterm",
+ "ghit-core",
+ "open",
+ "ratatui",
  "serde",
  "serde_json",
  "tempfile",

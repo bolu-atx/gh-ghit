@@ -1,0 +1,22 @@
+[package]
+name = "ghit-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UI-free data and domain core for ghit: model, GitHub API, store and cache"
+
+[features]
+test-support = []
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
