@@ -1,0 +1,22 @@
+[package]
+name = "ghit-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal UI for ghit: app state, rendering, input, keymap and theme"
+
+[dependencies]
+ghit-core.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+open.workspace = true
+tui-markdown.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+ghit-core = { workspace = true, features = ["test-support"] }

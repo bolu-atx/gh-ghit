@@ -66,8 +66,14 @@ jobs:
       # Installs the toolchain and components pinned in rust-toolchain.toml.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - name: ghit-core stays UI-free
+        run: |
+          if cargo tree -p ghit-core -e normal | grep -E "ratatui|crossterm|tui-markdown"; then
+            echo "ghit-core must not depend on ratatui, crossterm or tui-markdown" >&2
+            exit 1
+          fi
   # Known-vulnerability scan of Cargo.lock against the RustSec
   # advisory database. Not a required check, so a new advisory does
   # not block unrelated PRs, but it shows red on the PR.

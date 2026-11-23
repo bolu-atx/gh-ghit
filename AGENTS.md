@@ -44,26 +44,26 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 
 | File | Owns |
 | ---- | ---- |
-| `src/main.rs` | Thin entry: parse `cli`, run `app` |
-| `src/cli.rs` | Clap `Args` + numeric startup parsing |
-| `src/app.rs` + `src/app/{nav,sidebar,finder,format,issue,diff,map,board,compose,confirm,poll,menu,dialogs}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `finder` the Ctrl+P finder state and ranked results, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/review threads, `map` the dependency map (data, layout, camera, drag, cards), `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu and main-menu state (entries from the keymap), `settings` the Settings dialog (theme, icons, backfill limit), `dialogs` the one stored dialog stack (which dialogs and text rows are open, in order) plus the `layer_stack` derivation, `poll` per-frame landing. Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
-| `src/app/fetch_queue.rs` | Fetch scheduler: priority queue; current-issue fetches start at once, the rest at most 4 in flight; tier picked at start time; only tier 1 while rate limited |
-| `src/core.rs` | Pure business rules (`parse_bar`, selection, board cursor, pins, window) |
-| `src/core/fuzzy.rs` | Fuzzy scorer for the Ctrl+P finder: subsequence match, score and matched char indices |
-| `src/core/focus.rs` | Focus model: layer and pane types, pane order, `Tab` stepping |
-| `src/core/urgency.rs` | Fetch tiers: `urgency(kind, is_current, tab_shown)` picks which request starts first |
-| `src/core/map.rs` | Dependency map geometry: the camera (world to cell and back, fit, label detail per zoom) and line rasterizing |
-| `src/core/layout.rs` | Layout math: side column widths (`columns`), `MIN_MAIN_WIDTH`, `MAX_DIFF_FILES` |
-| `src/core/wrap.rs` | Soft wrap of a draft into visual rows; cursor to (row, col) and click to char index |
-| `src/model.rs` + `src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` (dependency map nodes and edges), `rank` (ready work, bottlenecks, critical paths), `physics` (force layout) |
-| `src/github.rs` | Data-access facade over `api`/`cache`/`store`; UI layers never import those directly |
-| `src/api.rs` + `src/api/{client,sections,sub_issues,board}.rs` | Token-backed GraphQL/REST calls |
-| `src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
-| `src/store.rs` | Local repo copy: one SQLite file per host + `owner/repo` (`store/<host>/<owner>/<repo>.sqlite`, WAL), shared by every clone and process; holds the sidebar rows, the last sync and the sync lease (one process per repo syncs; the rest watch `PRAGMA data_version`); item details (issue, diff) keyed by `updated_at`; item links (`edges`) the dependency map reads; backfill cursors and progress per connection (the lease holder fills the working set at the lowest fetch tier; `GHIT_NO_BACKFILL` turns it off) |
-| `src/keymap.rs` + `src/keymap/` | The key table: one binding list per focus context. Input, `?` help and hints read it. Change a key here, not in `input` |
-| `src/input.rs` + `src/input/` | Looks keys up in `keymap`, runs actions (`input/actions.rs`), maps mouse into `App` calls (`input/mouse.rs` wheel and entry, `input/click.rs` left-click routing); reads `ui` hit areas, never draws |
-| `src/ui.rs` | All rendering + frame tests; reads `App`, never fetches |
-| `src/theme.rs` | Palettes (ayu mirage, ayu dark), `GhitSheet` markdown stylesheet, `set()` |
+| `crates/ghit/src/main.rs` | Thin entry: parse `cli`, run `app` |
+| `crates/ghit/src/cli.rs` | Clap `Args` + numeric startup parsing |
+| `crates/ghit-tui/src/app.rs` + `crates/ghit-tui/src/app/{nav,sidebar,finder,format,issue,diff,map,board,compose,confirm,poll,menu,dialogs}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `finder` the Ctrl+P finder state and ranked results, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/review threads, `map` the dependency map (data, layout, camera, drag, cards), `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu and main-menu state (entries from the keymap), `settings` the Settings dialog (theme, icons, backfill limit), `dialogs` the one stored dialog stack (which dialogs and text rows are open, in order) plus the `layer_stack` derivation, `poll` per-frame landing. Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
+| `crates/ghit-core/src/fetch_queue.rs` | Fetch scheduler: priority queue; current-issue fetches start at once, the rest at most 4 in flight; tier picked at start time; only tier 1 while rate limited |
+| `crates/ghit-core/src/core.rs` | Pure business rules (`parse_bar`, selection, board cursor, pins, window) |
+| `crates/ghit-core/src/core/fuzzy.rs` | Fuzzy scorer for the Ctrl+P finder: subsequence match, score and matched char indices |
+| `crates/ghit-core/src/core/focus.rs` | Focus model: layer and pane types, pane order, `Tab` stepping |
+| `crates/ghit-core/src/core/urgency.rs` | Fetch tiers: `urgency(kind, is_current, tab_shown)` picks which request starts first |
+| `crates/ghit-core/src/core/map.rs` | Dependency map geometry: the camera (world to cell and back, fit, label detail per zoom) and line rasterizing |
+| `crates/ghit-core/src/core/layout.rs` | Layout math: side column widths (`columns`), `MIN_MAIN_WIDTH`, `MAX_DIFF_FILES` |
+| `crates/ghit-core/src/core/wrap.rs` | Soft wrap of a draft into visual rows; cursor to (row, col) and click to char index |
+| `crates/ghit-core/src/model.rs` + `crates/ghit-core/src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` (dependency map nodes and edges), `rank` (ready work, bottlenecks, critical paths), `physics` (force layout) |
+| `crates/ghit-core/src/github.rs` | Data-access facade over `api`/`cache`/`store`; UI layers never import those directly |
+| `crates/ghit-core/src/api.rs` + `crates/ghit-core/src/api/{client,sections,sub_issues,board}.rs` | Token-backed GraphQL/REST calls |
+| `crates/ghit-core/src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
+| `crates/ghit-core/src/store.rs` | Local repo copy: one SQLite file per host + `owner/repo` (`store/<host>/<owner>/<repo>.sqlite`, WAL), shared by every clone and process; holds the sidebar rows, the last sync and the sync lease (one process per repo syncs; the rest watch `PRAGMA data_version`); item details (issue, diff) keyed by `updated_at`; item links (`edges`) the dependency map reads; backfill cursors and progress per connection (the lease holder fills the working set at the lowest fetch tier; `GHIT_NO_BACKFILL` turns it off) |
+| `crates/ghit-tui/src/keymap.rs` + `crates/ghit-tui/src/keymap/` | The key table: one binding list per focus context. Input, `?` help and hints read it. Change a key here, not in `input` |
+| `crates/ghit-tui/src/input.rs` + `crates/ghit-tui/src/input/` | Looks keys up in `keymap`, runs actions (`input/actions.rs`), maps mouse into `App` calls (`input/mouse.rs` wheel and entry, `input/click.rs` left-click routing); reads `ui` hit areas, never draws |
+| `crates/ghit-tui/src/ui.rs` | All rendering + frame tests; reads `App`, never fetches |
+| `crates/ghit-tui/src/theme.rs` | Palettes (ayu mirage, ayu dark), `GhitSheet` markdown stylesheet, `set()` |
 
 Key patterns:
 

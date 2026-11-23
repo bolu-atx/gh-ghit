@@ -1,0 +1,18 @@
+[package]
+name = "ghit"
+version.workspace = true
+edition.workspace = true
+description = "Terminal viewer for GitHub issues and PRs, backed by the gh CLI"
+license.workspace = true
+repository.workspace = true
+keywords = ["github", "issues", "tui"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "ghit"
+path = "src/main.rs"
+
+[dependencies]
+ghit-core.workspace = true
+ghit-tui.workspace = true
+clap.workspace = true
