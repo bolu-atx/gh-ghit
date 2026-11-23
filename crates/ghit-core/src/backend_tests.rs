@@ -29,7 +29,7 @@ fn the_project_key_comes_from_the_jira_backend_only() {
 }
 
 #[tokio::test]
-async fn jira_detail_is_not_implemented() {
+async fn jira_writes_are_not_supported() {
     let client = crate::jira::JiraClient::new(
         "example.atlassian.net",
         "me@example.com".to_string(),
@@ -38,10 +38,10 @@ async fn jira_detail_is_not_implemented() {
     );
     let backend = IssueBackend::Jira(std::sync::Arc::new(client));
     let number = ItemRef { source: crate::model::Source::Jira, number: 1 };
-    assert!(backend.fetch_number("owner/repo", number, false, None).await.unwrap_err().contains("#315"));
-    assert!(backend.fetch_sub_issues("owner/repo", number).await.unwrap_err().contains("#315"));
-    assert!(backend.set_state("owner/repo", number, true).await.unwrap_err().contains("#315"));
-    assert!(backend.post_comment("owner/repo", number, "body").await.unwrap_err().contains("#315"));
+    let error = backend.set_state("owner/repo", number, true).await.unwrap_err();
+    assert!(error.contains("not supported for Jira yet"));
+    let error = backend.post_comment("owner/repo", number, "body").await.unwrap_err();
+    assert!(error.contains("not supported for Jira yet"));
 }
 
 #[tokio::test]

@@ -1,7 +1,6 @@
 //! Model: shared issue/comment/review types. One submodule per concern holds
 //! the rest; the items callers use are re-exported here.
 
-#[allow(dead_code)]
 mod adf;
 mod board;
 mod diff;
@@ -40,7 +39,6 @@ mod test_support;
 
 use serde::{Deserialize, Serialize};
 
-#[allow(unused_imports)]
 pub use adf::adf_to_markdown;
 pub use board::{BoardData, BoardDetail, BoardItem, CardFields, RowFields, board_columns, board_milestones, card_assignee, card_footer_labels, card_footer_right, card_meta};
 pub use diff::{CONTEXT_STEPS, DiffFile, DiffKind, SplitRow, diff_lines, diff_summary, header_file_index, line_target_at_cursor, patch_line_numbers, split_rows, strip_diff_gutter, thread_at_cursor, thread_patch_row, widen_patch};
@@ -228,6 +226,10 @@ pub struct IssueData {
     pub title: String,
     #[serde(default)]
     pub state: String,
+    #[serde(default)]
+    pub issue_type: String,
+    #[serde(default)]
+    pub priority: String,
     #[serde(default)]
     pub author: Author,
     #[serde(default)]

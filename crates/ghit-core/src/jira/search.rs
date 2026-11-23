@@ -25,7 +25,7 @@ const FIELDS: [&str; 10] = [
 ];
 
 /// Quote a JQL string value.
-fn quote(value: &str) -> String {
+pub(super) fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -71,7 +71,7 @@ fn item_of(project: &str, key: &str) -> Option<ItemRef> {
 
 /// Jira's `2024-05-01T10:00:00.000+0000` as the UTC RFC 3339 form the
 /// sidebar compares as text. Unparsable text stays as it is.
-fn utc(stamp: &str) -> String {
+pub(super) fn utc(stamp: &str) -> String {
     chrono::DateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S%.f%z")
         .or_else(|_| chrono::DateTime::parse_from_rfc3339(stamp))
         .map(|at| at.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
@@ -80,7 +80,7 @@ fn utc(stamp: &str) -> String {
 
 /// One Jira issue as a sidebar row. `None` for a key of another project.
 /// The status name rides in the project-status slot under the project key.
-fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row> {
+pub(super) fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row> {
     let key = issue.get("key")?.as_str()?;
     let number = item_of(project, key)?;
     let fields = issue.get("fields")?;
@@ -92,6 +92,8 @@ fn map_issue(project: &str, base: &str, issue: &Value) -> Option<Row> {
         number,
         title: text("/summary").unwrap_or_default(),
         state: if done { "CLOSED" } else { "OPEN" }.to_string(),
+        issue_type: text("/issuetype/name").unwrap_or_default(),
+        priority: text("/priority/name").unwrap_or_default(),
         author: person("/reporter/displayName").unwrap_or_default(),
         labels: labels
             .filter_map(Value::as_str)

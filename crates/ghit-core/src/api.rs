@@ -109,6 +109,8 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             number: ItemRef::github(number),
             title: string("title"),
             state,
+            issue_type: String::new(),
+            priority: String::new(),
             author: Author { login: v.pointer("/user/login").and_then(Value::as_str).unwrap_or("").to_owned() },
             labels,
             assignees,

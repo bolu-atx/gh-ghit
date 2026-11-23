@@ -62,6 +62,8 @@ pub(super) fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String
 
 pub(super) fn sample(number: ItemRef) -> IssueData {
     IssueData {
+        issue_type: String::new(),
+        priority: String::new(),
         number,
         title: "Fix the thing".to_string(),
         state: "OPEN".to_string(),

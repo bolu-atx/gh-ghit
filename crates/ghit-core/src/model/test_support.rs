@@ -8,6 +8,8 @@ pub(super) fn sample_issue() -> IssueData {
         number: ItemRef::github(1),
         title: "some title here".to_string(),
         state: "OPEN".to_string(),
+        issue_type: String::new(),
+        priority: String::new(),
         author: Author { login: "bo".to_string() },
         labels: vec![Label { name: "needs-triage".to_string() }],
         assignees: vec![],

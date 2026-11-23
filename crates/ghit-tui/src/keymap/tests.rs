@@ -324,6 +324,8 @@ fn help_merges_aliases_and_leads_with_the_current_context() {
 fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
     let mut app = app_in(Pane::Main);
     app.session.issues_test().data.insert(ItemRef::github(9), ghit_core::model::IssueData {
+        issue_type: String::new(),
+        priority: String::new(),
         number: ItemRef::github(9),
         title: String::new(),
         state: "OPEN".to_string(),
