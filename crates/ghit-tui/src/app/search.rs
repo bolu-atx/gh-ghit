@@ -93,7 +93,7 @@ impl App {
 
     fn unfold_diff_file(&mut self, fi: usize) {
         let Some(n) = self.nav.current else { return };
-        let Some(name) = self.diff.files.get(&n).and_then(|f| f.get(fi)).map(|f| f.filename.clone()) else { return };
+        let Some(name) = self.session.diff.files.get(&n).and_then(|f| f.get(fi)).map(|f| f.filename.clone()) else { return };
         self.diff.expanded_files.insert((n, name));
     }
 

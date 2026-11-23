@@ -178,11 +178,11 @@ fn diff_app() -> App {
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.diff.pending.remove(&ItemRef::github(9));
+    app.session.diff.pending.remove(&ItemRef::github(9));
     let file = |name: &str, patch: &str| DiffFile {
         filename: name.into(), status: "modified".into(), additions: 1, deletions: 0, patch: patch.into(),
     };
-    app.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff.files.insert(ItemRef::github(9), vec![
         file("src/a.rs", "@@ -1 +1 @@\n-old\n+new needle"),
         file("src/b.rs", "@@ -1 +1 @@\n-x\n+hidden needle here"),
     ]);

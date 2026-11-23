@@ -1,62 +1,11 @@
 //! Per-frame polls that land background fetches into `App`, plus startup bootstrap.
 
-use std::collections::HashSet;
 
 use crate::app::{App, Focus};
-use ghit_core::core::self;
-use ghit_core::{github, model};
+use ghit_core::github;
 use crate::app::auth_failure;
 use ghit_core::model::ItemRef;
-use ghit_core::session::SessionEvent;
-
-/// Fetch missing board card details together without blocking the event loop.
-pub(super) fn kick_off_details(app: &mut App) {
-    let Some(board) = &app.board.data else { return };
-    let mut cards = Vec::new();
-    for item in &board.items {
-        let (Some(n), Some(repo)) = (item.number, item.repo.clone()) else { continue };
-        if app.board.details.contains_key(&n) || app.board.detail_pending.contains(&n) { continue; }
-        if let Some(d) = app.session.issues.data.get(&n) {
-            app.board.details.insert(n, model::BoardDetail::from_issue(d));
-            continue;
-        }
-        app.board.detail_pending.insert(n);
-        cards.push((repo, n));
-    }
-    if cards.is_empty() { return; }
-    let tx = app.board.detail_tx.clone();
-    app.enqueue(core::Kind::Other, None, async move {
-        match github::fetch_board_details(&cards).await {
-            Ok(details) => {
-                let mut missing = Vec::new();
-                for ((repo, n), detail) in cards.into_iter().zip(details) {
-                    match detail {
-                        Some(detail) => { let _ = tx.send((n, Ok(detail))); }
-                        None => missing.push((repo, n)),
-                    }
-                }
-                for (repo, n) in missing {
-                    let _ = tx.send((n, github::fetch_board_detail(&repo, n).await));
-                }
-            }
-            Err(e) => for (_, n) in cards { let _ = tx.send((n, Err(e.clone()))); },
-        }
-    });
-}
-
-pub(crate) fn poll_details(app: &mut App) -> bool {
-    let ready: Vec<(ItemRef, Result<model::BoardDetail, String>)> =
-        app.board.detail_rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (n, res) in ready {
-        app.board.detail_pending.remove(&n);
-        match res {
-            Ok(d) => { app.board.details.insert(n, d); }
-            Err(e) => { auth_failure(app, &e); app.notify(e); }
-        }
-    }
-    landed
-}
+use ghit_core::session::{Held, Landed, PollCtx, SessionEvent};
 
 // ---------------------------------------------------------------------------
 // TUI runner
@@ -87,12 +36,12 @@ fn land_bootstrap(app: &mut App, numbers: Vec<ItemRef>) {
                 app.queue_issue(n, false);
             }
         }
-        app.session.sections.link = github::StoreLink::open(&key);
+        app.session.open_store(&key);
         if app.sidebar.query_active.trim().is_empty() {
             app.hydrate_cached_sections();
             // Another process holds the sync lease: its syncs land through
             // `watch_store`.
-            if app.sync_holder() {
+            if app.session.sync_holder() {
                 app.merge_recent_sections();
             }
         } else {
@@ -123,23 +72,13 @@ pub(crate) fn poll_repo_meta(app: &mut App) -> bool {
     true
 }
 
-/// Run the change probe inside a section task. False means the task is
-/// over: `Unchanged` (nothing new) or `Done(Err)` (probe failed, so the
-/// usual backoff applies) is already sent.
-pub(super) async fn probe_says_changed(repo: &str, tx: &std::sync::mpsc::Sender<github::SectionEvent>) -> bool {
-    match github::repo_changed(repo).await {
-        Ok(true) => true,
-        Ok(false) => { let _ = tx.send(github::SectionEvent::Unchanged); false }
-        Err(e) => { let _ = tx.send(github::SectionEvent::Done(Err(e))); false }
-    }
-}
-
 /// Land what the session finished and turn each event into view changes.
 /// True when anything landed.
 /// Land every finished `Session` fetch at once.
 #[cfg(test)]
 pub(crate) fn poll_session(app: &mut App) -> bool {
-    let events = app.session.poll();
+    let ctx = app.poll_ctx(std::time::Instant::now());
+    let events = app.session.poll_frame(&ctx);
     apply_session(app, events)
 }
 
@@ -163,6 +102,9 @@ fn apply_event(app: &mut App, event: SessionEvent) {
             Err(e) if github::is_auth_error(&e) => app.open_reauth(e, vec![], false),
             Err(e) => app.notify(e),
         },
+        SessionEvent::RowsLanded { landed, auto } => app.apply_landed(landed, auto),
+        SessionEvent::StoreChanged => { app.requery_after_store_change(); }
+        SessionEvent::SectionsStarted | SessionEvent::BackfillLanded => {}
         SessionEvent::SectionsProgress | SessionEvent::SectionsUnchanged | SessionEvent::IssueProgress(_) => {}
         SessionEvent::SectionsCapped => app.notify(cap_notice()),
         SessionEvent::SectionsDone { result, replace, auto } => {
@@ -171,7 +113,7 @@ fn apply_event(app: &mut App, event: SessionEvent) {
             }
             match result {
                 Ok(rows) if replace => app.land_github(rows),
-                Ok(rows) => land_rows(app, rows, replace, auto),
+                Ok(rows) => app.land_rows(rows, replace, auto),
                 // Auto-refresh failures notify too: a silent empty
                 // sidebar is how under-scoped tokens went unnoticed.
                 // The backoff in the session still bounds the retry rate.
@@ -212,78 +154,92 @@ fn apply_event(app: &mut App, event: SessionEvent) {
                 app.notify(error);
             }
         }
+        SessionEvent::BoardLoaded => {
+            app.board.col = 0;
+            app.board.row = 0;
+            app.board.states.clear();
+            app.board.expanded = None;
+            app.prune_board_milestones();
+            let view = app.fetch_view();
+            app.session.load_board_details(&view);
+        }
+        SessionEvent::BoardFailed(e) => {
+            // A failed load closes the board, as it did when "open"
+            // meant "has data or is loading".
+            app.close_board();
+            auth_failure(app, &e);
+            app.notify(e);
+        }
+        SessionEvent::BoardDetail(_) | SessionEvent::DiffLoaded(_) => {}
+        SessionEvent::BoardDetailFailed(e) | SessionEvent::DiffFailed(e) => { auth_failure(app, &e); app.notify(e); }
+        SessionEvent::HeadFilesLanded(n) => app.rewiden(n),
+        SessionEvent::HeadFilesFailed { number, error } => {
+            auth_failure(app, &error);
+            app.notify(error);
+            app.rewiden(number);
+        }
+        SessionEvent::DraftSent { number, result } => super::compose::land_draft_sent(app, number, result),
+        SessionEvent::ReviewSubmitted { number, result } => match result {
+            Ok(()) => {
+                app.notify(format!("pending review submitted on {n}", n = number.display("")));
+                app.load_issue(number, true);
+            }
+            Err(e) => {
+                auth_failure(app, &e);
+                app.notify(e);
+            }
+        },
+        SessionEvent::StateChanged { number, open, result } => super::confirm::land_state_changed(app, number, open, result),
         SessionEvent::SubIssuesLoaded(_) => {}
         SessionEvent::SubIssuesFailed(e) => { auth_failure(app, &e); app.notify(e); }
     }
 }
 
-/// Land listing rows: a window listing (`replace` false) first evicts the
-/// background rows it no longer carries, then known rows refresh display
-/// fields and new rows file under recent. A user fetch (`auto` false) with
-/// nothing open opens the last new row.
-pub(super) fn land_rows(app: &mut App, rows: Vec<ghit_core::github::Row>, replace: bool, auto: bool) {
-    if !replace {
-        evict_vanished_rows(app, &rows);
+impl App {
+    /// What the listing rules read from the view: the rows the sidebar
+    /// holds and the rows no listing may evict.
+    pub(crate) fn held_rows(&self) -> Held {
+        let keep = self
+            .nav
+            .visited
+            .iter()
+            .copied()
+            .chain(self.session.pins.order.iter().copied())
+            .chain(self.session.pins.set.iter().copied())
+            .chain(self.nav.current)
+            .chain(self.nav.requested)
+            .collect();
+        Held { recent: self.nav.recent.clone(), keep }
     }
-    let mut last = None;
-    for row in rows {
-        let n = row.issue.number;
-        if let Some(d) = app.session.issues.data.get_mut(&n) {
-            // Window listings refresh display fields only.
-            // Body, comments, and review threads belong to
-            // the full fetch and stay. Search hits carry no
-            // statuses, so replace mode never touches known
-            // rows — dropped unvisited rows reinsert below.
-            // A listing older than what we hold (search index
-            // lag, a cached page) never overwrites it: a
-            // just-closed item must not flip back to open.
-            if !replace && row.issue.updated_at >= d.updated_at {
-                d.title = row.issue.title;
-                d.state = row.issue.state;
-                d.checks = row.issue.checks;
-                d.labels = row.issue.labels;
-                d.updated_at = row.issue.updated_at;
-                app.session.issues.statuses.insert(n, row.statuses);
-                app.board.details.insert(n, row.detail);
-            }
-        } else {
-            if !row.complete { app.session.issues.partial.insert(n); }
-            app.session.issues.data.insert(n, row.issue);
-            app.session.issues.statuses.insert(n, row.statuses);
-            app.board.details.insert(n, row.detail);
-            app.ensure_recent(n);
-            last = Some(n);
+
+    /// Everything the session's poll reads from the view.
+    pub(crate) fn poll_ctx(&self, now: std::time::Instant) -> PollCtx {
+        PollCtx {
+            now,
+            searching: !self.sidebar.query_active.trim().is_empty(),
+            show: self.show_mask(),
+            idle: self.focus().layer == ghit_core::core::Layer::Base,
+            view: self.fetch_view(),
+            held: self.held_rows(),
         }
     }
-    if !auto && app.nav.current.is_none() && app.nav.requested.is_none() {
-        if let Some(n) = last { app.load_issue(n, false); }
-                    }
-}
 
-/// Window landing: evict listed background rows the fresh payload no
-/// longer carries. Visited, pinned, current, and pending-open rows stay
-/// so the open view and its thread survive a refresh; search mode never
-/// lands here and keeps `drop_unvisited_background` replace semantics.
-fn evict_vanished_rows(app: &mut App, rows: &[ghit_core::github::Row]) {
-    let fresh: HashSet<ItemRef> = rows.iter().map(|r| r.issue.number).collect();
-    let keep: HashSet<ItemRef> = app
-        .nav
-        .visited
-        .iter()
-        .copied()
-        .chain(app.session.pins.order.iter().copied())
-        .chain(app.session.pins.set.iter().copied())
-        .chain(app.nav.current)
-        .chain(app.nav.requested)
-        .collect();
-    let gone: HashSet<ItemRef> = app
-        .nav
-        .recent
-        .iter()
-        .copied()
-        .filter(|n| !fresh.contains(n) && !keep.contains(n))
-        .collect();
-    if gone.is_empty() { return; }
-    app.nav.recent.retain(|n| !gone.contains(n));
-    for n in gone { app.drop_cached(n); }
+    /// Land listing rows in the session, then file and drop the rows it
+    /// reports. A user fetch (`auto` false) with nothing open opens the
+    /// last new row.
+    pub(crate) fn land_rows(&mut self, rows: Vec<github::Row>, replace: bool, auto: bool) {
+        let held = self.held_rows();
+        let landed = self.session.land_rows(rows, replace, &held);
+        self.apply_landed(landed, auto);
+    }
+
+    fn apply_landed(&mut self, landed: Landed, auto: bool) {
+        self.nav.recent.retain(|n| !landed.gone.contains(n));
+        for n in &landed.filed {
+            self.ensure_recent(*n);
+        }
+        if !auto && self.nav.current.is_none() && self.nav.requested.is_none() {
+            if let Some(n) = landed.filed.last().copied() { self.load_issue(n, false); }
+        }
+    }
 }

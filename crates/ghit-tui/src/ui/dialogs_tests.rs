@@ -338,7 +338,7 @@ fn format_dialogs_fit_short_terminal_and_keep_focus_visible() {
     // Ten pills push the board dialog past 24 rows: the popup caps
     // at the area and scrolls the focused card field into view.
     let mut board = board_app(10);
-    for (i, item) in board.board.data.as_mut().unwrap().items.iter_mut().enumerate() {
+    for (i, item) in board.session.board.data.as_mut().unwrap().items.iter_mut().enumerate() {
         item.milestone = Some(format!("m{i}"));
     }
     board.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
@@ -391,8 +391,8 @@ fn compose_on_diff_line_targets_file_and_line() {
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.diff.pending.remove(&ItemRef::github(9));
-    app.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff.pending.remove(&ItemRef::github(9));
+    app.session.diff.files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.diff.expanded_files.insert((ItemRef::github(9), "a.rs".into()));
@@ -422,8 +422,8 @@ fn compose_on_thread_block_targets_the_reply() {
     ];
     app.session.issues.data.insert(ItemRef::github(9), pr);
     app.show_issue(ItemRef::github(9));
-    app.diff.pending.remove(&ItemRef::github(9));
-    app.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff.pending.remove(&ItemRef::github(9));
+    app.session.diff.files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.diff.expanded_files.insert((ItemRef::github(9), "a.rs".into()));

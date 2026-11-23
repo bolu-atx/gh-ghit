@@ -1,42 +1,27 @@
 //! Compose drafts: cursor editing, `$EDITOR`, send and poll.
 
-use std::collections::HashSet;
 use std::io::Stdout;
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use ghit_core::runtime::spawn_bg;
+use crate::app::ComposeTarget;
 use crate::app::App;
-use ghit_core::{github, model};
+use ghit_core::model;
 use crate::app::auth_failure;
 use ghit_core::model::ItemRef;
 
-/// Where a composed comment lands.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ComposeTarget {
-    /// Plain issue/PR thread comment.
-    Thread,
-    /// Single-shot PR line comment: file plus new-side line.
-    Line { path: String, line: u64 },
-    /// Reply inside an existing review thread: the cursor sits in its
-    /// rendered block on the Diff tab.
-    Reply { thread_id: String },
-}
-
-impl ComposeTarget {
-    /// Title naming what the draft answers; a thread comment adds the
-    /// item's title when it is loaded.
-    pub(crate) fn title(&self, number: ItemRef, item_title: Option<&str>) -> String {
-        match self {
-            ComposeTarget::Thread => match item_title {
-                Some(title) => format!("Comment on {number}  {title}", number = number.display("")),
-                None => format!("Comment on {number}", number = number.display("")),
-            },
-            ComposeTarget::Line { path, line } => format!("Line comment  {path}:{line}"),
-            ComposeTarget::Reply { .. } => {
-                format!("Reply on {number}", number = number.display(""))
-            }
+/// Title naming what a draft answers; a thread comment adds the item's
+/// title when it is loaded.
+pub(crate) fn target_title(target: &ComposeTarget, number: ItemRef, item_title: Option<&str>) -> String {
+    match target {
+        ComposeTarget::Thread => match item_title {
+            Some(title) => format!("Comment on {number}  {title}", number = number.display("")),
+            None => format!("Comment on {number}", number = number.display("")),
+        },
+        ComposeTarget::Line { path, line } => format!("Line comment  {path}:{line}"),
+        ComposeTarget::Reply { .. } => {
+            format!("Reply on {number}", number = number.display(""))
         }
     }
 }
@@ -66,36 +51,12 @@ pub(crate) struct ComposeView {
     pub(crate) followed: Option<usize>,
 }
 
-/// Compose slot: the `$EDITOR` handoff flag, the
-/// submit channel, and the per-PR review-submit channel plus its
-/// in-flight set.
+/// Compose slot: the `$EDITOR` handoff flag. Sends live in the session.
+#[derive(Default)]
 pub(crate) struct ComposeSlot {
     /// Set by input; the event loop suspends the TUI and runs `$EDITOR`
     /// on the draft outside it, then lands the edited text.
     pub(crate) editor_requested: bool,
-    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
-    // Pending review submit (`ctrl-s`): PRs with pending line comments, plus
-    // its background channel. One in-flight submit per PR.
-    pub(crate) review_tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
-    pub(crate) review_rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
-    pub(crate) submitting: HashSet<ItemRef>,
-    /// Close and reopen results: number, the state asked for, outcome.
-    pub(crate) state_tx: std::sync::mpsc::Sender<(ItemRef, bool, Result<(), String>)>,
-    pub(crate) state_rx: std::sync::mpsc::Receiver<(ItemRef, bool, Result<(), String>)>,
-}
-
-impl ComposeSlot {
-    pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
-        rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
-        review_tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
-        review_rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
-    ) -> Self {
-        let (state_tx, state_rx) = std::sync::mpsc::channel();
-        Self { editor_requested: false, tx, rx, review_tx, review_rx,
-            submitting: HashSet::new(), state_tx, state_rx }
-    }
 }
 
 impl App {
@@ -130,7 +91,7 @@ impl App {
             return None;
         }
         let n = self.nav.current?;
-        let files = self.diff.files.get(&n)?;
+        let files = self.session.diff.files.get(&n)?;
         let fi = self.diff_file_at_cursor()?;
         let file = files.get(fi)?;
         let abs = self.diff.line?;
@@ -527,31 +488,7 @@ impl App {
         }
         c.sending = true;
         let (number, target, body) = (c.number, c.target.clone(), c.body.clone());
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
-        // A REST reply names a numeric comment id, not the GraphQL
-        // thread id the cursor carries: resolve it from the loaded
-        // thread before sending.
-        let reply_comment_id = match &target {
-            ComposeTarget::Reply { thread_id } => self
-                .session
-                .issues
-                .data
-                .get(&number)
-                .and_then(|d| model::thread_reply_comment_id(&d.review_threads, thread_id)),
-            _ => None,
-        };
-        let tx = self.compose.tx.clone();
-        spawn_bg(async move {
-            let result = match &target {
-                ComposeTarget::Thread => github::post_thread_comment(&repo, number, &body).await,
-                ComposeTarget::Line { path, line } => github::post_line_comment(&repo, number, &body, path, *line).await,
-                ComposeTarget::Reply { .. } => match reply_comment_id {
-                    Some(comment_id) => github::post_thread_reply(&repo, number, comment_id, &body).await,
-                    None => Err("reply needs a review comment: refresh the PR to reload its threads".to_string()),
-                },
-            };
-            let _ = tx.send((number, result));
-        });
+        self.session.send_draft(number, target, body);
         self.notify("sending comment…".to_string());
     }
 }
@@ -559,34 +496,29 @@ impl App {
 /// Land a compose submit: success closes the modal, confirms on the
 /// status line, and refetches the issue so the Comments tab shows the
 /// new comment; failure keeps the draft and names the cause.
-pub(crate) fn poll_compose(app: &mut App) -> bool {
-    let ready: Vec<(ItemRef, Result<(), String>)> = app.compose.rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (n, res) in ready {
-        match res {
-            Ok(()) => {
-                let pending = matches!(app.draft().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
-                app.close(crate::app::Slot::Compose);
-                if pending {
-                    app.notify(format!(
-                        "line comment pending on {n} — press ctrl-s to submit",
-                        n = n.display("")
-                    ));
-                } else {
-                    app.notify(format!("comment posted to {n}", n = n.display("")));
-                }
-                app.load_issue(n, true);
+pub(super) fn land_draft_sent(app: &mut App, n: ItemRef, res: Result<(), String>) {
+    match res {
+        Ok(()) => {
+            let pending = matches!(app.draft().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
+            app.close(crate::app::Slot::Compose);
+            if pending {
+                app.notify(format!(
+                    "line comment pending on {n} — press ctrl-s to submit",
+                    n = n.display("")
+                ));
+            } else {
+                app.notify(format!("comment posted to {n}", n = n.display("")));
             }
-            Err(e) => {
-                if let Some(c) = app.draft_mut() {
-                    c.sending = false;
-                }
-                auth_failure(app, &e);
-                app.notify(e);
+            app.load_issue(n, true);
+        }
+        Err(e) => {
+            if let Some(c) = app.draft_mut() {
+                c.sending = false;
             }
+            auth_failure(app, &e);
+            app.notify(e);
         }
     }
-    landed
 }
 
 /// Suspend the TUI, run `$EDITOR` on the draft, and land the result.

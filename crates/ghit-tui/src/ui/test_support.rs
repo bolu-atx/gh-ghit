@@ -28,7 +28,7 @@ pub(super) fn board_app(n_cards: usize) -> App {
             }),
         })
         .collect();
-    app.board.data = Some(BoardData {
+    app.session.board.data = Some(BoardData {
         title: "Roadmap".to_string(),
         order: vec!["Todo".to_string()],
         items,

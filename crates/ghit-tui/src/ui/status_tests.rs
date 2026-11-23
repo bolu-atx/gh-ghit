@@ -81,8 +81,8 @@ fn bar_message_wins_over_spinner() {
 fn bar_loading_fits_the_80_cell_bar() {
     let mut app = loaded_app();
     app.session.issues.pending.insert(ItemRef::github(7));
-    app.diff.pending.insert(ItemRef::github(9));
-    app.board.detail_pending.insert(ItemRef::github(100));
+    app.session.diff.pending.insert(ItemRef::github(9));
+    app.session.board.detail_pending.insert(ItemRef::github(100));
     let (tx, rx) = std::sync::mpsc::channel();
     app.session.sections.rx = Some(rx);
     let _ = tx.send(ghit_core::github::SectionEvent::Progress { done: 120, total: 500 });

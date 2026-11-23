@@ -17,7 +17,7 @@ fn thread_pr_app(diff_line: usize) -> App {
         line: Some(2),
         ..Default::default()
     }];
-    app.diff.files.insert(
+    app.session.diff.files.insert(
         ItemRef::github(9),
         vec![ghit_core::model::DiffFile {
             filename: "a.rs".into(),
@@ -197,8 +197,8 @@ fn compose_poll_success_closes_and_refreshes() {
     app.open_compose();
     app.draft_mut().unwrap().body = "looks good".to_string();
     app.draft_mut().unwrap().sending = true;
-    app.compose.tx.send((ItemRef::github(7), Ok(()))).unwrap();
-    poll_compose(&mut app);
+    app.session.sends.tx.send((ItemRef::github(7), Ok(()))).unwrap();
+    poll_session(&mut app);
     assert!(app.draft().is_none());
     assert_eq!(app.message, "comment posted to #7");
     assert!(
@@ -213,14 +213,15 @@ fn compose_poll_failure_keeps_the_draft() {
     app.open_compose();
     app.draft_mut().unwrap().body = "looks good".to_string();
     app.draft_mut().unwrap().sending = true;
-    app.compose
+    app.session
+        .sends
         .tx
         .send((
             ItemRef::github(7),
             Err("token scopes deny comments".to_string()),
         ))
         .unwrap();
-    poll_compose(&mut app);
+    poll_session(&mut app);
     let c = app.draft().expect("draft kept");
     assert!(!c.sending);
     assert_eq!(c.body, "looks good");

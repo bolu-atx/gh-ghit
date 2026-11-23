@@ -285,7 +285,7 @@ fn board_right_click_selects_the_card_and_opens_the_board_menu() {
     draw(&mut app);
     click_menu_row(&mut app, Action::BoardExpand);
     assert_eq!(app.board.expanded, Some((col, row)));
-    assert!(app.board.data.is_some(), "the board stays open");
+    assert!(app.session.board.data.is_some(), "the board stays open");
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn board_outside_click_closes_it() {
     let mut app = board_app(3);
     draw(&mut app);
     left(&mut app, 0, 0);
-    assert!(app.board.data.is_none());
+    assert!(app.session.board.data.is_none());
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn board_filter_outside_click_applies_and_closes_the_form() {
     draw(&mut app);
     left(&mut app, 0, 0);
     assert!(!app.format_open());
-    assert!(app.board.data.is_some());
+    assert!(app.session.board.data.is_some());
 }
 
 #[test]
@@ -560,7 +560,7 @@ fn toolbar_expand_button_shows_on_diff_only_and_click_runs_it() {
     let mut issue = open_item(ItemRef::github(7), Tab::Details);
     assert!(!tab_line(&draw(&mut issue)).contains("expand"));
     let mut app = open_item(ItemRef::github(9), Tab::Visual);
-    app.diff.files.insert(ItemRef::github(9), vec![ghit_core::model::DiffFile {
+    app.session.diff.files.insert(ItemRef::github(9), vec![ghit_core::model::DiffFile {
         filename: "a.rs".into(), additions: 1, patch: "@@ -1 +1 @@\n+new".into(), ..Default::default()
     }]);
     let line = tab_line(&frame_text_sized(&mut app, 140, H));

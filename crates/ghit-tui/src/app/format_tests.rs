@@ -28,7 +28,7 @@ fn format_prefs_survive_across_sessions() {
     first.sidebar.sort_desc = false;
     first.board.filter = "auth".to_string();
     first.board.milestones.insert(Some("v1".to_string()));
-    first.board.loading = true;
+    first.session.board.loading = true;
     first.open(crate::app::Entry::Board);
     first.persist_prefs();
     // Second session: startup applies everything except the board
@@ -87,7 +87,7 @@ fn stale_saved_milestones_prune_when_board_lands() {
         milestone: milestone.map(str::to_string),
         content: serde_json::Value::Null,
     };
-    app.board.data = Some(BoardData {
+    app.session.board.data = Some(BoardData {
         title: "b".to_string(),
         order: vec!["Todo".to_string()],
         items: vec![card(Some("v2")), card(None)],
@@ -102,7 +102,7 @@ fn stale_saved_milestones_prune_when_board_lands() {
     let back = github::load_prefs();
     let saved_filter = &back.board_filters[&github::prefs_owner_key("o")];
     assert!(saved_filter.milestones.is_empty(), "pruned set persists");
-    let board = app.board.data.as_ref().unwrap();
+    let board = app.session.board.data.as_ref().unwrap();
     assert!(
         board_columns(board, &app.board.filter, &app.board.milestones)[0]
             .1
@@ -149,7 +149,7 @@ fn prefs_saved_under_another_host_stay_unrestored() {
     first.sidebar.query_active = "label:bug".to_string();
     first.board.filter = "auth".to_string();
     first.board.milestones.insert(Some("v1".to_string()));
-    first.board.loading = true;
+    first.session.board.loading = true;
     first.open(crate::app::Entry::Board);
     first.persist_prefs();
     // Same owner and repo on github.com restore nothing: Format

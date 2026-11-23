@@ -6,11 +6,9 @@ use std::time::Instant;
 use ratatui::widgets::ListState;
 
 use crate::app::{App, Focus, UndoAction};
-use ghit_core::core::{self, Layer};
+use ghit_core::core;
 use ghit_core::{github, model};
-use crate::app::poll::probe_says_changed;
 use ghit_core::model::ItemRef;
-use ghit_core::session::refresh_plan;
 
 /// What a filter-dialog query commit asks the caller to fetch.
 #[derive(Debug, PartialEq, Eq)]
@@ -125,19 +123,8 @@ impl App {
     /// no-op and startup behaves as before. Startup-only: refreshes must
     /// never resurrect evicted rows, so nothing else calls this.
     pub(super) fn hydrate_cached_sections(&mut self) {
-        let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) else { return };
-        let Some(rows) = github::cached_sections(&repo, self.session.sections.merged_window_hours, self.show_mask()) else { return };
-        for row in rows {
-            let n = row.issue.number;
-            if self.session.issues.data.contains_key(&n) {
-                continue;
-            }
-            if !row.complete {
-                self.session.issues.partial.insert(n);
-            }
-            self.session.issues.data.insert(n, row.issue);
-            self.session.issues.statuses.insert(n, row.statuses);
-            self.board.details.insert(n, row.detail);
+        let show = self.show_mask();
+        for n in self.session.hydrate_cached(show) {
             self.ensure_recent(n);
         }
     }
@@ -145,24 +132,8 @@ impl App {
     /// Pull recent issues plus open/windowed-merged PRs into the sidebar.
     /// Offline or out of a repo this is a no-op: clicked rows still list.
     pub(crate) fn merge_recent_sections(&mut self) {
-        let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) else { return };
-        self.session.sections.last_fetch = Instant::now();
-        self.session.sections.auto_refresh = false;
-        self.session.sections.replace = false;
-        let hours = self.session.sections.merged_window_hours;
-        let show = self.show_mask();
-        let probe = std::mem::take(&mut self.session.sections.probe);
-        let refresh = std::mem::take(&mut self.session.sections.refresh);
-        let now = Instant::now();
-        if refresh != github::Refresh::Delta { self.session.sections.last_status = now; }
-        if refresh == github::Refresh::Full { self.session.sections.last_full = now; }
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.session.sections.rx = Some(rx);
-        self.enqueue(core::Kind::Sections, None, async move {
-            if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, show, refresh, Some(tx.clone())).await;
-            let _ = tx.send(github::SectionEvent::Done(result));
-        });
+        let (show, view) = (self.show_mask(), self.fetch_view());
+        self.session.refresh_recent(show, &view);
     }
 
     /// Visible lists in section order: open PRs, merged PRs, open issues,
@@ -189,111 +160,44 @@ impl App {
         }
     }
 
-    /// True when this process syncs the repo's listing: it holds the
-    /// store's sync lease, or has no store link and syncs on its own.
-    pub(super) fn sync_holder(&self) -> bool {
-        self.session.sections.link.as_ref().is_none_or(github::StoreLink::holding)
-    }
-
-    /// Per tick: renew or try the sync lease, and when another process (or
-    /// this one's own fetch) wrote a new sync, re-read this instance's view
-    /// of the stored rows. An in-flight fetch skips the re-read; it lands
-    /// the same rows itself. A local query re-runs its filter; a GitHub
-    /// result set is re-read by number. True when rows landed.
-    pub(super) fn watch_store(&mut self, now: Instant) -> bool {
-        let Some(link) = self.session.sections.link.as_mut() else { return false };
-        link.tick(now);
-        if self.session.sections.rx.is_some() || !link.changed() {
-            return false;
-        }
+    /// Re-run the active query after the stored listing changed: a
+    /// GitHub result set is re-read by number, a local query re-filters.
+    pub(super) fn requery_after_store_change(&mut self) -> bool {
         let query = self.sidebar.query_active.clone();
-        if query.trim().is_empty() {
-            return self.reread_sections();
-        }
         if self.sidebar.query_github.is_some() {
             return self.reread_github(true);
         }
-        let Some(rows) = self.local_query_rows(&query) else { return false };
+        let Some(rows) = self.session.local_query_rows(&query) else { return false };
         self.land_local_query(rows, true);
         true
+    }
+
+    /// Per tick, tests only: the store watch of one poll frame.
+    #[cfg(test)]
+    pub(super) fn watch_store(&mut self, now: Instant) -> bool {
+        if !self.session.store_changed(now) {
+            return false;
+        }
+        if self.sidebar.query_active.trim().is_empty() {
+            return self.reread_sections();
+        }
+        self.requery_after_store_change()
+    }
+
+    /// Per tick, tests only: the auto-refresh of one poll frame.
+    #[cfg(test)]
+    pub(super) fn auto_refresh_recent(&mut self, now: Instant) {
+        let ctx = self.poll_ctx(now);
+        self.session.auto_refresh_recent(&ctx);
     }
 
     /// Land this instance's view of the stored rows: its window and list
     /// toggles filter them locally, with no request. Rows the view no
     /// longer shows leave unless visited or pinned. True when rows landed.
-    fn reread_sections(&mut self) -> bool {
-        let hours = self.session.sections.merged_window_hours;
-        let show = self.show_mask();
-        let Some(rows) = self.session.sections.link.as_ref().and_then(|link| link.rows(hours, show)) else { return false };
-        crate::app::poll::land_rows(self, rows, false, true);
+    pub(super) fn reread_sections(&mut self) -> bool {
+        let Some(rows) = self.session.window_rows(self.show_mask()) else { return false };
+        self.land_rows(rows, false, true);
         true
-    }
-
-    /// Query mode: the lease holder still runs the listing sync on the
-    /// normal cadence, because every ghit instance of the repo reads the
-    /// store it writes. The sync lands no rows here. A local query
-    /// re-filters when the store changes (`watch_store`).
-    fn sync_behind_query(&mut self, now: Instant) {
-        if now.duration_since(self.session.sections.last_sync) < self.session.sections.auto_refresh_interval
-            || self.session.sections.sync_rx.is_some()
-            || !self.sync_holder()
-            || self.focus().layer != Layer::Base
-            || github::rate_limited()
-        {
-            return;
-        }
-        let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) else { return };
-        self.session.sections.last_sync = now;
-        let refresh = refresh_plan(
-            now.duration_since(self.session.sections.last_status),
-            now.duration_since(self.session.sections.last_full),
-        );
-        if refresh != github::Refresh::Delta { self.session.sections.last_status = now; }
-        if refresh == github::Refresh::Full { self.session.sections.last_full = now; }
-        let probe = refresh == github::Refresh::Delta;
-        let (hours, show) = (self.session.sections.merged_window_hours, self.show_mask());
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.session.sections.sync_rx = Some(rx);
-        self.enqueue(core::Kind::Sections, None, async move {
-            if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, show, refresh, Some(tx.clone())).await;
-            let _ = tx.send(github::SectionEvent::Done(result));
-        });
-    }
-
-    pub(super) fn auto_refresh_recent(&mut self, now: Instant) {
-        if !self.sidebar.query_active.trim().is_empty() {
-            self.sync_behind_query(now);
-        }
-        if now.duration_since(self.session.sections.last_fetch) < self.session.sections.auto_refresh_interval
-            || self.session.sections.rx.is_some()
-            || self.focus().layer != Layer::Base
-            || github::rate_limited()
-        {
-            return;
-        }
-        let search = !self.sidebar.query_active.trim().is_empty();
-        if !search {
-            // Another process holds the sync lease: its writes land
-            // through `watch_store`, so this one sends no listing request.
-            if !self.sync_holder() {
-                return;
-            }
-            self.session.sections.refresh = refresh_plan(
-                now.duration_since(self.session.sections.last_status),
-                now.duration_since(self.session.sections.last_full),
-            );
-            self.session.sections.probe = self.session.sections.refresh == github::Refresh::Delta;
-            self.merge_recent_sections();
-        } else {
-            // A query never refreshes on GitHub by itself: it re-filters
-            // when the store changes (`watch_store`).
-            self.session.sections.last_fetch = now;
-            return;
-        }
-        if self.session.sections.rx.is_some() {
-            self.session.sections.auto_refresh = true;
-        }
     }
 
     /// Window change or back to the listing: re-read the stored rows
@@ -342,7 +246,7 @@ impl App {
     pub(crate) fn run_gh_search(&mut self, query: String) {
         self.session.sections.cap_notified = false;
         self.sidebar.query_github = None;
-        if let Some(rows) = self.local_query_rows(&query) {
+        if let Some(rows) = self.session.local_query_rows(&query) {
             self.notify(format!("query: {query} ({} local)", rows.len()));
             self.land_local_query(rows, false);
             return;
@@ -354,7 +258,7 @@ impl App {
     /// Re-read the GitHub result set from the store, with no request.
     pub(crate) fn reread_github(&mut self, auto: bool) -> bool {
         let Some(numbers) = self.sidebar.query_github.clone() else { return false };
-        let Some(rows) = self.session.sections.link.as_ref().map(|link| link.rows_by_number(&numbers)) else { return false };
+        let Some(rows) = self.session.stored_rows(&numbers) else { return false };
         self.land_local_query(rows, auto);
         true
     }
@@ -387,39 +291,10 @@ impl App {
     /// show the stored rows, and remember their numbers so a store change
     /// keeps the same result set on screen.
     pub(super) fn land_github(&mut self, hits: Vec<github::Row>) {
-        let rows = match self.session.sections.link.as_mut() {
-            Some(link) => link.save_search(hits),
-            None => hits,
-        };
+        let rows = self.session.save_search(hits);
         let numbers = rows.iter().map(|row| row.issue.number).collect();
         self.land_local_query(rows, false);
         self.sidebar.query_github = Some(numbers);
-    }
-
-    /// The parsed query when the store alone answers it: every term is
-    /// local, and the store holds every row the query could match (the
-    /// window token counts as a term). `None` sends it to the server.
-    fn local_query(&self, query: &str) -> Option<core::LocalQuery> {
-        let link = self.session.sections.link.as_ref()?;
-        let now = chrono::Utc::now();
-        let search = core::search_query(query, self.session.sections.merged_window_hours, now);
-        let parsed = core::LocalQuery::parse(&search)?;
-        let (open_done, closed_done) = link.backfill_done();
-        parsed.covered(now, self.session.sections.backfill.months, open_done, closed_done).then_some(parsed)
-    }
-
-    /// Stored rows a local query matches, most recently updated first.
-    /// `None` when the query needs the server.
-    fn local_query_rows(&self, query: &str) -> Option<Vec<github::Row>> {
-        let parsed = self.local_query(query)?;
-        let mut rows: Vec<github::Row> = self.session.sections.link.as_ref()?.all_rows()?
-            .into_iter()
-            .filter(|row| parsed.matches(&row.issue))
-            .collect();
-        rows.sort_by(|a, b| {
-            (&b.issue.updated_at, b.issue.number).cmp(&(&a.issue.updated_at, a.issue.number))
-        });
-        Some(rows)
     }
 
     /// Land local query rows as a search result: replace semantics, and any
@@ -432,7 +307,7 @@ impl App {
         self.session.sections.last_fetch = Instant::now();
         self.drop_unvisited_background();
         let numbers: Vec<ItemRef> = rows.iter().map(|row| row.issue.number).collect();
-        crate::app::poll::land_rows(self, rows, true, auto);
+        self.land_rows(rows, true, auto);
         // Complete rows already held are not re-filed by the landing.
         for n in numbers {
             self.ensure_recent(n);
@@ -441,20 +316,10 @@ impl App {
 
     /// Spawn the GitHub search fetch; the caller announces it.
     fn search_fetch(&mut self, query: String) {
-        let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) else {
+        let view = self.fetch_view();
+        if !self.session.search(&query, &view) {
             self.notify("search needs a repo: use -R or run inside one".to_string());
-            return;
-        };
-        self.session.sections.last_fetch = Instant::now();
-        self.session.sections.auto_refresh = false;
-        self.session.sections.replace = true;
-        let search = core::search_query(&query, self.session.sections.merged_window_hours, chrono::Utc::now());
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.session.sections.rx = Some(rx);
-        self.enqueue(core::Kind::Sections, None, async move {
-            let result = github::search_repo(&repo, &search, Some(tx.clone())).await;
-            let _ = tx.send(github::SectionEvent::Done(result));
-        });
+        }
     }
 
     /// Sidebar loading body for one pane: the scope the fetch covers.

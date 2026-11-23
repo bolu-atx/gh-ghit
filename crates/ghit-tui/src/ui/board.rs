@@ -187,7 +187,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-columns; the board name keeps its label.
     // Column headers stay icon-free: their vocabularies are user-defined
     // and already color-coded, so glyphs would add noise, not signal.
-    let title = match &app.board.data {
+    let title = match &app.session.board.data {
         Some(b) => Line::from(vec![
             Span::styled(format!(" {}", crate::theme::nf("\u{f0db} ", "")), Style::new().bg(ink()).fg(muted())),
             Span::styled(format!("{} ", b.title), Style::new().bg(ink()).fg(amber()).bold()),
@@ -247,7 +247,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     app.hits.legend.extend(legend_hits);
     f.render_widget(Paragraph::new(Line::from(hint)), hint_area);
 
-    let Some(board) = &app.board.data else {
+    let Some(board) = &app.session.board.data else {
         f.render_widget(
             Paragraph::new(super::loading_body("Loading board…", app.tick, usize::from(inner.height))).style(base()),
             inner,
@@ -272,7 +272,7 @@ pub(super) fn render_board(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             .enumerate()
             .map(|(ri, c)| {
                 let sel = app.board.col == i && app.board.row == ri;
-                let detail = c.number.and_then(|n| app.board.details.get(&n));
+                let detail = c.number.and_then(|n| app.session.board.details.get(&n));
                 let expanded = app.board.expanded == Some((i, ri));
                 board_card(c, sel, expanded, detail, inner_w, &app.board.fields)
             })
@@ -358,7 +358,7 @@ fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
     // Nerd Font Font Awesome fa-external-link: the project board page,
     // from `gh project list` (old caches predate it and show no icon
     // until the board refetches).
-    if let Some(url) = app.board.data.as_ref().map(|b| b.url.clone()) {
+    if let Some(url) = app.session.board.data.as_ref().map(|b| b.url.clone()) {
         if !url.is_empty() {
             links.push((crate::theme::nf("\u{f08e}", "↗").to_string(), url));
         }

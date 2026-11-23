@@ -316,24 +316,24 @@ fn confirm_dialog_keys_submit_discard_and_cancel() {
     handle_key(&mut app, plain_key(KeyCode::Char('d')));
     assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(ItemRef::github(9)));
-    assert!(app.compose.submitting.is_empty());
+    assert!(app.session.sends.submitting.is_empty());
     // Submit navigates and submits.
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Char('s')));
     assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(ItemRef::github(9)));
-    assert!(app.compose.submitting.contains(&ItemRef::github(7)));
+    assert!(app.session.sends.submitting.contains(&ItemRef::github(7)));
     // Enter picks the first choice (Submit).
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Enter));
     assert!(!app.confirm_open());
-    assert!(app.compose.submitting.contains(&ItemRef::github(7)));
+    assert!(app.session.sends.submitting.contains(&ItemRef::github(7)));
     // Esc cancels: no navigation, nothing sent.
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(ItemRef::github(7)));
-    assert!(app.compose.submitting.is_empty());
+    assert!(app.session.sends.submitting.is_empty());
     // Quit never escapes the dialog.
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Char('q')));
@@ -354,7 +354,7 @@ fn ctrl_s_submits_pending_review() {
         ..Default::default()
     }];
     handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    assert!(app.compose.submitting.contains(&ItemRef::github(7)), "ctrl-s starts the submit");
+    assert!(app.session.sends.submitting.contains(&ItemRef::github(7)), "ctrl-s starts the submit");
 }
 
 fn step_app() -> App {
@@ -443,7 +443,7 @@ fn top_layer_owns_keys_and_esc_pops_exactly_one() {
 fn board_esc_closes_one_layer_and_keeps_the_filter() {
     use ghit_core::core::{Dialog, Layer};
     let mut app = step_app();
-    app.board.loading = true;
+    app.session.board.loading = true;
     app.open(crate::app::Entry::Board);
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Board));
     app.board.filter = "bug".to_string();
@@ -554,13 +554,13 @@ fn bar_filter_and_board_keep_their_h_and_l() {
     assert_eq!(app.nav.step_pending, None);
     // The board modal moves columns instead of stepping issues.
     app.close(crate::app::Slot::Format);
-    app.board.loading = true;
+    app.session.board.loading = true;
     app.open(crate::app::Entry::Board);
     handle_key(&mut app, plain_key(KeyCode::Char('h')));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
     assert_eq!(app.nav.current, Some(ItemRef::github(7)), "board keeps h/l");
     assert_eq!(app.nav.step_pending, None);
-    assert!(app.board.loading, "board stays open");
+    assert!(app.session.board.loading, "board stays open");
 }
 
 #[test]
@@ -658,7 +658,7 @@ fn q_closes_the_top_dialog_and_quits_only_at_base() {
     app.open(crate::app::Entry::Shortcuts);
     press(&mut app, 'q');
     assert!(!app.shortcuts_open() && !app.quit, "q closes help");
-    app.board.loading = true;
+    app.session.board.loading = true;
     app.open(crate::app::Entry::Board);
     press(&mut app, 'q');
     assert!(!board_open(&app) && !app.quit, "q closes the board");
@@ -682,7 +682,7 @@ fn q_types_in_text_inputs_and_esc_never_quits() {
 #[test]
 fn help_opens_from_the_board_and_its_filter_form() {
     let mut app = step_app();
-    app.board.loading = true;
+    app.session.board.loading = true;
     app.open(crate::app::Entry::Board);
     press(&mut app, '?');
     assert!(app.shortcuts_open());
