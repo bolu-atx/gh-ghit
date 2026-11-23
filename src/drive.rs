@@ -18,6 +18,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use crate::model::ItemRef;
 
 /// Wire protocol version. The server sends it in the first `hello`
 /// frame; clients must check it before driving.
@@ -51,7 +52,7 @@ pub enum ServerMsg {
     Hello { protocol: u32 },
     Frame {
         tick: u64,
-        current: Option<u64>,
+        current: Option<ItemRef>,
         rows: Vec<String>,
         width: u16,
         height: u16,
@@ -224,7 +225,7 @@ fn drain_lines(
 /// quits, hangs up, or the app quits.
 pub(crate) fn run_drive(
     app: &mut crate::app::App,
-    numbers: &[u64],
+    numbers: &[ItemRef],
     sock_path: &Path,
     width: u16,
     height: u16,
@@ -391,7 +392,7 @@ mod tests {
     fn server_frame_round_trip() {
         let frame = ServerMsg::Frame {
             tick: 7,
-            current: Some(9),
+            current: Some(ItemRef::github(9)),
             rows: vec!["ghit  #9".to_string(), String::new()],
             width: 120,
             height: 40,
@@ -437,16 +438,19 @@ mod tests {
 
     fn driven_app() -> crate::app::App {
         use crate::model::{Author, IssueData};
-        let issue = |number: u64| IssueData {
+        let issue = |number: ItemRef| IssueData {
             number,
-            title: format!("issue {number}"),
+            title: format!("issue {number}", number = number.number),
             state: "OPEN".to_string(),
             author: Author { login: "bo".to_string() },
             labels: vec![],
             assignees: vec![],
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-05T00:00:00Z".to_string(),
-            url: format!("https://github.com/o/r/issues/{number}"),
+            url: format!(
+                "https://github.com/o/r/issues/{number}",
+                number = number.number
+            ),
             body: "hello".to_string(),
             comments: vec![],
             review_threads: vec![],
@@ -461,11 +465,13 @@ mod tests {
         let mut app = crate::app::App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
         for n in [7, 9] {
-            app.issues.data.insert(n, issue(n));
-            app.issues.statuses.insert(n, vec![]);
-            app.nav.visited.push(n);
+            app.issues
+                .data
+                .insert(ItemRef::github(n), issue(ItemRef::github(n)));
+            app.issues.statuses.insert(ItemRef::github(n), vec![]);
+            app.nav.visited.push(ItemRef::github(n));
         }
-        app.show_issue(7);
+        app.show_issue(ItemRef::github(7));
         app
     }
 
@@ -483,11 +489,15 @@ mod tests {
         let mut app = driven_app();
         let mut terminal = drive_on(&mut app, 120, 40);
         let mut size = (120, 40);
-        assert_eq!(app.nav.current, Some(7));
+        assert_eq!(app.nav.current, Some(ItemRef::github(7)));
         dispatch(&mut app, &key("j"), &mut terminal, &mut size);
-        assert_eq!(app.nav.current, Some(9), "j walks the Issues pane");
+        assert_eq!(
+            app.nav.current,
+            Some(ItemRef::github(9)),
+            "j walks the Issues pane"
+        );
         dispatch(&mut app, &key("k"), &mut terminal, &mut size);
-        assert_eq!(app.nav.current, Some(7), "k walks back");
+        assert_eq!(app.nav.current, Some(ItemRef::github(7)), "k walks back");
         assert!(!app.quit);
         dispatch(&mut app, &key("q"), &mut terminal, &mut size);
         assert!(app.quit, "q quits drive mode too");
@@ -545,7 +555,7 @@ mod tests {
         match frame {
             ServerMsg::Frame { tick, current, rows, width, height, quit, .. } => {
                 assert_eq!(tick, 41);
-                assert_eq!(current, Some(7));
+                assert_eq!(current, Some(ItemRef::github(7)));
                 assert_eq!((width, height), (200, 50));
                 assert_eq!(rows.len(), 50);
                 assert!(!quit);
@@ -627,7 +637,16 @@ mod tests {
         let mut moved = false;
         for _ in 0..200 {
             let frame = read_frame(&mut reader);
-            if matches!(frame, ServerMsg::Frame { current: Some(9), .. }) {
+            if matches!(
+                frame,
+                ServerMsg::Frame {
+                    current: Some(ItemRef {
+                        number: 9,
+                        source: crate::model::Source::GitHub
+                    }),
+                    ..
+                }
+            ) {
                 moved = true;
                 break;
             }

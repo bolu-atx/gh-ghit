@@ -1,6 +1,7 @@
 //! CLI surface: argument parsing only. No state, no fetching, no widgets.
 
 use clap::Parser;
+use crate::model::ItemRef;
 
 /// Terminal viewer for GitHub issues and PRs.
 #[derive(Parser, Debug)]
@@ -26,8 +27,11 @@ pub struct Args {
 
 impl Args {
     /// Numeric startup arguments; non-numeric input is ignored.
-    pub fn issue_numbers(&self) -> Vec<u64> {
-        self.numbers.iter().filter_map(|s| s.parse().ok()).collect()
+    pub fn issue_numbers(&self) -> Vec<ItemRef> {
+        self.numbers
+            .iter()
+            .filter_map(|s| s.parse().ok().map(ItemRef::github))
+            .collect()
     }
 
     /// Drive-mode geometry as (width, height) cells.
@@ -50,7 +54,7 @@ mod tests {
     #[test]
     fn non_numeric_numbers_are_ignored() {
         let args = Args { numbers: vec!["12".into(), "abc".into(), "34".into()], repo: None, drive: None, size: "200x50".into() };
-        assert_eq!(args.issue_numbers(), vec![12, 34]);
+        assert_eq!(args.issue_numbers(), vec![ItemRef::github(12), ItemRef::github(34)]);
     }
 
     fn args_with_size(size: &str) -> Args {

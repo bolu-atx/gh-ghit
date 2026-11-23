@@ -69,7 +69,10 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     if app.map.graph.nodes.is_empty() {
         let text = match app.map.center() {
             _ if !app.map.loaded => "Reading the local copy…".to_string(),
-            Some(n) => format!("#{n} is not in the local copy yet. Press s to see the whole repo."),
+            Some(n) => format!(
+                "{n} is not in the local copy yet. Press s to see the whole repo.",
+                n = n.display("")
+            ),
             None if app.map.filter.changed() => {
                 "Nothing matches the map filter. Press f to change it.".to_string()
             }
@@ -171,7 +174,7 @@ pub(super) fn render_map(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let items = graph.nodes.iter().filter(|node| node.number.is_some()).count();
     let pinned = app.map.layout.bodies().iter().filter(|body| body.pinned).count();
     let scope = match app.map.center() {
-        Some(n) => format!("linked to #{n}"),
+        Some(n) => format!("linked to {n}", n = n.display("")),
         None => "whole repo".to_string(),
     };
     let mut summary = format!(" {items} items · {scope}");
@@ -198,8 +201,10 @@ pub(super) fn node_color(state: NodeState) -> Color {
 /// Label text at a zoom: `#n title…`, `#n` or `•`; hubs keep a box.
 fn label(node: &model::MapNode, detail: LabelDetail) -> String {
     match (node.number, detail) {
-        (Some(n), LabelDetail::Title(width)) => format!("#{n} {}", model::slug(&node.title, width)),
-        (Some(n), LabelDetail::Number) => format!("#{n}"),
+        (Some(n), LabelDetail::Title(width)) => {
+            format!("{n} {}", model::slug(&node.title, width), n = n.display(""))
+        }
+        (Some(n), LabelDetail::Number) => n.display(""),
         (Some(_), LabelDetail::Dot) => "•".to_string(),
         (None, LabelDetail::Dot) => "◆".to_string(),
         (None, LabelDetail::Number) => format!("╭ {} ╮", model::slug(&node.title, 14)),

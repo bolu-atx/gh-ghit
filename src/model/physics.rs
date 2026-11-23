@@ -3,6 +3,7 @@
 //! World space is isotropic; the renderer corrects for tall terminal cells.
 
 use serde::{Deserialize, Serialize};
+use crate::model::NodeId;
 
 /// Kinetic energy per node under which the layout counts as settled.
 const SETTLED_ENERGY_PER_NODE: f64 = 1e-3;
@@ -215,7 +216,7 @@ impl Physics {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
     /// Caller-supplied stable id; survives a rebuild.
-    pub id: u64,
+    pub id: NodeId,
     pub x: f64,
     pub y: f64,
     pub vx: f64,
@@ -244,9 +245,9 @@ impl Layout {
     /// Replace the node and edge set. Nodes whose id persists keep position,
     /// velocity and pin; new ones start at a seeded position derived from
     /// their id alone. Edges index into `ids`; out-of-range edges are dropped.
-    pub fn rebuild(&mut self, ids: &[u64], edges: &[(usize, usize, EdgeStyle)]) {
+    pub fn rebuild(&mut self, ids: &[NodeId], edges: &[(usize, usize, EdgeStyle)]) {
         let radius = self.physics.spring_length * (1.0 + (ids.len() as f64).sqrt());
-        let old: std::collections::HashMap<u64, Body> =
+        let old: std::collections::HashMap<NodeId, Body> =
             self.bodies.drain(..).map(|b| (b.id, b)).collect();
         self.bodies = ids
             .iter()
@@ -371,7 +372,11 @@ fn splitmix(mut z: u64) -> u64 {
 }
 
 /// Uniform point in a disc of `radius`, a pure function of seed and id.
-fn seeded_point(seed: u64, id: u64, radius: f64) -> (f64, f64) {
+fn seeded_point(seed: u64, id: NodeId, radius: f64) -> (f64, f64) {
+    let id = match id {
+        NodeId::Item(item) => item.number ^ (item.source as u64).wrapping_mul(0x4a49_5241),
+        NodeId::Hub(hash) => hash,
+    };
     let h1 = splitmix(seed ^ splitmix(id));
     let h2 = splitmix(h1);
     let unit = |h: u64| (h >> 11) as f64 / (1u64 << 53) as f64;

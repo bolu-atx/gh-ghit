@@ -10,6 +10,7 @@ use crate::app::{App, Tab};
 use crate::core::{Dialog, Layer, Pane, SideSort};
 use crate::input::{handle_key, handle_mouse};
 use crate::keymap::Action;
+use crate::model::ItemRef;
 
 const W: u16 = 140;
 const H: u16 = 40;
@@ -85,7 +86,7 @@ fn list_state_and_footer_open_format() {
 #[test]
 fn filters_button_clears_every_filter() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string()];
     app.sidebar.label_filter.insert("bug".to_string());
@@ -100,7 +101,7 @@ fn filters_button_clears_every_filter() {
 #[test]
 fn diff_strip_toggles_split_and_steps_files() {
     let mut app = loaded_app();
-    app.show_issue(9);
+    app.show_issue(ItemRef::github(9));
     app.set_tab(Tab::Visual);
     draw(&mut app);
     let split = app.diff.split;
@@ -116,8 +117,8 @@ fn diff_strip_toggles_split_and_steps_files() {
 #[test]
 fn pane_title_row_focuses_refs_and_history() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
-    app.nav.history = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
+    app.nav.history = vec![ItemRef::github(9)];
     draw(&mut app);
     let refs = app.hits.refs_area;
     left(&mut app, refs.x + 2, refs.y);
@@ -135,7 +136,7 @@ fn right_click_on_a_row_selects_it_and_lists_the_row_actions() {
     right(&mut app, x, y);
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Menu));
     assert_eq!(app.nav.pane, Pane::Issues);
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     let labels = menu_labels(&app);
     for wanted in ["Focus content", "Pin", "Copy", "Open in browser", "Comment", "Evict row"] {
         assert!(labels.contains(&wanted), "{wanted} missing from {labels:?}");
@@ -151,7 +152,7 @@ fn menu_row_click_runs_the_action_and_closes_the_menu() {
     draw(&mut app);
     click_menu_row(&mut app, Action::ToggleRow);
     assert!(app.menu().is_none());
-    assert!(app.diff.expanded_rows.contains(&7));
+    assert!(app.diff.expanded_rows.contains(&ItemRef::github(7)));
     assert_eq!(app.focus().layer, Layer::Base);
 }
 
@@ -177,7 +178,7 @@ fn menu_keys_move_run_and_close() {
     assert_eq!(menu_labels(&app)[5], "Expand row");
     handle_key(&mut app, key(KeyCode::Enter));
     assert!(app.menu().is_none());
-    assert!(app.diff.expanded_rows.contains(&7));
+    assert!(app.diff.expanded_rows.contains(&ItemRef::github(7)));
 }
 
 #[test]
@@ -222,8 +223,8 @@ fn hover_never_changes_the_selection() {
 #[test]
 fn right_click_on_refs_history_labels_and_body_opens_their_menus() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
-    app.nav.history = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
+    app.nav.history = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string()];
     draw(&mut app);
@@ -325,7 +326,7 @@ fn help_shows_the_gesture_next_to_each_key() {
 #[test]
 fn history_wheel_moves_the_history_cursor() {
     let mut app = loaded_app();
-    app.nav.history = vec![9, 7];
+    app.nav.history = vec![ItemRef::github(9), ItemRef::github(7)];
     draw(&mut app);
     let (area, pane) = (app.hits.history_area, app.nav.pane);
     assert!(area.width > 0);
@@ -418,7 +419,7 @@ fn toolbar_actions(app: &App) -> Vec<Action> {
     found.into_iter().map(|(_, a, _)| *a).collect()
 }
 
-fn open_item(number: u64, tab: Tab) -> App {
+fn open_item(number: ItemRef, tab: Tab) -> App {
     let mut app = loaded_app();
     app.show_issue(number);
     app.set_tab(tab);
@@ -427,7 +428,7 @@ fn open_item(number: u64, tab: Tab) -> App {
 
 #[test]
 fn toolbar_on_an_issue_has_comment_and_close() {
-    let mut app = open_item(7, Tab::Details);
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
     let line = tab_line(&draw(&mut app));
     assert!(line.contains("comment") && line.contains("close") && !line.contains("split"), "{line}");
     assert!(line.contains(crate::theme::TOOL_CLOSE));
@@ -436,15 +437,15 @@ fn toolbar_on_an_issue_has_comment_and_close() {
 
 #[test]
 fn toolbar_on_a_closed_issue_reads_reopen() {
-    let mut app = open_item(7, Tab::Details);
-    app.issues.data.get_mut(&7).unwrap().state = "CLOSED".to_string();
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().state = "CLOSED".to_string();
     let line = tab_line(&draw(&mut app));
     assert!(line.contains("reopen") && !line.contains("close"), "{line}");
 }
 
 #[test]
 fn toolbar_split_shows_on_the_pr_diff_view_only() {
-    let mut app = open_item(9, Tab::Details);
+    let mut app = open_item(ItemRef::github(9), Tab::Details);
     assert!(!tab_line(&draw(&mut app)).contains("split"));
     app.set_tab(Tab::Visual);
     let line = tab_line(&draw(&mut app));
@@ -461,13 +462,13 @@ fn toolbar_split_shows_on_the_pr_diff_view_only() {
 #[test]
 fn toolbar_buttons_show_their_keys_and_keep_them_when_labels_drop() {
     let (comment, close, split) = (crate::theme::TOOL_COMMENT, crate::theme::TOOL_CLOSE, crate::theme::TOOL_SPLIT);
-    let mut wide = open_item(9, Tab::Visual);
+    let mut wide = open_item(ItemRef::github(9), Tab::Visual);
     let line = tab_line(&frame_text_sized(&mut wide, 140, H));
     for want in [format!("s {split} split"), format!("c {comment} comment"), format!("C {close} close")] {
         assert!(line.contains(&want), "{want}: {line}");
     }
     let narrow = (60..140).rev().find_map(|w| {
-        let mut app = open_item(9, Tab::Visual);
+        let mut app = open_item(ItemRef::github(9), Tab::Visual);
         let line = tab_line(&frame_text_sized(&mut app, w, H));
         (!line.contains("comment") && line.contains(comment)).then_some(line)
     });
@@ -480,7 +481,7 @@ fn toolbar_buttons_show_their_keys_and_keep_them_when_labels_drop() {
 #[test]
 fn toolbar_drops_labels_then_hides_as_the_pane_narrows() {
     let widths = |w: u16| {
-        let mut app = open_item(9, Tab::Visual);
+        let mut app = open_item(ItemRef::github(9), Tab::Visual);
         let line = tab_line(&frame_text_sized(&mut app, w, H));
         (line.contains("comment"), line.contains(crate::theme::TOOL_COMMENT), toolbar_actions(&app).len())
     };
@@ -499,30 +500,34 @@ fn toolbar_drops_labels_then_hides_as_the_pane_narrows() {
 
 #[test]
 fn toolbar_close_click_asks_before_writing() {
-    let mut app = open_item(7, Tab::Details);
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
     draw(&mut app);
     click_control(&mut app, Action::CloseItem);
     let dialog = app.confirm().expect("confirm opens");
     assert_eq!(dialog.title, "Close #7?");
     app.confirm_cancel();
     assert!(app.confirm().is_none());
-    assert_eq!(app.issues.data[&7].state, "OPEN", "cancel changes nothing");
+    assert_eq!(
+        app.issues.data[&ItemRef::github(7)].state,
+        "OPEN",
+        "cancel changes nothing"
+    );
 }
 
 #[test]
 fn toolbar_close_confirm_starts_the_write_and_reopen_asks_too() {
-    let mut app = open_item(7, Tab::Details);
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
     app.request_set_state();
     app.confirm_choose(0);
     assert!(app.message.contains("closing #7"), "{}", app.message);
-    app.issues.data.get_mut(&7).unwrap().state = "CLOSED".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().state = "CLOSED".to_string();
     app.request_set_state();
     assert_eq!(app.confirm().unwrap().title, "Reopen #7?");
 }
 
 #[test]
 fn toolbar_comment_click_opens_compose() {
-    let mut app = open_item(7, Tab::Details);
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
     draw(&mut app);
     click_control(&mut app, Action::Comment);
     assert!(app.compose_open());
@@ -530,14 +535,14 @@ fn toolbar_comment_click_opens_compose() {
 
 #[test]
 fn close_key_asks_first() {
-    let mut app = open_item(7, Tab::Details);
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
     handle_key(&mut app, key(KeyCode::Char('C')));
     assert_eq!(app.confirm().map(|d| d.title.as_str()), Some("Close #7?"));
 }
 
 #[test]
 fn main_menu_lists_close_or_reopen() {
-    let mut app = open_item(7, Tab::Details);
+    let mut app = open_item(ItemRef::github(7), Tab::Details);
     draw(&mut app);
     let body = app.hits.body_area;
     right(&mut app, body.x + 2, body.y + 1);
@@ -548,21 +553,24 @@ fn main_menu_lists_close_or_reopen() {
 fn toolbar_expand_button_shows_on_diff_only_and_click_runs_it() {
     let (expand, fold) = (crate::theme::TOOL_EXPAND, crate::theme::TOOL_FOLD);
     for (number, tab) in [(9, Tab::Details), (7, Tab::Visual)] {
-        let mut app = open_item(number, tab);
+        let mut app = open_item(ItemRef::github(number), tab);
         let line = tab_line(&draw(&mut app));
         assert!(!line.contains("expand") && !line.contains(expand), "{line}");
     }
-    let mut issue = open_item(7, Tab::Details);
+    let mut issue = open_item(ItemRef::github(7), Tab::Details);
     assert!(!tab_line(&draw(&mut issue)).contains("expand"));
-    let mut app = open_item(9, Tab::Visual);
-    app.diff.files.insert(9, vec![crate::model::DiffFile {
+    let mut app = open_item(ItemRef::github(9), Tab::Visual);
+    app.diff.files.insert(ItemRef::github(9), vec![crate::model::DiffFile {
         filename: "a.rs".into(), additions: 1, patch: "@@ -1 +1 @@\n+new".into(), ..Default::default()
     }]);
     let line = tab_line(&frame_text_sized(&mut app, 140, H));
     assert!(line.contains(&format!("a {expand} expand")), "{line}");
     app.diff.line = None;
     click_control(&mut app, Action::DiffExpandAll);
-    assert!(app.diff.expanded_files.contains(&(9, "a.rs".to_string())));
+    assert!(app
+        .diff
+        .expanded_files
+        .contains(&(ItemRef::github(9), "a.rs".to_string())));
     let line = tab_line(&frame_text_sized(&mut app, 140, H));
     assert!(line.contains(&format!("a {fold} fold")), "{line}");
 }

@@ -53,7 +53,7 @@ fn result_line(row: &FinderRow, active: bool, number_width: usize, width: usize)
     let state = if active { theme::RowState::Active } else { theme::RowState::Plain };
     let bg = theme::row_bg(state, true);
     let (marker, marker_style) = theme::row_marker(state, true, "█ ");
-    let number = format!("#{}", row.number);
+    let number = row.number.display("");
     let lead = number.chars().count();
     let tag = if row.is_pr { "PR" } else { "" };
     let room = width.saturating_sub(2 + number_width + 2 + 1 + tag.len() + 1);
@@ -123,7 +123,7 @@ pub(super) fn render_finder(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let visible = list.height as usize;
     let offset = (cursor + 1).saturating_sub(visible);
     let number_width = rows.iter().skip(offset).take(visible)
-        .map(|row| row.number.to_string().len() + 1).max().unwrap_or(0);
+        .map(|row| row.number.display("").len()).max().unwrap_or(0);
     for (i, row) in rows.iter().enumerate().skip(offset).take(visible) {
         let rect = Rect::new(list.x, list.y + (i - offset) as u16, list.width, 1);
         let line = result_line(row, i == cursor, number_width, list.width as usize);

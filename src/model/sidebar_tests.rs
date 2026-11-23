@@ -4,6 +4,7 @@ use super::*;
 use super::sidebar::relative_updated;
 
 use super::test_support::sample_issue;
+use crate::model::ItemRef;
 
 fn at(stamp: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(stamp).unwrap().with_timezone(&chrono::Utc)
@@ -56,7 +57,7 @@ fn sidebar_labels_truncate_before_date_and_status() {
     let st = vec![("Roadmap".to_string(), Some("Todo".to_string()))];
     let now = at("2026-01-07T00:00:00Z");
     let issue = IssueData {
-        number: 7,
+        number: ItemRef::github(7),
         title: "t".to_string(),
         labels,
         updated_at: "2026-01-05T00:00:00Z".to_string(),
@@ -73,7 +74,7 @@ fn sidebar_labels_truncate_before_date_and_status() {
 fn sidebar_segments_collapse_when_empty() {
     let now = at("2026-01-07T00:00:00Z");
     let issue = IssueData {
-        number: 7,
+        number: ItemRef::github(7),
         title: "t".to_string(),
         labels: vec![],
         updated_at: String::new(),
@@ -90,7 +91,7 @@ fn sidebar_segments_collapse_when_empty() {
 fn pinned_marker() {
     let now = at("2026-01-07T00:00:00Z");
     let issue = IssueData {
-        number: 7,
+        number: ItemRef::github(7),
         title: "t".to_string(),
         labels: vec![],
         updated_at: String::new(),

@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::model::ItemRef;
+
 pub const CACHE_TTL_SECS: u64 = 1800; // 30 minutes
 
 pub(crate) fn base_dir() -> PathBuf {
@@ -119,7 +121,7 @@ pub fn cache_drop(name: &str) {
 }
 
 fn pin_path(repo: &str) -> PathBuf {
-    base_dir().join(format!("pinned-{}.txt", repo.replace('/', "__")))
+    base_dir().join(format!("pinned-{}.json", repo.replace('/', "__")))
 }
 
 fn theme_path() -> PathBuf {
@@ -319,20 +321,19 @@ pub fn save_prefs(prefs: &Prefs) {
     );
 }
 
-pub fn load_pins(repo: &str) -> Vec<u64> {
+pub fn load_pins(repo: &str) -> Vec<ItemRef> {
     std::fs::read_to_string(pin_path(repo))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
-        .split_whitespace()
-        .filter_map(|x| x.parse().ok())
-        .collect()
 }
 
-pub fn save_pins(repo: &str, numbers: &[u64]) {
+pub fn save_pins(repo: &str, numbers: &[ItemRef]) {
     let d = base_dir();
     if !ensure_private_dir(&d) {
         return;
     }
-    let body = numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+    let body = serde_json::to_string(numbers).unwrap_or_default();
     let _ = std::fs::write(pin_path(repo), body);
 }
 
@@ -533,8 +534,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", dir.path());
-        save_pins("o/r", &[7, 9]);
-        assert_eq!(load_pins("o/r"), vec![7, 9]);
+        let pins = vec![
+            ItemRef::github(45),
+            ItemRef {
+                source: crate::model::Source::Jira,
+                number: 45,
+            },
+        ];
+        save_pins("o/r", &pins);
+        assert_eq!(load_pins("o/r"), pins);
+        std::fs::write(pin_path("o/r"), "garbage").unwrap();
+        assert!(load_pins("o/r").is_empty());
         match saved_xdg {
             Some(v) => std::env::set_var("XDG_DATA_HOME", v),
             None => std::env::remove_var("XDG_DATA_HOME"),

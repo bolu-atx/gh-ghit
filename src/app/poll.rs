@@ -7,6 +7,7 @@ use crate::core::self;
 use crate::{github, model};
 use crate::app::auth_failure;
 use crate::app::sidebar::{RECENT_REFRESH_MAX_INTERVAL, auto_refresh_interval_default};
+use crate::model::ItemRef;
 
 /// Fetch missing board card details together without blocking the event loop.
 pub(super) fn kick_off_details(app: &mut App) {
@@ -44,7 +45,8 @@ pub(super) fn kick_off_details(app: &mut App) {
 }
 
 pub(crate) fn poll_details(app: &mut App) -> bool {
-    let ready: Vec<(u64, Result<model::BoardDetail, String>)> = app.board.detail_rx.try_iter().collect();
+    let ready: Vec<(ItemRef, Result<model::BoardDetail, String>)> =
+        app.board.detail_rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, res) in ready {
         app.board.detail_pending.remove(&n);
@@ -61,7 +63,7 @@ pub(crate) fn poll_details(app: &mut App) -> bool {
 // ---------------------------------------------------------------------------
 /// Shared startup: file the requested numbers and resolve the repo
 /// off the async workers. Both the terminal and drive loops call this.
-pub(crate) fn bootstrap(app: &mut App, numbers: &[u64]) {
+pub(crate) fn bootstrap(app: &mut App, numbers: &[ItemRef]) {
     app.initial_numbers = numbers.to_vec();
     let repo = app.repo_flag.clone();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -285,14 +287,22 @@ pub(super) fn land_rows(app: &mut App, rows: Vec<crate::github::Row>, replace: b
 /// so the open view and its thread survive a refresh; search mode never
 /// lands here and keeps `drop_unvisited_background` replace semantics.
 fn evict_vanished_rows(app: &mut App, rows: &[crate::github::Row]) {
-    let fresh: HashSet<u64> = rows.iter().map(|r| r.issue.number).collect();
-    let keep: HashSet<u64> = app.nav.visited.iter().copied()
+    let fresh: HashSet<ItemRef> = rows.iter().map(|r| r.issue.number).collect();
+    let keep: HashSet<ItemRef> = app
+        .nav
+        .visited
+        .iter()
+        .copied()
         .chain(app.nav.pin_order.iter().copied())
         .chain(app.nav.pinned.iter().copied())
         .chain(app.nav.current)
         .chain(app.nav.requested)
         .collect();
-    let gone: HashSet<u64> = app.nav.recent.iter().copied()
+    let gone: HashSet<ItemRef> = app
+        .nav
+        .recent
+        .iter()
+        .copied()
         .filter(|n| !fresh.contains(n) && !keep.contains(n))
         .collect();
     if gone.is_empty() { return; }
@@ -353,7 +363,7 @@ pub(crate) fn poll_issues(app: &mut App) -> bool {
                         // keeps the existing error path unchanged and never
                         // claims "no more".
                         if stepped && e.contains("404") {
-                            app.notify(format!("no #{number}"));
+                            app.notify(format!("no {number}", number = number.display("")));
                         } else {
                             auth_failure(app, &e);
                             app.notify(e);

@@ -13,6 +13,7 @@ use super::{controls, hints};
 
 use super::{section_title, spinning, loading_body, footer_line};
 use super::main_pane::wrap_lines;
+use crate::model::ItemRef;
 
 /// Split `text` into plain spans plus highlighted spans for each query
 /// hit, so `/` search visibly marks the matched characters.
@@ -131,7 +132,7 @@ fn section_list(
     rows: &[crate::model::SideRow],
     app: &App,
     inner_width: usize,
-    mark: Option<u64>,
+    mark: Option<ItemRef>,
     focused: bool,
     now: chrono::DateTime<chrono::Utc>,
 ) -> (List<'static>, Vec<usize>) {
@@ -215,7 +216,11 @@ fn section_list(
             let glyph = if *has_children { if *folded { "▸" } else { "▾" } } else { " " };
             first.push(Span::styled(format!("{guide}{glyph} "), Style::new().fg(muted())));
         }
-        first.extend(highlighted_spans(format!("#{n} "), &query, num_style));
+        first.extend(highlighted_spans(
+            format!("{n} ", n = n.display("")),
+            &query,
+            num_style,
+        ));
         first.extend(highlighted_spans(title_text, &query, title_style));
         if outside {
             first.push(Span::styled(" · outside query", Style::new().fg(muted())));
@@ -290,7 +295,7 @@ fn side_section_title(name: &str, detail: &str, icon: &str, active: bool,
 }
 
 /// Position of `current` in display-row order, +1 for the top spacer.
-fn selected_index(rows: &[model::SideRow], current: Option<u64>) -> Option<usize> {
+fn selected_index(rows: &[model::SideRow], current: Option<ItemRef>) -> Option<usize> {
     current
         .and_then(|n| rows.iter().position(|r| r.number() == Some(n)))
         .map(|p| p + 1)
@@ -581,7 +586,7 @@ pub(super) fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
     f.render_widget(block, area);
     app.hits.history_area = area;
     let cursor = app.history_steps();
-    let mut numbers: Vec<u64> = app.nav.history.iter().rev().take(4).copied().collect();
+    let mut numbers: Vec<ItemRef> = app.nav.history.iter().rev().take(4).copied().collect();
     numbers.reverse();
     if let Some(current) = app.nav.current {
         numbers.push(current);
@@ -597,7 +602,7 @@ pub(super) fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
         let state = if steps == cursor { theme::RowState::Active } else { theme::RowState::Plain };
         let (marker, marker_style) = theme::row_marker(state, focused, "▌ ");
         let bg = theme::row_bg(state, focused);
-        let head = format!("#{number}");
+        let head = number.display("");
         let room = (inner.width as usize).saturating_sub(2 + head.chars().count() + 1);
         let title = app.issues.data.get(&number)
             .filter(|issue| !issue.title.is_empty() && room > 1)

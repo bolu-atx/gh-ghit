@@ -7,6 +7,7 @@ use super::*;
 use crate::app::{Focus, board_open};
 use crate::core::Pane;
 use super::test_support::sample;
+use crate::model::ItemRef;
 
 fn ctrl_key(code: KeyCode) -> crossterm::event::KeyEvent {
     crossterm::event::KeyEvent::new(code, KeyModifiers::CONTROL)
@@ -21,25 +22,27 @@ fn ctrl_o_and_ctrl_i_walk_history() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for n in [7, 9] {
-        app.issues.data.insert(n, sample(n));
-        app.issues.statuses.insert(n, vec![]);
+        app.issues
+            .data
+            .insert(ItemRef::github(n), sample(ItemRef::github(n)));
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
     }
-    app.ensure_visited(7);
-    app.load_issue(7, false);
-    app.ensure_visited(9);
-    app.load_issue(9, false);
-    assert_eq!(app.nav.current, Some(9));
+    app.ensure_visited(ItemRef::github(7));
+    app.load_issue(ItemRef::github(7), false);
+    app.ensure_visited(ItemRef::github(9));
+    app.load_issue(ItemRef::github(9), false);
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 
     handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 
     // Ctrl+I arrives as Tab on terminals without the kitty protocol.
     handle_key(&mut app, ctrl_key(KeyCode::Tab));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 
     handle_key(&mut app, ctrl_key(KeyCode::Char('o')));
     handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 
     // Plain Tab (no Ctrl) still cycles panes instead of redoing.
     app.nav.pane = crate::core::Pane::Issues;
@@ -48,7 +51,7 @@ fn ctrl_o_and_ctrl_i_walk_history() {
         crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
     );
     assert_eq!(app.nav.pane, crate::core::Pane::PRs);
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 }
 
 fn plain_key(code: KeyCode) -> crossterm::event::KeyEvent {
@@ -58,10 +61,12 @@ fn plain_key(code: KeyCode) -> crossterm::event::KeyEvent {
 fn compose_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
-    app.issues.data.insert(7, sample(7));
-    app.issues.statuses.insert(7, vec![]);
-    app.nav.visited.push(7);
-    app.show_issue(7);
+    app.issues
+        .data
+        .insert(ItemRef::github(7), sample(ItemRef::github(7)));
+    app.issues.statuses.insert(ItemRef::github(7), vec![]);
+    app.nav.visited.push(ItemRef::github(7));
+    app.show_issue(ItemRef::github(7));
     app
 }
 
@@ -251,7 +256,11 @@ fn compose_ctrl_i_inserts_tab_and_never_walks_history() {
     handle_key(&mut app, ctrl_key(KeyCode::Char('i')));
     type_text(&mut app, "b");
     assert_eq!(app.draft().unwrap().body, "a\tb");
-    assert_eq!(app.nav.current, Some(7), "tab never leaves the modal");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "tab never leaves the modal"
+    );
     assert!(app.compose_open());
 }
 
@@ -281,10 +290,12 @@ fn compose_ctrl_o_arms_editor_or_names_a_missing_editor() {
 
 fn pending_dialog_app() -> App {
     let mut app = compose_app();
-    app.issues.data.insert(9, sample(9));
-    app.issues.statuses.insert(9, vec![]);
-    app.nav.visited.push(9);
-    let d = app.issues.data.get_mut(&7).unwrap();
+    app.issues
+        .data
+        .insert(ItemRef::github(9), sample(ItemRef::github(9)));
+    app.issues.statuses.insert(ItemRef::github(9), vec![]);
+    app.nav.visited.push(ItemRef::github(9));
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![crate::model::ReviewThread {
         id: "t1".into(),
@@ -293,7 +304,7 @@ fn pending_dialog_app() -> App {
         comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
         ..Default::default()
     }];
-    app.request_issue(9);
+    app.request_issue(ItemRef::github(9));
     assert!(app.confirm_open(), "guard trips");
     app
 }
@@ -304,24 +315,24 @@ fn confirm_dialog_keys_submit_discard_and_cancel() {
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Char('d')));
     assert!(!app.confirm_open());
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     assert!(app.compose.submitting.is_empty());
     // Submit navigates and submits.
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Char('s')));
     assert!(!app.confirm_open());
-    assert_eq!(app.nav.current, Some(9));
-    assert!(app.compose.submitting.contains(&7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
+    assert!(app.compose.submitting.contains(&ItemRef::github(7)));
     // Enter picks the first choice (Submit).
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Enter));
     assert!(!app.confirm_open());
-    assert!(app.compose.submitting.contains(&7));
+    assert!(app.compose.submitting.contains(&ItemRef::github(7)));
     // Esc cancels: no navigation, nothing sent.
     let mut app = pending_dialog_app();
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert!(!app.confirm_open());
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert!(app.compose.submitting.is_empty());
     // Quit never escapes the dialog.
     let mut app = pending_dialog_app();
@@ -333,7 +344,7 @@ fn confirm_dialog_keys_submit_discard_and_cancel() {
 #[test]
 fn ctrl_s_submits_pending_review() {
     let mut app = compose_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![crate::model::ReviewThread {
         id: "t1".into(),
@@ -343,18 +354,20 @@ fn ctrl_s_submits_pending_review() {
         ..Default::default()
     }];
     handle_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    assert!(app.compose.submitting.contains(&7), "ctrl-s starts the submit");
+    assert!(app.compose.submitting.contains(&ItemRef::github(7)), "ctrl-s starts the submit");
 }
 
 fn step_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for n in [7u64, 8] {
-        app.issues.data.insert(n, sample(n));
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.visited.push(n);
+        app.issues
+            .data
+            .insert(ItemRef::github(n), sample(ItemRef::github(n)));
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.visited.push(ItemRef::github(n));
     }
-    app.show_issue(7);
+    app.show_issue(ItemRef::github(7));
     app.nav.pane = Pane::Main;
     app
 }
@@ -372,7 +385,11 @@ fn top_layer_owns_keys_and_esc_pops_exactly_one() {
     // Shortcuts swallow navigation; Esc closes.
     app.open(crate::app::Entry::Shortcuts);
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
-    assert_eq!(app.nav.current, Some(7), "shortcuts swallow l");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "shortcuts swallow l"
+    );
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Shortcuts));
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert!(!app.shortcuts_open());
@@ -390,7 +407,11 @@ fn top_layer_owns_keys_and_esc_pops_exactly_one() {
     app.open_compose();
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Compose));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
-    assert_eq!(app.nav.current, Some(7), "compose types, never steps");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "compose types, never steps"
+    );
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.focus().layer, Layer::Dialog(Dialog::Confirm));
     handle_key(&mut app, plain_key(KeyCode::Char('d')));
@@ -440,7 +461,7 @@ fn board_esc_closes_one_layer_and_keeps_the_filter() {
 #[test]
 fn history_pane_keys_walk_and_go_back() {
     let mut app = step_app();
-    app.nav.history = vec![5, 6, 8];
+    app.nav.history = vec![ItemRef::github(5), ItemRef::github(6), ItemRef::github(8)];
     app.refs.show = true;
     assert!(app.history_visible());
     app.nav.pane = Pane::History;
@@ -456,7 +477,7 @@ fn history_pane_keys_walk_and_go_back() {
     assert_eq!(app.history_steps(), 3, "clamped to the rows drawn");
     // Enter goes back that many steps, like clicking the row.
     handle_key(&mut app, plain_key(KeyCode::Enter));
-    assert_eq!(app.nav.history, Vec::<u64>::new());
+    assert_eq!(app.nav.history, Vec::<ItemRef>::new());
     assert_eq!(app.nav.history_cursor, 0);
 }
 
@@ -464,10 +485,18 @@ fn history_pane_keys_walk_and_go_back() {
 fn brackets_steps_between_neighbors_on_main() {
     let mut app = step_app();
     handle_key(&mut app, plain_key(KeyCode::Char(']')));
-    assert_eq!(app.nav.current, Some(8), "] opens the next issue");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(8)),
+        "] opens the next issue"
+    );
     assert_eq!(app.sidebar.issue_state.selected(), Some(2));
     handle_key(&mut app, plain_key(KeyCode::Char('[')));
-    assert_eq!(app.nav.current, Some(7), "[ opens the previous issue");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "[ opens the previous issue"
+    );
     assert_eq!(app.sidebar.issue_state.selected(), Some(1));
     assert_eq!(app.nav.step_pending, None, "cached steps never linger");
 }
@@ -481,10 +510,18 @@ fn brackets_steps_from_every_pane() {
         app.nav.pane = pane;
         app.message.clear();
         handle_key(&mut app, plain_key(KeyCode::Char(']')));
-        assert_eq!(app.nav.current, Some(8), "] steps from {pane:?}");
+        assert_eq!(
+            app.nav.current,
+            Some(ItemRef::github(8)),
+            "] steps from {pane:?}"
+        );
         assert_eq!(app.nav.step_pending, None, "cached steps never linger");
         handle_key(&mut app, plain_key(KeyCode::Char('[')));
-        assert_eq!(app.nav.current, Some(7), "[ steps back from {pane:?}");
+        assert_eq!(
+            app.nav.current,
+            Some(ItemRef::github(7)),
+            "[ steps back from {pane:?}"
+        );
         assert!(app.message.is_empty(), "no toast on a live neighbor");
     }
 }
@@ -507,13 +544,13 @@ fn bar_filter_and_board_keep_their_h_and_l() {
     handle_key(&mut app, plain_key(KeyCode::Char('h')));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
     assert_eq!(app.bar, "hl");
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     // The filter dialog swallows them.
     app.nav.focus = crate::app::Focus::Main;
     app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     handle_key(&mut app, plain_key(KeyCode::Char('h')));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert_eq!(app.nav.step_pending, None);
     // The board modal moves columns instead of stepping issues.
     app.close(crate::app::Slot::Format);
@@ -521,7 +558,7 @@ fn bar_filter_and_board_keep_their_h_and_l() {
     app.open(crate::app::Entry::Board);
     handle_key(&mut app, plain_key(KeyCode::Char('h')));
     handle_key(&mut app, plain_key(KeyCode::Char('l')));
-    assert_eq!(app.nav.current, Some(7), "board keeps h/l");
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "board keeps h/l");
     assert_eq!(app.nav.step_pending, None);
     assert!(app.board.loading, "board stays open");
 }
@@ -572,19 +609,31 @@ fn press(app: &mut App, c: char) {
 fn gg_jumps_and_a_stray_key_cancels_the_prefix() {
     let mut app = step_app();
     app.nav.pane = Pane::Issues;
-    app.show_issue(8);
+    app.show_issue(ItemRef::github(8));
     press(&mut app, 'g');
     assert_eq!(app.pending_prefix, Some('g'), "g waits");
-    assert_eq!(app.nav.current, Some(8));
+    assert_eq!(app.nav.current, Some(ItemRef::github(8)));
     press(&mut app, 'g');
     assert_eq!(app.pending_prefix, None);
-    assert_eq!(app.nav.current, Some(7), "gg selects the first row");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "gg selects the first row"
+    );
     press(&mut app, 'G');
-    assert_eq!(app.nav.current, Some(8), "G selects the last row");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(8)),
+        "G selects the last row"
+    );
     press(&mut app, 'g');
     press(&mut app, 'k');
     assert_eq!(app.pending_prefix, None, "any other key cancels");
-    assert_eq!(app.nav.current, Some(7), "and runs as usual");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "and runs as usual"
+    );
 }
 
 #[test]
@@ -653,32 +702,39 @@ fn enter_focuses_the_content_and_esc_returns_to_the_list() {
     let mut app = step_app();
     app.nav.pane = Pane::Issues;
     app.nav.visited.clear();
-    app.nav.recent = vec![7, 8];
-    app.show_issue(8);
+    app.nav.recent = vec![ItemRef::github(7), ItemRef::github(8)];
+    app.show_issue(ItemRef::github(8));
     handle_key(&mut app, plain_key(KeyCode::Enter));
-    assert_eq!(app.nav.current, Some(8));
+    assert_eq!(app.nav.current, Some(ItemRef::github(8)));
     assert_eq!(app.nav.pane, Pane::Main, "Enter focuses the content");
-    assert!(!app.nav.visited.contains(&8), "the row stays in its group");
+    assert!(
+        !app.nav.visited.contains(&ItemRef::github(8)),
+        "the row stays in its group"
+    );
     // j scrolls the content now; it does not switch items.
     handle_key(&mut app, plain_key(KeyCode::Char('j')));
-    assert_eq!(app.nav.current, Some(8));
+    assert_eq!(app.nav.current, Some(ItemRef::github(8)));
     assert_eq!(app.nav.scroll, 3);
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Issues, "Esc returns to the list");
     assert!(app.nav.back.is_empty());
     handle_key(&mut app, plain_key(KeyCode::Char('k')));
-    assert!(app.nav.current == Some(7) || app.nav.requested == Some(7), "k walks the list again");
+    assert!(
+        app.nav.current == Some(ItemRef::github(7))
+            || app.nav.requested == Some(ItemRef::github(7)),
+        "k walks the list again"
+    );
 }
 
 #[test]
 fn enter_in_refs_and_history_focuses_the_content_too() {
     let mut app = step_app();
-    app.show_issue(8);
+    app.show_issue(ItemRef::github(8));
     app.nav.pane = Pane::Refs;
-    app.refs.highlight = Some(7);
+    app.refs.highlight = Some(ItemRef::github(7));
     handle_key(&mut app, plain_key(KeyCode::Enter));
     assert_eq!(app.nav.pane, Pane::Main);
-    app.refs.numbers = vec![8];
+    app.refs.numbers = vec![ItemRef::github(8)];
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Refs, "Esc returns to Refs");
     app.nav.pane = Pane::History;
@@ -692,20 +748,23 @@ fn enter_in_refs_and_history_focuses_the_content_too() {
 fn esc_walks_the_back_stack_one_frame_at_a_time() {
     let mut app = step_app();
     app.nav.pane = Pane::Issues;
-    app.show_issue(8);
+    app.show_issue(ItemRef::github(8));
     handle_key(&mut app, plain_key(KeyCode::Enter));
     // A lateral move to Refs keeps the stack; Enter there pushes Refs
     // with the item it leaves.
     app.nav.pane = Pane::Refs;
-    app.refs.highlight = Some(7);
+    app.refs.highlight = Some(ItemRef::github(7));
     handle_key(&mut app, plain_key(KeyCode::Enter));
-    assert_eq!((app.nav.pane, app.nav.current), (Pane::Main, Some(7)));
+    assert_eq!(
+        (app.nav.pane, app.nav.current),
+        (Pane::Main, Some(ItemRef::github(7)))
+    );
     assert!(app.back_target().is_some(), "Esc can go back");
     // Esc restores #8 and its Refs, the cursor on the opened reference.
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert_eq!((app.nav.pane, app.nav.current), (Pane::Refs, Some(8)));
+    assert_eq!((app.nav.pane, app.nav.current), (Pane::Refs, Some(ItemRef::github(8))));
     assert!(app.menu().is_none(), "a back-stack entry beats the main menu");
-    assert_eq!(app.refs.highlight, Some(7), "the Refs cursor stays on #7");
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(7)), "the Refs cursor stays on #7");
     handle_key(&mut app, plain_key(KeyCode::Esc));
     assert_eq!(app.nav.pane, Pane::Issues, "the next Esc reaches the list");
     handle_key(&mut app, plain_key(KeyCode::Esc));
@@ -723,24 +782,27 @@ fn esc_walks_the_back_stack_one_frame_at_a_time() {
 #[test]
 fn esc_keeps_the_item_once_you_move_on() {
     let mut app = step_app();
-    app.show_issue(8);
+    app.show_issue(ItemRef::github(8));
     app.nav.pane = Pane::Refs;
-    app.refs.highlight = Some(7);
+    app.refs.highlight = Some(ItemRef::github(7));
     handle_key(&mut app, plain_key(KeyCode::Enter));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     // Moving on to another item drops the restore; Refs is hidden for
     // it, so Esc has nowhere to go.
     press(&mut app, ']');
-    assert_eq!(app.nav.current, Some(8));
+    assert_eq!(app.nav.current, Some(ItemRef::github(8)));
     app.refs.numbers.clear();
     app.refs.paired.clear();
     assert!(app.back_target().is_none(), "hidden Refs is skipped");
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert_eq!((app.nav.pane, app.nav.current), (Pane::Main, Some(8)));
+    assert_eq!(
+        (app.nav.pane, app.nav.current),
+        (Pane::Main, Some(ItemRef::github(8)))
+    );
     handle_key(&mut app, plain_key(KeyCode::Esc));
     // Coming back to #7 does not revive the restore.
     press(&mut app, '[');
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert!(app.nav.back.iter().all(|f| f.opened.is_none()));
 }
 
@@ -748,7 +810,7 @@ fn esc_keeps_the_item_once_you_move_on() {
 fn esc_clears_a_content_search_before_going_back() {
     let mut app = step_app();
     app.nav.pane = Pane::Issues;
-    app.show_issue(8);
+    app.show_issue(ItemRef::github(8));
     handle_key(&mut app, plain_key(KeyCode::Enter));
     app.search.query = "x".to_string();
     handle_key(&mut app, plain_key(KeyCode::Esc));
@@ -760,26 +822,36 @@ fn esc_clears_a_content_search_before_going_back() {
 #[test]
 fn esc_after_a_history_jump_restores_the_item() {
     let mut app = step_app();
-    app.ensure_visited(7);
-    app.load_issue(7, false);
-    app.ensure_visited(8);
-    app.load_issue(8, false);
+    app.ensure_visited(ItemRef::github(7));
+    app.load_issue(ItemRef::github(7), false);
+    app.ensure_visited(ItemRef::github(8));
+    app.load_issue(ItemRef::github(8), false);
     app.nav.pane = Pane::History;
     app.history_step(-1);
     handle_key(&mut app, plain_key(KeyCode::Enter));
-    assert_eq!((app.nav.pane, app.nav.current), (Pane::Main, Some(7)));
+    assert_eq!(
+        (app.nav.pane, app.nav.current),
+        (Pane::Main, Some(ItemRef::github(7)))
+    );
     handle_key(&mut app, plain_key(KeyCode::Esc));
-    assert_eq!((app.nav.pane, app.nav.current), (Pane::History, Some(8)));
-    assert_eq!((app.nav.history.clone(), app.nav.future.clone()), (vec![7], vec![]), "the chain is as before the jump");
+    assert_eq!(
+        (app.nav.pane, app.nav.current),
+        (Pane::History, Some(ItemRef::github(8)))
+    );
+    assert_eq!(
+        (app.nav.history.clone(), app.nav.future.clone()),
+        (vec![ItemRef::github(7)], vec![]),
+        "the chain is as before the jump"
+    );
 }
 
 #[test]
 fn o_opens_the_history_row_under_the_cursor() {
     let mut app = step_app();
-    app.ensure_visited(7);
-    app.load_issue(7, false);
-    app.ensure_visited(8);
-    app.load_issue(8, false);
+    app.ensure_visited(ItemRef::github(7));
+    app.load_issue(ItemRef::github(7), false);
+    app.ensure_visited(ItemRef::github(8));
+    app.load_issue(ItemRef::github(8), false);
     app.nav.pane = Pane::History;
     press(&mut app, 'o');
     assert_eq!(app.message, "opened #8 in browser");
@@ -794,9 +866,9 @@ fn brackets_step_issues_from_any_pane() {
     for pane in [Pane::Main, Pane::Issues, Pane::Refs] {
         app.nav.pane = pane;
         press(&mut app, ']');
-        assert_eq!(app.nav.current, Some(8), "{pane:?}");
+        assert_eq!(app.nav.current, Some(ItemRef::github(8)), "{pane:?}");
         press(&mut app, '[');
-        assert_eq!(app.nav.current, Some(7), "{pane:?}");
+        assert_eq!(app.nav.current, Some(ItemRef::github(7)), "{pane:?}");
     }
 }
 

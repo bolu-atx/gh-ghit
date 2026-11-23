@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use super::*;
+use crate::model::ItemRef;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -287,7 +288,7 @@ fn compose_chords_need_exact_modifiers() {
     let mut app = app_in(Pane::Main);
     app.close(crate::app::Slot::Format);
     app.open_draft(crate::app::ComposeState {
-        number: 7,
+        number: ItemRef::github(7),
         target: crate::app::ComposeTarget::Thread,
         body: String::new(),
         cursor: 0,
@@ -322,8 +323,8 @@ fn help_merges_aliases_and_leads_with_the_current_context() {
 #[test]
 fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
     let mut app = app_in(Pane::Main);
-    app.issues.data.insert(9, crate::model::IssueData {
-        number: 9,
+    app.issues.data.insert(ItemRef::github(9), crate::model::IssueData {
+        number: ItemRef::github(9),
         title: String::new(),
         state: "OPEN".to_string(),
         author: crate::model::Author { login: "bo".to_string() },
@@ -343,7 +344,7 @@ fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
             links: Default::default(),
         is_pr: true,
     });
-    app.nav.current = Some(9);
+    app.nav.current = Some(ItemRef::github(9));
     app.nav.tab = crate::app::Tab::Visual;
     let order: Vec<Context> = help_sections(&app).into_iter()
         .filter(|(_, current)| *current).map(|(context, _)| context).collect();

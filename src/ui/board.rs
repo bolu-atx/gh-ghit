@@ -428,7 +428,7 @@ fn board_card(
     let show_number = fields.number || expanded;
     let head = match (c.number, show_number) {
         (Some(n), true) => {
-            let prefix = format!("#{n} ");
+            let prefix = format!("{n} ", n = n.display(""));
             let room = title_width.saturating_sub(prefix.chars().count()).max(1);
             format!("{prefix}{}", model::slug(&c.title, room))
         }

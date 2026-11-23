@@ -8,6 +8,7 @@ use crate::model::{
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use crate::model::ItemRef;
 
 pub(super) fn board_app(n_cards: usize) -> App {
     let mut app = App::new(Some("o/r".to_string()));
@@ -15,7 +16,7 @@ pub(super) fn board_app(n_cards: usize) -> App {
     let items: Vec<BoardItem> = (0..n_cards)
         .map(|i| BoardItem {
             title: format!("Card {i}"),
-            number: Some(100 + i as u64),
+            number: Some(ItemRef::github(100 + i as u64)),
             status: Some("Todo".to_string()),
             labels: vec![Label { name: "x".to_string() }],
             repo: Some("o/r".to_string()),
@@ -59,7 +60,7 @@ pub(super) fn frame_text_sized(app: &mut App, width: u16, height: u16) -> String
         .collect()
 }
 
-pub(super) fn sample(number: u64) -> IssueData {
+pub(super) fn sample(number: ItemRef) -> IssueData {
     IssueData {
         number,
         title: "Fix the thing".to_string(),
@@ -69,7 +70,10 @@ pub(super) fn sample(number: u64) -> IssueData {
         assignees: vec![],
         created_at: "2026-01-02T00:00:00Z".to_string(),
         updated_at: "2026-01-05T00:00:00Z".to_string(),
-        url: format!("https://github.com/o/r/issues/{number}"),
+        url: format!(
+            "https://github.com/o/r/issues/{number}",
+            number = number.number
+        ),
         body: "# hello\n\n- a\n- b\n".to_string(),
         comments: vec![],
         review_threads: vec![],
@@ -86,15 +90,15 @@ pub(super) fn sample(number: u64) -> IssueData {
 pub(super) fn loaded_app() -> App {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
-    let mut pr = sample(9);
+    let mut pr = sample(ItemRef::github(9));
     pr.is_pr = true;
-    for d in [sample(7), pr] {
+    for d in [sample(ItemRef::github(7)), pr] {
         let n = d.number;
         app.issues.data.insert(n, d);
         app.issues.statuses.insert(n, vec![]);
         app.nav.visited.push(n);
     }
-    app.show_issue(7);
+    app.show_issue(ItemRef::github(7));
     app
 }
 
@@ -149,14 +153,14 @@ pub(super) fn cells<'a>(buf: &'a ratatui::buffer::Buffer, symbol: &str) -> Vec<&
     buf.content().iter().filter(|c| c.symbol() == symbol).collect()
 }
 
-pub(super) fn check_pr(number: u64, checks: Option<crate::model::CheckState>) -> IssueData {
+pub(super) fn check_pr(number: ItemRef, checks: Option<crate::model::CheckState>) -> IssueData {
     let mut d = sample(number);
     d.is_pr = true;
     d.checks = checks;
     d
 }
 
-pub(super) fn check_app(number: u64, checks: Option<crate::model::CheckState>) -> App {
+pub(super) fn check_app(number: ItemRef, checks: Option<crate::model::CheckState>) -> App {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.issues.data.insert(number, check_pr(number, checks));
@@ -197,7 +201,7 @@ pub(super) fn sidebar_text(app: &mut App) -> String {
     text
 }
 
-pub(super) fn diff_pr(number: u64) -> IssueData {
+pub(super) fn diff_pr(number: ItemRef) -> IssueData {
     let mut d = sample(number);
     d.is_pr = true;
     d

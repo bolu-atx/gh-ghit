@@ -2,11 +2,12 @@
 
 use super::*;
 use super::test_support::{pending_nav_app, sidebar_app};
+use crate::model::ItemRef;
 
 fn draft_app(body: &str) -> App {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     app.open_draft(ComposeState {
-        number: 7,
+        number: ItemRef::github(7),
         target: ComposeTarget::Thread,
         body: body.to_string(),
         cursor: body.chars().count(),
@@ -17,8 +18,8 @@ fn draft_app(body: &str) -> App {
 }
 
 fn pending_review_app() -> App {
-    let mut app = sidebar_app(&[7]);
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![model::ReviewThread {
         id: "t1".into(),
@@ -55,7 +56,7 @@ fn quit_with_draft_asks_first() {
     app.request_quit();
     app.confirm_choose(1);
     assert!(app.quit);
-    let mut plain = sidebar_app(&[7]);
+    let mut plain = sidebar_app(&[ItemRef::github(7)]);
     plain.request_quit();
     assert!(plain.quit && !plain.confirm_open(), "nothing at risk quits at once");
 }
@@ -74,23 +75,30 @@ fn quit_with_pending_review_asks_first() {
 
 #[test]
 fn evict_undo_restores_row_in_place() {
-    let mut app = sidebar_app(&[7, 9, 11]);
-    app.nav.current = Some(9);
-    app.diff.expanded_rows.insert(9);
+    let mut app = sidebar_app(&[ItemRef::github(7), ItemRef::github(9), ItemRef::github(11)]);
+    app.nav.current = Some(ItemRef::github(9));
+    app.diff.expanded_rows.insert(ItemRef::github(9));
     app.evict_current();
     assert!(app.message.contains("removed #9 · u undo"), "{}", app.message);
-    assert_eq!(app.nav.visited, vec![7, 11]);
+    assert_eq!(app.nav.visited, vec![ItemRef::github(7), ItemRef::github(11)]);
     app.undo_last();
-    assert_eq!(app.nav.visited, vec![7, 9, 11], "same order");
-    assert!(app.issues.data.contains_key(&9) && app.issues.statuses.contains_key(&9));
-    assert!(app.diff.expanded_rows.contains(&9));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(
+        app.nav.visited,
+        vec![ItemRef::github(7), ItemRef::github(9), ItemRef::github(11)],
+        "same order"
+    );
+    assert!(
+        app.issues.data.contains_key(&ItemRef::github(9))
+            && app.issues.statuses.contains_key(&ItemRef::github(9))
+    );
+    assert!(app.diff.expanded_rows.contains(&ItemRef::github(9)));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     assert!(app.undo.is_none(), "one shot");
 }
 
 #[test]
 fn saved_query_delete_undo_restores_index() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     for (name, query) in [("a", "is:open"), ("b", "label:bug"), ("c", "is:pr")] {
         app.sidebar.saved_queries.push(github::SavedQuery { name: name.into(), query: query.into() });
     }
@@ -106,15 +114,19 @@ fn saved_query_delete_undo_restores_index() {
 
 #[test]
 fn undo_expires_with_its_window() {
-    let mut app = sidebar_app(&[7, 9]);
-    app.nav.current = Some(7);
+    let mut app = sidebar_app(&[ItemRef::github(7), ItemRef::github(9)]);
+    app.nav.current = Some(ItemRef::github(7));
     app.evict_current();
     assert!(app.undo_live());
     app.undo.as_mut().unwrap().at = Instant::now() - Duration::from_secs(10);
     assert!(!app.undo_live());
     app.undo_last();
-    assert_eq!(app.nav.visited, vec![9], "expired undo restores nothing");
-    app.nav.current = Some(9);
+    assert_eq!(
+        app.nav.visited,
+        vec![ItemRef::github(9)],
+        "expired undo restores nothing"
+    );
+    app.nav.current = Some(ItemRef::github(9));
     app.evict_current();
     app.notify("other news".to_string());
     assert!(!app.undo_live(), "a later toast hides the undo offer");
@@ -123,35 +135,46 @@ fn undo_expires_with_its_window() {
 #[test]
 fn pending_nav_guard_trips_and_cancel_stays() {
     let mut app = pending_nav_app();
-    app.request_issue(7);
+    app.request_issue(ItemRef::github(7));
     let dialog = app.confirm().expect("guard trips");
     assert_eq!(dialog.title, "Unsubmitted comments");
     assert!(dialog.body.iter().any(|l| l.text.contains("#9")), "names the issue: {:?}", dialog.body);
     assert_eq!(dialog.choices.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Submit them", "Discard", "Cancel"]);
-    assert_eq!(app.nav.current, Some(9), "no navigation while the dialog is up");
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)), "no navigation while the dialog is up");
     app.confirm_cancel();
     assert!(!app.confirm_open());
-    assert_eq!(app.nav.current, Some(9), "cancel stays put");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(9)),
+        "cancel stays put"
+    );
 }
 
 #[test]
 fn pending_nav_discard_navigates_without_submitting() {
     let mut app = pending_nav_app();
-    app.request_issue(7);
+    app.request_issue(ItemRef::github(7));
     app.confirm_choose(1);
     assert!(!app.confirm_open());
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert!(app.compose.submitting.is_empty(), "discard never submits");
 }
 
 #[test]
 fn pending_nav_submit_navigates_and_submits() {
     let mut app = pending_nav_app();
-    app.request_issue(7);
+    app.request_issue(ItemRef::github(7));
     app.confirm_choose(0);
     assert!(!app.confirm_open());
-    assert_eq!(app.nav.current, Some(7), "submit still navigates");
-    assert!(app.compose.submitting.contains(&9), "submit starts the review submit");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "submit still navigates"
+    );
+    assert!(
+        app.compose.submitting.contains(&ItemRef::github(9)),
+        "submit starts the review submit"
+    );
 }
 
 #[test]
@@ -162,16 +185,16 @@ fn pending_nav_tab_switch_guards_and_same_target_passes() {
     app.confirm_choose(1);
     assert_eq!(app.nav.tab, crate::app::Tab::Visual);
     // Same-target requests never open the dialog.
-    let mut plain = sidebar_app(&[7, 9]);
-    plain.show_issue(9);
-    plain.request_issue(9);
+    let mut plain = sidebar_app(&[ItemRef::github(7), ItemRef::github(9)]);
+    plain.show_issue(ItemRef::github(9));
+    plain.request_issue(ItemRef::github(9));
     assert!(!plain.confirm_open());
     plain.request_tab(plain.nav.tab);
     assert!(!plain.confirm_open());
     // Without pending threads everything navigates directly.
-    plain.request_issue(7);
+    plain.request_issue(ItemRef::github(7));
     assert!(!plain.confirm_open());
-    assert_eq!(plain.nav.current, Some(7));
+    assert_eq!(plain.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
@@ -234,7 +257,7 @@ fn auth_degraded_holds_until_a_reauth_succeeds() {
 #[test]
 fn auth_question_blocked_by_another_dialog_still_degrades() {
     let mut app = pending_nav_app();
-    app.request_issue(7);
+    app.request_issue(ItemRef::github(7));
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials");
     assert!(
         matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
@@ -257,7 +280,7 @@ fn reopen_reauth_only_reopens_while_degraded() {
     );
     assert!(app.auth.degraded, "reopening keeps the badge until a re-auth succeeds");
     let mut guarded = pending_nav_app();
-    guarded.request_issue(7);
+    guarded.request_issue(ItemRef::github(7));
     guarded.auth.degraded = true;
     guarded.reopen_reauth();
     assert!(
@@ -269,7 +292,7 @@ fn reopen_reauth_only_reopens_while_degraded() {
 #[test]
 fn auth_failure_waits_for_an_open_dialog() {
     let mut app = pending_nav_app();
-    app.request_issue(7);
+    app.request_issue(ItemRef::github(7));
     assert!(app.confirm_open(), "nav guard holds the dialog");
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
     assert!(

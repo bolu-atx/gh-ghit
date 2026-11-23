@@ -26,7 +26,9 @@ pub(super) fn render_map_card(f: &mut ratatui::Frame, area: Rect, app: &mut App)
     app.hits.map_card = area;
     let title = match card {
         MapCard::Node => match app.map.selected_index().map(|i| &app.map.graph.nodes[i]) {
-            Some(MapNode { number: Some(n), .. }) => format!(" #{n} "),
+            Some(MapNode {
+                number: Some(n), ..
+            }) => format!(" {n} ", n = n.display("")),
             _ => " milestone ".to_string(),
         },
         MapCard::Edge { .. } => " link ".to_string(),
@@ -163,7 +165,7 @@ fn hub_card(f: &mut ratatui::Frame, area: Rect, app: &mut App, index: usize) {
     for (row, &member) in (3..area.height).zip(&members) {
         let node = &graph.nodes[member];
         let rect = Rect::new(area.x, area.y + row, area.width, 1);
-        let label = format!("#{} {}", node.number.unwrap_or_default(), node.title);
+        let label = format!("{} {}", node.number.unwrap_or_default().display(""), node.title);
         f.render_widget(Paragraph::new(model::slug(&label, width)).style(state_style(node)), rect);
         hits.push((rect, CardHit::End(node.id)));
     }
@@ -189,7 +191,7 @@ fn edge_card(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let rect = Rect::new(area.x, area.y + y, area.width, 2);
         let marker = if app.map.selected == Some(node.id) { "▌" } else { " " };
         let name = match node.number {
-            Some(n) => format!("#{n} {}", node.title),
+            Some(n) => format!("{n} {}", node.title, n = n.display("")),
             None => format!("◆ {}", node.title),
         };
         let lines = vec![

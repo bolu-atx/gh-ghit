@@ -11,9 +11,9 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::api::Row;
 use crate::cache;
-use crate::model::{IssueData, MapItem};
+use crate::model::{IssueData, ItemRef, MapItem, Source};
 
-const SCHEMA_VERSION: &str = "5";
+const SCHEMA_VERSION: &str = "6";
 
 /// How long a write waits for another process's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -24,7 +24,8 @@ CREATE TABLE meta (
     value TEXT NOT NULL
 );
 CREATE TABLE items (
-    number INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    number INTEGER NOT NULL,
     kind TEXT NOT NULL,
     state TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -39,14 +40,16 @@ CREATE TABLE items (
     checks TEXT,
     project_status TEXT NOT NULL,
     window_at TEXT,
-    row_json TEXT NOT NULL
+    row_json TEXT NOT NULL,
+    PRIMARY KEY (source, number)
 );
 CREATE TABLE details (
+    source TEXT NOT NULL,
     number INTEGER NOT NULL,
     kind TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     payload TEXT NOT NULL,
-    PRIMARY KEY (number, kind)
+    PRIMARY KEY (source, number, kind)
 );
 CREATE TABLE backfill (
     name TEXT PRIMARY KEY,
@@ -56,12 +59,14 @@ CREATE TABLE backfill (
     total INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE edges (
+    src_source TEXT NOT NULL,
     src INTEGER NOT NULL,
+    dst_source TEXT NOT NULL,
     dst INTEGER NOT NULL,
     kind TEXT NOT NULL,
-    PRIMARY KEY (dst, src, kind)
+    PRIMARY KEY (dst_source, dst, src_source, src, kind)
 );
-CREATE INDEX edges_src ON edges (src);
+CREATE INDEX edges_src ON edges (src_source, src);
 ";
 
 /// The sync lease and the last sync start, one row per repo store.
@@ -82,7 +87,7 @@ INSERT INTO sync_state (id) VALUES (1);
 /// What the finder needs of one stored item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
-    pub number: u64,
+    pub number: ItemRef,
     pub is_pr: bool,
     pub state: String,
     pub title: String,
@@ -118,8 +123,8 @@ impl EdgeKind {
 /// One link between two stored item numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edge {
-    pub src: u64,
-    pub dst: u64,
+    pub src: ItemRef,
+    pub dst: ItemRef,
     pub kind: EdgeKind,
 }
 
@@ -195,7 +200,8 @@ impl Store {
     /// order from row data (`api::visible_rows`).
     pub fn rows(&self) -> Result<Vec<Row>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
-        let mut stmt = self.conn.prepare("SELECT row_json FROM items ORDER BY number DESC").map_err(fail)?;
+        let mut stmt = self.conn
+            .prepare("SELECT row_json FROM items ORDER BY source, number DESC").map_err(fail)?;
         let raw = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(fail)?;
         let mut rows = Vec::new();
         for json in raw {
@@ -208,10 +214,14 @@ impl Store {
     }
 
     /// The stored row of one item.
-    pub fn row(&self, number: u64) -> Option<Row> {
+    pub fn row(&self, number: ItemRef) -> Option<Row> {
         let json: String = self
             .conn
-            .query_row("SELECT row_json FROM items WHERE number = ?1", [number as i64], |r| r.get(0))
+            .query_row(
+                "SELECT row_json FROM items WHERE source = ?1 AND number = ?2",
+                params![number.source.as_str(), number.number as i64],
+                |r| r.get(0),
+            )
             .optional()
             .ok()
             .flatten()?;
@@ -230,7 +240,10 @@ impl Store {
     /// Every stored link between items.
     pub fn edges(&self) -> Result<Vec<Edge>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
-        let mut stmt = self.conn.prepare("SELECT src, dst, kind FROM edges ORDER BY dst, src, kind").map_err(fail)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT src_source, src, dst_source, dst, kind FROM edges
+             ORDER BY dst_source, dst, src_source, src, kind",
+        ).map_err(fail)?;
         let edges = stmt.query_map([], read_edge).map_err(fail)?;
         Ok(edges.collect::<Result<Vec<_>, _>>().map_err(fail)?.into_iter().flatten().collect())
     }
@@ -239,17 +252,18 @@ impl Store {
     pub fn map_items(&self) -> Result<Vec<MapItem>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let mut stmt = self.conn
-            .prepare("SELECT number, kind, state, title, milestone, labels FROM items ORDER BY number")
+            .prepare("SELECT source, number, kind, state, title, milestone, labels FROM items
+                      ORDER BY source, number")
             .map_err(fail)?;
         let items = stmt
             .query_map([], |r| {
-                let labels: String = r.get(5)?;
+                let labels: String = r.get(6)?;
                 Ok(MapItem {
-                    number: r.get::<_, i64>(0)? as u64,
-                    is_pr: r.get::<_, String>(1)? == "pr",
-                    state: r.get(2)?,
-                    title: r.get(3)?,
-                    milestone: r.get(4)?,
+                    number: read_item(r, 0)?,
+                    is_pr: r.get::<_, String>(2)? == "pr",
+                    state: r.get(3)?,
+                    title: r.get(4)?,
+                    milestone: r.get(5)?,
                     labels: serde_json::from_str(&labels).unwrap_or_default(),
                 })
             })
@@ -262,17 +276,18 @@ impl Store {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let mut stmt = self
             .conn
-            .prepare("SELECT number, kind, state, title, author, labels FROM items ORDER BY updated_at DESC, number DESC")
+            .prepare("SELECT source, number, kind, state, title, author, labels FROM items
+                      ORDER BY updated_at DESC, source, number DESC")
             .map_err(fail)?;
         let rows = stmt
             .query_map([], |r| {
-                let labels: String = r.get(5)?;
+                let labels: String = r.get(6)?;
                 Ok(Candidate {
-                    number: r.get::<_, i64>(0)? as u64,
-                    is_pr: r.get::<_, String>(1)? == "pr",
-                    state: r.get(2)?,
-                    title: r.get(3)?,
-                    author: r.get(4)?,
+                    number: read_item(r, 0)?,
+                    is_pr: r.get::<_, String>(2)? == "pr",
+                    state: r.get(3)?,
+                    title: r.get(4)?,
+                    author: r.get(5)?,
                     labels: serde_json::from_str(&labels).unwrap_or_default(),
                 })
             })
@@ -301,7 +316,11 @@ impl Store {
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
         for hit in rows {
             let stored: Option<String> = tx
-                .query_row("SELECT row_json FROM items WHERE number = ?1", [hit.issue.number as i64], |r| r.get(0))
+                .query_row(
+                    "SELECT row_json FROM items WHERE source = ?1 AND number = ?2",
+                    params![hit.issue.number.source.as_str(), hit.issue.number.number as i64],
+                    |r| r.get(0),
+                )
                 .optional()
                 .map_err(fail)?;
             let mut row = hit.clone();
@@ -319,7 +338,7 @@ impl Store {
     }
 
     /// The stored rows with these numbers, most recently updated first.
-    pub fn rows_by_number(&self, numbers: &[u64]) -> Vec<Row> {
+    pub fn rows_by_number(&self, numbers: &[ItemRef]) -> Vec<Row> {
         let mut rows: Vec<Row> = self.rows().unwrap_or_default().into_iter()
             .filter(|row| numbers.contains(&row.issue.number))
             .collect();
@@ -328,10 +347,18 @@ impl Store {
     }
 }
 
+fn read_item(row: &rusqlite::Row, column: usize) -> rusqlite::Result<ItemRef> {
+    let tag: String = row.get(column)?;
+    let source = Source::parse(&tag).ok_or_else(|| rusqlite::Error::InvalidColumnType(
+        column, tag, rusqlite::types::Type::Text,
+    ))?;
+    Ok(ItemRef { source, number: row.get::<_, i64>(column + 1)? as u64 })
+}
+
 /// An edge row; `None` for a kind this build does not know.
 fn read_edge(row: &rusqlite::Row) -> rusqlite::Result<Option<Edge>> {
-    let kind: String = row.get(2)?;
-    let (src, dst) = (row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64);
+    let kind: String = row.get(4)?;
+    let (src, dst) = (read_item(row, 0)?, read_item(row, 2)?);
     Ok(EdgeKind::from_name(&kind).map(|kind| Edge { src, dst, kind }))
 }
 
@@ -346,7 +373,8 @@ fn upsert_rows(tx: &rusqlite::Transaction, sql: &str, rows: &[Row]) -> Result<()
         let merged_at = (issue.is_pr && issue.state == "MERGED").then(|| row.window_at.clone()).flatten();
         let written = upsert
             .execute(params![
-                issue.number as i64,
+                issue.number.source.as_str(),
+                issue.number.number as i64,
                 if issue.is_pr { "pr" } else { "issue" },
                 issue.state,
                 issue.title,
@@ -387,15 +415,20 @@ fn bump_generation(tx: &rusqlite::Transaction) -> rusqlite::Result<()> {
 
 /// Replace every edge into `issue` with the links its row carries.
 fn replace_edges(tx: &rusqlite::Transaction, issue: &IssueData) -> rusqlite::Result<()> {
-    tx.execute("DELETE FROM edges WHERE dst = ?1", [issue.number as i64])?;
+    tx.execute(
+        "DELETE FROM edges WHERE dst_source = ?1 AND dst = ?2",
+        params![issue.number.source.as_str(), issue.number.number as i64],
+    )?;
     let links = issue.parent.map(|parent| (parent, EdgeKind::Parent))
         .into_iter()
         .chain(issue.links.blocked_by.iter().map(|&blocker| (blocker, EdgeKind::Blocks)))
         .chain(issue.links.closed_by.iter().map(|&pr| (pr, EdgeKind::Closes)));
     for (src, kind) in links {
         tx.execute(
-            "INSERT OR IGNORE INTO edges (src, dst, kind) VALUES (?1, ?2, ?3)",
-            params![src as i64, issue.number as i64, kind.name()],
+            "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![src.source.as_str(), src.number as i64,
+                issue.number.source.as_str(), issue.number.number as i64, kind.name()],
         )?;
     }
     Ok(())
@@ -428,19 +461,27 @@ pub fn serve_stored(force: bool, stored: Option<&str>, current: Option<&str>) ->
 
 impl Store {
     /// `updated_at` of the item as the latest sync listed it.
-    pub fn item_updated_at(&self, number: u64) -> Option<String> {
+    pub fn item_updated_at(&self, number: ItemRef) -> Option<String> {
         self.conn
-            .query_row("SELECT updated_at FROM items WHERE number = ?1", [number as i64], |r| r.get(0))
+            .query_row(
+                "SELECT updated_at FROM items WHERE source = ?1 AND number = ?2",
+                params![number.source.as_str(), number.number as i64],
+                |r| r.get(0),
+            )
             .optional()
             .ok()
             .flatten()
     }
 
     /// Project statuses of the item as the latest sync listed them.
-    pub fn item_statuses(&self, number: u64) -> Option<Vec<(String, Option<String>)>> {
+    pub fn item_statuses(&self, number: ItemRef) -> Option<Vec<(String, Option<String>)>> {
         let json: String = self
             .conn
-            .query_row("SELECT project_status FROM items WHERE number = ?1", [number as i64], |r| r.get(0))
+            .query_row(
+                "SELECT project_status FROM items WHERE source = ?1 AND number = ?2",
+                params![number.source.as_str(), number.number as i64],
+                |r| r.get(0),
+            )
             .optional()
             .ok()
             .flatten()?;
@@ -448,7 +489,12 @@ impl Store {
     }
 
     /// The stored detail when it is fresh for an open (`serve_stored`).
-    pub fn fresh_detail<T: serde::de::DeserializeOwned>(&self, kind: Detail, number: u64, force: bool) -> Option<T> {
+    pub fn fresh_detail<T: serde::de::DeserializeOwned>(
+        &self,
+        kind: Detail,
+        number: ItemRef,
+        force: bool,
+    ) -> Option<T> {
         let (stored_at, payload) = self.detail_payload(kind, number)?;
         let current = self.item_updated_at(number);
         if !serve_stored(force, Some(&stored_at), current.as_deref()) {
@@ -459,7 +505,7 @@ impl Store {
     }
 
     /// The stored detail whatever its age, for views that only show it.
-    pub fn stored_detail<T>(&self, kind: Detail, number: u64) -> Option<T>
+    pub fn stored_detail<T>(&self, kind: Detail, number: ItemRef) -> Option<T>
     where
         T: serde::de::DeserializeOwned,
     {
@@ -467,11 +513,12 @@ impl Store {
     }
 
     /// `updated_at` and raw payload of a stored detail.
-    fn detail_payload(&self, kind: Detail, number: u64) -> Option<(String, String)> {
+    fn detail_payload(&self, kind: Detail, number: ItemRef) -> Option<(String, String)> {
         self.conn
             .query_row(
-                "SELECT updated_at, payload FROM details WHERE number = ?1 AND kind = ?2",
-                params![number as i64, kind.name()],
+                "SELECT updated_at, payload FROM details
+                 WHERE source = ?1 AND number = ?2 AND kind = ?3",
+                params![number.source.as_str(), number.number as i64, kind.name()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
@@ -480,25 +527,42 @@ impl Store {
     }
 
     /// Store a detail with the `updated_at` it was fetched at.
-    pub fn put_detail<T: serde::Serialize>(&self, kind: Detail, number: u64, updated_at: &str, value: &T) -> Result<(), String> {
+    pub fn put_detail<T: serde::Serialize>(
+        &self,
+        kind: Detail,
+        number: ItemRef,
+        updated_at: &str,
+        value: &T,
+    ) -> Result<(), String> {
         let payload = serde_json::to_string(value).map_err(|e| format!("store: {e}"))?;
         self.conn
             .execute(
-                "INSERT INTO details (number, kind, updated_at, payload) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (number, kind) DO UPDATE SET updated_at = excluded.updated_at, payload = excluded.payload",
-                params![number as i64, kind.name(), updated_at, payload],
+                "INSERT INTO details (source, number, kind, updated_at, payload)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (source, number, kind) DO UPDATE
+                 SET updated_at = excluded.updated_at, payload = excluded.payload",
+                params![number.source.as_str(), number.number as i64, kind.name(), updated_at, payload],
             )
             .map(|_| ())
             .map_err(|e| format!("store: {e}"))
     }
 
     /// Drop an item and its details: it was deleted or transferred.
-    pub fn drop_item(&mut self, number: u64) -> Result<(), String> {
+    pub fn drop_item(&mut self, number: ItemRef) -> Result<(), String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
-        tx.execute("DELETE FROM items WHERE number = ?1", [number as i64]).map_err(fail)?;
-        tx.execute("DELETE FROM details WHERE number = ?1", [number as i64]).map_err(fail)?;
-        tx.execute("DELETE FROM edges WHERE dst = ?1", [number as i64]).map_err(fail)?;
+        tx.execute(
+            "DELETE FROM items WHERE source = ?1 AND number = ?2",
+            params![number.source.as_str(), number.number as i64],
+        ).map_err(fail)?;
+        tx.execute(
+            "DELETE FROM details WHERE source = ?1 AND number = ?2",
+            params![number.source.as_str(), number.number as i64],
+        ).map_err(fail)?;
+        tx.execute(
+            "DELETE FROM edges WHERE dst_source = ?1 AND dst = ?2",
+            params![number.source.as_str(), number.number as i64],
+        ).map_err(fail)?;
         bump_generation(&tx).map_err(fail)?;
         tx.commit().map_err(fail)
     }
@@ -562,10 +626,15 @@ impl Store {
 
     /// Stamp of what a map card shows for one item: the row's and the
     /// stored issue detail's `updated_at`. It moves when either is rewritten.
-    pub fn card_stamp(&self, number: u64) -> Option<String> {
+    pub fn card_stamp(&self, number: ItemRef) -> Option<String> {
         let detail: Option<String> = self
             .conn
-            .query_row("SELECT updated_at FROM details WHERE number = ?1 AND kind = 'issue'", [number as i64], |r| r.get(0))
+            .query_row(
+                "SELECT updated_at FROM details
+                 WHERE source = ?1 AND number = ?2 AND kind = 'issue'",
+                params![number.source.as_str(), number.number as i64],
+                |r| r.get(0),
+            )
             .optional()
             .ok()
             .flatten();
@@ -658,10 +727,10 @@ impl Store {
 
 /// `closed_at` stays NULL: the listing fields carry no `closedAt`.
 const UPSERT: &str = "
-INSERT INTO items (number, kind, state, title, author, labels, assignees, milestone,
+INSERT INTO items (source, number, kind, state, title, author, labels, assignees, milestone,
     created_at, updated_at, merged_at, checks, project_status, window_at, row_json)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-ON CONFLICT (number) DO UPDATE SET
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+ON CONFLICT (source, number) DO UPDATE SET
     kind = excluded.kind, state = excluded.state, title = excluded.title,
     author = excluded.author, labels = excluded.labels, assignees = excluded.assignees,
     milestone = excluded.milestone, created_at = excluded.created_at,
@@ -677,7 +746,7 @@ mod demo_tests;
 mod tests {
     use super::*;
 
-    fn row(number: u64, state: &str) -> Row {
+    fn row(number: ItemRef, state: &str) -> Row {
         Row {
             issue: crate::model::IssueData { number, state: state.to_string(), ..Default::default() },
             statuses: vec![],
@@ -687,24 +756,110 @@ mod tests {
         }
     }
 
-    fn numbers(store: &Store) -> Vec<u64> {
+    fn numbers(store: &Store) -> Vec<ItemRef> {
         store.rows().unwrap().iter().map(|r| r.issue.number).collect()
+    }
+
+    #[test]
+    fn item_columns_store_source_tags_and_sort_numbers_numerically() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("numbers.sqlite")).unwrap();
+        let github = [ItemRef::github(2), ItemRef::github(10)];
+        let jira = github.map(|item| ItemRef { source: Source::Jira, ..item });
+        let rows: Vec<_> = github.into_iter().chain(jira).map(|item| row(item, "OPEN")).collect();
+        store.write("sync", &rows).unwrap();
+        let mut stmt = store.conn.prepare(
+            "SELECT source, typeof(number) FROM items ORDER BY source, number",
+        ).unwrap();
+        let columns: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(columns, vec![
+            ("github".into(), "integer".into()), ("github".into(), "integer".into()),
+            ("jira".into(), "integer".into()), ("jira".into(), "integer".into()),
+        ]);
+        assert_eq!(numbers(&store), vec![github[1], github[0], jira[1], jira[0]]);
+        let map: Vec<_> = store.map_items().unwrap().iter().map(|item| item.number).collect();
+        assert_eq!(map, vec![github[0], github[1], jira[0], jira[1]]);
+        let finder: Vec<_> = store.finder_candidates().unwrap().iter()
+            .map(|item| item.number).collect();
+        assert_eq!(finder, numbers(&store));
+    }
+
+    #[test]
+    fn sources_keep_rows_details_edges_and_lookup_results_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sources.sqlite");
+        let mut store = open_at(&path).unwrap();
+        let github = ItemRef::github(45);
+        let jira = ItemRef {
+            source: crate::model::Source::Jira,
+            number: 45,
+        };
+        let mut gh_row = row(github, "OPEN");
+        gh_row.issue.title = "GitHub".into();
+        let mut jira_row = row(jira, "OPEN");
+        jira_row.issue.title = "Jira".into();
+        jira_row.issue.links.blocked_by = vec![github];
+        store.write("sync", &[gh_row, jira_row]).unwrap();
+        store
+            .put_detail(Detail::Issue, github, "", &"github body")
+            .unwrap();
+        store
+            .put_detail(Detail::Issue, jira, "", &"jira body")
+            .unwrap();
+        drop(store);
+
+        let mut store = open_at(&path).unwrap();
+        assert_eq!(store.row(github).unwrap().issue.title, "GitHub");
+        assert_eq!(store.row(jira).unwrap().issue.title, "Jira");
+        assert_eq!(
+            store
+                .stored_detail::<String>(Detail::Issue, github)
+                .unwrap(),
+            "github body"
+        );
+        assert_eq!(
+            store.stored_detail::<String>(Detail::Issue, jira).unwrap(),
+            "jira body"
+        );
+        assert_eq!(store.finder_candidates().unwrap().len(), 2);
+        assert_eq!(store.map_items().unwrap().len(), 2);
+        assert_eq!(store.rows_by_number(&[jira]).len(), 1);
+        assert_eq!(
+            store.edges().unwrap(),
+            vec![Edge {
+                src: github,
+                dst: jira,
+                kind: EdgeKind::Blocks
+            }]
+        );
+        store.drop_item(jira).unwrap();
+        assert!(store.row(github).is_some());
+        assert!(store.row(jira).is_none());
+        assert!(store.edges().unwrap().is_empty());
+        assert!(store
+            .stored_detail::<String>(Detail::Issue, github)
+            .is_some());
+        assert!(store.stored_detail::<String>(Detail::Issue, jira).is_none());
     }
 
     #[test]
     fn finder_candidates_list_every_item_newest_update_first() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("s.sqlite")).unwrap();
-        let mut a = row(1, "OPEN");
+        let mut a = row(ItemRef::github(1), "OPEN");
         a.issue.title = "old".into();
         a.issue.updated_at = "2026-01-01T00:00:00Z".into();
         a.issue.labels = vec![crate::model::Label { name: "bug".into() }];
-        let mut b = row(2, "MERGED");
+        let mut b = row(ItemRef::github(2), "MERGED");
         b.issue.is_pr = true;
         b.issue.updated_at = "2026-02-01T00:00:00Z".into();
         store.write("2026-02-02T00:00:00Z", &[a, b]).unwrap();
         let got = store.finder_candidates().unwrap();
-        assert_eq!(got.iter().map(|c| c.number).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(
+            got.iter().map(|c| c.number).collect::<Vec<_>>(),
+            vec![ItemRef::github(2), ItemRef::github(1)]
+        );
         assert!(got[0].is_pr && got[0].state == "MERGED");
         assert_eq!((got[1].title.as_str(), got[1].labels.clone()), ("old", vec!["bug".to_string()]));
     }
@@ -731,17 +886,39 @@ mod tests {
     fn writes_round_trip_rows_and_sync_start() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
-        assert!(store.sync_started_at().is_none() && numbers(&store).is_empty(), "a new store is empty");
-        store.write("t1", &[row(5, "OPEN"), row(2, "OPEN"), row(9, "CLOSED")]).unwrap();
-        assert_eq!(numbers(&store), vec![9, 5, 2]);
+        assert!(
+            store.sync_started_at().is_none() && numbers(&store).is_empty(),
+            "a new store is empty"
+        );
+        store
+            .write(
+                "t1",
+                &[
+                    row(ItemRef::github(5), "OPEN"),
+                    row(ItemRef::github(2), "OPEN"),
+                    row(ItemRef::github(9), "CLOSED"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            numbers(&store),
+            vec![ItemRef::github(9), ItemRef::github(5), ItemRef::github(2)]
+        );
         assert_eq!(store.sync_started_at().as_deref(), Some("t1"));
         // A later write upserts; rows it leaves out keep their data.
-        let mut retitled = row(2, "OPEN");
+        let mut retitled = row(ItemRef::github(2), "OPEN");
         retitled.issue.title = "renamed".to_string();
         store.write("t2", &[retitled]).unwrap();
         let rows = store.rows().unwrap();
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows.iter().find(|r| r.issue.number == 2).unwrap().issue.title, "renamed");
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.issue.number == ItemRef::github(2))
+                .unwrap()
+                .issue
+                .title,
+            "renamed"
+        );
         assert_eq!(store.sync_started_at().as_deref(), Some("t2"));
         let wal: String = store.conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(wal, "wal");
@@ -753,10 +930,17 @@ mod tests {
         let file = dir.path().join("r.sqlite");
         let mut first = open_at(&file).unwrap();
         let mut second = open_at(&file).unwrap();
-        first.write("t1", &[row(1, "OPEN")]).unwrap();
-        assert_eq!(numbers(&second), vec![1]);
-        second.write("t2", &[row(2, "OPEN")]).unwrap();
-        assert_eq!(numbers(&first), vec![2, 1]);
+        first
+            .write("t1", &[row(ItemRef::github(1), "OPEN")])
+            .unwrap();
+        assert_eq!(numbers(&second), vec![ItemRef::github(1)]);
+        second
+            .write("t2", &[row(ItemRef::github(2), "OPEN")])
+            .unwrap();
+        assert_eq!(
+            numbers(&first),
+            vec![ItemRef::github(2), ItemRef::github(1)]
+        );
         assert_eq!(first.sync_started_at().as_deref(), Some("t2"));
     }
 
@@ -784,18 +968,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
         assert_eq!(store.items_generation().unwrap(), 0);
-        store.write("t1", &[row(1, "OPEN")]).unwrap();
+        store
+            .write("t1", &[row(ItemRef::github(1), "OPEN")])
+            .unwrap();
         assert_eq!(store.items_generation().unwrap(), 1, "a sync write counts");
         store.claim_lease("a", 100, 60, false).unwrap();
-        store.put_detail(Detail::Issue, 1, "u", &"body").unwrap();
+        store.put_detail(Detail::Issue, ItemRef::github(1), "u", &"body").unwrap();
         assert_eq!(store.items_generation().unwrap(), 1, "lease and detail writes do not");
-        store.upsert_search(&[row(1, "OPEN")]).unwrap();
+        store.upsert_search(&[row(ItemRef::github(1), "OPEN")]).unwrap();
         assert_eq!(store.items_generation().unwrap(), 1, "a search hit that changes no row does not");
-        let mut newer = row(2, "OPEN");
+        let mut newer = row(ItemRef::github(2), "OPEN");
         newer.issue.updated_at = "2".into();
         store.upsert_search(&[newer]).unwrap();
         assert_eq!(store.items_generation().unwrap(), 2, "a stored search hit counts");
-        store.drop_item(2).unwrap();
+        store.drop_item(ItemRef::github(2)).unwrap();
         assert_eq!(store.items_generation().unwrap(), 3, "a drop counts");
     }
 
@@ -803,14 +989,28 @@ mod tests {
     fn card_stamp_moves_with_the_items_row_and_detail() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
-        assert_eq!(store.card_stamp(1), None);
-        store.write("t1", &[row(1, "OPEN")]).unwrap();
-        let bare = store.card_stamp(1);
-        store.put_detail(Detail::Issue, 1, "u", &"body").unwrap();
-        assert_ne!(store.card_stamp(1), bare, "a stored detail moves it");
-        let other = store.card_stamp(1);
-        store.write("t2", &[row(2, "OPEN")]).unwrap();
-        assert_eq!(store.card_stamp(1), other, "another item's write does not");
+        assert_eq!(store.card_stamp(ItemRef::github(1)), None);
+        store
+            .write("t1", &[row(ItemRef::github(1), "OPEN")])
+            .unwrap();
+        let bare = store.card_stamp(ItemRef::github(1));
+        store
+            .put_detail(Detail::Issue, ItemRef::github(1), "u", &"body")
+            .unwrap();
+        assert_ne!(
+            store.card_stamp(ItemRef::github(1)),
+            bare,
+            "a stored detail moves it"
+        );
+        let other = store.card_stamp(ItemRef::github(1));
+        store
+            .write("t2", &[row(ItemRef::github(2), "OPEN")])
+            .unwrap();
+        assert_eq!(
+            store.card_stamp(ItemRef::github(1)),
+            other,
+            "another item's write does not"
+        );
     }
 
     #[test]
@@ -820,7 +1020,7 @@ mod tests {
         let mut writer = open_at(&file).unwrap();
         let watcher = open_at(&file).unwrap();
         let (seen, own) = (watcher.data_version().unwrap(), writer.data_version().unwrap());
-        writer.write("t1", &[row(1, "OPEN")]).unwrap();
+        writer.write("t1", &[row(ItemRef::github(1), "OPEN")]).unwrap();
         assert_ne!(watcher.data_version().unwrap(), seen, "another connection's commit moves it");
         assert_eq!(writer.data_version().unwrap(), own, "a connection's own commit does not");
     }
@@ -830,7 +1030,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("r.sqlite");
         let mut store = open_at(&file).unwrap();
-        store.write("t1", &[row(1, "OPEN")]).unwrap();
+        store.write("t1", &[row(ItemRef::github(1), "OPEN")]).unwrap();
         store.conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'", []).unwrap();
         store.conn.execute_batch("CREATE TABLE leftover (x)").unwrap();
         drop(store);
@@ -858,43 +1058,108 @@ mod tests {
     fn details_round_trip_per_kind_and_follow_the_item() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
-        let mut listed = row(5, "OPEN");
+        let mut listed = row(ItemRef::github(5), "OPEN");
         listed.issue.updated_at = "t1".to_string();
         listed.statuses = vec![("Board".to_string(), Some("Todo".to_string()))];
         store.write("s", &[listed]).unwrap();
-        assert_eq!(store.item_updated_at(5).as_deref(), Some("t1"));
-        assert_eq!(store.item_statuses(5), Some(vec![("Board".to_string(), Some("Todo".to_string()))]));
-        assert_eq!(store.item_updated_at(6), None);
+        assert_eq!(
+            store.item_updated_at(ItemRef::github(5)).as_deref(),
+            Some("t1")
+        );
+        assert_eq!(
+            store.item_statuses(ItemRef::github(5)),
+            Some(vec![("Board".to_string(), Some("Todo".to_string()))])
+        );
+        assert_eq!(store.item_updated_at(ItemRef::github(6)), None);
 
-        let issue = crate::model::IssueData { number: 5, body: "b".to_string(), updated_at: "t1".to_string(), ..Default::default() };
-        let files = vec![crate::model::DiffFile { filename: "a.rs".to_string(), ..Default::default() }];
-        store.put_detail(Detail::Issue, 5, "t1", &issue).unwrap();
-        store.put_detail(Detail::Diff, 5, "t1", &files).unwrap();
-        assert_eq!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).unwrap().body, "b");
-        assert_eq!(store.fresh_detail::<Vec<crate::model::DiffFile>>(Detail::Diff, 5, false).unwrap()[0].filename, "a.rs");
-        assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, true).is_none(), "force skips the store");
+        let issue = crate::model::IssueData {
+            number: ItemRef::github(5),
+            body: "b".to_string(),
+            updated_at: "t1".to_string(),
+            ..Default::default()
+        };
+        let files = vec![crate::model::DiffFile {
+            filename: "a.rs".to_string(),
+            ..Default::default()
+        }];
+        store
+            .put_detail(Detail::Issue, ItemRef::github(5), "t1", &issue)
+            .unwrap();
+        store
+            .put_detail(Detail::Diff, ItemRef::github(5), "t1", &files)
+            .unwrap();
+        assert_eq!(
+            store
+                .fresh_detail::<crate::model::IssueData>(Detail::Issue, ItemRef::github(5), false)
+                .unwrap()
+                .body,
+            "b"
+        );
+        assert_eq!(
+            store
+                .fresh_detail::<Vec<crate::model::DiffFile>>(
+                    Detail::Diff,
+                    ItemRef::github(5),
+                    false
+                )
+                .unwrap()[0]
+                .filename,
+            "a.rs"
+        );
+        assert!(
+            store
+                .fresh_detail::<crate::model::IssueData>(Detail::Issue, ItemRef::github(5), true)
+                .is_none(),
+            "force skips the store"
+        );
 
         // A sync that reports a newer updated_at makes every detail stale.
-        let mut newer = row(5, "OPEN");
+        let mut newer = row(ItemRef::github(5), "OPEN");
         newer.issue.updated_at = "t2".to_string();
         store.write("s2", &[newer]).unwrap();
-        assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
-        assert_eq!(store.stored_detail::<crate::model::IssueData>(Detail::Issue, 5).unwrap().body, "b", "a view still reads it");
+        assert!(store
+            .fresh_detail::<crate::model::IssueData>(Detail::Issue, ItemRef::github(5), false)
+            .is_none());
+        assert_eq!(
+            store
+                .stored_detail::<crate::model::IssueData>(Detail::Issue, ItemRef::github(5))
+                .unwrap()
+                .body,
+            "b",
+            "a view still reads it"
+        );
 
         // A refetch replaces the stored copy.
-        let fixed = crate::model::IssueData { body: "new".to_string(), updated_at: "t2".to_string(), ..issue.clone() };
-        store.put_detail(Detail::Issue, 5, "t2", &fixed).unwrap();
-        assert_eq!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).unwrap().body, "new");
+        let fixed = crate::model::IssueData {
+            body: "new".to_string(),
+            updated_at: "t2".to_string(),
+            ..issue.clone()
+        };
+        store
+            .put_detail(Detail::Issue, ItemRef::github(5), "t2", &fixed)
+            .unwrap();
+        assert_eq!(
+            store
+                .fresh_detail::<crate::model::IssueData>(Detail::Issue, ItemRef::github(5), false)
+                .unwrap()
+                .body,
+            "new"
+        );
 
         // A 404 drops the item and its details.
-        store.drop_item(5).unwrap();
-        assert!(numbers(&store).is_empty() && store.item_updated_at(5).is_none());
-        assert!(store.fresh_detail::<crate::model::IssueData>(Detail::Issue, 5, false).is_none());
-        let left: i64 = store.conn.query_row("SELECT count(*) FROM details", [], |r| r.get(0)).unwrap();
+        store.drop_item(ItemRef::github(5)).unwrap();
+        assert!(numbers(&store).is_empty() && store.item_updated_at(ItemRef::github(5)).is_none());
+        assert!(store
+            .fresh_detail::<crate::model::IssueData>(Detail::Issue, ItemRef::github(5), false)
+            .is_none());
+        let left: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM details", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(left, 0);
     }
 
-    fn dated(number: u64, title: &str, updated: &str) -> Row {
+    fn dated(number: ItemRef, title: &str, updated: &str) -> Row {
         let mut r = row(number, "CLOSED");
         r.issue.title = title.into();
         r.issue.updated_at = updated.into();
@@ -905,17 +1170,48 @@ mod tests {
     fn backfill_never_clobbers_a_newer_or_equal_synced_row() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("s.sqlite")).unwrap();
-        store.write("s1", &[dated(1, "synced", "2026-05-01T00:00:00Z"), dated(2, "synced", "2026-05-01T00:00:00Z")]).unwrap();
+        store
+            .write(
+                "s1",
+                &[
+                    dated(ItemRef::github(1), "synced", "2026-05-01T00:00:00Z"),
+                    dated(ItemRef::github(2), "synced", "2026-05-01T00:00:00Z"),
+                ],
+            )
+            .unwrap();
         let page = [
-            dated(1, "backfill", "2026-01-01T00:00:00Z"),
-            dated(2, "backfill", "2026-05-01T00:00:00Z"),
-            dated(3, "backfill", "2026-01-01T00:00:00Z"),
+            dated(ItemRef::github(1), "backfill", "2026-01-01T00:00:00Z"),
+            dated(ItemRef::github(2), "backfill", "2026-05-01T00:00:00Z"),
+            dated(ItemRef::github(3), "backfill", "2026-01-01T00:00:00Z"),
         ];
-        assert!(store.backfill_save("issues_closed", None, &page, Some("c1"), false, 9).unwrap());
-        let titles: Vec<_> = store.rows().unwrap().iter().map(|r| (r.issue.number, r.issue.title.clone())).collect();
-        assert_eq!(titles, vec![(3, "backfill".to_string()), (2, "synced".to_string()), (1, "synced".to_string())]);
+        assert!(store
+            .backfill_save("issues_closed", None, &page, Some("c1"), false, 9)
+            .unwrap());
+        let titles: Vec<_> = store
+            .rows()
+            .unwrap()
+            .iter()
+            .map(|r| (r.issue.number, r.issue.title.clone()))
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                (ItemRef::github(3), "backfill".to_string()),
+                (ItemRef::github(2), "synced".to_string()),
+                (ItemRef::github(1), "synced".to_string())
+            ]
+        );
         // A backfilled row is replaced by a newer backfill page.
-        assert!(store.backfill_save("issues_closed", Some("c1"), &[dated(3, "newer", "2026-02-01T00:00:00Z")], None, true, 9).unwrap());
+        assert!(store
+            .backfill_save(
+                "issues_closed",
+                Some("c1"),
+                &[dated(ItemRef::github(3), "newer", "2026-02-01T00:00:00Z")],
+                None,
+                true,
+                9
+            )
+            .unwrap());
         assert_eq!(store.rows().unwrap()[0].issue.title, "newer");
         assert_eq!(store.sync_started_at().as_deref(), Some("s1"), "backfill leaves the sync start alone");
     }
@@ -926,15 +1222,53 @@ mod tests {
         let path = dir.path().join("s.sqlite");
         let mut store = open_at(&path).unwrap();
         assert_eq!(store.backfill_conn("prs_open"), BackfillConn::default());
-        assert!(store.backfill_save("prs_open", None, &[dated(1, "a", "2026-01-01T00:00:00Z")], Some("c1"), false, 5).unwrap());
+        assert!(store
+            .backfill_save(
+                "prs_open",
+                None,
+                &[dated(ItemRef::github(1), "a", "2026-01-01T00:00:00Z")],
+                Some("c1"),
+                false,
+                5
+            )
+            .unwrap());
         drop(store);
         // Another process (a new connection) continues from the cursor.
         let mut store = open_at(&path).unwrap();
         let state = store.backfill_conn("prs_open");
-        assert_eq!((state.cursor.as_deref(), state.done, state.fetched, state.total), (Some("c1"), false, 1, 5));
-        assert!(!store.backfill_save("prs_open", None, &[dated(2, "b", "2026-01-01T00:00:00Z")], Some("c2"), false, 5).unwrap(), "a stale cursor stores nothing");
-        assert_eq!(numbers(&store), vec![1]);
-        assert!(store.backfill_save("prs_open", Some("c1"), &[dated(2, "b", "2026-01-01T00:00:00Z")], None, true, 5).unwrap());
+        assert_eq!(
+            (
+                state.cursor.as_deref(),
+                state.done,
+                state.fetched,
+                state.total
+            ),
+            (Some("c1"), false, 1, 5)
+        );
+        assert!(
+            !store
+                .backfill_save(
+                    "prs_open",
+                    None,
+                    &[dated(ItemRef::github(2), "b", "2026-01-01T00:00:00Z")],
+                    Some("c2"),
+                    false,
+                    5
+                )
+                .unwrap(),
+            "a stale cursor stores nothing"
+        );
+        assert_eq!(numbers(&store), vec![ItemRef::github(1)]);
+        assert!(store
+            .backfill_save(
+                "prs_open",
+                Some("c1"),
+                &[dated(ItemRef::github(2), "b", "2026-01-01T00:00:00Z")],
+                None,
+                true,
+                5
+            )
+            .unwrap());
         let state = store.backfill_conn("prs_open");
         assert_eq!((state.cursor, state.done, state.fetched), (None, true, 2));
     }
@@ -950,14 +1284,19 @@ mod tests {
         let store = open_at(&path).unwrap();
         assert!(!store.backfill_conn("prs_open").done);
     }
-    fn linked(number: u64, parent: Option<u64>, blocked_by: &[u64], closed_by: &[u64]) -> Row {
+    fn linked(
+        number: ItemRef,
+        parent: Option<ItemRef>,
+        blocked_by: &[ItemRef],
+        closed_by: &[ItemRef],
+    ) -> Row {
         let mut r = row(number, "OPEN");
         r.issue.parent = parent;
         r.issue.links = crate::model::IssueLinks { blocked_by: blocked_by.to_vec(), closed_by: closed_by.to_vec() };
         r
     }
 
-    fn edge(src: u64, dst: u64, kind: EdgeKind) -> Edge {
+    fn edge(src: ItemRef, dst: ItemRef, kind: EdgeKind) -> Edge {
         Edge { src, dst, kind }
     }
 
@@ -975,7 +1314,11 @@ mod tests {
         store.write("s1", &[parsed]).unwrap();
         assert_eq!(
             store.edges().unwrap(),
-            [edge(3, 7, EdgeKind::Parent), edge(4, 7, EdgeKind::Blocks), edge(9, 7, EdgeKind::Closes)]
+            [
+                edge(ItemRef::github(3), ItemRef::github(7), EdgeKind::Parent),
+                edge(ItemRef::github(4), ItemRef::github(7), EdgeKind::Blocks),
+                edge(ItemRef::github(9), ItemRef::github(7), EdgeKind::Closes)
+            ]
         );
     }
 
@@ -983,45 +1326,97 @@ mod tests {
     fn rewriting_an_issue_replaces_its_edges() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("e.sqlite")).unwrap();
-        let mut first = linked(7, None, &[4, 5], &[]);
+        let mut first = linked(
+            ItemRef::github(7),
+            None,
+            &[ItemRef::github(4), ItemRef::github(5)],
+            &[],
+        );
         first.issue.updated_at = "t1".into();
-        store.write("s1", &[first, linked(8, None, &[4], &[])]).unwrap();
-        let mut second = linked(7, None, &[5], &[]);
+        store
+            .write(
+                "s1",
+                &[
+                    first,
+                    linked(ItemRef::github(8), None, &[ItemRef::github(4)], &[]),
+                ],
+            )
+            .unwrap();
+        let mut second = linked(ItemRef::github(7), None, &[ItemRef::github(5)], &[]);
         second.issue.updated_at = "t2".into();
         store.write("s2", &[second]).unwrap();
-        assert_eq!(store.edges().unwrap(), [edge(5, 7, EdgeKind::Blocks), edge(4, 8, EdgeKind::Blocks)]);
+        assert_eq!(
+            store.edges().unwrap(),
+            [
+                edge(ItemRef::github(5), ItemRef::github(7), EdgeKind::Blocks),
+                edge(ItemRef::github(4), ItemRef::github(8), EdgeKind::Blocks)
+            ]
+        );
 
         // A backfill page that is not newer leaves row and edges alone.
-        let mut stale = linked(7, None, &[], &[]);
+        let mut stale = linked(ItemRef::github(7), None, &[], &[]);
         stale.issue.updated_at = "t1".into();
         store.backfill_save("c", None, &[stale], None, true, 1).unwrap();
         assert_eq!(store.edges().unwrap().len(), 2);
 
         // A newer backfill page replaces them.
-        let mut newer = linked(7, Some(1), &[], &[]);
+        let mut newer = linked(ItemRef::github(7), Some(ItemRef::github(1)), &[], &[]);
         newer.issue.updated_at = "t3".into();
-        store.backfill_save("d", None, &[newer], None, true, 1).unwrap();
-        assert_eq!(store.edges().unwrap(), [edge(1, 7, EdgeKind::Parent), edge(4, 8, EdgeKind::Blocks)]);
+        store
+            .backfill_save("d", None, &[newer], None, true, 1)
+            .unwrap();
+        assert_eq!(
+            store.edges().unwrap(),
+            [
+                edge(ItemRef::github(1), ItemRef::github(7), EdgeKind::Parent),
+                edge(ItemRef::github(4), ItemRef::github(8), EdgeKind::Blocks)
+            ]
+        );
 
-        store.drop_item(8).unwrap();
-        assert_eq!(store.edges().unwrap(), [edge(1, 7, EdgeKind::Parent)]);
+        store.drop_item(ItemRef::github(8)).unwrap();
+        assert_eq!(
+            store.edges().unwrap(),
+            [edge(
+                ItemRef::github(1),
+                ItemRef::github(7),
+                EdgeKind::Parent
+            )]
+        );
     }
 
     #[test]
     fn map_items_carry_kind_state_title_milestone_and_labels() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open_at(&dir.path().join("m.sqlite")).unwrap();
-        let mut pr = row(4, "MERGED");
+        let mut pr = row(ItemRef::github(4), "MERGED");
         pr.issue.is_pr = true;
         pr.issue.milestone = Some("v1".to_string());
         pr.issue.labels = vec![crate::model::Label { name: "bug".into() }, crate::model::Label { name: "perf".into() }];
-        store.write("s1", &[row(3, "OPEN"), pr]).unwrap();
+        store.write("s1", &[row(ItemRef::github(3), "OPEN"), pr]).unwrap();
         let mut items = store.map_items().unwrap();
         items.sort_by_key(|item| item.number);
         assert_eq!(items.len(), 2);
-        assert_eq!((items[0].number, items[0].is_pr, &*items[0].state, items[0].milestone.as_deref()), (3, false, "OPEN", None));
-        assert_eq!((items[1].is_pr, &*items[1].state, items[1].milestone.as_deref()), (true, "MERGED", Some("v1")));
-        assert_eq!((items[0].labels.len(), items[1].labels.clone()), (0, vec!["bug".to_string(), "perf".to_string()]));
+        assert_eq!(
+            (
+                items[0].number,
+                items[0].is_pr,
+                &*items[0].state,
+                items[0].milestone.as_deref()
+            ),
+            (ItemRef::github(3), false, "OPEN", None)
+        );
+        assert_eq!(
+            (
+                items[1].is_pr,
+                &*items[1].state,
+                items[1].milestone.as_deref()
+            ),
+            (true, "MERGED", Some("v1"))
+        );
+        assert_eq!(
+            (items[0].labels.len(), items[1].labels.clone()),
+            (0, vec!["bug".to_string(), "perf".to_string()])
+        );
     }
 
     #[test]
@@ -1029,7 +1424,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("e.sqlite");
         let mut store = open_at(&file).unwrap();
-        store.write("s1", &[linked(2, None, &[1], &[])]).unwrap();
+        store.write("s1", &[linked(ItemRef::github(2), None, &[ItemRef::github(1)], &[])]).unwrap();
         store.conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'", []).unwrap();
         drop(store);
         let store = open_at(&file).unwrap();

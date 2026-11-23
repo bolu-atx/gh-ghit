@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use super::test_support::{frame_text_sized, sample, loaded_app, key, click, draw_buffer, cells, frame_text, sidebar_text};
+use crate::model::ItemRef;
 
 fn frame_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
@@ -19,8 +20,8 @@ fn frame_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
 /// Issue 7 with a Refs pane, a History stack and a toggled-on sidebar.
 fn wide_content_app() -> App {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
-    app.nav.history = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
+    app.nav.history = vec![ItemRef::github(9)];
     app
 }
 
@@ -54,7 +55,7 @@ fn history_alone_and_sidebar_toggle_resize_main() {
     frame_text_sized(&mut app, 160, 40);
     let full_width = app.hits.body_area.width;
     assert!(app.hits.history_rows.is_empty());
-    app.nav.history = vec![9];
+    app.nav.history = vec![ItemRef::github(9)];
     let text = frame_text_sized(&mut app, 160, 40);
     assert!(text.contains("History"));
     assert_eq!(app.hits.refs_area.width, 0);
@@ -111,8 +112,8 @@ fn drag_hovers_without_visiting_and_up_is_noop() {
     let visited_before = app.nav.visited.clone();
     let (x, y) = (app.hits.side_pr_area.x + 1, app.hits.side_pr_area.y + 2);
     handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x, y));
-    assert_eq!(app.nav.hover, Some(9), "drag previews the row");
-    assert_eq!(app.nav.current, Some(7), "drag never visits");
+    assert_eq!(app.nav.hover, Some(ItemRef::github(9)), "drag previews the row");
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "drag never visits");
     assert_eq!(app.nav.visited, visited_before, "drag files nothing");
     assert!(app.hits.last_click.is_some(), "drag flashes");
     let current = app.nav.current;
@@ -170,27 +171,27 @@ fn jk_stays_in_the_focused_pane() {
     use crate::core::Pane;
     let mut app = loaded_app();
     // A second issue to walk between.
-    let mut extra = sample(5);
+    let mut extra = sample(ItemRef::github(5));
     extra.body = String::new();
-    app.issues.data.insert(5, extra);
-    app.issues.statuses.insert(5, vec![]);
-    app.nav.visited.push(5);
-    app.show_issue(7);
+    app.issues.data.insert(ItemRef::github(5), extra);
+    app.issues.statuses.insert(ItemRef::github(5), vec![]);
+    app.nav.visited.push(ItemRef::github(5));
+    app.show_issue(ItemRef::github(7));
     assert_eq!(app.nav.pane, Pane::Issues);
     // j never crosses into PRs: it walks issues only.
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.nav.current, Some(5));
+    assert_eq!(app.nav.current, Some(ItemRef::github(5)));
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.nav.current, Some(5));
+    assert_eq!(app.nav.current, Some(ItemRef::github(5)));
     handle_key(&mut app, key(KeyCode::Char('k')));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     // The PRs pane walks PRs only, starting from the first PR even
     // when the selection sits on an issue.
     app.nav.pane = Pane::PRs;
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     handle_key(&mut app, key(KeyCode::Char('k')));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 }
 
 #[test]
@@ -215,7 +216,7 @@ fn pane_focus_drives_border_title_and_marker() {
     // the active row, cursor stays.
     handle_key(&mut app, key(KeyCode::Tab));
     assert_eq!(app.nav.pane, Pane::PRs);
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert_eq!(app.sidebar.issue_state.selected(), Some(1), "cursor kept while blurred");
     terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
     let buf = terminal.backend().buffer().clone();
@@ -231,14 +232,14 @@ fn pane_focus_drives_border_title_and_marker() {
     assert_eq!(buf[(40, 0)].symbol(), "═");
     let text: String = buf.content().iter().map(|c| c.symbol()).collect();
     assert!(text.contains("█"), "marker returns with focus");
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
 fn every_pane_takes_the_double_amber_frame_and_one_focus_shows() {
     use crate::core::Pane;
     let mut app = loaded_app();
-    app.nav.history = vec![9];
+    app.nav.history = vec![ItemRef::github(9)];
     // Issues, History: boxed panes draw a double top-left corner.
     for pane in [Pane::Issues, Pane::History] {
         app.nav.pane = pane;
@@ -269,11 +270,11 @@ fn main_focus_keeps_sidebar_marker_for_current() {
     // Clicking the Diff/Visual tab moves focus to Main; the sidebar
     // marker must stay coupled to what the main pane displays.
     app.nav.pane = Pane::Main;
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     let text = sidebar_text(&mut app);
     assert!(text.contains("█"), "main focus keeps the active marker");
     // Same for a PR in the lower pane.
-    app.show_issue(9);
+    app.show_issue(ItemRef::github(9));
     app.nav.pane = Pane::Main;
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).expect("test backend");

@@ -5,12 +5,13 @@ use crate::core::{Layer, Pane, TextInput};
 use crate::input::{handle_key, handle_mouse};
 use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use super::test_support::{click, diff_pr, draw_buffer, frame_text, key, loaded_app, sample};
+use crate::model::ItemRef;
 
 fn main_app(body: &str) -> App {
     let mut app = loaded_app();
-    let mut d = sample(7);
+    let mut d = sample(ItemRef::github(7));
     d.body = body.to_string();
-    app.issues.data.insert(7, d);
+    app.issues.data.insert(ItemRef::github(7), d);
     app.nav.pane = Pane::Main;
     app.nav.focus = Focus::Main;
     app
@@ -173,17 +174,19 @@ fn sidebar_focus_keeps_the_row_search() {
 fn diff_app() -> App {
     use crate::model::DiffFile;
     let mut app = loaded_app();
-    app.issues.data.insert(9, diff_pr(9));
-    app.show_issue(9);
-    app.diff.pending.remove(&9);
+    app.issues
+        .data
+        .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
+    app.show_issue(ItemRef::github(9));
+    app.diff.pending.remove(&ItemRef::github(9));
     let file = |name: &str, patch: &str| DiffFile {
         filename: name.into(), status: "modified".into(), additions: 1, deletions: 0, patch: patch.into(),
     };
-    app.diff.files.insert(9, vec![
+    app.diff.files.insert(ItemRef::github(9), vec![
         file("src/a.rs", "@@ -1 +1 @@\n-old\n+new needle"),
         file("src/b.rs", "@@ -1 +1 @@\n-x\n+hidden needle here"),
     ]);
-    app.diff.expanded_files.insert((9, "src/a.rs".to_string()));
+    app.diff.expanded_files.insert((ItemRef::github(9), "src/a.rs".to_string()));
     app.set_tab(Tab::Visual);
     app.nav.pane = Pane::Main;
     app.nav.focus = Focus::Main;
@@ -198,9 +201,17 @@ fn a_match_in_a_folded_file_unfolds_it_only_when_jumped_to() {
     frame_text(&mut app);
     assert_eq!(app.search.matches.len(), 2);
     assert_eq!(app.search.matches[1].hidden_file, Some(1));
-    assert!(!app.diff.expanded_files.contains(&(9, "src/b.rs".to_string())), "typing never unfolds");
+    assert!(
+        !app.diff
+            .expanded_files
+            .contains(&(ItemRef::github(9), "src/b.rs".to_string())),
+        "typing never unfolds"
+    );
     handle_key(&mut app, key(KeyCode::Char('n')));
-    assert!(app.diff.expanded_files.contains(&(9, "src/b.rs".to_string())));
+    assert!(app
+        .diff
+        .expanded_files
+        .contains(&(ItemRef::github(9), "src/b.rs".to_string())));
     let text = frame_text(&mut app);
     assert!(text.contains("hidden needle here") && text.contains("2/2"), "{text}");
     assert_eq!(app.search.matches[1].hidden_file, None);

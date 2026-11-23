@@ -8,25 +8,26 @@ use crate::app::{App, Tab, Focus, NavIntent, UndoAction};
 use crate::core::{self, Pane};
 use crate::{github, model};
 use crate::model::IssueData;
+use crate::model::ItemRef;
 
 /// Issues owned by the app: fetched payloads plus the fetch channel
 /// triplet (sender, receiver, in-flight set) and per-issue page progress.
 pub(crate) struct IssueStore {
-    pub(crate) data: HashMap<u64, IssueData>,
-    pub(crate) statuses: HashMap<u64, Vec<(String, Option<String>)>>,
-    pub(crate) partial: HashSet<u64>,
-    pub(crate) tx: std::sync::mpsc::Sender<(u64, github::IssueEvent)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(u64, github::IssueEvent)>,
-    pub(crate) pending: HashSet<u64>,
+    pub(crate) data: HashMap<ItemRef, IssueData>,
+    pub(crate) statuses: HashMap<ItemRef, Vec<(String, Option<String>)>>,
+    pub(crate) partial: HashSet<ItemRef>,
+    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, github::IssueEvent)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, github::IssueEvent)>,
+    pub(crate) pending: HashSet<ItemRef>,
     /// Comment-page progress per issue: pages done vs total. Cleared when
     /// the terminal result lands.
-    pub(crate) progress: HashMap<u64, (usize, usize)>,
+    pub(crate) progress: HashMap<ItemRef, (usize, usize)>,
 }
 
 impl IssueStore {
     pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(u64, github::IssueEvent)>,
-        rx: std::sync::mpsc::Receiver<(u64, github::IssueEvent)>,
+        tx: std::sync::mpsc::Sender<(ItemRef, github::IssueEvent)>,
+        rx: std::sync::mpsc::Receiver<(ItemRef, github::IssueEvent)>,
     ) -> Self {
         Self { data: HashMap::new(), statuses: HashMap::new(), partial: HashSet::new(),
             tx, rx, pending: HashSet::new(), progress: HashMap::new() }
@@ -38,13 +39,13 @@ impl IssueStore {
 pub(crate) struct RefsPane {
     /// Related issues mentioned in the current body. Hidden when empty.
     pub(crate) show: bool,
-    pub(crate) numbers: Vec<u64>,
+    pub(crate) numbers: Vec<ItemRef>,
     /// Will-close counterparts of the current issue/PR, listed under a
     /// `Paired` divider. Kept disjoint from `numbers` so a row has one
     /// behavior: paired rows open, mention rows only highlight.
-    pub(crate) paired: Vec<u64>,
+    pub(crate) paired: Vec<ItemRef>,
     /// Click-selected refs row: highlights its source line instead of opening it.
-    pub(crate) highlight: Option<u64>,
+    pub(crate) highlight: Option<ItemRef>,
     pub(crate) state: ListState,
 }
 
@@ -58,7 +59,11 @@ impl RefsPane {
 impl App {
     /// Drop background rows the user never opened, with their cached data.
     pub(super) fn drop_unvisited_background(&mut self) {
-        let mut keep: HashSet<u64> = self.nav.visited.iter().copied()
+        let mut keep: HashSet<ItemRef> = self
+            .nav
+            .visited
+            .iter()
+            .copied()
             .chain(self.nav.pin_order.iter().copied())
             .chain(self.nav.pinned.iter().copied())
             .collect();
@@ -78,7 +83,7 @@ impl App {
     }
 
     /// Remove every cached payload for `n` so a revisit fetches again.
-    pub(super) fn drop_cached(&mut self, n: u64) {
+    pub(super) fn drop_cached(&mut self, n: ItemRef) {
         self.issues.partial.remove(&n);
         self.issues.progress.remove(&n);
         self.issues.data.remove(&n);
@@ -107,7 +112,10 @@ impl App {
             return;
         };
         if self.nav.pinned.contains(&n) || self.nav.pin_order.contains(&n) {
-            self.notify(format!("#{n} is pinned — unpin with p first"));
+            self.notify(format!(
+                "{n} is pinned — unpin with p first",
+                n = n.display("")
+            ));
             return;
         }
         let order = match self.nav.pane {
@@ -146,10 +154,10 @@ impl App {
                 self.sync_selection();
             }
         }
-        self.arm_undo(action, format!("removed #{n} · u undo"));
+        self.arm_undo(action, format!("removed {n} · u undo", n = n.display("")));
     }
 
-    pub(crate) fn load_issue(&mut self, number: u64, force: bool) {
+    pub(crate) fn load_issue(&mut self, number: ItemRef, force: bool) {
         self.nav.requested = Some(number);
         if !force && self.issues.data.contains_key(&number) && !self.issues.partial.contains(&number) {
             self.show_issue(number);
@@ -162,7 +170,7 @@ impl App {
 
     /// Queue the full fetch for `number` without opening it. No-op while
     /// one is already in flight.
-    pub(super) fn queue_issue(&mut self, number: u64, force: bool) {
+    pub(super) fn queue_issue(&mut self, number: ItemRef, force: bool) {
         if !self.issues.pending.insert(number) { return; }
         let tx = self.issues.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
@@ -222,7 +230,7 @@ impl App {
     }
 
     /// j/k order for the refs pane, skipping the divider.
-    pub(crate) fn ref_order(&self) -> Vec<u64> {
+    pub(crate) fn ref_order(&self) -> Vec<ItemRef> {
         self.refs.numbers.iter().chain(self.refs.paired.iter()).copied().collect()
     }
 
@@ -262,9 +270,14 @@ impl App {
         };
         // Pairs win over mentions so each row has one behavior: the
         // pairing survives, and Enter on it opens the counterpart.
-        let paired: Vec<u64> = d.paired.iter().map(|p| p.number).filter(|m| *m != n).collect();
+        let paired: Vec<ItemRef> = d
+            .paired
+            .iter()
+            .map(|p| p.number)
+            .filter(|m| *m != n)
+            .collect();
         let repo = self.repo_key();
-        let nums: Vec<u64> = model::referenced_numbers(&d.body, repo.as_deref())
+        let nums: Vec<ItemRef> = model::referenced_numbers(&d.body, repo.as_deref())
             .into_iter()
             .filter(|m| *m != n && !paired.contains(m))
             .collect();
@@ -291,10 +304,10 @@ impl App {
         let pins = core::toggle_pin(&loaded, n);
         if was_pinned {
             self.nav.pinned.remove(&n);
-            self.notify(format!("unpinned #{n}"));
+            self.notify(format!("unpinned {n}", n = n.display("")));
         } else {
             self.nav.pinned.insert(n);
-            self.notify(format!("pinned #{n}"));
+            self.notify(format!("pinned {n}", n = n.display("")));
         }
         self.nav.pin_order = pins.clone();
         github::save_pins(&key, &pins);
@@ -314,7 +327,7 @@ impl App {
         self.load_diff(n, true);
         self.map.loaded = false;
         self.refresh_listing();
-        self.notify(format!("refreshed #{n}"));
+        self.notify(format!("refreshed {n}", n = n.display("")));
     }
 
     /// A search listing refreshes from the server; a window listing
@@ -357,7 +370,7 @@ impl App {
             if let Some(td) = target {
                 return Some(core::yank_issue_text(t, &td.title, &td.url));
             }
-            return Some(format!("#{t}"));
+            return Some(t.display(""));
         }
         if self.nav.tab == Tab::Visual && d.is_pr {
             let files = self.diff.files.get(&current)?;

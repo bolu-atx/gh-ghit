@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::client::{client, get, rest_base};
 use crate::model::{self, Label};
+use crate::model::ItemRef;
 
 /// Sub-issues for the opt-in sidebar tree. The tree shows every child,
 /// so it pages once at the REST maximum.
@@ -30,7 +31,7 @@ fn sub_issue_row(v: &Value) -> Option<model::IssueData> {
         .filter_map(|l| l.get("name").and_then(Value::as_str).or_else(|| l.as_str()).map(|s| Label { name: s.to_owned() }))
         .collect();
     Some(model::IssueData {
-        number: v.get("number")?.as_u64()?,
+        number: ItemRef::github(v.get("number")?.as_u64()?),
         title: v.get("title").and_then(Value::as_str).unwrap_or("").to_owned(),
         state: v.get("state").and_then(Value::as_str).unwrap_or("").to_uppercase(),
         labels,
@@ -52,7 +53,10 @@ mod tests {
             null,
         ]));
         assert_eq!(rows.len(), 2);
-        assert_eq!((rows[0].number, &*rows[0].title, &*rows[0].state), (8, "child", "OPEN"));
+        assert_eq!(
+            (rows[0].number, &*rows[0].title, &*rows[0].state),
+            (ItemRef::github(8), "child", "OPEN")
+        );
         assert_eq!(rows[0].labels[0].name, "bug");
         assert_eq!(rows[1].state, "CLOSED");
         assert!(parse_sub_issues(&json!({"not": "a list"})).is_empty());

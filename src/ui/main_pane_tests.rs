@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use super::test_support::{sample, loaded_app, key, click, check_pr, check_app, frame_text};
+use crate::model::ItemRef;
 
 /// Masthead rows only (brand line plus the issue line), so masthead
 /// assertions cannot pass off sidebar rows as the title source.
@@ -27,8 +28,14 @@ fn style_links_colors_refs_across_span_edges() {
     use ratatui::text::{Line, Span};
     let mut lines = vec![Line::from(vec![Span::raw("fixes #1"), Span::raw("2 and #5 via https://x.io, #8")])];
     super::main_pane::style_links(&mut lines, None, |n| match n {
-        12 => Some(false),
-        5 => Some(true),
+        ItemRef {
+            number: 12,
+            source: crate::model::Source::GitHub,
+        } => Some(false),
+        ItemRef {
+            number: 5,
+            source: crate::model::Source::GitHub,
+        } => Some(true),
         _ => None,
     });
     let linked: Vec<(&str, _)> = lines[0]
@@ -49,8 +56,8 @@ fn style_links_colors_refs_across_span_edges() {
 #[test]
 fn main_shows_loading_while_first_issue_loads() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.nav.requested = Some(7);
-    app.issues.pending.insert(7);
+    app.nav.requested = Some(ItemRef::github(7));
+    app.issues.pending.insert(ItemRef::github(7));
     let text = frame_text(&mut app);
     assert!(text.contains("Loading #7…") && text.contains("⣾") && !text.contains("No issue loaded"), "main loading: {text}");
     app.issues.pending.clear();
@@ -58,8 +65,8 @@ fn main_shows_loading_while_first_issue_loads() {
     // A cached issue keeps its text while another one is fetching.
     let mut app = loaded_app();
     app.tick = 0;
-    app.nav.requested = Some(12);
-    app.issues.pending.insert(12);
+    app.nav.requested = Some(ItemRef::github(12));
+    app.issues.pending.insert(ItemRef::github(12));
     let text = frame_text(&mut app);
     assert!(text.contains("Fix the thing ⠋"), "main spinner: {text}");
     assert!(!text.contains("Loading #"), "no loading body over cached text: {text}");
@@ -72,10 +79,10 @@ fn jk_in_main_scrolls_instead_of_moving_selection() {
     app.nav.pane = Pane::Main;
     handle_key(&mut app, key(KeyCode::Char('j')));
     assert_eq!(app.nav.scroll, 3);
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     handle_key(&mut app, key(KeyCode::Char('k')));
     assert_eq!(app.nav.scroll, 0);
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
@@ -83,9 +90,11 @@ fn details_header_shows_clickable_paired_line() {
     let mut app = loaded_app();
     let text = frame_text(&mut app);
     assert!(!text.contains("Paired"), "no line without pairs: {text}");
-    app.issues.data.get_mut(&7).unwrap().paired =
-        vec![PairedRef { number: 9, state: "MERGED".to_string() }];
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().paired = vec![PairedRef {
+        number: ItemRef::github(9),
+        state: "MERGED".to_string(),
+    }];
+    app.show_issue(ItemRef::github(7));
     let text = frame_text(&mut app);
     assert!(text.contains("Paired"), "{text}");
     assert!(text.contains("#9 MERGED"), "{text}");
@@ -98,30 +107,44 @@ fn details_header_shows_clickable_paired_line() {
 fn paired_header_click_opens_counterpart_in_main() {
     use crate::core::Pane;
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().paired =
-        vec![PairedRef { number: 9, state: "MERGED".to_string() }];
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().paired = vec![PairedRef {
+        number: ItemRef::github(9),
+        state: "MERGED".to_string(),
+    }];
+    app.show_issue(ItemRef::github(7));
     let _ = frame_text(&mut app);
     let idx = app.hits.header_rows.iter().position(|l| l.contains("Paired")).expect("paired row");
     let col = app.hits.header_area.x + app.hits.header_rows[idx].find("#9").expect("paired ref col") as u16;
     let row_y = app.hits.header_area.y + idx as u16;
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), col, row_y));
-    assert_eq!(app.nav.current, Some(9), "clicking the paired header opens the counterpart");
-    assert_eq!(app.nav.pane, Pane::Main, "counterpart opens in the main tab");
+    handle_mouse(
+        &mut app,
+        click(MouseEventKind::Down(MouseButton::Left), col, row_y),
+    );
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(9)),
+        "clicking the paired header opens the counterpart"
+    );
+    assert_eq!(
+        app.nav.pane,
+        Pane::Main,
+        "counterpart opens in the main tab"
+    );
     assert!(matches!(app.nav.focus, crate::app::Focus::Main));
 }
 
 #[test]
 fn mouse_click_on_refs_row_highlights_source_instead_of_opening() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "intro\n\nblocked by #9, see details".to_string();
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+        "intro\n\nblocked by #9, see details".to_string();
+    app.show_issue(ItemRef::github(7));
     let _ = frame_text(&mut app); // records hit areas
     // +2 skips the border and the breathing-room spacer row.
     let (x, y) = (app.hits.refs_area.x + 2, app.hits.refs_area.y + 2);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(7), "stays on the issue");
-    assert_eq!(app.refs.highlight, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "stays on the issue");
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(9)));
     // Scrolled so the mentioning row sits at the top.
     let row = app.hits.body_rows.iter().position(|l| l.contains("#9")).unwrap();
     assert_eq!(app.nav.scroll, row as u16);
@@ -130,7 +153,7 @@ fn mouse_click_on_refs_row_highlights_source_instead_of_opening() {
     assert_eq!(app.refs.highlight, None);
     // Switching issues clears it too.
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.refs.highlight, Some(9));
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(9)));
     // The mentioning line renders highlighted at the top of the pane.
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).expect("test backend");
@@ -138,7 +161,7 @@ fn mouse_click_on_refs_row_highlights_source_instead_of_opening() {
     let buf = terminal.backend().buffer().clone();
     let cell = &buf[(app.hits.body_area.x + 1, app.hits.body_area.y)];
     assert_eq!(cell.bg, crate::theme::amber(), "source line highlighted");
-    app.show_issue(9);
+    app.show_issue(ItemRef::github(9));
     assert_eq!(app.refs.highlight, None);
 }
 
@@ -152,12 +175,12 @@ fn pr_masthead_shows_check_rollup_glyph_per_state() {
     ] {
         // The masthead title carries the glyph now that the header
         // block starts at the meta lines …
-        let mut app = check_app(9, checks);
+        let mut app = check_app(ItemRef::github(9), checks);
         let mast = masthead_text(&mut app);
         assert!(mast.contains(glyph), "{checks:?} glyph in masthead: {mast}");
         assert!(mast.contains("#9"), "masthead keeps the number: {mast}");
         // … and the header block itself stays clean.
-        let d = check_pr(9, checks);
+        let d = check_pr(ItemRef::github(9), checks);
         let header: String = super::main_pane::header_lines(&d, &[])
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
@@ -172,14 +195,14 @@ fn pr_masthead_shows_check_rollup_glyph_per_state() {
     }
     // No rollup, an unknown state, or a non-PR renders no masthead glyph.
     for checks in [None, Some(CheckState::Unknown)] {
-        let mut app = check_app(9, checks);
+        let mut app = check_app(ItemRef::github(9), checks);
         let mast = masthead_text(&mut app);
         assert!(
             !mast.contains("\u{f00c}") && !mast.contains("\u{f00d}") && !mast.contains("\u{f017}"),
             "{checks:?} masthead stays clean: {mast}"
         );
     }
-    let mut issue = sample(7);
+    let mut issue = sample(ItemRef::github(7));
     issue.checks = Some(CheckState::Pass);
     let header: String = super::main_pane::header_lines(&issue, &[])
         .iter()
@@ -212,7 +235,8 @@ fn mouse_click_switches_tabs() {
 #[test]
 fn mouse_click_on_ref_opens_issue() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+        "blocked by #9, see details".to_string();
     let _ = frame_text(&mut app);
     let row = app.hits
         .body_rows
@@ -221,13 +245,13 @@ fn mouse_click_on_ref_opens_issue() {
         .expect("ref visible");
     let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 }
 
 #[test]
 fn mouse_click_opens_nearest_ref_on_row() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "fix #7 then #9 ok".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "fix #7 then #9 ok".to_string();
     let _ = frame_text(&mut app);
     let row = app.hits
         .body_rows
@@ -238,16 +262,17 @@ fn mouse_click_opens_nearest_ref_on_row() {
     let (bax, bay) = (app.hits.body_area.x, app.hits.body_area.y);
     let x9 = bax + line.find("#9").unwrap() as u16;
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x9, bay + row as u16));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     let x7 = bax + line.find("#7").unwrap() as u16;
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x7, bay + row as u16));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
 fn mouse_click_on_url_opens_browser_not_issue() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "see https://example.com/a ok".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+        "see https://example.com/a ok".to_string();
     let _ = frame_text(&mut app);
     let row = app.hits
         .body_rows
@@ -256,7 +281,7 @@ fn mouse_click_on_url_opens_browser_not_issue() {
         .expect("url visible");
     let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert!(app.message.contains("opened https://example.com/a"));
 }
 
@@ -271,7 +296,7 @@ fn mouse_click_on_plain_text_keeps_issue() {
         .expect("body visible");
     let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
@@ -287,11 +312,11 @@ fn mouse_wheel_scrolls() {
 fn desk_renders_issue() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
-    let d = sample(7);
-    app.issues.data.insert(7, d);
-    app.issues.statuses.insert(7, vec![]);
-    app.nav.visited.push(7);
-    app.show_issue(7);
+    let d = sample(ItemRef::github(7));
+    app.issues.data.insert(ItemRef::github(7), d);
+    app.issues.statuses.insert(ItemRef::github(7), vec![]);
+    app.nav.visited.push(ItemRef::github(7));
+    app.show_issue(ItemRef::github(7));
     let text = frame_text(&mut app);
     assert!(text.contains("ghit"), "masthead wordmark");
     assert!(text.contains("#7"), "issue number");
@@ -314,7 +339,7 @@ fn masthead_splits_brand_and_issue_lines() {
 #[test]
 fn main_pane_keeps_a_single_title_line_with_hint() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().title = "Quasar title nine".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().title = "Quasar title nine".to_string();
     let text = frame_text(&mut app);
     // Masthead plus the one sidebar row; the header block starts at
     // the meta lines and no longer repeats the title.
@@ -339,7 +364,7 @@ fn desk_renders_empty() {
 #[test]
 fn details_contains_body_before_comments() {
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.body = "body evidence".into();
     d.comments.push(crate::model::Comment { body: "comment evidence".into(), ..Default::default() });
     let text = frame_text(&mut app);
@@ -374,7 +399,7 @@ fn content_tabs_show_shortcut_numbers() {
     // The titles stay the same for issues, PRs and no open item.
     let mut app = loaded_app();
     for number in [7, 9] {
-        app.show_issue(number);
+        app.show_issue(ItemRef::github(number));
         let text = frame_text(&mut app);
         assert!(text.contains("1 Details"), "details tab names its key: {text}");
         assert!(text.contains("2 Diff"), "diff tab names its key: {text}");
@@ -434,7 +459,8 @@ fn header_url_click_opens() {
     // through the meta lines now: the issue URL line opens its link.
     // (The test `open_url` stub notifies instead of opening a browser.)
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().url = "https://example.com/note".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().url =
+        "https://example.com/note".to_string();
     let _ = frame_text(&mut app);
     let idx = app.hits.header_rows.iter().position(|l| l.contains("example.com")).expect("url row");
     let col = app.hits.header_area.x + app.hits.header_rows[idx].find("example.com").expect("url col") as u16;
@@ -447,7 +473,7 @@ fn header_url_click_opens() {
 fn narrow_header_wraps_without_clipping_labels() {
     use crate::model::Label;
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.labels = vec![Label { name: "modernization".to_string() }, Label { name: "new-modernization".to_string() }];
     let backend = TestBackend::new(70, 40);
     let mut terminal = Terminal::new(backend).expect("test backend");
@@ -474,8 +500,8 @@ fn yank_text_covers_issue_diff_and_refs() {
     );
     // Diff file context follows the file cursor, folded by default.
     let mut app = loaded_app();
-    app.show_issue(9);
-    app.diff.files.insert(9, vec![
+    app.show_issue(ItemRef::github(9));
+    app.diff.files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.set_tab(crate::app::Tab::Visual);
@@ -484,14 +510,14 @@ fn yank_text_covers_issue_diff_and_refs() {
         "#9 Fix the thing — src/a.rs (modified +1 -1) — https://github.com/o/r/issues/9"
     );
     // Expanded files add the hunk header for agents.
-    app.diff.expanded_files.insert((9, "src/a.rs".to_string()));
+    app.diff.expanded_files.insert((ItemRef::github(9), "src/a.rs".to_string()));
     assert!(app.yank_text().unwrap().contains("@@ -1 +1 @@"), "{}", app.yank_text().unwrap());
     // Refs context names the raw body line and the ticket.
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "intro\nsee #9 here\n".to_string();
-    app.refs.numbers = vec![9];
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "intro\nsee #9 here\n".to_string();
+    app.refs.numbers = vec![ItemRef::github(9)];
     app.nav.pane = Pane::Refs;
-    app.refs.highlight = Some(9);
+    app.refs.highlight = Some(ItemRef::github(9));
     let text = app.yank_text().unwrap();
     assert!(text.contains("#7 refs #9 (body line 2)"), "{text}");
     assert!(text.contains("https://github.com/o/r/issues/9"), "{text}");
@@ -542,8 +568,8 @@ fn number_keys_switch_content_tabs() {
 #[test]
 fn loading_body_spinner_advances_with_the_tick() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.nav.requested = Some(7);
-    app.issues.pending.insert(7);
+    app.nav.requested = Some(ItemRef::github(7));
+    app.issues.pending.insert(ItemRef::github(7));
     app.tick = 0;
     let first = frame_text(&mut app);
     app.tick = 1;
