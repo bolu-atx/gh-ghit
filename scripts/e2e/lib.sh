@@ -189,4 +189,4 @@ e2e_bar() { # $1 text
   e2e_key Enter
 }
 
-fail() { echo "FAIL [${E2E_SCENARIO:-?}] $1"; exit 1; }
+fail() { echo "FAIL [${E2E_SCENARIO:-?}] $1"; echo "--- pane:"; e2e_pane; exit 1; }
