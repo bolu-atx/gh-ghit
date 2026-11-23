@@ -484,6 +484,42 @@ fn refs_pane_lists_paired_rows_and_enter_opens() {
 }
 
 #[test]
+fn jira_issue_lists_its_linked_pr_as_paired() {
+    use ghit_core::model::SideRow::{Divider, Item};
+    use ghit_core::model::Source;
+    let jira = ItemRef { source: Source::Jira, number: 123 };
+    let mut app = App::new(Some("o/r".to_string()));
+    app.session.set_repo_slug("o/r");
+    let issue = sample(jira);
+    let mut pr = sample(ItemRef::github(9));
+    pr.is_pr = true;
+    pr.state = "MERGED".to_string();
+    pr.title = "Fix PROJ-123 thing".to_string();
+    pr.jira_refs = vec![jira];
+    for d in [issue, pr] {
+        let n = d.number;
+        app.session.issues_test().data.insert(n, d);
+        app.session.issues_test().statuses.insert(n, vec![]);
+        app.nav.visited.push(n);
+    }
+    app.show_issue(jira);
+    assert_eq!(
+        app.refs_rows(),
+        vec![Divider("Paired".to_string()), Item(ItemRef::github(9))]
+    );
+    assert_eq!(app.refs_footer(), "mentioned (0) · paired (1)");
+    let text = frame_text(&mut app);
+    assert!(text.contains("Paired"), "{text}");
+    assert!(text.contains("#9 MERGED"), "linked PR with state: {text}");
+    // Enter on the paired row opens the PR, as for a will-close pair.
+    app.nav.pane = ghit_core::core::Pane::Refs;
+    handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(9)));
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
+}
+
+#[test]
 fn paired_refs_row_click_opens_instead_of_highlighting() {
     let mut app = loaded_app();
     let d = app.session.item_mut(ItemRef::github(7)).unwrap();

@@ -11,7 +11,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::api::Row;
 use crate::cache;
-use crate::model::{IssueData, ItemRef, MapItem, Source};
+use crate::model::{IssueData, ItemRef, MapItem, PairedRef, Source};
 
 const SCHEMA_VERSION: &str = "6";
 
@@ -248,6 +248,31 @@ impl Store {
         Ok(edges.collect::<Result<Vec<_>, _>>().map_err(fail)?.into_iter().flatten().collect())
     }
 
+    /// Pull requests linked to `number` by a closes edge, with state.
+    pub fn linked_prs(&self, number: ItemRef) -> Vec<PairedRef> {
+        let Ok(mut stmt) = self.conn.prepare(
+            "SELECT src FROM edges WHERE dst_source = ?1 AND dst = ?2
+             AND src_source = 'github' AND kind = 'closes' ORDER BY src",
+        ) else {
+            return vec![];
+        };
+        let Ok(rows) = stmt.query_map(
+            params![number.source.as_str(), number.number as i64],
+            |row| row.get::<_, i64>(0),
+        ) else {
+            return vec![];
+        };
+        rows.filter_map(Result::ok)
+            .map(|src| {
+                let item = ItemRef::github(src as u64);
+                PairedRef {
+                    number: item,
+                    state: self.row(item).map_or(String::new(), |row| row.issue.state),
+                }
+            })
+            .collect()
+    }
+
     /// Every stored item, as the dependency map needs it.
     pub fn map_items(&self) -> Result<Vec<MapItem>, String> {
         let fail = |e: rusqlite::Error| format!("store: {e}");
@@ -439,11 +464,30 @@ fn bump_generation(tx: &rusqlite::Transaction) -> rusqlite::Result<()> {
 }
 
 /// Replace every edge into `issue` with the links its row carries.
+/// Closes edges into a Jira issue are owned by the PR row that names
+/// it, so a Jira row landing leaves them alone; a PR row replaces the
+/// Jira closes edges it owns.
 fn replace_edges(tx: &rusqlite::Transaction, issue: &IssueData) -> rusqlite::Result<()> {
     tx.execute(
-        "DELETE FROM edges WHERE dst_source = ?1 AND dst = ?2",
+        "DELETE FROM edges WHERE dst_source = ?1 AND dst = ?2
+         AND NOT (dst_source = 'jira' AND kind = 'closes')",
         params![issue.number.source.as_str(), issue.number.number as i64],
     )?;
+    if issue.is_pr {
+        tx.execute(
+            "DELETE FROM edges WHERE src_source = ?1 AND src = ?2
+             AND dst_source = 'jira' AND kind = 'closes'",
+            params![issue.number.source.as_str(), issue.number.number as i64],
+        )?;
+        for dst in &issue.jira_refs {
+            tx.execute(
+                "INSERT OR IGNORE INTO edges (src_source, src, dst_source, dst, kind)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![issue.number.source.as_str(), issue.number.number as i64,
+                    dst.source.as_str(), dst.number as i64, EdgeKind::Closes.name()],
+            )?;
+        }
+    }
     let links = issue.parent.map(|parent| (parent, EdgeKind::Parent))
         .into_iter()
         .chain(issue.links.blocked_by.iter().map(|&blocker| (blocker, EdgeKind::Blocks)))
@@ -876,6 +920,31 @@ mod tests {
             .stored_detail::<String>(Detail::Issue, github)
             .is_some());
         assert!(store.stored_detail::<String>(Detail::Issue, jira).is_none());
+    }
+
+    #[test]
+    fn pr_jira_refs_write_closes_edges_that_survive_jira_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("jira.sqlite")).unwrap();
+        let jira = ItemRef { source: Source::Jira, number: 123 };
+        let mut pr = row(ItemRef::github(9), "MERGED");
+        pr.issue.is_pr = true;
+        pr.issue.jira_refs = vec![jira];
+        store.write("g1", &[pr.clone(), row(jira, "OPEN")]).unwrap();
+        let edge = Edge { src: ItemRef::github(9), dst: jira, kind: EdgeKind::Closes };
+        assert_eq!(store.edges().unwrap(), vec![edge]);
+        assert_eq!(
+            store.linked_prs(jira),
+            vec![PairedRef { number: ItemRef::github(9), state: "MERGED".to_string() }]
+        );
+        // A Jira sync landing its own row leaves the PR-owned edge alone.
+        store.write_jira("j1", &[row(jira, "OPEN")]).unwrap();
+        assert_eq!(store.edges().unwrap(), vec![edge]);
+        // A PR row that no longer names the key replaces its edges.
+        pr.issue.jira_refs = vec![];
+        store.write("g2", &[pr]).unwrap();
+        assert!(store.edges().unwrap().is_empty());
+        assert!(store.linked_prs(jira).is_empty());
     }
 
     #[test]

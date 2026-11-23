@@ -85,6 +85,8 @@ pub(super) fn sample(number: ItemRef) -> IssueData {
         parent: None,
         sub_summary: None,
             links: Default::default(),
+        head_ref_name: String::new(),
+        jira_refs: vec![],
         is_pr: false,
     }
 }

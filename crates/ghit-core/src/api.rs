@@ -126,6 +126,12 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
             parent: None,
             sub_summary: if is_pr { None } else { sub_summary },
             links: Default::default(),
+            head_ref_name: String::new(),
+            jira_refs: if is_pr {
+                model::jira_refs(&string("title"), "", &string("body"))
+            } else {
+                vec![]
+            },
             is_pr,
         },
         statuses: vec![],
@@ -419,14 +425,22 @@ pub async fn issue(
     let milestone = v.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
     v["milestone"] = milestone.map(Value::String).unwrap_or(Value::Null);
     v["number"] = serde_json::to_value(ItemRef::github(number)).unwrap();
-    let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
+    let mut data: IssueData =
+        serde_json::from_value(v.clone()).map_err(|e| format!("bad issue payload: {e}"))?;
+    if is_pr {
+        data.head_ref_name = v
+            .pointer("/head/ref")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+    }
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
     let threads_field = if is_pr { "reviewThreads(first:50) { nodes { id path line isResolved comments(first:20) { nodes { id databaseId author { login } body state } } } }" } else { "" };
     // Will-close counterparts: an issue lists its closing PRs, a PR lists
     // the issues it will close. Never body mentions.
     let paired_field = if is_pr {
-        "closingIssuesReferences(first: 5) { nodes { number state } }"
+        "headRefName closingIssuesReferences(first: 5) { nodes { number state } }"
     } else {
         "closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number state } }"
     };
@@ -450,6 +464,16 @@ pub async fn issue(
     }
     if let (true, Some(node)) = (is_pr, node) {
         data.review_threads = crate::model::parse_review_threads(node);
+        let head = node
+            .get("headRefName")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        if let Some(head) = head {
+            data.head_ref_name = head.to_owned();
+        }
+    }
+    if is_pr {
+        data.jira_refs = model::jira_refs(&data.title, &data.head_ref_name, &data.body);
     }
     let statuses = node.and_then(|n| n.pointer("/projectItems/nodes")).and_then(Value::as_array).into_iter().flatten()
         .map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();

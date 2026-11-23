@@ -47,7 +47,10 @@ pub use graph::{LinkKind, MapFilter, MapGraph, MapItem, MapLink, MapNode, NodeId
 pub use graph::hub_id;
 pub use rank::{Ranking, rank};
 pub use issue::{merge_comment_pages, paired_refs, parse_check_state, parse_review_threads, thread_reply_comment_id};
-pub use links::{LinkTarget, link_ranges, linkify, links_in_line, nearest_link, referenced_numbers};
+pub use links::{
+    LinkTarget, jira_refs, jira_refs_for_key, link_ranges, linkify, links_in_line, nearest_link,
+    referenced_numbers,
+};
 pub use sidebar::{GroupBy, LazyChildren, SideRow, sidebar_lines};
 pub use text::{MetaKind, body_md, build_comments_md, meta_spans, status_text};
 
@@ -276,6 +279,14 @@ pub struct IssueData {
     /// listing; the store records them as edges.
     #[serde(default)]
     pub links: IssueLinks,
+    /// Head branch name of a PR (`headRefName`), empty otherwise.
+    /// Defaulted so old file caches without the field still parse.
+    #[serde(default)]
+    pub head_ref_name: String,
+    /// Jira issues this PR names in its title, head branch or body.
+    /// Defaulted so old file caches without the field still parse.
+    #[serde(default)]
+    pub jira_refs: Vec<ItemRef>,
 }
 
 /// Links that point at an issue and show on its own row.

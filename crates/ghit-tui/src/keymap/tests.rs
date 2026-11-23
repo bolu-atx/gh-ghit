@@ -344,6 +344,8 @@ fn help_from_a_diff_tab_lists_the_diff_context_before_global() {
         parent: None,
         sub_summary: None,
             links: Default::default(),
+        head_ref_name: String::new(),
+        jira_refs: vec![],
         is_pr: true,
     });
     app.nav.current = Some(ItemRef::github(9));

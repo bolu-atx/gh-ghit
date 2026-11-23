@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::model::ItemRef;
+use crate::model::{ItemRef, Source};
 
 fn issue_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -89,6 +89,69 @@ pub fn referenced_numbers(body: &str, repo: Option<&str>) -> Vec<ItemRef> {
         }
     }
     out
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Byte spans of `<KEY>-N` in `line` for `key`, in first-seen order.
+fn jira_ref_spans(line: &str, key: &str) -> Vec<(usize, usize, ItemRef)> {
+    let key = key.trim();
+    if key.is_empty() {
+        return vec![];
+    }
+    let (bytes, wanted) = (line.as_bytes(), key.as_bytes());
+    let mut out = vec![];
+    let mut start = 0;
+    while start + wanted.len() < bytes.len() {
+        let hit = (start..=bytes.len() - wanted.len()).find(|&i| {
+            bytes[i..i + wanted.len()].eq_ignore_ascii_case(wanted)
+                && (i == 0 || !is_word_byte(bytes[i - 1]))
+        });
+        let Some(i) = hit else { break };
+        let dash = i + wanted.len();
+        let digits = dash + 1;
+        let found = bytes.get(dash) == Some(&b'-')
+            && bytes.get(digits).is_some_and(u8::is_ascii_digit);
+        if found {
+            let mut end = digits;
+            while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+                end += 1;
+            }
+            let bounded = end == bytes.len() || !is_word_byte(bytes[end]);
+            if bounded {
+                if let Ok(number) = line[digits..end].parse::<u64>() {
+                    out.push((i, end, ItemRef { source: Source::Jira, number }));
+                }
+            }
+            start = end;
+        } else {
+            start = dash;
+        }
+    }
+    out
+}
+
+/// Jira issues named in a PR title, head branch and body, for `key`.
+/// Deduped, in first-seen order. An empty key finds nothing.
+pub fn jira_refs_for_key(
+    key: &str, title: &str, head_ref_name: &str, body: &str,
+) -> Vec<ItemRef> {
+    let mut out: Vec<ItemRef> = vec![];
+    for text in [title, head_ref_name, body] {
+        for (_, _, item) in jira_ref_spans(text, key) {
+            if !out.contains(&item) {
+                out.push(item);
+            }
+        }
+    }
+    out
+}
+
+/// `jira_refs_for_key` with the process Jira key (see `jira_key`).
+pub fn jira_refs(title: &str, head_ref_name: &str, body: &str) -> Vec<ItemRef> {
+    jira_refs_for_key(crate::model::jira_key(), title, head_ref_name, body)
 }
 
 /// Something clickable on a visible line, in textual order.
@@ -188,6 +251,12 @@ fn link_spans(line: &str, repo: Option<&str>) -> Vec<(usize, usize, LinkTarget)>
             }
             claim(m.start(), m.start() + url.len(), LinkTarget::Url(url), &mut hits, &mut taken);
         }
+    }
+    for (start, end, item) in jira_ref_spans(line, crate::model::jira_key()) {
+        if followed_by_url_dest(line, end) {
+            continue;
+        }
+        claim(start, end, LinkTarget::Issue(item), &mut hits, &mut taken);
     }
     hits.sort_by_key(|(idx, _, _)| *idx);
     hits.dedup();
