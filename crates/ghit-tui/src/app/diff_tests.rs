@@ -19,13 +19,14 @@ fn pending_submit_counts_threads_and_lands() {
     app.nav.current = Some(ItemRef::github(9));
     assert_eq!(app.pending_threads(), 1);
     // Landing a submit refetches so the Diff tab shows submitted threads.
-    app.compose.submitting.insert(ItemRef::github(9));
-    app.compose
+    app.session.sends.submitting.insert(ItemRef::github(9));
+    app.session
+        .sends
         .review_tx
         .send((ItemRef::github(9), Ok(())))
         .unwrap();
-    assert!(poll_review_submit(&mut app));
-    assert!(!app.compose.submitting.contains(&ItemRef::github(9)));
+    assert!(poll_session(&mut app));
+    assert!(!app.session.sends.submitting.contains(&ItemRef::github(9)));
     assert_eq!(app.message, "pending review submitted on #9");
     assert!(app.session.issues.pending.contains(&ItemRef::github(9)));
     // No pending threads means a note, never a send.
@@ -33,6 +34,6 @@ fn pending_submit_counts_threads_and_lands() {
     d.review_threads.clear();
     assert_eq!(app.pending_threads(), 0);
     app.submit_pending_review();
-    assert!(app.compose.submitting.is_empty());
+    assert!(app.session.sends.submitting.is_empty());
     assert_eq!(app.message, "no pending comments to submit");
 }

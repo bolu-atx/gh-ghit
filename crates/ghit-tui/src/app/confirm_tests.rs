@@ -158,7 +158,7 @@ fn pending_nav_discard_navigates_without_submitting() {
     app.confirm_choose(1);
     assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(ItemRef::github(7)));
-    assert!(app.compose.submitting.is_empty(), "discard never submits");
+    assert!(app.session.sends.submitting.is_empty(), "discard never submits");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn pending_nav_submit_navigates_and_submits() {
         "submit still navigates"
     );
     assert!(
-        app.compose.submitting.contains(&ItemRef::github(9)),
+        app.session.sends.submitting.contains(&ItemRef::github(9)),
         "submit starts the review submit"
     );
 }

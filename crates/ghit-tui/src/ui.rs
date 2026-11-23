@@ -151,7 +151,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
             let empty: Vec<model::DiffFile> = vec![];
             let files = app.nav
                 .current
-                .and_then(|n| app.diff.files.get(&n))
+                .and_then(|n| app.session.diff.files.get(&n))
                 .map(|fs| fs.as_slice())
                 .unwrap_or(&empty);
             app.hits.body_rows
@@ -188,7 +188,7 @@ pub(crate) fn render(f: &mut ratatui::Frame, app: &mut App) {
                     app.diff.cursor = f;
                     if app.diff.touched {
                         let key = app.nav.current.and_then(|n| {
-                            app.diff.files
+                            app.session.diff.files
                                 .get(&n)
                                 .and_then(|fs| fs.get(f))
                                 .map(|file| (n, file.filename.clone()))

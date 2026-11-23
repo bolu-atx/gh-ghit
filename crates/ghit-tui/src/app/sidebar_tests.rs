@@ -65,7 +65,7 @@ fn startup_hydrates_sidebar_from_sections_cache() {
     assert!(!app.session.issues.partial.contains(&ItemRef::github(9)));
     assert!(
         app.session.issues.statuses.contains_key(&ItemRef::github(7))
-            && app.board.details.contains_key(&ItemRef::github(7))
+            && app.session.board.details.contains_key(&ItemRef::github(7))
     );
     restore_xdg(saved);
 }
@@ -134,7 +134,7 @@ fn lease_holder_alone_auto_refreshes_the_listing() {
     let (_guard, _dir, saved) = temp_xdg();
     let mut holder = linked_app();
     let mut other = linked_app();
-    assert!(holder.sync_holder() && !other.sync_holder(), "one lease per repo");
+    assert!(holder.session.sync_holder() && !other.session.sync_holder(), "one lease per repo");
     for app in [&mut holder, &mut other] {
         let start = app.session.sections.last_fetch;
         app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
@@ -150,7 +150,7 @@ fn lease_holder_alone_auto_refreshes_the_listing() {
     other.sidebar.query_active.clear();
     other.session.sections.rx = None;
     other.refresh_listing();
-    assert!(other.sync_holder() && other.session.sections.rx.is_some(), "r takes the lease and walks");
+    assert!(other.session.sync_holder() && other.session.sections.rx.is_some(), "r takes the lease and walks");
     assert_eq!(other.session.sections.refresh, github::Refresh::Delta, "the Full plan was consumed by the spawn");
     restore_xdg(saved);
 }
@@ -549,11 +549,11 @@ fn auto_refresh_guards_each_active_view() {
         match guard {
             0 => app.session.sections.rx = Some(rx),
             1 => {
-                app.board.loading = true;
+                app.session.board.loading = true;
                 app.open(crate::app::Entry::Board);
             }
             2 => {
-                app.board.data = Some(BoardData {
+                app.session.board.data = Some(BoardData {
                     title: String::new(),
                     order: vec![],
                     items: vec![],
@@ -676,7 +676,7 @@ fn only_the_lease_holder_queues_a_backfill_page() {
     let (_guard, _dir, saved) = temp_xdg();
     let mut holder = linked_app();
     let mut other = linked_app();
-    assert!(holder.sync_holder() && !other.sync_holder());
+    assert!(holder.session.sync_holder() && !other.session.sync_holder());
     for app in [&mut holder, &mut other] {
         app.session.sections.backfill.months = 12;
         app.drive_backfill(Instant::now() + Duration::from_secs(10));
@@ -823,7 +823,7 @@ fn holder_syncs_behind_a_local_query_and_the_view_refilters() {
     );
     let mut holder = linked_app();
     let mut other = linked_app();
-    assert!(holder.sync_holder() && !other.sync_holder());
+    assert!(holder.session.sync_holder() && !other.session.sync_holder());
     for app in [&mut holder, &mut other] {
         app.session.sections.merged_window_hours = 0;
         app.sidebar.query_active = "is:open label:bug".to_string();

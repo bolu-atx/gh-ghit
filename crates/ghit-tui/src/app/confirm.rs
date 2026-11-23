@@ -224,12 +224,7 @@ impl App {
 
     /// Send the state change on a background thread.
     fn start_set_state(&mut self, number: ItemRef, open: bool) {
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
-        let tx = self.compose.state_tx.clone();
-        spawn_bg(async move {
-            let result = github::set_state(&repo, number, open).await;
-            let _ = tx.send((number, open, result));
-        });
+        self.session.set_state(number, open);
         self.notify(format!(
             "{} {number}…",
             if open { "reopening" } else { "closing" },
@@ -397,31 +392,26 @@ impl App {
 
 /// Land a close or reopen: success refreshes the item and its sidebar
 /// row; failure names the cause and runs the auth path.
-pub(crate) fn poll_set_state(app: &mut App) -> bool {
-    let ready: Vec<(ItemRef, bool, Result<(), String>)> = app.compose.state_rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (n, open, res) in ready {
-        match res {
-            Ok(()) => {
-                // The item is already open: a pending open would clear the toast.
-                if app.nav.requested == Some(n) {
-                    app.nav.requested = None;
-                }
-                app.queue_issue(n, true);
-                app.refresh_listing();
-                app.notify(format!(
-                    "{} {n}",
-                    if open { "reopened" } else { "closed" },
-                    n = n.display("")
-                ));
+pub(super) fn land_state_changed(app: &mut App, n: ItemRef, open: bool, res: Result<(), String>) {
+    match res {
+        Ok(()) => {
+            // The item is already open: a pending open would clear the toast.
+            if app.nav.requested == Some(n) {
+                app.nav.requested = None;
             }
-            Err(e) => {
-                auth_failure(app, &e);
-                app.notify(e);
-            }
+            app.queue_issue(n, true);
+            app.refresh_listing();
+            app.notify(format!(
+                "{} {n}",
+                if open { "reopened" } else { "closed" },
+                n = n.display("")
+            ));
+        }
+        Err(e) => {
+            auth_failure(app, &e);
+            app.notify(e);
         }
     }
-    landed
 }
 
 /// Route an auth-class fetch failure at the re-auth modal: the early

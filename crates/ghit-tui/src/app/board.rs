@@ -1,24 +1,17 @@
 //! Project board modal: open, filter, cursor and poll.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use ratatui::widgets::ListState;
 
 use crate::app::{App, Entry, FormatEdit, Slot};
 use ghit_core::core::self;
 use ghit_core::{github, model};
-use ghit_core::model::BoardData;
-use crate::app::auth_failure;
-use crate::app::poll::kick_off_details;
-use ghit_core::model::ItemRef;
+use ghit_core::model::{BoardData, ItemRef};
 
-/// Board modal state: the loaded project payload, its fetch channel,
-/// per-column list states, cursor, text/milestone filters, and the card
-/// detail cache plus its fetch triplet.
+/// Board modal view state: per-column list states, cursor, and the
+/// text/milestone filters. The payload and card details live in the session.
 pub(crate) struct BoardView {
-    pub(crate) data: Option<BoardData>,
-    pub(crate) loading: bool,
-    pub(crate) rx: Option<std::sync::mpsc::Receiver<Result<BoardData, String>>>,
     pub(crate) states: Vec<ListState>,
     pub(crate) expanded: Option<(usize, usize)>,
     /// Board text filter (`f` while the board is open): label, card title,
@@ -38,22 +31,14 @@ pub(crate) struct BoardView {
     pub(crate) fields: model::CardFields,
     pub(crate) col: usize,
     pub(crate) row: usize,
-    pub(crate) details: HashMap<ItemRef, model::BoardDetail>,
-    pub(crate) detail_pending: HashSet<ItemRef>,
-    pub(crate) detail_tx: std::sync::mpsc::Sender<(ItemRef, Result<model::BoardDetail, String>)>,
-    pub(crate) detail_rx: std::sync::mpsc::Receiver<(ItemRef, Result<model::BoardDetail, String>)>,
 }
 
 impl BoardView {
-    pub(crate) fn new(
-        detail_tx: std::sync::mpsc::Sender<(ItemRef, Result<model::BoardDetail, String>)>,
-        detail_rx: std::sync::mpsc::Receiver<(ItemRef, Result<model::BoardDetail, String>)>,
-    ) -> Self {
-        Self { data: None, loading: false, rx: None, states: Vec::new(), expanded: None,
+    pub(crate) fn new() -> Self {
+        Self { states: Vec::new(), expanded: None,
             filter: String::new(), milestones: HashSet::new(), filter_focus: 0,
             milestone_draft: HashSet::new(), fields: model::CardFields::default(),
-            col: 0, row: 0, details: HashMap::new(),
-            detail_pending: HashSet::new(), detail_tx, detail_rx }
+            col: 0, row: 0 }
     }
 }
 
@@ -70,15 +55,11 @@ impl App {
             return;
         };
         self.open(Entry::Board);
-        self.board.loading = true;
         self.board.col = 0;
         self.board.row = 0;
         self.restore_board_filter(&owner);
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.board.rx = Some(rx);
-        self.enqueue(core::Kind::Other, None, async move {
-            let _ = tx.send(github::fetch_board(&owner).await);
-        });
+        let view = self.fetch_view();
+        self.session.load_board(owner, &view);
     }
 
     /// Restore the saved text filter and milestone pills for a board
@@ -103,7 +84,7 @@ impl App {
     /// deleted milestone would otherwise hide every lane with no pill
     /// to deselect it by. Persists the pruned set when prefs are live.
     pub(crate) fn prune_board_milestones(&mut self) {
-        let Some(board) = &self.board.data else { return };
+        let Some(board) = &self.session.board.data else { return };
         let live: std::collections::HashSet<Option<String>> =
             model::board_milestones(&board.items).into_iter().collect();
         self.board.milestones.retain(|m| live.contains(m));
@@ -117,8 +98,7 @@ impl App {
     /// ignored when it lands. The filter stays.
     pub(crate) fn close_board(&mut self) {
         self.close(Slot::Board);
-        self.board.data = None;
-        self.board.loading = false;
+        self.session.close_board();
     }
 
     /// Open the format dialog against the board cards. It opens in
@@ -157,7 +137,7 @@ impl App {
 
     /// Milestone pills for the dialog, in display order.
     pub(crate) fn board_pills(&self) -> Vec<Option<String>> {
-        match &self.board.data {
+        match &self.session.board.data {
             Some(board) => model::board_milestones(&board.items),
             None => vec![],
         }
@@ -180,7 +160,7 @@ impl App {
     }
 
     fn clamp_board_cursor(&mut self) {
-        let Some(board) = &self.board.data else { return };
+        let Some(board) = &self.session.board.data else { return };
         let cols = board_columns(board, &self.board.filter, &self.board.milestones);
         let col = self.board.col.min(cols.len().saturating_sub(1));
         let rows = cols.get(col).map(|(_, cards)| cards.len()).unwrap_or(0);
@@ -224,7 +204,7 @@ pub(crate) fn board_columns<'a>(
 
 pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
     app.board.expanded = None;
-    let Some(board) = &app.board.data else { return };
+    let Some(board) = &app.session.board.data else { return };
     let cols = board_columns(board, &app.board.filter, &app.board.milestones);
     if cols.is_empty() {
         return;
@@ -236,36 +216,7 @@ pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
 }
 
 pub(crate) fn board_selected_number(app: &App) -> Option<ItemRef> {
-    let board = app.board.data.as_ref()?;
+    let board = app.session.board.data.as_ref()?;
     let cols = board_columns(board, &app.board.filter, &app.board.milestones);
     cols.get(app.board.col)?.1.get(app.board.row)?.number
-}
-
-pub(crate) fn poll_board(app: &mut App) -> bool {
-    if !app.board.loading {
-        return false;
-    }
-    let res = app.board.rx.as_ref().and_then(|rx| rx.try_recv().ok());
-    let Some(res) = res else { return false };
-    app.board.rx = None;
-    app.board.loading = false;
-    match res {
-        Ok(data) => {
-            app.board.data = Some(data);
-            app.board.col = 0;
-            app.board.row = 0;
-            app.board.states.clear();
-            app.board.expanded = None;
-            app.prune_board_milestones();
-            kick_off_details(app);
-        }
-        Err(e) => {
-            // A failed load closes the board, as it did when "open"
-            // meant "has data or is loading".
-            app.close_board();
-            auth_failure(app, &e);
-            app.notify(e);
-        }
-    }
-    true
 }

@@ -247,7 +247,7 @@ fn handle_board_mouse(app: &mut App, m: MouseEvent) {
                 app.note_click(rect);
                 // Clicking the URL line of an expanded card opens it.
                 if app.board.expanded == Some((c, r)) && m.row - rect.y == 3 {
-                    if let Some(board) = &app.board.data {
+                    if let Some(board) = &app.session.board.data {
                         let cols =
                             crate::app::board_columns(board, &app.board.filter, &app.board.milestones);
                         if let Some(url) = cols

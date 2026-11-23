@@ -155,7 +155,8 @@ fn section_landing_refreshes_known_row_display_fields() {
         Some(&vec![("Roadmap".to_string(), Some("Done".to_string()))])
     );
     assert_eq!(
-        app.board
+        app.session
+            .board
             .details
             .get(&ItemRef::github(7))
             .map(|d| d.comments),
@@ -245,7 +246,8 @@ fn section_landing_evicts_unvisited_rows_missing_from_the_window() {
         issue(ItemRef::github(9), "2026-01-05T00:00:00Z"),
     );
     app.session.issues.statuses.insert(ItemRef::github(9), vec![]);
-    app.board
+    app.session
+        .board
         .details
         .insert(ItemRef::github(9), model::BoardDetail::default());
     app.session.issues.partial.insert(ItemRef::github(9));
@@ -264,7 +266,7 @@ fn section_landing_evicts_unvisited_rows_missing_from_the_window() {
         "vanished row data dropped"
     );
     assert!(!app.session.issues.statuses.contains_key(&ItemRef::github(9)));
-    assert!(!app.board.details.contains_key(&ItemRef::github(9)));
+    assert!(!app.session.board.details.contains_key(&ItemRef::github(9)));
     assert!(!app.session.issues.partial.contains(&ItemRef::github(9)));
     assert!(!app.nav.recent.contains(&ItemRef::github(9)));
     assert!(

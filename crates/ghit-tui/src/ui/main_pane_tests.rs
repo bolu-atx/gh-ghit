@@ -501,7 +501,7 @@ fn yank_text_covers_issue_diff_and_refs() {
     // Diff file context follows the file cursor, folded by default.
     let mut app = loaded_app();
     app.show_issue(ItemRef::github(9));
-    app.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff.files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.set_tab(crate::app::Tab::Visual);

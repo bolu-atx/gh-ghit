@@ -10,7 +10,7 @@ fn evict_drops_row_and_cached_data_then_moves_cursor() {
     let mut app = sidebar_app(&[ItemRef::github(7), ItemRef::github(9)]);
     app.nav.current = Some(ItemRef::github(7));
     app.diff.expanded_rows.insert(ItemRef::github(7));
-    app.diff.files.insert(ItemRef::github(7), vec![]);
+    app.session.diff.files.insert(ItemRef::github(7), vec![]);
     app.evict_current();
     assert!(!app.nav.visited.contains(&ItemRef::github(7)));
     assert!(
@@ -22,7 +22,7 @@ fn evict_drops_row_and_cached_data_then_moves_cursor() {
         "status dropped"
     );
     assert!(
-        !app.diff.files.contains_key(&ItemRef::github(7)),
+        !app.session.diff.files.contains_key(&ItemRef::github(7)),
         "diff dropped"
     );
     assert!(
