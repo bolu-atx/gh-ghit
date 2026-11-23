@@ -1,10 +1,15 @@
 //! The sidebar listing: refresh cadence, store watch, local queries and row landing.
 
+#[cfg(test)]
+#[path = "listing_tests.rs"]
+mod tests;
+
 use std::collections::HashSet;
 use std::time::Instant;
 
 use super::{Session, SessionEvent};
 use super::sections::refresh_plan;
+use crate::backend::IssueBackend;
 use crate::core::{self, Kind};
 use crate::fetch_queue::View;
 use crate::github;
@@ -62,9 +67,11 @@ impl Session {
         if refresh == github::Refresh::Full { self.sections.last_full = now; }
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.rx = Some(rx);
+        let backend = self.issue_backend;
         self.enqueue(Kind::Sections, None, async move {
-            if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, show, refresh, Some(tx.clone())).await;
+            if probe && backend.shares_github_sections()
+                && !probe_says_changed(&repo, &tx).await { return; }
+            let result = fetch_sections(backend, &repo, hours, show, refresh, tx.clone()).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         }, view);
     }
@@ -110,9 +117,11 @@ impl Session {
         let (hours, show) = (self.sections.merged_window_hours, ctx.show);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sections.sync_rx = Some(rx);
+        let backend = self.issue_backend;
         self.enqueue(Kind::Sections, None, async move {
-            if probe && !probe_says_changed(&repo, &tx).await { return; }
-            let result = github::fetch_recent_sections(&repo, hours, show, refresh, Some(tx.clone())).await;
+            if probe && backend.shares_github_sections()
+                && !probe_says_changed(&repo, &tx).await { return; }
+            let result = fetch_sections(backend, &repo, hours, show, refresh, tx.clone()).await;
             let _ = tx.send(github::SectionEvent::Done(result));
         }, &ctx.view);
     }
@@ -391,4 +400,33 @@ pub async fn probe_says_changed(repo: &str, tx: &std::sync::mpsc::Sender<github:
         Ok(false) => { let _ = tx.send(github::SectionEvent::Unchanged); false }
         Err(e) => { let _ = tx.send(github::SectionEvent::Done(Err(e))); false }
     }
+}
+
+/// Shared backends preserve the single GitHub fetch, including its progress events.
+async fn fetch_sections(
+    backend: IssueBackend,
+    repo: &str,
+    hours: u64,
+    show: [bool; 4],
+    refresh: github::Refresh,
+    progress: std::sync::mpsc::Sender<github::SectionEvent>,
+) -> Result<Vec<github::Row>, String> {
+    if backend.shares_github_sections() {
+        return github::fetch_recent_sections(repo, hours, show, refresh, Some(progress)).await;
+    }
+    let (prs, issues) = split_section_flags(show);
+    let prs = github::fetch_recent_sections(repo, hours, prs, refresh, Some(progress.clone())).await?;
+    let issues = backend.fetch_sections(repo, hours, issues, refresh, Some(progress)).await?;
+    Ok(merge_section_rows(prs, issues))
+}
+
+fn split_section_flags(show: [bool; 4]) -> ([bool; 4], [bool; 2]) {
+    ([show[0], show[1], false, false], [show[2], show[3]])
+}
+
+fn merge_section_rows(
+    mut prs: Vec<github::Row>, issues: Vec<github::Row>,
+) -> Vec<github::Row> {
+    prs.extend(issues);
+    prs
 }

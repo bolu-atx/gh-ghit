@@ -1,4 +1,5 @@
 pub mod api;
+pub mod backend;
 pub mod cache;
 pub mod core;
 pub mod fetch_queue;

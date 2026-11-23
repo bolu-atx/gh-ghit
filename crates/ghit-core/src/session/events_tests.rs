@@ -295,3 +295,20 @@ fn board_results_land_with_their_details() {
     assert!(matches!(session.poll()[0], SessionEvent::BoardDetail(m) if m == n));
     assert!(session.board.details.contains_key(&n) && session.board.detail_pending.is_empty());
 }
+
+#[test]
+fn only_known_github_prs_bypass_the_issue_backend() {
+    let mut session = Session::new(None);
+    assert!(session.issue_backend.shares_github_sections());
+    let number = item(1);
+    assert!(!session.is_github_pr(number), "unknown numbers use issue-or-PR discovery");
+    session.issues.data.insert(number, issue(number, "issue"));
+    assert!(!session.is_github_pr(number));
+    session.issues.data.get_mut(&number).unwrap().is_pr = true;
+    assert!(session.is_github_pr(number));
+    let jira = ItemRef { source: Source::Jira, number: 1 };
+    let mut data = issue(jira, "jira");
+    data.is_pr = true;
+    session.issues.data.insert(jira, data);
+    assert!(!session.is_github_pr(jira), "source takes precedence over a PR flag");
+}
