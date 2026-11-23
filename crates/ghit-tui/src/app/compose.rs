@@ -13,15 +13,17 @@ use ghit_core::model::ItemRef;
 
 /// Title naming what a draft answers; a thread comment adds the item's
 /// title when it is loaded.
-pub(crate) fn target_title(target: &ComposeTarget, number: ItemRef, item_title: Option<&str>) -> String {
+pub(crate) fn target_title(
+    target: &ComposeTarget, label: &str, item_title: Option<&str>,
+) -> String {
     match target {
         ComposeTarget::Thread => match item_title {
-            Some(title) => format!("Comment on {number}  {title}", number = number.display("")),
-            None => format!("Comment on {number}", number = number.display("")),
+            Some(title) => format!("Comment on {label}  {title}"),
+            None => format!("Comment on {label}"),
         },
         ComposeTarget::Line { path, line } => format!("Line comment  {path}:{line}"),
         ComposeTarget::Reply { .. } => {
-            format!("Reply on {number}", number = number.display(""))
+            format!("Reply on {label}")
         }
     }
 }
@@ -504,10 +506,10 @@ pub(super) fn land_draft_sent(app: &mut App, n: ItemRef, res: Result<(), String>
             if pending {
                 app.notify(format!(
                     "line comment pending on {n} — press ctrl-s to submit",
-                    n = n.display("")
+                    n = app.session.label(n)
                 ));
             } else {
-                app.notify(format!("comment posted to {n}", n = n.display("")));
+                app.notify(format!("comment posted to {n}", n = app.session.label(n)));
             }
             app.load_issue(n, true);
         }

@@ -7,6 +7,11 @@ use super::Session;
 use crate::model::{BoardData, BoardDetail, DiffFile, IssueData, ItemRef, LazyChildren};
 
 impl Session {
+    /// How a list shows `n`: `#N` for GitHub, `<KEY>-N` for Jira.
+    pub fn label(&self, n: ItemRef) -> String {
+        n.display(&self.issue_backend.project_key().to_ascii_uppercase())
+    }
+
     /// Every cached item payload, listing rows included.
     pub fn items(&self) -> &HashMap<ItemRef, IssueData> {
         &self.issues.data

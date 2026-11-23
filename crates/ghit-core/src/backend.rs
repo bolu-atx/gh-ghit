@@ -26,6 +26,14 @@ impl IssueBackend {
         }
     }
 
+    /// The Jira project key item labels carry; empty for GitHub.
+    pub fn project_key(&self) -> &str {
+        match self {
+            Self::GitHub => "",
+            Self::Jira(client) => client.project(),
+        }
+    }
+
     /// Detail includes the full comment thread and its pagination progress.
     pub async fn fetch_number(
         &self,
@@ -66,17 +74,17 @@ impl IssueBackend {
     /// Only backends with separate issue sections may enter this path.
     pub async fn fetch_sections(
         &self,
-        _repo: &str,
-        _hours: u64,
-        _show: [bool; 2],
-        _refresh: github::Refresh,
-        _progress: Option<Sender<SectionEvent>>,
+        repo: &str,
+        hours: u64,
+        show: [bool; 2],
+        refresh: github::Refresh,
+        progress: Option<Sender<SectionEvent>>,
     ) -> Result<Vec<Row>, String> {
         match self {
             Self::GitHub => {
                 unreachable!("GitHub issue sections use the shared sections query")
             }
-            Self::Jira(_) => Ok(vec![]),
+            Self::Jira(client) => client.fetch_sections(repo, hours, show, refresh, progress).await,
         }
     }
 }

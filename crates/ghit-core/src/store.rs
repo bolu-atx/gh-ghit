@@ -307,6 +307,31 @@ impl Store {
 }
 
 impl Store {
+    /// Start of the last Jira sync. It has its own `meta` key, apart from
+    /// the GitHub sync start in `sync_state`.
+    pub fn jira_last_sync(&self) -> Option<String> {
+        self.conn
+            .query_row("SELECT value FROM meta WHERE key = 'jira_last_sync'", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+    }
+
+    /// One transaction: upsert Jira `rows` and record `started_at` as the
+    /// last Jira sync start. GitHub rows and the GitHub sync start stay.
+    pub fn write_jira(&mut self, started_at: &str, rows: &[Row]) -> Result<(), String> {
+        let fail = |e: rusqlite::Error| format!("store: {e}");
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(fail)?;
+        upsert_rows(&tx, UPSERT, rows)?;
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES ('jira_last_sync', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [started_at],
+        )
+        .map_err(fail)?;
+        tx.commit().map_err(fail)
+    }
+
     /// Store GitHub search hits. A hit only replaces a stored row with an
     /// older `updated_at`. REST hits carry no CI or project status, so a
     /// replaced row keeps the stored `checks`, statuses and parent.
@@ -580,6 +605,16 @@ impl Store {
             .ok()
             .flatten()
             .flatten()
+    }
+
+    /// A stamp that moves when either source finishes a sync; `None`
+    /// before the first sync of both.
+    pub fn sync_stamp(&self) -> Option<String> {
+        let (github, jira) = (self.sync_started_at(), self.jira_last_sync());
+        if github.is_none() && jira.is_none() {
+            return None;
+        }
+        Some(format!("{}|{}", github.unwrap_or_default(), jira.unwrap_or_default()))
     }
 
     /// Take or renew the lease for `holder` until `now + ttl` (unix
@@ -922,6 +957,26 @@ mod tests {
         assert_eq!(store.sync_started_at().as_deref(), Some("t2"));
         let wal: String = store.conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(wal, "wal");
+    }
+
+    #[test]
+    fn jira_syncs_keep_their_own_time_and_leave_github_rows_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_at(&dir.path().join("r.sqlite")).unwrap();
+        assert!(store.sync_stamp().is_none() && store.jira_last_sync().is_none());
+        let jira = |number| ItemRef { source: Source::Jira, number };
+        store.write("g1", &[row(ItemRef::github(1), "OPEN")]).unwrap();
+        let after_github = store.sync_stamp();
+        store.write_jira("j1", &[row(jira(1), "OPEN"), row(jira(2), "CLOSED")]).unwrap();
+        assert_eq!(store.jira_last_sync().as_deref(), Some("j1"));
+        assert_eq!(store.sync_started_at().as_deref(), Some("g1"), "GitHub sync time stays");
+        assert_ne!(store.sync_stamp(), after_github, "a Jira sync moves the stamp");
+        assert_eq!(numbers(&store).len(), 3, "both sources share the file");
+        store.write("g2", &[row(ItemRef::github(1), "CLOSED")]).unwrap();
+        assert_eq!(store.jira_last_sync().as_deref(), Some("j1"), "a GitHub sync leaves Jira time");
+        assert!(store.row(jira(1)).is_some() && store.row(ItemRef::github(1)).is_some());
+        store.write_jira("j2", &[]).unwrap();
+        assert_eq!(store.jira_last_sync().as_deref(), Some("j2"));
     }
 
     #[test]

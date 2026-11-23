@@ -92,7 +92,7 @@ impl App {
         let Some(finder) = self.finder() else { return vec![] };
         let mut hits: Vec<(i32, FinderRow)> = vec![];
         for c in self.finder_candidates() {
-            let head = format!("{} {}", c.number.display(""), c.title);
+            let head = format!("{} {}", self.session.label(c.number), c.title);
             let found = core::fuzzy_score(&finder.query, &head).or_else(|| {
                 let tail = format!("{head} {} {}", c.labels.join(" "), c.author);
                 let mut f = core::fuzzy_score(&finder.query, &tail)?;

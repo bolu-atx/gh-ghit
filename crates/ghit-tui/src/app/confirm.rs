@@ -131,7 +131,7 @@ impl App {
                     self.diff.expanded_rows.insert(n);
                 }
                 self.show_issue(n);
-                self.notify(format!("restored {n}", n = n.display("")));
+                self.notify(format!("restored {n}", n = self.session.label(n)));
             }
             UndoAction::Query { index, query } => {
                 let name = query.name.clone();
@@ -196,17 +196,17 @@ impl App {
         if state == "MERGED" {
             self.notify(format!(
                 "{n} is merged: nothing to close",
-                n = n.display("")
+                n = self.session.label(n)
             ));
             return;
         }
         let open = state == "CLOSED";
         let verb = if open { "Reopen" } else { "Close" };
         self.open_confirm(ConfirmDialog {
-            title: format!("{verb} {n}?", n = n.display("")),
+            title: format!("{verb} {n}?", n = self.session.label(n)),
             body: vec![ConfirmLine::strong(format!(
                 "This changes {n} on GitHub.",
-                n = n.display("")
+                n = self.session.label(n)
             ))],
             choices: vec![
                 ConfirmChoice { key: if open { 'r' } else { 'c' }, label: verb.to_lowercase() },
@@ -222,7 +222,7 @@ impl App {
         self.notify(format!(
             "{} {number}…",
             if open { "reopening" } else { "closing" },
-            number = number.display("")
+            number = self.session.label(number)
         ));
     }
 
@@ -316,7 +316,7 @@ impl App {
                 ConfirmLine::plain(format!(
                     "{n} has {count} unsubmitted comment{s}.",
                     s = if count == 1 { "" } else { "s" },
-                    n = n.display("")
+                    n = self.session.label(n)
                 )),
                 ConfirmLine::plain("Discard leaves them pending on GitHub.".to_string()),
             ],
@@ -398,7 +398,7 @@ pub(super) fn land_state_changed(app: &mut App, n: ItemRef, open: bool, res: Res
             app.notify(format!(
                 "{} {n}",
                 if open { "reopened" } else { "closed" },
-                n = n.display("")
+                n = app.session.label(n)
             ));
         }
         Err(e) => {

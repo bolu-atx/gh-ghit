@@ -30,6 +30,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    ghit_core::model::set_jira_key(client.project());
     if let Err(error) = ghit_core::runtime::rt().block_on(client.check_startup()) {
         eprintln!("jtui: {}", error.message());
         std::process::exit(1);

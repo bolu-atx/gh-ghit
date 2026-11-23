@@ -13,7 +13,7 @@ use crate::backend::IssueBackend;
 use crate::core::{self, Kind};
 use crate::fetch_queue::View;
 use crate::github;
-use crate::model::ItemRef;
+use crate::model::{ItemRef, Source};
 
 /// What the front end shows that the listing rules depend on.
 pub struct Held {
@@ -182,7 +182,17 @@ impl Session {
     /// toggles filter the rows locally, with no request.
     pub fn window_rows(&self, show: [bool; 4]) -> Option<Vec<github::Row>> {
         let hours = self.sections.merged_window_hours;
-        self.sections.link.as_ref().and_then(|link| link.rows(hours, show))
+        let rows = self.sections.link.as_ref().and_then(|link| link.rows(hours, show))?;
+        Some(self.own_rows(rows))
+    }
+
+    /// `rows` without the GitHub issues a backend with its own issue
+    /// sections never lists. The shared store may hold them.
+    fn own_rows(&self, mut rows: Vec<github::Row>) -> Vec<github::Row> {
+        if !self.issue_backend.shares_github_sections() {
+            rows.retain(|row| row.issue.number.source != Source::GitHub || row.issue.is_pr);
+        }
+        rows
     }
 
     /// Stored rows for the numbers of a GitHub result set.
@@ -215,7 +225,7 @@ impl Session {
     /// `None` when the query needs the server.
     pub fn local_query_rows(&self, query: &str) -> Option<Vec<github::Row>> {
         let parsed = self.local_query(query)?;
-        let mut rows: Vec<github::Row> = self.sections.link.as_ref()?.all_rows()?
+        let mut rows: Vec<github::Row> = self.own_rows(self.sections.link.as_ref()?.all_rows()?)
             .into_iter()
             .filter(|row| parsed.matches(&row.issue))
             .collect();
@@ -259,6 +269,7 @@ impl Session {
     pub fn hydrate_cached(&mut self, show: [bool; 4]) -> Vec<ItemRef> {
         let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return vec![] };
         let Some(rows) = github::cached_sections(&repo, self.sections.merged_window_hours, show) else { return vec![] };
+        let rows = self.own_rows(rows);
         let mut filed = Vec::new();
         for row in rows {
             let n = row.issue.number;

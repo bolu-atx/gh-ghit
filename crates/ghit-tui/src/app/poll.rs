@@ -148,7 +148,7 @@ fn apply_event(app: &mut App, event: SessionEvent) {
                 app.nav.step_pending = None;
             }
             if stepped && error.contains("404") {
-                app.notify(format!("no {number}", number = number.display("")));
+                app.notify(format!("no {number}", number = app.session.label(number)));
             } else {
                 auth_failure(app, &error);
                 app.notify(error);
@@ -181,7 +181,8 @@ fn apply_event(app: &mut App, event: SessionEvent) {
         SessionEvent::DraftSent { number, result } => super::compose::land_draft_sent(app, number, result),
         SessionEvent::ReviewSubmitted { number, result } => match result {
             Ok(()) => {
-                app.notify(format!("pending review submitted on {n}", n = number.display("")));
+                let label = app.session.label(number);
+                app.notify(format!("pending review submitted on {label}"));
                 app.load_issue(number, true);
             }
             Err(e) => {

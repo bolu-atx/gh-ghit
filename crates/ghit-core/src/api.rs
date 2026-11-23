@@ -5,7 +5,8 @@ mod sub_issues;
 mod sections;
 
 pub use client::{
-    check_auth, check_repo_access, forget_token, is_auth_error, rate_limited, reauth_command, token,
+    check_auth, check_repo_access, forget_token, is_auth_error, note_rate_limit_until, rate_limited,
+    reauth_command, token,
     REQUIRED_SCOPES,
 };
 pub use backfill::{age_cutoff, fetch_page, Conn};

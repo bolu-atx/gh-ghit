@@ -46,3 +46,51 @@ fn merged_sections_allow_either_feed_to_be_empty() {
     assert_eq!(merge_section_rows(vec![], vec![row(number, false, "issue")])[0].issue.number,
         number);
 }
+
+fn jira_session() -> Session {
+    let client = crate::jira::JiraClient::new(
+        "example.atlassian.net",
+        "me@example.com".to_string(),
+        "secret".to_string(),
+        "proj".to_string(),
+    );
+    Session::with_backend(None, IssueBackend::Jira(std::sync::Arc::new(client)))
+}
+
+#[test]
+fn labels_follow_the_backend() {
+    let jira = ItemRef { source: Source::Jira, number: 12 };
+    assert_eq!(Session::new(None).label(ItemRef::github(12)), "#12");
+    assert_eq!(jira_session().label(jira), "PROJ-12");
+}
+
+#[test]
+fn a_jira_session_hides_github_issues_but_keeps_github_prs() {
+    let rows = vec![
+        row(ItemRef::github(1), false, "gh issue"),
+        row(ItemRef::github(2), true, "gh pr"),
+        row(ItemRef { source: Source::Jira, number: 3 }, false, "jira"),
+    ];
+    let titles = |rows: Vec<github::Row>| -> Vec<String> {
+        rows.into_iter().map(|row| row.issue.title).collect()
+    };
+    assert_eq!(titles(jira_session().own_rows(rows.clone())), ["gh pr", "jira"]);
+    assert_eq!(titles(Session::new(None).own_rows(rows)).len(), 3);
+}
+
+#[test]
+fn a_window_landing_evicts_only_the_vanished_rows_of_either_source() {
+    let mut session = jira_session();
+    let jira = |number| ItemRef { source: Source::Jira, number };
+    let pr = ItemRef::github(2);
+    let all = vec![row(pr, true, "pr"), row(jira(1), false, "a"), row(jira(2), false, "b")];
+    let held = Held { recent: vec![], keep: HashSet::new() };
+    let landed = session.land_rows(all, false, &held);
+    assert_eq!(landed.filed.len(), 3);
+    let held = Held { recent: landed.filed, keep: HashSet::new() };
+    let landed = session.land_rows(
+        vec![row(pr, true, "pr"), row(jira(1), false, "a")], false, &held,
+    );
+    assert_eq!(landed.gone, vec![jira(2)]);
+    assert!(session.has_item(pr) && session.has_item(jira(1)) && !session.has_item(jira(2)));
+}

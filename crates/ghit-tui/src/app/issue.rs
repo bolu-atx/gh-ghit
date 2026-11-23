@@ -77,7 +77,7 @@ impl App {
         if self.session.is_pinned(n) || self.session.pins().contains(&n) {
             self.notify(format!(
                 "{n} is pinned — unpin with p first",
-                n = n.display("")
+                n = self.session.label(n)
             ));
             return;
         }
@@ -116,7 +116,7 @@ impl App {
                 self.sync_selection();
             }
         }
-        self.arm_undo(action, format!("removed {n} · u undo", n = n.display("")));
+        self.arm_undo(action, format!("removed {n} · u undo", n = self.session.label(n)));
     }
 
     pub(crate) fn load_issue(&mut self, number: ItemRef, force: bool) {
@@ -250,8 +250,8 @@ impl App {
             return;
         };
         match self.session.toggle_pin(n) {
-            Ok(true) => self.notify(format!("pinned {n}", n = n.display(""))),
-            Ok(false) => self.notify(format!("unpinned {n}", n = n.display(""))),
+            Ok(true) => self.notify(format!("pinned {n}", n = self.session.label(n))),
+            Ok(false) => self.notify(format!("unpinned {n}", n = self.session.label(n))),
             Err(e) => {
                 self.notify(e);
                 return;
@@ -272,7 +272,7 @@ impl App {
         self.load_diff(n, true);
         self.map.loaded = false;
         self.refresh_listing();
-        self.notify(format!("refreshed {n}", n = n.display("")));
+        self.notify(format!("refreshed {n}", n = self.session.label(n)));
     }
 
     /// A search listing refreshes from the server; a window listing
@@ -313,7 +313,7 @@ impl App {
             if let Some(td) = target {
                 return Some(core::yank_issue_text(t, &td.title, &td.url));
             }
-            return Some(t.display(""));
+            return Some(self.session.label(t));
         }
         if self.nav.tab == Tab::Visual && d.is_pr {
             let files = self.session.diff_files(current)?;

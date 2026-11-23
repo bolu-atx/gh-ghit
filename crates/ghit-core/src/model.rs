@@ -101,6 +101,23 @@ impl ItemRef {
             Source::Jira => format!("{jira_key}-{}", self.number),
         }
     }
+
+    /// `display` with the process's Jira project key (see `set_jira_key`).
+    pub fn label(self) -> String {
+        self.display(jira_key())
+    }
+}
+
+static JIRA_KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The one Jira project key this process shows. Unset (empty) in ghit.
+pub fn jira_key() -> &'static str {
+    JIRA_KEY.get().map_or("", String::as_str)
+}
+
+/// Set the Jira project key once at startup; later calls are ignored.
+pub fn set_jira_key(key: &str) {
+    let _ = JIRA_KEY.set(key.to_uppercase());
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

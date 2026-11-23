@@ -40,7 +40,7 @@ pub(super) fn render_map_strip(f: &mut ratatui::Frame, area: Rect, app: &mut App
     let mut lines: Vec<(Line<'static>, Option<usize>)> = vec![heading("Ready")];
     let mut row = 0;
     for &node in &ranking.ready {
-        lines.push((item_line(graph, node, None, width, cursor == Some(row)), Some(row)));
+        lines.push((item_line(app, graph, node, None, width, cursor == Some(row)), Some(row)));
         row += 1;
     }
     if ranking.ready.is_empty() {
@@ -49,7 +49,8 @@ pub(super) fn render_map_strip(f: &mut ratatui::Frame, area: Rect, app: &mut App
     lines.push((Line::default(), None));
     lines.push(heading("Bottlenecks"));
     for &(node, count) in &ranking.bottlenecks {
-        lines.push((item_line(graph, node, Some(count), width, cursor == Some(row)), Some(row)));
+        let line = item_line(app, graph, node, Some(count), width, cursor == Some(row));
+        lines.push((line, Some(row)));
         row += 1;
     }
     if ranking.bottlenecks.is_empty() {
@@ -68,7 +69,7 @@ pub(super) fn render_map_strip(f: &mut ratatui::Frame, area: Rect, app: &mut App
         let numbers: Vec<String> = chain
             .iter()
             .filter_map(|&i| graph.nodes[i].number)
-            .map(|n| n.display(""))
+            .map(|n| app.session.label(n))
             .collect();
         let text = format!(" {}", model::slug(&numbers.join(" → "), width - 1));
         lines.push((Line::from(Span::styled(text, Style::new().fg(paper()))), None));
@@ -89,9 +90,11 @@ pub(super) fn render_map_strip(f: &mut ratatui::Frame, area: Rect, app: &mut App
 
 /// One ranked item: `#n title`, or `#n unblocks k title` for a
 /// bottleneck. The picked row is bold behind the marker.
-fn item_line(graph: &MapGraph, node: usize, unblocks: Option<usize>, width: usize, picked: bool) -> Line<'static> {
+fn item_line(
+    app: &App, graph: &MapGraph, node: usize, unblocks: Option<usize>, width: usize, picked: bool,
+) -> Line<'static> {
     let item = &graph.nodes[node];
-    let number = item.number.map_or(String::new(), |n| n.display(""));
+    let number = item.number.map_or(String::new(), |n| app.session.label(n));
     let mut style = Style::new().fg(node_color(item.state));
     if picked {
         style = style.add_modifier(Modifier::BOLD);
