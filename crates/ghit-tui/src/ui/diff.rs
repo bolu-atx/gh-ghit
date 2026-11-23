@@ -41,8 +41,8 @@ pub(super) fn diff_text_aux(
             Style::new().bg(ink()).fg(muted()),
         )));
     }
-    let Some(files) = app.diff.files.get(&d.number) else {
-        let note = if app.diff.pending.contains(&d.number) {
+    let Some(files) = app.session.diff.files.get(&d.number) else {
+        let note = if app.session.diff.pending.contains(&d.number) {
             "Fetching diff …"
         } else {
             "No diff loaded yet."
@@ -221,7 +221,7 @@ pub(super) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u
         return None;
     }
     let n = app.nav.current?;
-    let files = app.diff.files.get(&n)?;
+    let files = app.session.diff.files.get(&n)?;
     if fi >= files.len().min(MAX_DIFF_FILES) {
         return None;
     }

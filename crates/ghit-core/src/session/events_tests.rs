@@ -144,3 +144,154 @@ fn sub_issue_children_land_with_their_parent_set() {
     assert!(session.issues.partial.contains(&child));
     assert!(matches!(session.subs.state[&parent], LazyChildren::Loaded(ref v) if v == &[child]));
 }
+
+fn row(n: ItemRef, updated: &str) -> github::Row {
+    let mut data = issue(n, "row");
+    data.updated_at = updated.to_string();
+    github::Row { issue: data, statuses: vec![], detail: Default::default(), complete: true, window_at: None }
+}
+
+fn ctx(recent: Vec<ItemRef>) -> PollCtx {
+    PollCtx {
+        now: Instant::now(),
+        searching: false,
+        show: [true; 4],
+        idle: false,
+        view: View::default(),
+        held: Held { recent, keep: HashSet::new() },
+    }
+}
+
+#[test]
+fn a_refresh_lands_new_rows_and_drops_vanished_background_rows() {
+    let mut session = Session::new(Some("o/r".to_string()));
+    session.fetches.hold = true;
+    let (stay, gone, fresh) = (item(1), item(2), item(3));
+    session.issues.data.insert(stay, issue(stay, "old"));
+    session.issues.data.insert(gone, issue(gone, "gone"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    session.sections.rx = Some(rx);
+    tx.send(github::SectionEvent::Done(Ok(vec![row(stay, "2026-02-01"), row(fresh, "2026-02-01")]))).unwrap();
+
+    let events = session.poll_frame(&ctx(vec![stay, gone]));
+    let landed = events.iter().find_map(|e| match e {
+        SessionEvent::RowsLanded { landed, auto } => Some((landed, *auto)),
+        _ => None,
+    });
+    let (landed, auto) = landed.expect("rows landed");
+    assert!(!auto);
+    assert_eq!(landed.filed, vec![fresh]);
+    assert_eq!(landed.gone, vec![gone]);
+    assert!(session.issues.data.contains_key(&fresh) && !session.issues.data.contains_key(&gone));
+    assert!(session.sections.rx.is_none());
+}
+
+#[test]
+fn a_full_item_fetch_wins_over_a_listing_row_landing_in_the_same_frame() {
+    let mut session = Session::new(None);
+    let n = item(4);
+    session.issues.data.insert(n, issue(n, "listing"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    session.sections.rx = Some(rx);
+    let mut stale = row(n, "2099-01-01");
+    stale.issue.title = "stale row".to_string();
+    tx.send(github::SectionEvent::Done(Ok(vec![stale]))).unwrap();
+    session.issues.tx.send((n, github::IssueEvent::Done(Ok(Box::new((issue(n, "full"), vec![])))))).unwrap();
+    session.poll_frame(&ctx(vec![n]));
+    assert_eq!(session.issues.data[&n].title, "full");
+}
+
+#[test]
+fn item_fetches_wait_a_frame_while_the_front_end_lands_replace_rows() {
+    let mut session = Session::new(None);
+    let n = item(5);
+    let (tx, rx) = std::sync::mpsc::channel();
+    session.sections.rx = Some(rx);
+    session.sections.replace = true;
+    tx.send(github::SectionEvent::Done(Ok(vec![row(n, "2099-01-01")]))).unwrap();
+    session.issues.tx.send((n, github::IssueEvent::Done(Ok(Box::new((issue(n, "full"), vec![])))))).unwrap();
+    let first = session.poll_frame(&ctx(vec![]));
+    assert!(first.iter().any(|e| matches!(e, SessionEvent::SectionsDone { replace: true, .. })));
+    assert!(!first.iter().any(|e| matches!(e, SessionEvent::IssueLoaded(_))), "items wait for the front end's rows");
+    let second = session.poll_frame(&ctx(vec![]));
+    assert!(second.iter().any(|e| matches!(e, SessionEvent::IssueLoaded(m) if *m == n)));
+    assert_eq!(session.issues.data[&n].title, "full");
+}
+
+#[test]
+fn a_diff_load_marks_pending_and_lands_files() {
+    let mut session = Session::new(Some("o/r".to_string()));
+    session.fetches.hold = true;
+    let n = item(8);
+    let mut pr = issue(n, "pr");
+    pr.is_pr = true;
+    session.issues.data.insert(n, pr);
+    session.load_diff(n, false, &View::default());
+    assert!(session.diff.pending.contains(&n));
+    session.load_diff(n, false, &View::default());
+    assert_eq!(session.fetches.queue_mut().len(), 1, "a pending diff queues nothing more");
+
+    session.diff.tx.send((n, Ok(vec![]))).unwrap();
+    let events = session.poll();
+    assert!(matches!(events[0], SessionEvent::DiffLoaded(m) if m == n));
+    assert!(session.diff.files.contains_key(&n) && session.diff.raw.contains_key(&n));
+    assert!(session.diff.pending.is_empty());
+}
+
+#[test]
+fn a_diff_load_skips_plain_issues() {
+    let mut session = Session::new(None);
+    let n = item(9);
+    session.issues.data.insert(n, issue(n, "issue"));
+    session.load_diff(n, false, &View::default());
+    assert!(session.diff.pending.is_empty());
+}
+
+#[test]
+fn a_state_change_result_lands_as_an_event() {
+    let mut session = Session::new(None);
+    let n = item(6);
+    session.sends.state_tx.send((n, true, Ok(()))).unwrap();
+    session.sends.state_tx.send((n, false, Err("nope".to_string()))).unwrap();
+    let events = session.poll();
+    assert!(matches!(events[0], SessionEvent::StateChanged { number, open: true, result: Ok(()) } if number == n));
+    assert!(matches!(&events[1], SessionEvent::StateChanged { open: false, result: Err(e), .. } if e == "nope"));
+}
+
+#[test]
+fn a_review_submit_locks_its_pr_until_the_result_lands() {
+    let mut session = Session::new(None);
+    let n = item(5);
+    assert!(session.submit_review(n));
+    assert!(!session.submit_review(n), "one submit per PR");
+    session.sends.review_tx.send((n, Ok(()))).unwrap();
+    let events = session.poll();
+    assert!(matches!(events[0], SessionEvent::ReviewSubmitted { number, .. } if number == n));
+    assert!(session.sends.submitting.is_empty());
+}
+
+#[test]
+fn a_sent_draft_reports_its_result() {
+    let mut session = Session::new(None);
+    let n = item(3);
+    session.sends.tx.send((n, Err("down".to_string()))).unwrap();
+    let events = session.poll();
+    assert!(matches!(&events[0], SessionEvent::DraftSent { number, result: Err(e) } if *number == n && e == "down"));
+}
+
+#[test]
+fn board_results_land_with_their_details() {
+    let mut session = Session::new(None);
+    let n = item(7);
+    session.board.loading = true;
+    let (tx, rx) = std::sync::mpsc::channel();
+    session.board.rx = Some(rx);
+    tx.send(Err("no board".to_string())).unwrap();
+    let events = session.poll();
+    assert!(matches!(&events[0], SessionEvent::BoardFailed(e) if e == "no board"));
+    assert!(!session.board.loading && session.board.rx.is_none());
+    session.board.detail_pending.insert(n);
+    session.board.detail_tx.send((n, Ok(Default::default()))).unwrap();
+    assert!(matches!(session.poll()[0], SessionEvent::BoardDetail(m) if m == n));
+    assert!(session.board.details.contains_key(&n) && session.board.detail_pending.is_empty());
+}

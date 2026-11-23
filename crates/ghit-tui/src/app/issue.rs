@@ -57,9 +57,9 @@ impl App {
         self.session.issues.progress.remove(&n);
         self.session.issues.data.remove(&n);
         self.session.issues.statuses.remove(&n);
-        self.board.details.remove(&n);
-        self.diff.files.remove(&n);
-        self.diff.pending.remove(&n);
+        self.session.board.details.remove(&n);
+        self.session.diff.files.remove(&n);
+        self.session.diff.pending.remove(&n);
     }
 
     /// Evict the highlighted sidebar row: drop it from the pane lists and
@@ -292,9 +292,7 @@ impl App {
     /// any process; the old holder stops syncing on its next renewal.
     pub(crate) fn refresh_listing(&mut self) {
         if self.sidebar.query_active.trim().is_empty() {
-            if let Some(link) = self.session.sections.link.as_mut() {
-                link.take_over();
-            }
+            self.session.take_over_lease();
             self.session.sections.refresh = github::Refresh::Full;
             self.merge_recent_sections();
         } else if !self.reread_github(false) {
@@ -329,7 +327,7 @@ impl App {
             return Some(t.display(""));
         }
         if self.nav.tab == Tab::Visual && d.is_pr {
-            let files = self.diff.files.get(&current)?;
+            let files = self.session.diff.files.get(&current)?;
             if files.is_empty() {
                 return None;
             }

@@ -265,7 +265,7 @@ pub(super) fn handle_left(app: &mut App, x: u16, y: u16, drag: bool) {
                 if let Some(f) = app.diff.row_files.get(row).copied().flatten() {
                     app.diff.cursor = f;
                     let expanded = app.nav.current.and_then(|n| {
-                        app.diff.files.get(&n).and_then(|fs| {
+                        app.session.diff.files.get(&n).and_then(|fs| {
                             fs.get(f).map(|file| {
                                 app.diff.expanded_files.contains(&(n, file.filename.clone()))
                             })

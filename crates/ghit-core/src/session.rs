@@ -7,8 +7,13 @@
 
 mod auth;
 mod backfill;
+mod board;
+mod commands;
+mod diff;
 mod issues;
+mod listing;
 mod sections;
+mod sends;
 
 #[cfg(test)]
 mod events_tests;
@@ -18,7 +23,11 @@ use std::time::Instant;
 
 pub use auth::AuthState;
 pub use backfill::{BACKFILL_DELAY, BackfillFeed};
+pub use board::{BoardFeed, DetailResult};
+pub use diff::{DiffData, DiffResult, HeadFiles};
+pub use listing::{Held, Landed, PollCtx};
 pub use issues::{IssueStore, SubIssueLoads, SubIssueResult};
+pub use sends::{ComposeTarget, SendResult, Sends, StateResult};
 pub use sections::{
     FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, STATUS_REFRESH_INTERVAL, SectionFeed,
     auto_refresh_interval_default, refresh_interval_from, refresh_plan,
@@ -53,6 +62,16 @@ pub enum SessionEvent {
     Bootstrapped { numbers: Vec<ItemRef> },
     /// The auth probe finished: the missing scopes, or the failure.
     AuthChecked(Result<Vec<String>, String>),
+    /// Window-listing rows landed in the store. File `landed.filed` under
+    /// recent and drop `landed.gone`; a user fetch (`auto` false) with
+    /// nothing open opens the last filed row.
+    RowsLanded { landed: Landed, auto: bool },
+    /// The stored listing changed while a query shows: re-run the query.
+    StoreChanged,
+    /// An auto-refresh started a listing fetch.
+    SectionsStarted,
+    /// A backfill step landed.
+    BackfillLanded,
     SectionsProgress,
     /// The listing hit the row cap. Sent once per fetch setting.
     SectionsCapped,
@@ -62,6 +81,21 @@ pub enum SessionEvent {
     SectionsDone { result: Result<Vec<github::Row>, String>, replace: bool, auto: bool },
     /// The lease holder's quiet sync failed.
     SyncFailed(String),
+    /// The board payload landed in `board.data`.
+    BoardLoaded,
+    BoardFailed(String),
+    /// A card detail landed in `board.details`.
+    BoardDetail(ItemRef),
+    BoardDetailFailed(String),
+    /// A PR diff landed in `diff.files`.
+    DiffLoaded(ItemRef),
+    DiffFailed(String),
+    /// Head-side file bodies for a PR landed; its diff wants re-widening.
+    HeadFilesLanded(ItemRef),
+    HeadFilesFailed { number: ItemRef, error: String },
+    DraftSent { number: ItemRef, result: Result<(), String> },
+    ReviewSubmitted { number: ItemRef, result: Result<(), String> },
+    StateChanged { number: ItemRef, open: bool, result: Result<(), String> },
     IssueProgress(ItemRef),
     /// The full fetch landed in the store.
     IssueLoaded(ItemRef),
@@ -78,6 +112,9 @@ pub struct Session {
     pub auth: AuthState,
     pub refs: Refs,
     pub pins: Pins,
+    pub board: BoardFeed,
+    pub diff: DiffData,
+    pub sends: Sends,
     pub repo_flag: Option<String>,
     pub repo_slug: Option<String>,
     pub initial_numbers: Vec<ItemRef>,
@@ -94,6 +131,9 @@ impl Session {
             auth: AuthState::default(),
             refs: Refs::default(),
             pins: Pins::default(),
+            board: BoardFeed::new(),
+            diff: DiffData::new(),
+            sends: Sends::new(),
             repo_flag,
             repo_slug: None,
             initial_numbers: vec![],
@@ -148,6 +188,17 @@ impl Session {
     /// spent only the current issue's fetches start.
     pub fn pump(&mut self, view: &View) {
         self.fetches.start(view, github::rate_limited());
+    }
+
+    /// Remove every cached payload for `n` so a revisit fetches again.
+    pub fn drop_cached(&mut self, n: ItemRef) {
+        self.issues.partial.remove(&n);
+        self.issues.progress.remove(&n);
+        self.issues.data.remove(&n);
+        self.issues.statuses.remove(&n);
+        self.board.details.remove(&n);
+        self.diff.files.remove(&n);
+        self.diff.pending.remove(&n);
     }
 
     /// Queue the full fetch for `number`. No-op while one is in flight.
@@ -233,7 +284,8 @@ impl Session {
     }
 
     /// Land everything the background fetches finished and report it.
-    pub fn poll(&mut self) -> Vec<SessionEvent> {
+    #[cfg(test)]
+    fn poll(&mut self) -> Vec<SessionEvent> {
         let mut events = self.poll_feed();
         events.extend(self.poll_items());
         events
@@ -242,7 +294,7 @@ impl Session {
     /// Land repo, auth and sections results. A front end that writes
     /// sidebar rows into `issues` between the two phases must call this
     /// first, so a full item fetch from `poll_items` wins over a row.
-    pub fn poll_feed(&mut self) -> Vec<SessionEvent> {
+    fn poll_feed(&mut self) -> Vec<SessionEvent> {
         let mut events = Vec::new();
         self.poll_bootstrap(&mut events);
         self.poll_auth(&mut events);
@@ -250,11 +302,17 @@ impl Session {
         events
     }
 
-    /// Land full item fetches and sub-issue loads.
-    pub fn poll_items(&mut self) -> Vec<SessionEvent> {
+    /// Land full item fetches, sub-issue loads, diffs, the board and the
+    /// results of writes.
+    fn poll_items(&mut self) -> Vec<SessionEvent> {
         let mut events = Vec::new();
         self.poll_issues(&mut events);
         self.poll_subs(&mut events);
+        self.poll_diffs(&mut events);
+        self.poll_head_files(&mut events);
+        self.poll_board(&mut events);
+        self.poll_details(&mut events);
+        self.poll_sends(&mut events);
         events
     }
 
@@ -405,6 +463,91 @@ impl Session {
                     events.push(SessionEvent::SubIssuesFailed(e));
                 }
             }
+        }
+    }
+
+    fn poll_diffs(&mut self, events: &mut Vec<SessionEvent>) {
+        let ready: Vec<_> = self.diff.rx.try_iter().collect();
+        for (number, result) in ready {
+            self.diff.pending.remove(&number);
+            match result {
+                Ok(files) => {
+                    // A refetch may move the head: drop its old file bodies.
+                    self.diff.heads.retain(|(i, _), _| *i != number);
+                    self.diff.raw.insert(number, files.clone());
+                    self.diff.files.insert(number, files);
+                    events.push(SessionEvent::DiffLoaded(number));
+                }
+                Err(e) => events.push(SessionEvent::DiffFailed(e)),
+            }
+        }
+    }
+
+    fn poll_head_files(&mut self, events: &mut Vec<SessionEvent>) {
+        let ready: Vec<HeadFiles> = self.diff.heads_rx.try_iter().collect();
+        for (n, names, result) in ready {
+            for name in &names {
+                self.diff.heads_pending.remove(&(n, name.clone()));
+            }
+            match result {
+                Ok(bodies) => {
+                    for (name, body) in bodies {
+                        let lines = body.ok().map(|b| b.lines().map(str::to_owned).collect());
+                        self.diff.heads.insert((n, name), lines);
+                    }
+                    events.push(SessionEvent::HeadFilesLanded(n));
+                }
+                Err(error) => {
+                    for name in names {
+                        self.diff.heads.insert((n, name), None);
+                    }
+                    events.push(SessionEvent::HeadFilesFailed { number: n, error });
+                }
+            }
+        }
+    }
+
+    fn poll_board(&mut self, events: &mut Vec<SessionEvent>) {
+        if !self.board.loading {
+            return;
+        }
+        let Some(res) = self.board.rx.as_ref().and_then(|rx| rx.try_recv().ok()) else { return };
+        self.board.rx = None;
+        self.board.loading = false;
+        match res {
+            Ok(data) => {
+                self.board.data = Some(data);
+                events.push(SessionEvent::BoardLoaded);
+            }
+            Err(e) => events.push(SessionEvent::BoardFailed(e)),
+        }
+    }
+
+    fn poll_details(&mut self, events: &mut Vec<SessionEvent>) {
+        let ready: Vec<_> = self.board.detail_rx.try_iter().collect();
+        for (n, res) in ready {
+            self.board.detail_pending.remove(&n);
+            match res {
+                Ok(d) => {
+                    self.board.details.insert(n, d);
+                    events.push(SessionEvent::BoardDetail(n));
+                }
+                Err(e) => events.push(SessionEvent::BoardDetailFailed(e)),
+            }
+        }
+    }
+
+    fn poll_sends(&mut self, events: &mut Vec<SessionEvent>) {
+        for (number, result) in self.sends.rx.try_iter().collect::<Vec<_>>() {
+            events.push(SessionEvent::DraftSent { number, result });
+        }
+        // The review lock frees as the result lands.
+        for (number, result) in self.sends.review_rx.try_iter().collect::<Vec<_>>() {
+            self.sends.submitting.remove(&number);
+            events.push(SessionEvent::ReviewSubmitted { number, result });
+        }
+        for (number, open, result) in self.sends.state_rx.try_iter().collect::<Vec<_>>() {
+            events.push(SessionEvent::StateChanged { number, open, result });
         }
     }
 }

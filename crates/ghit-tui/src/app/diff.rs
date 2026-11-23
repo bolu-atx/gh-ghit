@@ -1,18 +1,15 @@
 //! Diff and review-thread state and loads.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use ghit_core::runtime::spawn_bg;
 use crate::app::App;
 use ghit_core::core::{self, Pane};
 use ghit_core::{github, model};
-use crate::app::auth_failure;
 use ghit_core::model::ItemRef;
 
-/// Diff tab state: fetched per-issue file lists, the line cursor and its
-/// render bookkeeping, folded-file state, and the fetch triplet.
+/// Diff tab view state: the line cursor and its render bookkeeping and
+/// folded-file state. Fetched files live in `Session::diff`.
 pub(crate) struct DiffView {
-    pub(crate) files: HashMap<ItemRef, Vec<model::DiffFile>>,
     pub(crate) cursor: usize,
     /// Active diff line as an absolute body-buffer row. `None` until the
     /// next render anchors it to the first file header. Steps one row at a
@@ -39,9 +36,6 @@ pub(crate) struct DiffView {
     /// direction. Only render knows the body layout after the jump's own
     /// fold change, so it resolves the scroll offset (`finish_diff_jump`).
     pub(crate) pending_jump: Option<(usize, isize)>,
-    pub(crate) pending: HashSet<ItemRef>,
-    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) split: bool,
     /// Expand-all mode, sticky across PRs once `a` set it: `Some(true)`
     /// opens every small file of each PR on first view, `Some(false)`
@@ -52,34 +46,14 @@ pub(crate) struct DiffView {
     pub(crate) synced: HashSet<ItemRef>,
     /// Index into `model::CONTEXT_STEPS`: context lines around changes.
     pub(crate) context: usize,
-    /// Patches as GitHub sent them; `files` holds them widened to `context`.
-    pub(crate) raw: HashMap<ItemRef, Vec<model::DiffFile>>,
-    /// Head-side file lines per (PR, filename), for widening. `None`
-    /// marks a failed fetch, so it is not retried this session.
-    pub(crate) heads: HashMap<(ItemRef, String), Option<Vec<String>>>,
-    pub(crate) heads_pending: HashSet<(ItemRef, String)>,
-    pub(crate) heads_tx: std::sync::mpsc::Sender<HeadFiles>,
-    pub(crate) heads_rx: std::sync::mpsc::Receiver<HeadFiles>,
 }
 
-/// One head-files fetch result: the PR, the names asked for, and the bodies.
-pub(crate) type HeadFiles = (
-    ItemRef,
-    Vec<String>,
-    Result<Vec<(String, Result<String, String>)>, String>,
-);
-
 impl DiffView {
-    pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
-        rx: std::sync::mpsc::Receiver<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
-    ) -> Self {
-        let (heads_tx, heads_rx) = std::sync::mpsc::channel();
-        Self { files: HashMap::new(), cursor: 0, line: None, touched: false,
+    pub(crate) fn new() -> Self {
+        Self { cursor: 0, line: None, touched: false,
             row_files: vec![], expanded_files: HashSet::new(), expanded_rows: HashSet::new(),
-            headers: vec![], pending_jump: None, pending: HashSet::new(), tx, rx, split: false,
-            expand_all: None, synced: HashSet::new(), context: 0, raw: HashMap::new(),
-            heads: HashMap::new(), heads_pending: HashSet::new(), heads_tx, heads_rx }
+            headers: vec![], pending_jump: None, split: false,
+            expand_all: None, synced: HashSet::new(), context: 0 }
     }
 }
 
@@ -98,7 +72,7 @@ impl App {
     pub(crate) fn set_diff_file(&mut self, open: Option<bool>) {
         let Some(n) = self.nav.current else { return };
         self.nav.pane = Pane::Main;
-        let Some(files) = self.diff.files.get(&n) else { return };
+        let Some(files) = self.session.diff.files.get(&n) else { return };
         let count = files.len().min(ghit_core::core::MAX_DIFF_FILES);
         if count == 0 {
             return;
@@ -121,7 +95,7 @@ impl App {
 
     /// Files expand-all would open: shown, with a patch, not large.
     fn small_files(&self, n: ItemRef) -> Vec<&model::DiffFile> {
-        let files = self.diff.files.get(&n).map(|f| f.as_slice()).unwrap_or(&[]);
+        let files = self.session.diff.files.get(&n).map(|f| f.as_slice()).unwrap_or(&[]);
         files.iter().take(ghit_core::core::MAX_DIFF_FILES).filter(|f| !f.is_large() && f.has_patch()).collect()
     }
 
@@ -136,7 +110,7 @@ impl App {
     /// in view: it queues a jump to that file's header for the next render.
     pub(crate) fn diff_expand_all(&mut self) {
         let Some(n) = self.nav.current else { return };
-        let count = self.diff.files.get(&n).map_or(0, |f| f.len().min(ghit_core::core::MAX_DIFF_FILES));
+        let count = self.session.diff.files.get(&n).map_or(0, |f| f.len().min(ghit_core::core::MAX_DIFF_FILES));
         if count == 0 {
             return;
         }
@@ -176,7 +150,7 @@ impl App {
             return;
         }
         let Some(n) = self.nav.current else { return };
-        let count = self.diff.files.get(&n).map(|f| f.len().min(ghit_core::core::MAX_DIFF_FILES)).unwrap_or(0);
+        let count = self.session.diff.files.get(&n).map(|f| f.len().min(ghit_core::core::MAX_DIFF_FILES)).unwrap_or(0);
         if count == 0 {
             return;
         }
@@ -193,7 +167,7 @@ impl App {
         // so the measured offsets must come from the post-jump text.
         self.diff.cursor = next;
         self.nav.pane = Pane::Main;
-        if let Some(files) = self.diff.files.get(&n) {
+        if let Some(files) = self.session.diff.files.get(&n) {
             if let Some(f) = files.get(next) {
                 self.diff.expanded_files.insert((n, f.filename.clone()));
             }
@@ -249,7 +223,7 @@ impl App {
     /// inside the old content would point at the wrong region.
     fn anchor_cursor_to_header(&mut self, fi: usize) {
         let base = self.hits.body_base as usize;
-        let found = match self.nav.current.and_then(|n| self.diff.files.get(&n)) {
+        let found = match self.nav.current.and_then(|n| self.session.diff.files.get(&n)) {
             Some(files) => self.hits.body_rows.iter().enumerate().find_map(|(vis, line)| {
                 (model::header_file_index(line, files) == Some(fi)).then_some(vis)
             }),
@@ -265,7 +239,7 @@ impl App {
     /// head side of open files (`sync_diff`) and widen once they land.
     pub(crate) fn cycle_diff_context(&mut self) {
         self.diff.context = (self.diff.context + 1) % model::CONTEXT_STEPS.len();
-        let numbers: Vec<ItemRef> = self.diff.raw.keys().copied().collect();
+        let numbers: Vec<ItemRef> = self.session.diff.raw.keys().copied().collect();
         for n in numbers {
             self.rewiden(n);
         }
@@ -281,19 +255,19 @@ impl App {
 
     /// Rebuild PR `n`'s shown patches from its raw ones at the current
     /// context. Files without a fetched head side keep the raw patch.
-    fn rewiden(&mut self, n: ItemRef) {
-        let Some(raw) = self.diff.raw.get(&n) else { return };
+    pub(super) fn rewiden(&mut self, n: ItemRef) {
+        let Some(raw) = self.session.diff.raw.get(&n) else { return };
         let ctx = model::CONTEXT_STEPS[self.diff.context];
         let files = raw.iter().map(|f| {
             let mut f = f.clone();
             if ctx > model::CONTEXT_STEPS[0] {
-                if let Some(Some(lines)) = self.diff.heads.get(&(n, f.filename.clone())) {
+                if let Some(Some(lines)) = self.session.diff.heads.get(&(n, f.filename.clone())) {
                     f.patch = model::widen_patch(&f.patch, lines, ctx);
                 }
             }
             f
         }).collect();
-        self.diff.files.insert(n, files);
+        self.session.diff.files.insert(n, files);
     }
 
     /// Bring the open PR's Diff tab in line with the sticky modes: apply
@@ -305,7 +279,7 @@ impl App {
             return false;
         }
         let Some(n) = self.nav.current else { return false };
-        if !self.diff.files.contains_key(&n) {
+        if !self.session.diff.files.contains_key(&n) {
             return false;
         }
         let mut changed = false;
@@ -321,33 +295,23 @@ impl App {
             }
         }
         if self.diff.context > 0 {
-            let want: Vec<String> = self.diff.raw.get(&n).into_iter().flatten()
+            let want: Vec<String> = self.session.diff.raw.get(&n).into_iter().flatten()
                 .take(ghit_core::core::MAX_DIFF_FILES)
                 .filter(|f| f.has_patch() && f.status != "removed")
                 .map(|f| f.filename.clone())
                 .filter(|name| {
                     let key = (n, name.clone());
                     self.diff.expanded_files.contains(&key)
-                        && !self.diff.heads.contains_key(&key)
-                        && !self.diff.heads_pending.contains(&key)
+                        && !self.session.diff.heads.contains_key(&key)
+                        && !self.session.diff.heads_pending.contains(&key)
                 })
                 .collect();
             if !want.is_empty() {
-                self.load_head_files(n, want);
+                let view = self.fetch_view();
+                self.session.load_head_files(n, want, &view);
             }
         }
         changed
-    }
-
-    /// Queue one fetch of the head side of `names` in PR `n`.
-    fn load_head_files(&mut self, n: ItemRef, names: Vec<String>) {
-        self.diff.heads_pending.extend(names.iter().map(|name| (n, name.clone())));
-        let tx = self.diff.heads_tx.clone();
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
-        self.enqueue(core::Kind::Diff, Some(n), async move {
-            let result = github::fetch_head_files(&repo, n, names.clone()).await;
-            let _ = tx.send((n, names, result));
-        });
     }
 
     /// Flip the Diff tab between unified and side-by-side rendering,
@@ -363,21 +327,8 @@ impl App {
     /// Queue a diff fetch for PR `number`. No-op for issues, cached rows,
     /// and rows already in flight.
     pub(crate) fn load_diff(&mut self, number: ItemRef, force: bool) {
-        let Some(d) = self.session.issues.data.get(&number) else { return };
-        if !d.is_pr {
-            return;
-        }
-        if !force && self.diff.files.contains_key(&number) {
-            return;
-        }
-        if !self.diff.pending.insert(number) {
-            return;
-        }
-        let tx = self.diff.tx.clone();
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
-        self.enqueue(core::Kind::Diff, Some(number), async move {
-            let _ = tx.send((number, github::fetch_diff(&repo, number, force).await));
-        });
+        let view = self.fetch_view();
+        self.session.load_diff(number, force, &view);
     }
 
     /// Expand-time REST load for the opt-in tree: at most one fetch per
@@ -412,90 +363,14 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        if self.compose.submitting.contains(&n) {
+        if self.session.sends.submitting.contains(&n) {
             return;
         }
         if self.pending_threads() == 0 {
             self.notify("no pending comments to submit".to_string());
             return;
         }
-        self.compose.submitting.insert(n);
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
-        let tx = self.compose.review_tx.clone();
-        spawn_bg(async move {
-            let result = github::submit_pending_review(&repo, n).await;
-            let _ = tx.send((n, result));
-        });
+        self.session.submit_review(n);
         self.notify("submitting pending review…".to_string());
     }
-}
-
-/// Land a pending-review submit: success refetches the issue so the
-/// Diff tab shows submitted threads; failure just names the cause.
-pub(crate) fn poll_review_submit(app: &mut App) -> bool {
-    let ready: Vec<(ItemRef, Result<(), String>)> = app.compose.review_rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (n, res) in ready {
-        app.compose.submitting.remove(&n);
-        match res {
-            Ok(()) => {
-                app.notify(format!(
-                    "pending review submitted on {n}",
-                    n = n.display("")
-                ));
-                app.load_issue(n, true);
-            }
-            Err(e) => {
-                auth_failure(app, &e);
-                app.notify(e);
-            }
-        }
-    }
-    landed
-}
-
-pub(crate) fn poll_diffs(app: &mut App) -> bool {
-    let ready: Vec<_> = app.diff.rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (number, result) in ready {
-        app.diff.pending.remove(&number);
-        match result {
-            Ok(files) => {
-                // A refetch may move the head: drop its old file bodies.
-                app.diff.heads.retain(|(i, _), _| *i != number);
-                app.diff.raw.insert(number, files.clone());
-                app.diff.files.insert(number, files);
-            }
-            Err(e) => { auth_failure(app, &e); app.notify(e); }
-        }
-    }
-    landed
-}
-
-/// Land head-side file bodies and re-widen their PR.
-pub(crate) fn poll_head_files(app: &mut App) -> bool {
-    let ready: Vec<HeadFiles> = app.diff.heads_rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (n, names, result) in ready {
-        for name in &names {
-            app.diff.heads_pending.remove(&(n, name.clone()));
-        }
-        match result {
-            Ok(bodies) => {
-                for (name, body) in bodies {
-                    let lines = body.ok().map(|b| b.lines().map(str::to_owned).collect());
-                    app.diff.heads.insert((n, name), lines);
-                }
-            }
-            Err(e) => {
-                for name in names {
-                    app.diff.heads.insert((n, name), None);
-                }
-                auth_failure(app, &e);
-                app.notify(e);
-            }
-        }
-        app.rewiden(n);
-    }
-    landed
 }

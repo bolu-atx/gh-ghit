@@ -217,7 +217,7 @@ fn board() -> App {
         "url": "https://github.com/orgs/o/projects/1",
     }))
     .expect("board json");
-    app.board.data = Some(data);
+    app.session.board.data = Some(data);
     app.open(crate::app::Entry::Board);
     app.board.states = vec![Default::default(), Default::default()];
     app
@@ -401,7 +401,7 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
             "board",
             format!(
                 "{}/{}/{}/{:?}/{}",
-                app.board.data.is_some(),
+                app.session.board.data.is_some(),
                 app.board.col,
                 app.board.row,
                 app.board.expanded,

@@ -90,18 +90,18 @@ pub(crate) const CLICK_FLASH_MS: u64 = 150;
 /// cadence for the animation, not on every 15ms poll pass.
 pub(crate) const SPIN_FRAME_MS: u64 = 100;
 
-pub(crate) use diff::{poll_review_submit, poll_diffs, poll_head_files};
-pub(crate) use board::{board_open, board_columns, board_move, board_selected_number, poll_board};
-pub(crate) use compose::{poll_compose, run_compose_editor};
-pub(crate) use confirm::{poll_set_state, auth_failure, run_reauth};
-pub(crate) use poll::{apply_session, poll_details, bootstrap, poll_repo_meta};
+pub(crate) use board::{board_open, board_columns, board_move, board_selected_number};
+pub(crate) use compose::{run_compose_editor, target_title};
+pub(crate) use confirm::{auth_failure, run_reauth};
+pub(crate) use poll::{apply_session, bootstrap, poll_repo_meta};
 #[cfg(test)]
 pub(crate) use poll::poll_session;
 pub(crate) use confirm::{ConfirmDialog, ConfirmKind, PendingUndo, UndoAction};
 pub(crate) use board::BoardView;
 pub(crate) use compose::ComposeSlot;
 #[cfg(test)]
-pub(crate) use compose::{ComposeState, ComposeTarget};
+pub(crate) use compose::ComposeState;
+pub(crate) use ghit_core::session::ComposeTarget;
 pub(crate) use diff::DiffView;
 pub(crate) use sidebar::{FilterItem, LabelsPane, QueryAction, Sidebar};
 pub(crate) use issue::RefsPane;
@@ -310,10 +310,6 @@ pub struct App {
 
 impl App {
     pub fn new(repo_flag: Option<String>) -> Self {
-        let (detail_tx, detail_rx) = std::sync::mpsc::channel();
-        let (compose_tx, compose_rx) = std::sync::mpsc::channel();
-        let (review_submit_tx, review_submit_rx) = std::sync::mpsc::channel();
-        let (diff_tx, diff_rx) = std::sync::mpsc::channel();
         Self {
             session: Session::new(repo_flag),
             prefs_loaded: false,
@@ -327,10 +323,10 @@ impl App {
             pending_prefix: None,
             message_at: None,
             undo: None,
-            compose: ComposeSlot::new(compose_tx, compose_rx, review_submit_tx, review_submit_rx),
+            compose: ComposeSlot::default(),
             tick: 0,
-            board: BoardView::new(detail_tx, detail_rx),
-            diff: DiffView::new(diff_tx, diff_rx),
+            board: BoardView::new(),
+            diff: DiffView::new(),
             map: MapView::default(),
             quit: false,
             hits: HitAreas::default(),
@@ -374,6 +370,7 @@ impl App {
     }
 
     /// Per loop pass: land a finished backfill step and queue the next page.
+    #[cfg(test)]
     pub(super) fn drive_backfill(&mut self, now: Instant) -> bool {
         let view = self.fetch_view();
         self.session.drive_backfill(now, &view)
@@ -424,11 +421,11 @@ impl App {
         let (done, total) = self.session.issues.progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
         core::FetchState {
             issues: self.session.issues.pending.len(),
-            diffs: self.diff.pending.len(),
-            details: self.board.detail_pending.len(),
+            diffs: self.session.diff.pending.len(),
+            details: self.session.board.detail_pending.len(),
             sections_live: self.session.sections.rx.is_some(),
             bootstrap_live: self.session.auth.bootstrap_rx.is_some(),
-            board: self.board.loading,
+            board: self.session.board.loading,
             message_visible: self.message_visible(),
             issue_progress: if self.session.issues.progress.is_empty() { None } else { Some((done, total)) },
             section_progress: self.session.sections.progress,
@@ -495,24 +492,11 @@ pub(crate) fn draw_frame(f: &mut ratatui::Frame, app: &mut App) {
 pub(crate) fn poll_all(app: &mut App) -> bool {
     let mut landed = false;
     app.pump_fetches();
-    let feed = app.session.poll_feed();
-    landed |= apply_session(app, feed);
+    let ctx = app.poll_ctx(Instant::now());
+    let events = app.session.poll_frame(&ctx);
+    landed |= apply_session(app, events);
     landed |= poll_repo_meta(app);
-    landed |= app.watch_store(Instant::now());
-    let had_fetch = app.session.sections.rx.is_some();
-    app.auto_refresh_recent(Instant::now());
-    landed |= had_fetch != app.session.sections.rx.is_some();
-    landed |= app.drive_backfill(Instant::now());
-    let items = app.session.poll_items();
-    landed |= apply_session(app, items);
-    landed |= poll_diffs(app);
-    landed |= poll_head_files(app);
     landed |= app.sync_diff();
-    landed |= poll_board(app);
-    landed |= poll_details(app);
-    landed |= poll_compose(app);
-    landed |= poll_review_submit(app);
-    landed |= poll_set_state(app);
     landed |= app.map_tick();
     landed
 }
