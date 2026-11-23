@@ -1,6 +1,7 @@
 //! Issue payload parsing: review threads, will-close refs, CI rollup, comment pages.
 
 use super::*;
+use crate::model::ItemRef;
 
 /// Numeric REST id of a thread's first comment: the `in_reply_to`
 /// target for a REST reply inside that thread. `None` when the thread
@@ -46,7 +47,7 @@ pub fn paired_refs(value: &serde_json::Value, is_pr: bool) -> Vec<PairedRef> {
             continue;
         };
         out.push(PairedRef {
-            number,
+            number: ItemRef::github(number),
             state: node.get("state").and_then(serde_json::Value::as_str).unwrap_or("").to_owned(),
         });
     }

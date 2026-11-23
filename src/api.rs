@@ -24,6 +24,7 @@ use client::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use crate::model::ItemRef;
 
 type Statuses = Vec<(String, Option<String>)>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,7 +105,7 @@ pub fn search_row(v: &Value) -> Result<Row, String> {
     });
     Ok(Row {
         issue: IssueData {
-            number,
+            number: ItemRef::github(number),
             title: string("title"),
             state,
             author: Author { login: v.pointer("/user/login").and_then(Value::as_str).unwrap_or("").to_owned() },
@@ -414,6 +415,7 @@ pub async fn issue(
     // `Option<String>` field parses. Absent or null stays `None`.
     let milestone = v.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
     v["milestone"] = milestone.map(Value::String).unwrap_or(Value::Null);
+    v["number"] = serde_json::to_value(ItemRef::github(number)).unwrap();
     let mut data: IssueData = serde_json::from_value(v).map_err(|e| format!("bad issue payload: {e}"))?;
     let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
     let field = if is_pr { "pullRequest" } else { "issue" };
@@ -450,7 +452,6 @@ pub async fn issue(
         .map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
     Ok((data, statuses))
 }
-
 
 /// Post a plain issue/PR thread comment through REST. Validation errors
 /// are strings for the status line, never panics.
@@ -662,7 +663,7 @@ mod tests {
         assert_eq!(absorb_search_page(&search_page(1, 100), &mut rows), Ok(100));
         assert_eq!(absorb_search_page(&search_page(101, 2), &mut rows), Ok(2));
         assert_eq!(rows.len(), 102, "both pages land");
-        assert_eq!(rows[101].issue.number, 102);
+        assert_eq!(rows[101].issue.number, ItemRef::github(102));
         // A page of 100 means "ask again"; the cap ignores later hits.
         let mut capped = vec![];
         for page in 0..5 {

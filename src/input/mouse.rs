@@ -9,6 +9,7 @@ use super::toggle_board_focused;
 
 use crate::app::{App, board_open, board_selected_number};
 use crate::core::{self, Dialog, Layer};
+use crate::model::ItemRef;
 
 /// Where a wheel event lands: the Issues/PRs side panes, the right
 /// Refs pane while visible, or the main body everywhere else. A hidden
@@ -43,7 +44,7 @@ pub(crate) fn wheel_target(app: &App, x: u16, y: u16) -> WheelTarget {
 /// j/k this never visits: `current`, body scroll, and the other panes
 /// stay exactly where they were. Landing back on `current` clears the
 /// hover since there is nothing left to distinguish.
-fn wheel_hover(app: &mut App, order: Vec<u64>, delta: isize) {
+fn wheel_hover(app: &mut App, order: Vec<ItemRef>, delta: isize) {
     let base = app.nav.hover.filter(|n| order.contains(n)).or(app.nav.current);
     if let Some(n) = core::next_in_order(&order, base, delta) {
         app.nav.hover = if Some(n) == app.nav.current { None } else { Some(n) };

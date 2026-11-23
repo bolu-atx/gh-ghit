@@ -2,10 +2,11 @@
 
 use super::*;
 use super::test_support::sidebar_app;
+use crate::model::ItemRef;
 
 #[test]
 fn spin_owed_paces_spinner_repaints() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     assert!(!app.spin_owed(Instant::now()), "idle owes nothing");
     app.notify("loading".to_string());
     assert!(!app.spin_owed(Instant::now()), "fresh paint owes nothing");

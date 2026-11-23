@@ -4,6 +4,7 @@ use super::*;
 use super::sidebar::{FULL_REFRESH_INTERVAL, RECENT_REFRESH_INTERVAL, RECENT_REFRESH_MAX_INTERVAL, STATUS_REFRESH_INTERVAL, refresh_interval_from, refresh_plan};
 use super::test_support::{issue, restore_xdg, section_row, sidebar_app, temp_xdg};
 use crate::model::BoardData;
+use crate::model::ItemRef;
 
 /// Store rows as a sync that started `age_secs` ago.
 fn put_sections(rows: Vec<crate::github::Row>, age_secs: i64) {
@@ -11,7 +12,7 @@ fn put_sections(rows: Vec<crate::github::Row>, age_secs: i64) {
     crate::store::open("o/r").unwrap().write(&started.to_rfc3339(), &rows).unwrap();
 }
 
-fn cached_row(number: u64, complete: bool) -> crate::github::Row {
+fn cached_row(number: ItemRef, complete: bool) -> crate::github::Row {
     crate::github::Row {
         issue: issue(number, "2026-01-05T00:00:00Z"),
         statuses: vec![],
@@ -26,7 +27,7 @@ fn cached_row(number: u64, complete: bool) -> crate::github::Row {
 }
 
 /// Add a background (recent) row with the fields the pills read.
-fn add_recent(app: &mut App, n: u64, updated: &str, labels: &[&str], milestone: Option<&str>) {
+fn add_recent(app: &mut App, n: ItemRef, updated: &str, labels: &[&str], milestone: Option<&str>) {
     let mut d = issue(n, updated);
     d.labels = labels
         .iter()
@@ -41,33 +42,60 @@ fn add_recent(app: &mut App, n: u64, updated: &str, labels: &[&str], milestone: 
 #[test]
 fn startup_hydrates_sidebar_from_sections_cache() {
     let (_guard, _dir, saved) = temp_xdg();
-    let mut newer = cached_row(7, false);
+    let mut newer = cached_row(ItemRef::github(7), false);
     newer.issue.created_at = "2026-01-02T00:00:00Z".to_string();
-    put_sections(vec![newer, cached_row(9, true)], 0);
+    put_sections(vec![newer, cached_row(ItemRef::github(9), true)], 0);
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     app.hydrate_cached_sections();
-    assert_eq!(app.nav.recent, vec![7, 9], "stored order (open rows newest created first) becomes sidebar order");
-    assert!(app.issues.data.contains_key(&7) && app.issues.data.contains_key(&9));
-    assert!(app.issues.partial.contains(&7), "slim rows stay partial so open runs the full fetch");
-    assert!(!app.issues.partial.contains(&9));
-    assert!(app.issues.statuses.contains_key(&7) && app.board.details.contains_key(&7));
+    assert_eq!(
+        app.nav.recent,
+        vec![ItemRef::github(7), ItemRef::github(9)],
+        "stored order (open rows newest created first) becomes sidebar order"
+    );
+    assert!(
+        app.issues.data.contains_key(&ItemRef::github(7))
+            && app.issues.data.contains_key(&ItemRef::github(9))
+    );
+    assert!(
+        app.issues.partial.contains(&ItemRef::github(7)),
+        "slim rows stay partial so open runs the full fetch"
+    );
+    assert!(!app.issues.partial.contains(&ItemRef::github(9)));
+    assert!(
+        app.issues.statuses.contains_key(&ItemRef::github(7))
+            && app.board.details.contains_key(&ItemRef::github(7))
+    );
     restore_xdg(saved);
 }
 
 #[test]
 fn startup_hydration_leaves_present_rows_alone() {
     let (_guard, _dir, saved) = temp_xdg();
-    put_sections(vec![cached_row(7, false), cached_row(9, false)], 0);
+    put_sections(
+        vec![
+            cached_row(ItemRef::github(7), false),
+            cached_row(ItemRef::github(9), false),
+        ],
+        0,
+    );
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
-    let mut kept = issue(7, "2026-01-05T00:00:00Z");
+    let mut kept = issue(ItemRef::github(7), "2026-01-05T00:00:00Z");
     kept.title = "kept".to_string();
-    app.issues.data.insert(7, kept);
+    app.issues.data.insert(ItemRef::github(7), kept);
     app.hydrate_cached_sections();
-    assert_eq!(app.issues.data[&7].title, "kept", "CLI-opened rows win over the cache");
-    assert!(app.issues.data.contains_key(&9));
-    assert_eq!(app.nav.recent, vec![9], "present rows are not re-added to recent");
+    assert_eq!(
+        app.issues.data[&ItemRef::github(7)].title,
+        "kept",
+        "CLI-opened rows win over the cache"
+    );
+    assert!(app.issues.data.contains_key(&ItemRef::github(9)));
+    assert_eq!(
+        app.nav.recent,
+        vec![ItemRef::github(9)],
+        "present rows are not re-added to recent"
+    );
     restore_xdg(saved);
 }
 
@@ -80,9 +108,13 @@ fn startup_hydration_ignores_a_missing_store_but_paints_an_old_sync() {
     assert!(app.nav.recent.is_empty() && app.issues.data.is_empty(), "no store means no rows");
     // The store is the shared local copy: a process that does not hold
     // the sync lease reads it whatever its age.
-    put_sections(vec![cached_row(7, false)], 3601);
+    put_sections(vec![cached_row(ItemRef::github(7), false)], 3601);
     app.hydrate_cached_sections();
-    assert_eq!(app.nav.recent, vec![7], "an old sync still paints");
+    assert_eq!(
+        app.nav.recent,
+        vec![ItemRef::github(7)],
+        "an old sync still paints"
+    );
     restore_xdg(saved);
 }
 
@@ -129,83 +161,160 @@ fn another_process_sync_lands_through_the_store_watch() {
     app.sections.merged_window_hours = 168;
     let now = Instant::now();
     assert!(!app.watch_store(now), "nothing new yet");
-    let mut merged = section_row(issue(4, "2026-01-05T00:00:00Z"));
+    let mut merged = section_row(issue(ItemRef::github(4), "2026-01-05T00:00:00Z"));
     merged.issue.is_pr = true;
     merged.issue.state = "MERGED".to_string();
     merged.window_at = Some(chrono::Utc::now().to_rfc3339());
-    put_sections(vec![cached_row(7, false), merged], 0);
+    put_sections(vec![cached_row(ItemRef::github(7), false), merged], 0);
     assert!(app.watch_store(now), "a sync by another connection lands");
-    assert!(app.nav.recent.contains(&7) && app.nav.recent.contains(&4));
+    assert!(
+        app.nav.recent.contains(&ItemRef::github(7))
+            && app.nav.recent.contains(&ItemRef::github(4))
+    );
     assert!(!app.watch_store(now), "each sync lands once");
     // List toggles and the window filter the stored rows locally.
     app.toggle_list(1);
-    assert!(!app.nav.recent.contains(&4), "hiding merged PRs drops the row");
+    assert!(
+        !app.nav.recent.contains(&ItemRef::github(4)),
+        "hiding merged PRs drops the row"
+    );
     assert!(app.sections.rx.is_none(), "a toggle sends no request");
     app.toggle_list(1);
-    assert!(app.nav.recent.contains(&4));
+    assert!(app.nav.recent.contains(&ItemRef::github(4)));
     app.set_window(1);
-    assert!(app.nav.recent.contains(&4), "merged now is inside 1h");
+    assert!(app.nav.recent.contains(&ItemRef::github(4)), "merged now is inside 1h");
     assert!(app.sections.rx.is_none(), "a window change sends no request");
     restore_xdg(saved);
 }
 
 #[test]
 fn sort_cycle_orders_rows_and_restores_default() {
-    let mut app = sidebar_app(&[7, 9, 11]);
-    app.issues.data.get_mut(&7).unwrap().updated_at = "2026-01-05T00:00:00Z".to_string();
-    app.issues.data.get_mut(&9).unwrap().updated_at = "2026-01-09T00:00:00Z".to_string();
-    app.issues.data.get_mut(&11).unwrap().updated_at = "2026-01-01T00:00:00Z".to_string();
-    assert_eq!(app.issue_numbers(), vec![7, 9, 11]);
+    let mut app = sidebar_app(&[ItemRef::github(7), ItemRef::github(9), ItemRef::github(11)]);
+    app.issues
+        .data
+        .get_mut(&ItemRef::github(7))
+        .unwrap()
+        .updated_at = "2026-01-05T00:00:00Z".to_string();
+    app.issues
+        .data
+        .get_mut(&ItemRef::github(9))
+        .unwrap()
+        .updated_at = "2026-01-09T00:00:00Z".to_string();
+    app.issues
+        .data
+        .get_mut(&ItemRef::github(11))
+        .unwrap()
+        .updated_at = "2026-01-01T00:00:00Z".to_string();
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(7), ItemRef::github(9), ItemRef::github(11)]
+    );
     app.cycle_sort();
     assert_eq!(app.sidebar.sort, core::SideSort::Updated);
-    assert_eq!(app.issue_numbers(), vec![9, 7, 11], "newest first");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(9), ItemRef::github(7), ItemRef::github(11)],
+        "newest first"
+    );
     app.toggle_sort_dir();
-    assert_eq!(app.issue_numbers(), vec![11, 7, 9], "direction flips");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(11), ItemRef::github(7), ItemRef::github(9)],
+        "direction flips"
+    );
     for _ in 0..4 {
         app.cycle_sort();
     }
     assert_eq!(app.sidebar.sort, core::SideSort::Default);
-    assert_eq!(app.issue_numbers(), vec![7, 9, 11], "default order is back");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(7), ItemRef::github(9), ItemRef::github(11)],
+        "default order is back"
+    );
 }
 
 #[test]
 fn sort_applies_to_the_prs_pane_too() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     for (n, updated) in [(13, "2026-01-03T00:00:00Z"), (15, "2026-01-08T00:00:00Z")] {
-        let mut pr = issue(n, updated);
+        let mut pr = issue(ItemRef::github(n), updated);
         pr.is_pr = true;
-        app.issues.data.insert(n, pr);
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.visited.push(n);
+        app.issues.data.insert(ItemRef::github(n), pr);
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.visited.push(ItemRef::github(n));
     }
-    assert_eq!(app.pr_numbers(), vec![13, 15]);
+    assert_eq!(
+        app.pr_numbers(),
+        vec![ItemRef::github(13), ItemRef::github(15)]
+    );
     app.cycle_sort();
-    assert_eq!(app.pr_numbers(), vec![15, 13], "PRs sort newest first");
-    assert_eq!(app.issue_numbers(), vec![7], "panes stay separate");
+    assert_eq!(
+        app.pr_numbers(),
+        vec![ItemRef::github(15), ItemRef::github(13)],
+        "PRs sort newest first"
+    );
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(7)],
+        "panes stay separate"
+    );
 }
 
 #[test]
 fn label_and_milestone_pills_narrow_recent_rows_only() {
     let mut app = sidebar_app(&[]);
     app.nav.visited.clear();
-    add_recent(&mut app, 1, "2026-01-05T00:00:00Z", &["bug"], Some("v1"));
-    add_recent(&mut app, 2, "2026-01-04T00:00:00Z", &["docs"], Some("v2"));
-    add_recent(&mut app, 3, "2026-01-03T00:00:00Z", &[], None);
+    add_recent(
+        &mut app,
+        ItemRef::github(1),
+        "2026-01-05T00:00:00Z",
+        &["bug"],
+        Some("v1"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(2),
+        "2026-01-04T00:00:00Z",
+        &["docs"],
+        Some("v2"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(3),
+        "2026-01-03T00:00:00Z",
+        &[],
+        None,
+    );
     let query = "label:remote".to_string();
     app.sidebar.query_active = query.clone();
-    assert_eq!(app.issue_numbers(), vec![1, 2, 3]);
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(1), ItemRef::github(2), ItemRef::github(3)]
+    );
     app.sidebar.label_filter.insert("bug".to_string());
-    assert_eq!(app.issue_numbers(), vec![1], "label pill narrows");
+    assert_eq!(app.issue_numbers(), vec![ItemRef::github(1)], "label pill narrows");
     assert_eq!(app.sidebar.query_active, query, "filter code never edits the query");
     app.sidebar.label_filter.clear();
     app.sidebar.milestone_filter.insert(Some("v2".to_string()));
-    assert_eq!(app.issue_numbers(), vec![2], "milestone pill narrows");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(2)],
+        "milestone pill narrows"
+    );
     assert_eq!(app.sidebar.query_active, query, "query still untouched");
     app.sidebar.milestone_filter.clear();
     app.sidebar.milestone_filter.insert(None);
-    assert_eq!(app.issue_numbers(), vec![3], "(no milestone) pill narrows");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(3)],
+        "(no milestone) pill narrows"
+    );
     app.sidebar.milestone_filter.insert(Some("v1".to_string()));
-    assert_eq!(app.issue_numbers(), vec![1, 3], "milestone pills match any selected");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(1), ItemRef::github(3)],
+        "milestone pills match any selected"
+    );
     // Kinds intersect: label AND milestone.
     app.sidebar.label_filter.insert("docs".to_string());
     assert!(app.issue_numbers().is_empty());
@@ -214,11 +323,23 @@ fn label_and_milestone_pills_narrow_recent_rows_only() {
 #[test]
 fn pinned_and_requested_rows_skip_filters_and_grouping() {
     use crate::model::{GroupBy, SideRow::{Divider, Item}};
-    let mut app = sidebar_app(&[1, 2]);
-    app.nav.pin_order = vec![1];
-    app.nav.pinned = [1].into_iter().collect();
-    add_recent(&mut app, 3, "2026-01-05T00:00:00Z", &["bug"], Some("v1"));
-    add_recent(&mut app, 4, "2026-01-04T00:00:00Z", &["bug"], Some("v1"));
+    let mut app = sidebar_app(&[ItemRef::github(1), ItemRef::github(2)]);
+    app.nav.pin_order = vec![ItemRef::github(1)];
+    app.nav.pinned = [1].map(ItemRef::github).into_iter().collect();
+    add_recent(
+        &mut app,
+        ItemRef::github(3),
+        "2026-01-05T00:00:00Z",
+        &["bug"],
+        Some("v1"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(4),
+        "2026-01-04T00:00:00Z",
+        &["bug"],
+        Some("v1"),
+    );
     app.sidebar.label_filter.insert("bug".to_string());
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
@@ -227,12 +348,12 @@ fn pinned_and_requested_rows_skip_filters_and_grouping() {
     assert_eq!(
         app.issue_rows(),
         vec![
-            Item(1),
+            Item(ItemRef::github(1)),
             Divider("requested".to_string()),
-            Item(2),
+            Item(ItemRef::github(2)),
             Divider("v1 (2)".to_string()),
-            Item(3),
-            Item(4),
+            Item(ItemRef::github(3)),
+            Item(ItemRef::github(4)),
         ],
         "pins and requested rows stay on top, ungrouped and unfiltered"
     );
@@ -243,8 +364,20 @@ fn sort_runs_inside_each_milestone_group() {
     use crate::model::{GroupBy, SideRow::{Divider, Item}};
     let mut app = sidebar_app(&[]);
     app.nav.visited.clear();
-    add_recent(&mut app, 3, "2026-01-03T00:00:00Z", &[], Some("v1"));
-    add_recent(&mut app, 4, "2026-01-06T00:00:00Z", &[], Some("v1"));
+    add_recent(
+        &mut app,
+        ItemRef::github(3),
+        "2026-01-03T00:00:00Z",
+        &[],
+        Some("v1"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(4),
+        "2026-01-06T00:00:00Z",
+        &[],
+        Some("v1"),
+    );
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
     app.sidebar.milestones =
@@ -252,10 +385,18 @@ fn sort_runs_inside_each_milestone_group() {
     app.cycle_sort();
     assert_eq!(
         app.issue_rows(),
-        vec![Divider("v1 (2)".to_string()), Item(4), Item(3)],
+        vec![
+            Divider("v1 (2)".to_string()),
+            Item(ItemRef::github(4)),
+            Item(ItemRef::github(3))
+        ],
         "updated sort reorders inside the group"
     );
-    assert_eq!(app.issue_numbers(), vec![4, 3], "j/k follows the grouped display");
+    assert_eq!(
+        app.issue_numbers(),
+        vec![ItemRef::github(4), ItemRef::github(3)],
+        "j/k follows the grouped display"
+    );
 }
 
 #[test]
@@ -263,10 +404,34 @@ fn milestone_groups_order_dated_then_undated_then_none() {
     use crate::model::{GroupBy, SideRow::Divider};
     let mut app = sidebar_app(&[]);
     app.nav.visited.clear();
-    add_recent(&mut app, 1, "2026-01-05T00:00:00Z", &[], Some("later"));
-    add_recent(&mut app, 2, "2026-01-05T00:00:00Z", &[], Some("sooner"));
-    add_recent(&mut app, 3, "2026-01-05T00:00:00Z", &[], Some("backlog"));
-    add_recent(&mut app, 4, "2026-01-05T00:00:00Z", &[], None);
+    add_recent(
+        &mut app,
+        ItemRef::github(1),
+        "2026-01-05T00:00:00Z",
+        &[],
+        Some("later"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(2),
+        "2026-01-05T00:00:00Z",
+        &[],
+        Some("sooner"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(3),
+        "2026-01-05T00:00:00Z",
+        &[],
+        Some("backlog"),
+    );
+    add_recent(
+        &mut app,
+        ItemRef::github(4),
+        "2026-01-05T00:00:00Z",
+        &[],
+        None,
+    );
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
     app.sidebar.milestones = vec![
@@ -375,7 +540,7 @@ fn auto_refresh_interval_env_override() {
 
 #[test]
 fn auto_refresh_fires_at_interval() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     let start = app.sections.last_fetch;
     app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL - Duration::from_millis(1));
     assert!(app.sections.rx.is_none());
@@ -387,13 +552,32 @@ fn auto_refresh_fires_at_interval() {
 #[test]
 fn auto_refresh_guards_each_active_view() {
     for guard in 0..7 {
-        let mut app = sidebar_app(&[7]);
+        let mut app = sidebar_app(&[ItemRef::github(7)]);
         let (_tx, rx) = std::sync::mpsc::channel();
         match guard {
             0 => app.sections.rx = Some(rx),
-            1 => { app.board.loading = true; app.open(crate::app::Entry::Board); }
-            2 => { app.board.data = Some(BoardData { title: String::new(), order: vec![], items: vec![], url: String::new() }); app.open(crate::app::Entry::Board); }
-            3 => app.open_draft(ComposeState { number: 7, target: ComposeTarget::Thread, body: String::new(), cursor: 0, sending: false, kill: String::new(), view: Default::default() }),
+            1 => {
+                app.board.loading = true;
+                app.open(crate::app::Entry::Board);
+            }
+            2 => {
+                app.board.data = Some(BoardData {
+                    title: String::new(),
+                    order: vec![],
+                    items: vec![],
+                    url: String::new(),
+                });
+                app.open(crate::app::Entry::Board);
+            }
+            3 => app.open_draft(ComposeState {
+                number: ItemRef::github(7),
+                target: ComposeTarget::Thread,
+                body: String::new(),
+                cursor: 0,
+                sending: false,
+                kill: String::new(),
+                view: Default::default(),
+            }),
             4 => app.open(crate::app::Entry::Format(crate::app::FormatEdit::None)),
             5 => app.open(crate::app::Entry::Shortcuts),
             6 => app.nav.focus = Focus::Bar,
@@ -408,7 +592,7 @@ fn auto_refresh_guards_each_active_view() {
 
 #[test]
 fn auto_refresh_failure_backs_off_and_success_resets() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     for expected in [60, 60] {
         let (tx, rx) = std::sync::mpsc::channel();
         app.sections.rx = Some(rx);
@@ -441,7 +625,7 @@ fn refresh_plan_picks_delta_status_or_full() {
 
 #[test]
 fn auto_refresh_probes_until_a_status_refresh_is_due() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     app.repo_slug = Some("o/r".to_string());
     let start = app.sections.last_fetch;
     let status_clock = app.sections.last_status;
@@ -464,7 +648,7 @@ fn auto_refresh_probes_until_a_status_refresh_is_due() {
 
 #[test]
 fn unchanged_probe_keeps_rows_and_resets_backoff() {
-    let mut app = sidebar_app(&[7]);
+    let mut app = sidebar_app(&[ItemRef::github(7)]);
     let before = app.nav.recent.clone();
     let full = app.sections.last_full;
     let (tx, rx) = std::sync::mpsc::channel();
@@ -482,21 +666,27 @@ fn unchanged_probe_keeps_rows_and_resets_backoff() {
 
 #[test]
 fn auto_refresh_landing_preserves_view() {
-    for current in [Some(7), None] {
-        let mut app = sidebar_app(&[7]);
+    for current in [Some(ItemRef::github(7)), None] {
+        let mut app = sidebar_app(&[ItemRef::github(7)]);
         app.nav.current = current;
         app.nav.scroll = 12;
-        app.nav.hover = Some(7);
+        app.nav.hover = Some(ItemRef::github(7));
         let (tx, rx) = std::sync::mpsc::channel();
         app.sections.rx = Some(rx);
         app.sections.auto_refresh = true;
-        let row = crate::github::Row { issue: issue(9, "2026-01-06T00:00:00Z"), statuses: vec![], detail: model::BoardDetail::default(), complete: true, window_at: None };
+        let row = crate::github::Row {
+            issue: issue(ItemRef::github(9), "2026-01-06T00:00:00Z"),
+            statuses: vec![],
+            detail: model::BoardDetail::default(),
+            complete: true,
+            window_at: None,
+        };
         tx.send(github::SectionEvent::Done(Ok(vec![row]))).unwrap();
         poll_sections(&mut app);
-        assert!(app.nav.recent.contains(&9));
+        assert!(app.nav.recent.contains(&ItemRef::github(9)));
         assert_eq!(app.nav.current, current);
         assert_eq!(app.nav.scroll, 12);
-        assert_eq!(app.nav.hover, Some(7));
+        assert_eq!(app.nav.hover, Some(ItemRef::github(7)));
     }
 }
 
@@ -528,7 +718,7 @@ fn seed_backfilled(rows: Vec<crate::github::Row>, done: bool) {
     }
 }
 
-fn stored(number: u64, state: &str, labels: &[&str], title: &str) -> crate::github::Row {
+fn stored(number: ItemRef, state: &str, labels: &[&str], title: &str) -> crate::github::Row {
     let mut row = cached_row(number, true);
     row.issue.state = state.to_string();
     row.issue.title = title.to_string();
@@ -545,23 +735,35 @@ fn queued(app: &mut App) -> usize {
 fn local_query_answers_from_the_store_with_zero_requests() {
     let (_guard, _dir, saved) = temp_xdg();
     seed_backfilled(vec![
-        stored(1, "OPEN", &["bug"], "crash on start"),
-        stored(2, "OPEN", &["feature"], "dark mode"),
-        stored(3, "CLOSED", &["bug"], "old crash"),
+        stored(ItemRef::github(1), "OPEN", &["bug"], "crash on start"),
+        stored(ItemRef::github(2), "OPEN", &["feature"], "dark mode"),
+        stored(ItemRef::github(3), "CLOSED", &["bug"], "old crash"),
     ], true);
     let mut app = linked_app();
     app.sections.merged_window_hours = 0;
     app.sidebar.query_active = "is:open label:bug".to_string();
     app.run_gh_search("is:open label:bug".to_string());
-    assert_eq!(app.nav.recent, vec![1], "only the matching stored row lands");
+    assert_eq!(app.nav.recent, vec![ItemRef::github(1)], "only the matching stored row lands");
     assert!(app.sections.rx.is_none() && !app.sections.replace, "no fetch was spawned");
     assert_eq!(queued(&mut app), 0, "zero requests queued");
     assert_eq!(app.sidebar.query_active, "is:open label:bug", "the query tag keeps its text");
 
     // A store change re-filters with no request.
-    put_sections(vec![stored(1, "OPEN", &["bug"], "crash on start"), stored(2, "OPEN", &["bug"], "dark mode")], 0);
-    assert!(app.watch_store(Instant::now()), "the changed store re-filters");
-    assert!(app.nav.recent.contains(&1) && app.nav.recent.contains(&2));
+    put_sections(
+        vec![
+            stored(ItemRef::github(1), "OPEN", &["bug"], "crash on start"),
+            stored(ItemRef::github(2), "OPEN", &["bug"], "dark mode"),
+        ],
+        0,
+    );
+    assert!(
+        app.watch_store(Instant::now()),
+        "the changed store re-filters"
+    );
+    assert!(
+        app.nav.recent.contains(&ItemRef::github(1))
+            && app.nav.recent.contains(&ItemRef::github(2))
+    );
     assert!(app.sections.rx.is_none());
     assert_eq!(queued(&mut app), 0);
 
@@ -576,14 +778,20 @@ fn local_query_answers_from_the_store_with_zero_requests() {
 #[test]
 fn local_query_matches_title_words_through_a_saved_query() {
     let (_guard, _dir, saved) = temp_xdg();
-    seed_backfilled(vec![stored(1, "OPEN", &[], "Crash on start"), stored(2, "OPEN", &[], "dark mode")], true);
+    seed_backfilled(
+        vec![
+            stored(ItemRef::github(1), "OPEN", &[], "Crash on start"),
+            stored(ItemRef::github(2), "OPEN", &[], "dark mode"),
+        ],
+        true,
+    );
     let mut app = linked_app();
     app.sections.merged_window_hours = 0;
     app.sidebar.saved_queries = vec![github::SavedQuery { name: "crashes".to_string(), query: "is:open crash START".to_string() }];
     app.sidebar.format_focus = 1;
     app.toggle_format_widget();
     assert_eq!(app.sidebar.query_active, "is:open crash START");
-    assert_eq!(app.nav.recent, vec![1]);
+    assert_eq!(app.nav.recent, vec![ItemRef::github(1)]);
     assert_eq!(queued(&mut app), 0);
     restore_xdg(saved);
 }
@@ -591,7 +799,10 @@ fn local_query_matches_title_words_through_a_saved_query() {
 #[test]
 fn queries_the_store_cannot_answer_show_a_notice_and_send_nothing() {
     let (_guard, _dir, saved) = temp_xdg();
-    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
+    seed_backfilled(
+        vec![stored(ItemRef::github(1), "OPEN", &["bug"], "crash")],
+        true,
+    );
     let mut app = linked_app();
     app.sections.merged_window_hours = 0;
     // An unknown term, and a closed query reaching past the backfill horizon.
@@ -609,7 +820,10 @@ fn queries_the_store_cannot_answer_show_a_notice_and_send_nothing() {
 #[test]
 fn an_unfinished_backfill_sends_no_search() {
     let (_guard, _dir, saved) = temp_xdg();
-    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], false);
+    seed_backfilled(
+        vec![stored(ItemRef::github(1), "OPEN", &["bug"], "crash")],
+        false,
+    );
     let mut app = linked_app();
     app.run_gh_search("is:open label:bug".to_string());
     assert!(app.sections.rx.is_none() && queued(&mut app) == 0, "the store is incomplete, the notice names the action");
@@ -619,7 +833,13 @@ fn an_unfinished_backfill_sends_no_search() {
 #[test]
 fn holder_syncs_behind_a_local_query_and_the_view_refilters() {
     let (_guard, _dir, saved) = temp_xdg();
-    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash"), stored(2, "OPEN", &[], "dark mode")], true);
+    seed_backfilled(
+        vec![
+            stored(ItemRef::github(1), "OPEN", &["bug"], "crash"),
+            stored(ItemRef::github(2), "OPEN", &[], "dark mode"),
+        ],
+        true,
+    );
     let mut holder = linked_app();
     let mut other = linked_app();
     assert!(holder.sync_holder() && !other.sync_holder());
@@ -627,7 +847,7 @@ fn holder_syncs_behind_a_local_query_and_the_view_refilters() {
         app.sections.merged_window_hours = 0;
         app.sidebar.query_active = "is:open label:bug".to_string();
         app.run_gh_search("is:open label:bug".to_string());
-        assert_eq!(app.nav.recent, vec![1]);
+        assert_eq!(app.nav.recent, vec![ItemRef::github(1)]);
     }
     let start = holder.sections.last_sync;
     holder.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
@@ -640,16 +860,32 @@ fn holder_syncs_behind_a_local_query_and_the_view_refilters() {
     // The sync's Done writes the store but lands nothing in the sidebar.
     let (tx, rx) = std::sync::mpsc::channel();
     holder.sections.sync_rx = Some(rx);
-    tx.send(github::SectionEvent::Done(Ok(vec![stored(9, "OPEN", &["bug"], "listing row")]))).unwrap();
+    tx.send(github::SectionEvent::Done(Ok(vec![stored(
+        ItemRef::github(9),
+        "OPEN",
+        &["bug"],
+        "listing row",
+    )])))
+    .unwrap();
     poll_sections(&mut holder);
     assert!(holder.sections.sync_rx.is_none());
-    assert_eq!(holder.nav.recent, vec![1], "the query result stays");
-    assert!(!holder.issues.data.contains_key(&9));
+    assert_eq!(
+        holder.nav.recent,
+        vec![ItemRef::github(1)],
+        "the query result stays"
+    );
+    assert!(!holder.issues.data.contains_key(&ItemRef::github(9)));
 
     // The store changed: the re-filter picks the row up with no request.
-    put_sections(vec![stored(1, "OPEN", &["bug"], "crash"), stored(2, "OPEN", &["bug"], "dark mode")], 0);
+    put_sections(
+        vec![
+            stored(ItemRef::github(1), "OPEN", &["bug"], "crash"),
+            stored(ItemRef::github(2), "OPEN", &["bug"], "dark mode"),
+        ],
+        0,
+    );
     assert!(holder.watch_store(Instant::now()));
-    assert!(holder.nav.recent.contains(&2));
+    assert!(holder.nav.recent.contains(&ItemRef::github(2)));
     assert_eq!(queued(&mut holder), 1, "no new request");
     restore_xdg(saved);
 }
@@ -666,7 +902,7 @@ fn holder_still_syncs_behind_an_unanswerable_query_and_sends_no_search() {
     restore_xdg(saved);
 }
 
-fn gh_hit(number: u64, updated: &str, title: &str) -> crate::github::Row {
+fn gh_hit(number: ItemRef, updated: &str, title: &str) -> crate::github::Row {
     let mut row = cached_row(number, false);
     row.issue.updated_at = updated.to_string();
     row.issue.title = title.to_string();
@@ -684,7 +920,10 @@ fn land_search(app: &mut App, rows: Vec<crate::github::Row>) {
 #[test]
 fn the_search_action_runs_one_github_search_and_lands_github_rows() {
     let (_guard, _dir, saved) = temp_xdg();
-    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
+    seed_backfilled(
+        vec![stored(ItemRef::github(1), "OPEN", &["bug"], "crash")],
+        true,
+    );
     let mut app = linked_app();
     app.sidebar.query_active = "in:body crash".to_string();
     app.run_gh_search("in:body crash".to_string());
@@ -693,10 +932,19 @@ fn the_search_action_runs_one_github_search_and_lands_github_rows() {
     app.search_github();
     assert_eq!(queued(&mut app), 1, "exactly one search");
     assert!(app.sections.rx.is_some() && app.sections.replace);
-    land_search(&mut app, vec![gh_hit(40, "2030-01-01T00:00:00Z", "body hit")]);
+    land_search(
+        &mut app,
+        vec![gh_hit(
+            ItemRef::github(40),
+            "2030-01-01T00:00:00Z",
+            "body hit",
+        )],
+    );
     assert_eq!(app.query_source(), "GitHub");
-    assert_eq!(app.nav.recent, vec![40]);
-    let stored = crate::store::open("o/r").unwrap().rows_by_number(&[40]);
+    assert_eq!(app.nav.recent, vec![ItemRef::github(40)]);
+    let stored = crate::store::open("o/r")
+        .unwrap()
+        .rows_by_number(&[ItemRef::github(40)]);
     assert_eq!(stored.len(), 1, "the hit is in the store");
     restore_xdg(saved);
 }
@@ -704,35 +952,49 @@ fn the_search_action_runs_one_github_search_and_lands_github_rows() {
 #[test]
 fn github_results_upsert_newer_only_and_keep_statuses() {
     let (_guard, _dir, saved) = temp_xdg();
-    let mut old = stored(5, "OPEN", &[], "stored title");
+    let mut old = stored(ItemRef::github(5), "OPEN", &[], "stored title");
     old.issue.updated_at = "2030-01-01T00:00:00Z".to_string();
     old.issue.checks = Some(model::CheckState::Pass);
     old.statuses = vec![("Board".to_string(), Some("Doing".to_string()))];
-    let mut same = stored(6, "OPEN", &[], "same time");
+    let mut same = stored(ItemRef::github(6), "OPEN", &[], "same time");
     same.issue.updated_at = "2030-01-01T00:00:00Z".to_string();
     seed_backfilled(vec![old, same], true);
     let mut app = linked_app();
     app.sidebar.query_active = "in:body x".to_string();
     land_search(&mut app, vec![
-        gh_hit(5, "2030-02-01T00:00:00Z", "newer title"),
-        gh_hit(6, "2030-01-01T00:00:00Z", "ignored title"),
+        gh_hit(ItemRef::github(5), "2030-02-01T00:00:00Z", "newer title"),
+        gh_hit(ItemRef::github(6), "2030-01-01T00:00:00Z", "ignored title"),
     ]);
     let store = crate::store::open("o/r").unwrap();
-    let five = &store.rows_by_number(&[5])[0];
+    let five = &store.rows_by_number(&[ItemRef::github(5)])[0];
     assert_eq!(five.issue.title, "newer title");
     assert!(five.issue.checks.is_some(), "checks survive the REST row");
     assert_eq!(five.statuses.len(), 1, "statuses survive the REST row");
-    assert_eq!(store.rows_by_number(&[6])[0].issue.title, "same time", "equal updated_at keeps the stored row");
+    assert_eq!(
+        store.rows_by_number(&[ItemRef::github(6)])[0].issue.title,
+        "same time",
+        "equal updated_at keeps the stored row"
+    );
     restore_xdg(saved);
 }
 
 #[test]
 fn a_github_result_set_stays_visible_and_never_auto_refreshes() {
     let (_guard, _dir, saved) = temp_xdg();
-    seed_backfilled(vec![stored(1, "OPEN", &["bug"], "crash")], true);
+    seed_backfilled(
+        vec![stored(ItemRef::github(1), "OPEN", &["bug"], "crash")],
+        true,
+    );
     let mut app = linked_app();
     app.sidebar.query_active = "in:body crash".to_string();
-    land_search(&mut app, vec![gh_hit(40, "2030-01-01T00:00:00Z", "body hit")]);
+    land_search(
+        &mut app,
+        vec![gh_hit(
+            ItemRef::github(40),
+            "2030-01-01T00:00:00Z",
+            "body hit",
+        )],
+    );
     let queued_before = queued(&mut app);
     // Auto-refresh sends no search.
     let start = app.sections.last_fetch;
@@ -740,9 +1002,19 @@ fn a_github_result_set_stays_visible_and_never_auto_refreshes() {
     assert!(app.sections.rx.is_none() && !app.sections.replace);
     assert!(queued(&mut app) <= queued_before + 1, "at most the holder's quiet sync");
     // A store change re-reads the same numbers.
-    put_sections(vec![stored(1, "OPEN", &["bug"], "crash"), gh_hit(40, "2030-01-02T00:00:00Z", "body hit v2")], 0);
+    put_sections(
+        vec![
+            stored(ItemRef::github(1), "OPEN", &["bug"], "crash"),
+            gh_hit(ItemRef::github(40), "2030-01-02T00:00:00Z", "body hit v2"),
+        ],
+        0,
+    );
     assert!(app.watch_store(Instant::now()));
-    assert_eq!(app.nav.recent, vec![40], "the GitHub result set stays");
+    assert_eq!(
+        app.nav.recent,
+        vec![ItemRef::github(40)],
+        "the GitHub result set stays"
+    );
     assert_eq!(app.query_source(), "GitHub");
     // A new local query run resets the source.
     app.run_gh_search("in:body crash".to_string());

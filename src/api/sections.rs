@@ -3,6 +3,7 @@ use super::client::{client, graphql_auth_failure, graphql_url, http_fail, note_r
 use crate::model::{Author, BoardDetail, IssueData, IssueLinks, Label, SubSummary};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use crate::model::ItemRef;
 
 pub(super) const PR_FIELDS: &str = r#"
  number title state author { login } labels(first: 20) { nodes { name } }
@@ -43,46 +44,91 @@ const STATUS_CHUNK: usize = 50;
 
 /// Silent-change fields of one row: CI rollup and project statuses.
 pub struct StatusUpdate {
-    pub number: u64,
+    pub number: ItemRef,
     pub checks: Option<crate::model::CheckState>,
     pub statuses: super::Statuses,
 }
 
 /// The open rows whose CI or project status can change without bumping
 /// `updatedAt`: `(number, is_pr)`.
-pub fn status_targets(rows: &[Row]) -> Vec<(u64, bool)> {
+pub fn status_targets(rows: &[Row]) -> Vec<(ItemRef, bool)> {
     rows.iter().filter(|r| r.issue.state == "OPEN").map(|r| (r.issue.number, r.issue.is_pr)).collect()
 }
 
 /// One aliased query per chunk of 50 targets: `p<n>` pull requests,
 /// `i<n>` issues.
-fn status_queries(targets: &[(u64, bool)]) -> Vec<String> {
+fn status_queries(targets: &[(ItemRef, bool)]) -> Vec<String> {
     targets.chunks(STATUS_CHUNK).map(|chunk| {
         let fields: String = chunk.iter().map(|&(n, is_pr)| if is_pr {
-            format!(" p{n}: pullRequest(number: {n}) {{ {STATUS_PR_FIELDS} }}")
+            format!(" p{n}: pullRequest(number: {n}) {{ {STATUS_PR_FIELDS} }}", n = n.number)
         } else {
-            format!(" i{n}: issue(number: {n}) {{ {STATUS_ISSUE_FIELDS} }}")
+            format!(" i{n}: issue(number: {n}) {{ {STATUS_ISSUE_FIELDS} }}", n = n.number)
         }).collect();
         format!("query($owner: String!, $repo: String!) {{\n repository(owner: $owner, name: $repo) {{{fields} }}\n {RATE_LIMIT_FIELD} }}")
     }).collect()
 }
 
-fn parse_status_page(value: &Value, chunk: &[(u64, bool)]) -> Result<Vec<StatusUpdate>, String> {
+fn parse_status_page(
+    value: &Value,
+    chunk: &[(ItemRef, bool)],
+) -> Result<Vec<StatusUpdate>, String> {
     if let Some(e) = graphql_auth_failure(value) {
         return Err(e);
     }
-    let repo = value.pointer("/data/repository").filter(|v| v.is_object())
-        .ok_or_else(|| format!("GitHub GraphQL: {}", value.get("errors").unwrap_or(&Value::Null)))?;
-    Ok(chunk.iter().filter_map(|&(number, is_pr)| {
-        let n = repo.get(format!("{}{number}", if is_pr { "p" } else { "i" })).filter(|v| v.is_object())?;
-        let statuses = n.pointer("/projectItems/nodes").and_then(Value::as_array).into_iter().flatten().map(|p| (p.pointer("/project/title").and_then(Value::as_str).unwrap_or("").to_owned(), p.pointer("/status/name").and_then(Value::as_str).map(str::to_owned))).collect();
-        Some(StatusUpdate { number, checks: crate::model::parse_check_state(n), statuses })
-    }).collect())
+    let repo = value
+        .pointer("/data/repository")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| {
+            format!(
+                "GitHub GraphQL: {}",
+                value.get("errors").unwrap_or(&Value::Null)
+            )
+        })?;
+    Ok(chunk
+        .iter()
+        .filter_map(|&(number, is_pr)| {
+            let n = repo
+                .get(format!(
+                    "{}{number}",
+                    if is_pr { "p" } else { "i" },
+                    number = number.number
+                ))
+                .filter(|v| v.is_object())?;
+            let statuses = n
+                .pointer("/projectItems/nodes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|p| {
+                    (
+                        p.pointer("/project/title")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                        p.pointer("/status/name")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    )
+                })
+                .collect();
+            Some(StatusUpdate {
+                number,
+                checks: crate::model::parse_check_state(n),
+                statuses,
+            })
+        })
+        .collect())
 }
 
 /// Fetch CI and project status for the open `targets`, chunked.
-pub async fn fetch_statuses(repo: &str, targets: &[(u64, bool)], bearer: &str) -> Result<Vec<StatusUpdate>, String> {
-    let (owner, name) = repo.split_once('/').ok_or("repository must be owner/repo")?;
+pub async fn fetch_statuses(
+    repo: &str,
+    targets: &[(ItemRef, bool)],
+    bearer: &str,
+) -> Result<Vec<StatusUpdate>, String> {
+    let (owner, name) = repo
+        .split_once('/')
+        .ok_or("repository must be owner/repo")?;
     let url = graphql_url();
     let client = client();
     let mut updates = Vec::new();
@@ -187,16 +233,64 @@ pub(crate) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> R
     // Slim listing row: body and review threads load on open
     // through the full fetch, so they stay empty here even when a
     // payload carries them.
-    let milestone = n.pointer("/milestone/title").and_then(Value::as_str).map(str::to_owned);
-    let parent = n.pointer("/parent/number").and_then(Value::as_u64);
-    let numbers = |path: &str| n.pointer(path).and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("number")?.as_u64()).collect();
-    let links = IssueLinks { blocked_by: numbers("/blockedBy/nodes"), closed_by: numbers("/closedByPullRequestsReferences/nodes") };
+    let milestone = n
+        .pointer("/milestone/title")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let parent = n
+        .pointer("/parent/number")
+        .and_then(Value::as_u64)
+        .map(ItemRef::github);
+    let numbers = |path: &str| {
+        n.pointer(path)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.get("number")?.as_u64().map(ItemRef::github))
+            .collect()
+    };
+    let links = IssueLinks {
+        blocked_by: numbers("/blockedBy/nodes"),
+        closed_by: numbers("/closedByPullRequestsReferences/nodes"),
+    };
     let summary = n.get("subIssuesSummary").filter(|s| s.is_object());
     let sub_summary = summary.map(|s| SubSummary {
         total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
         completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
     });
-    Ok(Row { issue: IssueData { number, title: string("title"), state: string("state"), author: Author { login: n.pointer("/author/login").and_then(Value::as_str).unwrap_or("").to_owned() }, labels, assignees, created_at: created, updated_at: updated, url: string("url"), body: String::new(), comments: vec![], review_threads: vec![], paired: vec![], checks: crate::model::parse_check_state(n), milestone, parent, sub_summary, links, is_pr }, statuses, detail, complete: false, window_at })
+    Ok(Row {
+        issue: IssueData {
+            number: ItemRef::github(number),
+            title: string("title"),
+            state: string("state"),
+            author: Author {
+                login: n
+                    .pointer("/author/login")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            },
+            labels,
+            assignees,
+            created_at: created,
+            updated_at: updated,
+            url: string("url"),
+            body: String::new(),
+            comments: vec![],
+            review_threads: vec![],
+            paired: vec![],
+            checks: crate::model::parse_check_state(n),
+            milestone,
+            parent,
+            sub_summary,
+            links,
+            is_pr,
+        },
+        statuses,
+        detail,
+        complete: false,
+        window_at,
+    })
 }
 
 /// `(hasNextPage, endCursor)` for one section connection of a sections page.
@@ -233,7 +327,7 @@ fn absorb_page(
     live: &mut [bool; 4],
     cursors: &mut [Option<String>; 4],
     page_count: &mut [usize; 4],
-    cached: Option<&HashSet<u64>>,
+    cached: Option<&HashSet<ItemRef>>,
     now: chrono::DateTime<chrono::Utc>,
     hours: u64,
 ) -> usize {
@@ -251,8 +345,14 @@ fn absorb_page(
         fetched += nodes.map(Vec::len).unwrap_or(0);
         page_count[i] += 1;
         let overlap = cached.map_or(0, |c| {
-            nodes.into_iter().flatten()
-                .filter(|n| n.get("number").and_then(Value::as_u64).is_some_and(|n| c.contains(&n)))
+            nodes
+                .into_iter()
+                .flatten()
+                .filter(|n| {
+                    n.get("number")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|n| c.contains(&ItemRef::github(n)))
+                })
                 .count()
         });
         let (more, cursor) = section_cursor(value, section);
@@ -285,7 +385,7 @@ pub async fn sections(
     repo: &str,
     hours: u64,
     bearer: &str,
-    cached: Option<&HashSet<u64>>,
+    cached: Option<&HashSet<ItemRef>>,
     show: [bool; 4],
     progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
 ) -> Result<SectionRows, String> {
@@ -345,7 +445,7 @@ fn merge_rows(fresh: Vec<Row>, cached: Vec<Row>, now: chrono::DateTime<chrono::U
             (true, _) => 0,
         }
     }
-    let mut seen: HashSet<u64> = fresh.iter().map(|r| r.issue.number).collect();
+    let mut seen: HashSet<ItemRef> = fresh.iter().map(|r| r.issue.number).collect();
     let mut sections: [Vec<Row>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     for row in fresh {
         sections[section(&row)].push(row);
@@ -478,7 +578,7 @@ pub fn visible_rows(rows: Vec<Row>, now: chrono::DateTime<chrono::Utc>, hours: u
 /// data alone: open rows by creation, merged PRs by merge time (their
 /// window anchor), closed issues by last update; ties by number. GitHub
 /// timestamps share one RFC 3339 form, so text order is time order.
-fn list_order(row: &Row) -> (&str, u64) {
+fn list_order(row: &Row) -> (&str, ItemRef) {
     let issue = &row.issue;
     let at = match (issue.is_pr, issue.state.as_str()) {
         (true, "MERGED") => row.window_at.as_deref().unwrap_or(&issue.updated_at),
@@ -502,21 +602,31 @@ mod tests {
 
     #[test]
     fn status_queries_alias_and_chunk_at_fifty() {
-        let targets: Vec<(u64, bool)> = (1..=120).map(|n| (n, n % 2 == 0)).collect();
+        let targets: Vec<(ItemRef, bool)> = (1..=120)
+            .map(|n| (ItemRef::github(n), n % 2 == 0))
+            .collect();
         let qs = status_queries(&targets);
         assert_eq!(qs.len(), 3);
         assert!(qs[0].contains(" p2: pullRequest(number: 2)") && qs[0].contains(" i1: issue(number: 1)"));
         assert!(qs[0].contains("statusCheckRollup") && qs[0].contains(RATE_LIMIT_FIELD));
         assert!(qs[2].contains("i101:") && !qs[2].contains("i100:"), "chunks split 50/50/20");
-        let q = status_queries(&[(5, false)]).remove(0);
+        let q = status_queries(&[(ItemRef::github(5), false)]).remove(0);
         assert!(!q.contains("statusCheckRollup"), "issues ask project status only");
         assert!(q.contains("projectItems"));
     }
 
     #[test]
     fn status_targets_take_open_rows_only() {
-        let rows = vec![status_row(1, true, "OPEN"), status_row(2, true, "MERGED"), status_row(3, false, "OPEN"), status_row(4, false, "CLOSED")];
-        assert_eq!(status_targets(&rows), vec![(1, true), (3, false)]);
+        let rows = vec![
+            status_row(1, true, "OPEN"),
+            status_row(2, true, "MERGED"),
+            status_row(3, false, "OPEN"),
+            status_row(4, false, "CLOSED"),
+        ];
+        assert_eq!(
+            status_targets(&rows),
+            vec![(ItemRef::github(1), true), (ItemRef::github(3), false)]
+        );
     }
 
     #[test]
@@ -528,7 +638,16 @@ mod tests {
                    "projectItems": {"nodes": [{"project": {"title": "Board"}, "status": {"name": "Done"}}]}},
             "i3": {"projectItems": {"nodes": [{"project": {"title": "Board"}, "status": {"name": "Todo"}}]}},
             "p99": {"projectItems": {"nodes": []}}}}});
-        let updates = parse_status_page(&value, &[(1, true), (3, false), (99, true), (7, true)]).unwrap();
+        let updates = parse_status_page(
+            &value,
+            &[
+                (ItemRef::github(1), true),
+                (ItemRef::github(3), false),
+                (ItemRef::github(99), true),
+                (ItemRef::github(7), true),
+            ],
+        )
+        .unwrap();
         assert_eq!(updates.len(), 3, "a missing alias is skipped");
         apply_statuses(&mut rows, updates);
         assert_eq!(rows[0].issue.checks, Some(crate::model::CheckState::Fail));
@@ -555,7 +674,10 @@ mod tests {
         let v = json!({"data":{"repository":{
             "open":{"nodes":[{"number":1,"title":"one","state":"OPEN"}]}}}});
         let rows = parse_rows(&[v], test_now(), 24).unwrap();
-        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(
+            rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(),
+            vec![ItemRef::github(1)]
+        );
     }
     #[test]
     fn merged_and_closed_stop_at_the_window_cutoff_while_open_keeps_paging() {
@@ -637,7 +759,10 @@ mod tests {
         assert_eq!(parse_node(&json!({"number": 1}), false, None).unwrap().issue.links, IssueLinks::default());
         let node = json!({"number": 1, "blockedBy": {"nodes": [{"number": 4}, null]}, "closedByPullRequestsReferences": {"nodes": [{"number": 9}]}});
         let links = parse_node(&node, false, None).unwrap().issue.links;
-        assert_eq!((links.blocked_by, links.closed_by), (vec![4], vec![9]));
+        assert_eq!(
+            (links.blocked_by, links.closed_by),
+            (vec![ItemRef::github(4)], vec![ItemRef::github(9)])
+        );
     }
 
     #[test]
@@ -652,8 +777,12 @@ mod tests {
             "closedIssues":{"nodes":[]}}}});
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&[v], now, 24).unwrap();
-        let row = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap();
-        assert_eq!(row(7).issue.parent, Some(3));
+        let row = |n: u64| {
+            rows.iter()
+                .find(|r| r.issue.number == ItemRef::github(n))
+                .unwrap()
+        };
+        assert_eq!(row(7).issue.parent, Some(ItemRef::github(3)));
         assert_eq!(row(7).issue.sub_summary, Some(SubSummary { total: 4, completed: 1 }));
         assert_eq!(row(8).issue.parent, None, "a top-level issue has no parent");
         assert_eq!(row(8).issue.sub_summary, None, "a leaf issue has no sub-issues");
@@ -677,7 +806,13 @@ mod tests {
             "closedIssues": {"nodes": []}}}});
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&[v], now, 24).unwrap();
-        let checks = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap().issue.checks;
+        let checks = |n: u64| {
+            rows.iter()
+                .find(|r| r.issue.number == ItemRef::github(n))
+                .unwrap()
+                .issue
+                .checks
+        };
         assert_eq!(checks(1), Some(CheckState::Pass));
         assert_eq!(checks(2), Some(CheckState::Fail));
         assert_eq!(checks(3), Some(CheckState::Pending));
@@ -690,14 +825,41 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&[v], now, 1).unwrap();
         assert!(rows[0].issue.body.is_empty(), "slim rows carry no body");
-        assert!(rows[0].issue.review_threads.is_empty(), "slim rows carry no threads");
-        assert!(!rows[0].complete, "slim rows stay partial so open runs the full fetch");
-        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 7, 8]);
+        assert!(
+            rows[0].issue.review_threads.is_empty(),
+            "slim rows carry no threads"
+        );
+        assert!(
+            !rows[0].complete,
+            "slim rows stay partial so open runs the full fetch"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(),
+            vec![
+                ItemRef::github(1),
+                ItemRef::github(2),
+                ItemRef::github(7),
+                ItemRef::github(8)
+            ]
+        );
         assert_eq!(rows[0].issue.labels[0].name, "bug");
         assert_eq!(rows[0].statuses[0].1.as_deref(), Some("Todo"));
         assert_eq!(rows[0].detail.comments, 3);
-        assert!(rows.iter().find(|r| r.issue.number == 1).unwrap().issue.is_pr);
-        assert!(!rows.iter().find(|r| r.issue.number == 7).unwrap().issue.is_pr);
+        assert!(
+            rows.iter()
+                .find(|r| r.issue.number == ItemRef::github(1))
+                .unwrap()
+                .issue
+                .is_pr
+        );
+        assert!(
+            !rows
+                .iter()
+                .find(|r| r.issue.number == ItemRef::github(7))
+                .unwrap()
+                .issue
+                .is_pr
+        );
         assert!(parse_rows(&[json!({"errors":[{"message":"denied"}]})], now, 1).is_err());
     }
     #[test]
@@ -717,9 +879,32 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&[page1, page2], now, 1).unwrap();
         // Open pages merge in order, stale merged 5 and stale closed 9 drop.
-        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 4, 3, 7, 8]);
-        assert!(rows.iter().find(|r| r.issue.number == 4).unwrap().issue.is_pr);
-        assert!(!rows.iter().find(|r| r.issue.number == 7).unwrap().issue.is_pr);
+        assert_eq!(
+            rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(),
+            vec![
+                ItemRef::github(1),
+                ItemRef::github(2),
+                ItemRef::github(4),
+                ItemRef::github(3),
+                ItemRef::github(7),
+                ItemRef::github(8)
+            ]
+        );
+        assert!(
+            rows.iter()
+                .find(|r| r.issue.number == ItemRef::github(4))
+                .unwrap()
+                .issue
+                .is_pr
+        );
+        assert!(
+            !rows
+                .iter()
+                .find(|r| r.issue.number == ItemRef::github(7))
+                .unwrap()
+                .issue
+                .is_pr
+        );
     }
     #[test]
     fn retired_section_does_not_duplicate_rows_across_pages() {
@@ -748,9 +933,22 @@ mod tests {
         pages.push(page2);
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&pages, now, 1).unwrap();
-        let numbers = |state: &str| rows.iter().filter(|r| r.issue.state == state).map(|r| r.issue.number).collect::<Vec<_>>();
-        assert_eq!(numbers("OPEN"), vec![1, 2, 5], "open rows merge in page order");
-        assert_eq!(numbers("MERGED"), vec![3, 4], "each merged row appears exactly once");
+        let numbers = |state: &str| {
+            rows.iter()
+                .filter(|r| r.issue.state == state)
+                .map(|r| r.issue.number)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            numbers("OPEN"),
+            vec![ItemRef::github(1), ItemRef::github(2), ItemRef::github(5)],
+            "open rows merge in page order"
+        );
+        assert_eq!(
+            numbers("MERGED"),
+            vec![ItemRef::github(3), ItemRef::github(4)],
+            "each merged row appears exactly once"
+        );
     }
     #[test]
     fn section_rows_stop_at_named_cap() {
@@ -766,8 +964,11 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&[page(head), page(tail)], now, 24).unwrap();
         assert_eq!(rows.len(), MAX_SECTION_ROWS);
-        assert_eq!(rows[0].issue.number, 1);
-        assert_eq!(rows[MAX_SECTION_ROWS - 1].issue.number, MAX_SECTION_ROWS as u64);
+        assert_eq!(rows[0].issue.number, ItemRef::github(1));
+        assert_eq!(
+            rows[MAX_SECTION_ROWS - 1].issue.number,
+            ItemRef::github(MAX_SECTION_ROWS as u64)
+        );
     }
     /// One sections page with `open` nodes; the other sections are empty
     /// and done, so only the open section stays live.
@@ -804,13 +1005,28 @@ mod tests {
             dated(7, false, "CLOSED", "2026-11-10T08:00:00Z", "2026-11-10T03:00:00Z", None),
             dated(8, false, "CLOSED", "2026-11-01T00:00:00Z", "2026-11-10T06:00:00Z", None),
         ];
-        let order: Vec<u64> = visible_rows(rows, now, 24, [true; 4]).iter().map(|r| r.issue.number).collect();
-        assert_eq!(order, vec![2, 1, 4, 3, 6, 5, 8, 7]);
+        let order: Vec<ItemRef> = visible_rows(rows, now, 24, [true; 4])
+            .iter()
+            .map(|r| r.issue.number)
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                ItemRef::github(2),
+                ItemRef::github(1),
+                ItemRef::github(4),
+                ItemRef::github(3),
+                ItemRef::github(6),
+                ItemRef::github(5),
+                ItemRef::github(8),
+                ItemRef::github(7)
+            ]
+        );
     }
     fn section_row(number: u64, title: &str, state: &str, is_pr: bool, window_at: Option<&str>) -> Row {
         Row {
             issue: IssueData {
-                number, title: title.to_owned(), state: state.to_owned(),
+                number: ItemRef::github(number), title: title.to_owned(), state: state.to_owned(),
                 author: Author::default(), labels: vec![], assignees: vec![],
                 created_at: String::new(), updated_at: String::new(),
                 url: String::new(), body: String::new(), comments: vec![],
@@ -826,7 +1042,7 @@ mod tests {
     }
     #[test]
     fn overlap_retires_a_warm_section_before_its_last_page() {
-        let cached: HashSet<u64> = [1, 2, 3].into();
+        let cached: HashSet<ItemRef> = [1, 2, 3].map(ItemRef::github).into();
         let mut page = open_page(&[1, 2, 3, 4], true, Some("c1"));
         let mut live = [true; 4];
         let mut cursors: [Option<String>; 4] = [None, None, None, None];
@@ -838,7 +1054,7 @@ mod tests {
     }
     #[test]
     fn warm_section_keeps_paging_below_the_overlap() {
-        let cached: HashSet<u64> = [1, 2].into();
+        let cached: HashSet<ItemRef> = [1, 2].map(ItemRef::github).into();
         let mut page = open_page(&[1, 2, 3, 4], true, Some("c1"));
         let mut live = [true; 4];
         let mut cursors: [Option<String>; 4] = [None, None, None, None];
@@ -888,8 +1104,20 @@ mod tests {
         ];
         let rows = merge_rows(fresh, cached, now, 24);
         // Fresh-then-cached within each section keeps the cold-refresh order.
-        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
-        assert_eq!(rows[0].issue.title, "fresh", "the fetched row wins over the cached one");
+        assert_eq!(
+            rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(),
+            vec![
+                ItemRef::github(1),
+                ItemRef::github(2),
+                ItemRef::github(3),
+                ItemRef::github(4),
+                ItemRef::github(5)
+            ]
+        );
+        assert_eq!(
+            rows[0].issue.title, "fresh",
+            "the fetched row wins over the cached one"
+        );
     }
     #[test]
     fn merge_drops_cached_rows_that_aged_out_of_the_window() {
@@ -900,7 +1128,10 @@ mod tests {
             section_row(3, "open stays", "OPEN", false, None),
         ];
         let rows = merge_rows(vec![], cached, now, 1);
-        assert_eq!(rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(
+            rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(),
+            vec![ItemRef::github(1), ItemRef::github(3)]
+        );
     }
     #[test]
     fn parsed_rows_carry_the_window_anchor_used_at_merge_time() {
@@ -911,7 +1142,13 @@ mod tests {
             "closedIssues":{"nodes":[{"number":8,"title":"eight","state":"CLOSED","updatedAt":"2026-11-10T11:00:00Z"}]}}}});
         let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
         let rows = parse_rows(&[v], now, 24).unwrap();
-        let anchor = |n: u64| rows.iter().find(|r| r.issue.number == n).unwrap().window_at.clone();
+        let anchor = |n: u64| {
+            rows.iter()
+                .find(|r| r.issue.number == ItemRef::github(n))
+                .unwrap()
+                .window_at
+                .clone()
+        };
         assert_eq!(anchor(1), None, "open rows never age out");
         assert_eq!(anchor(2).as_deref(), Some("2026-11-10T11:30:00Z"));
         assert_eq!(anchor(8).as_deref(), Some("2026-11-10T11:00:00Z"));
@@ -919,20 +1156,20 @@ mod tests {
     #[test]
     fn cached_rows_roundtrip_through_json() {
         let mut row = section_row(7, "cached", "MERGED", true, Some("2026-11-10T11:30:00Z"));
-        row.issue.parent = Some(3);
+        row.issue.parent = Some(ItemRef::github(3));
         row.issue.sub_summary = Some(SubSummary { total: 2, completed: 1 });
         let raw = serde_json::to_string(&row).unwrap();
         let back: Row = serde_json::from_str(&raw).unwrap();
-        assert_eq!(back.issue.number, 7);
+        assert_eq!(back.issue.number, ItemRef::github(7));
         assert_eq!(back.issue.title, "cached");
-        assert_eq!(back.issue.parent, Some(3));
+        assert_eq!(back.issue.parent, Some(ItemRef::github(3)));
         assert_eq!(back.issue.sub_summary, Some(SubSummary { total: 2, completed: 1 }));
         assert_eq!(back.window_at.as_deref(), Some("2026-11-10T11:30:00Z"));
     }
     #[test]
-    fn old_cached_rows_without_sub_issue_fields_still_parse() {
+    fn cached_rows_without_sub_issue_fields_still_parse() {
         let old = json!({
-            "issue": {"number": 7, "title": "cached", "state": "OPEN"},
+            "issue": {"number": ItemRef::github(7), "title": "cached", "state": "OPEN"},
             "statuses": [],
             "detail": {},
             "complete": false,

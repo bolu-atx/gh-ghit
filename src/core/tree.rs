@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{IssueData, LazyChildren, SideRow};
+use crate::model::ItemRef;
 
 /// Deepest indent level drawn; GitHub allows 8, the sidebar shows 4.
 const MAX_DEPTH: usize = 4;
@@ -9,9 +10,9 @@ const MAX_DEPTH: usize = 4;
 /// summary reports children the fetched rows do not cover, and the
 /// session holds neither a result nor an in-flight request.
 pub(crate) fn needs_lazy_children(
-    parent: u64,
-    data: &HashMap<u64, IssueData>,
-    lazy: &HashMap<u64, LazyChildren>,
+    parent: ItemRef,
+    data: &HashMap<ItemRef, IssueData>,
+    lazy: &HashMap<ItemRef, LazyChildren>,
 ) -> bool {
     if lazy.contains_key(&parent) {
         return false;
@@ -28,21 +29,21 @@ pub(crate) fn needs_lazy_children(
 
 /// Tree input that stays constant across the descent.
 struct TreeCtx<'a> {
-    data: &'a HashMap<u64, IssueData>,
-    children: &'a HashMap<u64, Vec<u64>>,
-    folded: &'a HashSet<u64>,
-    lazy: &'a HashMap<u64, LazyChildren>,
-    visible: &'a HashSet<u64>,
+    data: &'a HashMap<ItemRef, IssueData>,
+    children: &'a HashMap<ItemRef, Vec<ItemRef>>,
+    folded: &'a HashSet<ItemRef>,
+    lazy: &'a HashMap<ItemRef, LazyChildren>,
+    visible: &'a HashSet<ItemRef>,
 }
 
 pub(crate) fn tree_rows(
-    rows: &[u64],
-    data: &HashMap<u64, IssueData>,
-    folded: &HashSet<u64>,
-    lazy: &HashMap<u64, LazyChildren>,
+    rows: &[ItemRef],
+    data: &HashMap<ItemRef, IssueData>,
+    folded: &HashSet<ItemRef>,
+    lazy: &HashMap<ItemRef, LazyChildren>,
 ) -> Vec<SideRow> {
-    let visible: HashSet<u64> = rows.iter().copied().collect();
-    let mut children: HashMap<u64, Vec<u64>> = HashMap::new();
+    let visible: HashSet<ItemRef> = rows.iter().copied().collect();
+    let mut children: HashMap<ItemRef, Vec<ItemRef>> = HashMap::new();
     let mut roots = Vec::new();
     let mut nested = HashSet::new();
     for &n in rows {
@@ -82,7 +83,14 @@ pub(crate) fn tree_rows(
 /// `guide` is this row's connector column (`│ `, `├─`, `└─` per level);
 /// `prefix` is what its children inherit. Both stop growing past
 /// `MAX_DEPTH` levels so deep chains keep their indent.
-fn visit(n: u64, depth: usize, guide: &str, prefix: &str, ctx: &TreeCtx, out: &mut Vec<SideRow>) {
+fn visit(
+    n: ItemRef,
+    depth: usize,
+    guide: &str,
+    prefix: &str,
+    ctx: &TreeCtx,
+    out: &mut Vec<SideRow>,
+) {
     let descendants = ctx.children.get(&n);
     let has_children = descendants.is_some() || summary_total(ctx.data, n) > 0;
     // A parent whose children exist only on GitHub shows folded until its
@@ -107,7 +115,7 @@ fn visit(n: u64, depth: usize, guide: &str, prefix: &str, ctx: &TreeCtx, out: &m
 
 /// Sub-issue count from the summary; only `total > 0` marks a parent
 /// (GraphQL ships `{0, 0}` for every leaf).
-fn summary_total(data: &HashMap<u64, IssueData>, n: u64) -> u64 {
+fn summary_total(data: &HashMap<ItemRef, IssueData>, n: ItemRef) -> u64 {
     data.get(&n).and_then(|d| d.sub_summary).map_or(0, |s| s.total)
 }
 

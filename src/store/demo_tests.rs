@@ -6,6 +6,7 @@
 use super::open_at;
 use crate::api::Row;
 use crate::model::{Author, BoardDetail, CheckState, IssueData, IssueLinks, Label};
+use crate::model::ItemRef;
 
 const MILESTONES: [&str; 5] = ["Offline first", "Fast startup", "Clear review flow", "Safe sync", "Readable diffs"];
 /// The subject label of each milestone, in `MILESTONES` order.
@@ -123,56 +124,88 @@ const CLOSES: &[(u64, u64)] = &[
 ];
 
 fn demo_rows() -> Vec<Row> {
-    ITEMS.iter().map(|&(number, is_pr, state, title, milestone)| {
-        let incoming = |pairs: &[(u64, u64)]| pairs.iter().filter(|p| p.1 == number).map(|p| p.0).collect::<Vec<u64>>();
-        let path = if is_pr { "pull" } else { "issues" };
-        let issue = IssueData {
-            number,
-            is_pr,
-            state: state.to_string(),
-            title: title.to_string(),
-            url: format!("https://github.com/demo/graph/{path}/{number}"),
-            created_at: "2026-11-01T00:00:00Z".to_string(),
-            updated_at: format!("2026-11-{:02}T12:00:00Z", 2 + number % 17),
-            milestone: milestone.map(|i| MILESTONES[i].to_string()),
-            parent: incoming(PARENTS).first().copied(),
-            links: IssueLinks { blocked_by: incoming(BLOCKS), closed_by: incoming(CLOSES) },
-            ..IssueData::default()
-        };
-        // Labels, assignees, project status and checks vary by number, so
-        // map cards have something to show.
-        let mut labels: Vec<&str> = milestone.map(|i| SUBJECTS[i]).into_iter().collect();
-        if number % 7 == 0 {
-            labels.push("bug");
-        }
-        if milestone.is_none() {
-            labels.push("good first issue");
-        }
-        let issue = IssueData {
-            labels: labels.into_iter().map(|name| Label { name: name.to_string() }).collect(),
-            assignees: PEOPLE.iter()
-                .skip(number as usize % 3)
-                .take(if number % 4 == 0 { 0 } else { 1 + number as usize % 2 })
-                .map(|login| Author { login: login.to_string() })
-                .collect(),
-            checks: is_pr.then(|| [CheckState::Pass, CheckState::Fail, CheckState::Pending][number as usize % 3]),
-            ..issue
-        };
-        let status = match (state, number % 3) {
-            ("OPEN", 0) => "Todo",
-            ("OPEN", 1) => "In progress",
-            ("OPEN", _) => "In review",
-            _ => "Done",
-        };
-        let detail = BoardDetail {
-            created: "2026-11-01".to_string(),
-            updated: issue.updated_at[..10].to_string(),
-            comments: number as usize % 5,
-        };
-        let window_at = (state != "OPEN").then(|| issue.updated_at.clone());
-        let statuses = vec![("Roadmap".to_string(), Some(status.to_string()))];
-        Row { issue, statuses, detail, complete: false, window_at }
-    }).collect()
+    ITEMS
+        .iter()
+        .map(|&(number, is_pr, state, title, milestone)| {
+            let incoming = |pairs: &[(u64, u64)]| {
+                pairs
+                    .iter()
+                    .filter(|p| p.1 == number)
+                    .map(|p| p.0)
+                    .collect::<Vec<u64>>()
+            };
+            let path = if is_pr { "pull" } else { "issues" };
+            let issue = IssueData {
+                number: ItemRef::github(number),
+                is_pr,
+                state: state.to_string(),
+                title: title.to_string(),
+                url: format!("https://github.com/demo/graph/{path}/{number}"),
+                created_at: "2026-11-01T00:00:00Z".to_string(),
+                updated_at: format!("2026-11-{:02}T12:00:00Z", 2 + number % 17),
+                milestone: milestone.map(|i| MILESTONES[i].to_string()),
+                parent: incoming(PARENTS).first().copied().map(ItemRef::github),
+                links: IssueLinks {
+                    blocked_by: incoming(BLOCKS).into_iter().map(ItemRef::github).collect(),
+                    closed_by: incoming(CLOSES).into_iter().map(ItemRef::github).collect(),
+                },
+                ..IssueData::default()
+            };
+            // Labels, assignees, project status and checks vary by number, so
+            // map cards have something to show.
+            let mut labels: Vec<&str> = milestone.map(|i| SUBJECTS[i]).into_iter().collect();
+            if number % 7 == 0 {
+                labels.push("bug");
+            }
+            if milestone.is_none() {
+                labels.push("good first issue");
+            }
+            let issue = IssueData {
+                labels: labels
+                    .into_iter()
+                    .map(|name| Label {
+                        name: name.to_string(),
+                    })
+                    .collect(),
+                assignees: PEOPLE
+                    .iter()
+                    .skip(number as usize % 3)
+                    .take(if number % 4 == 0 {
+                        0
+                    } else {
+                        1 + number as usize % 2
+                    })
+                    .map(|login| Author {
+                        login: login.to_string(),
+                    })
+                    .collect(),
+                checks: is_pr.then(|| {
+                    [CheckState::Pass, CheckState::Fail, CheckState::Pending][number as usize % 3]
+                }),
+                ..issue
+            };
+            let status = match (state, number % 3) {
+                ("OPEN", 0) => "Todo",
+                ("OPEN", 1) => "In progress",
+                ("OPEN", _) => "In review",
+                _ => "Done",
+            };
+            let detail = BoardDetail {
+                created: "2026-11-01".to_string(),
+                updated: issue.updated_at[..10].to_string(),
+                comments: number as usize % 5,
+            };
+            let window_at = (state != "OPEN").then(|| issue.updated_at.clone());
+            let statuses = vec![("Roadmap".to_string(), Some(status.to_string()))];
+            Row {
+                issue,
+                statuses,
+                detail,
+                complete: false,
+                window_at,
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -180,7 +213,10 @@ fn demo_items_are_well_formed() {
     let rows = demo_rows();
     assert_eq!(rows.len(), 80);
     assert_eq!(rows.iter().filter(|row| row.issue.is_pr).count(), 25);
-    let known = |n: u64| rows.iter().any(|row| row.issue.number == n);
+    let known = |n: u64| {
+        rows.iter()
+            .any(|row| row.issue.number == ItemRef::github(n))
+    };
     for &(a, b) in BLOCKS.iter().chain(PARENTS).chain(CLOSES) {
         assert!(known(a) && known(b), "{a} -> {b}");
     }
@@ -201,12 +237,12 @@ fn write_graph_demo_store() {
     // fifth item has an empty body, so its map card says so.
     for row in &rows {
         let mut issue = row.issue.clone();
-        if issue.number % 5 != 0 {
+        if issue.number.number % 5 != 0 {
             issue.body = format!(
                 "Demo item #{} for the dependency map: {}.\n\nIt belongs to {}. Its links come \
                  from the demo tables, so the map, the cards and the e2e scenario all read \
                  the same store.",
-                issue.number,
+                issue.number.number,
                 issue.title.to_lowercase(),
                 issue.milestone.as_deref().unwrap_or("no milestone"),
             );
@@ -218,4 +254,3 @@ fn write_graph_demo_store() {
     assert_eq!(stored.len(), 80);
     assert!(store.edges().expect("edges read back").len() >= BLOCKS.len() + PARENTS.len() + CLOSES.len());
 }
-

@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+use crate::model::ItemRef;
+
 fn issue_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\(#(\d+)\)").unwrap())
@@ -59,10 +61,10 @@ pub const MAX_REFS: usize = 20;
 
 /// Issue/PR numbers mentioned in a raw body, in first-seen order, deduped.
 /// Same-repo `github.com` URLs count; cross-repo URLs and code spans do not.
-pub fn referenced_numbers(body: &str, repo: Option<&str>) -> Vec<u64> {
+pub fn referenced_numbers(body: &str, repo: Option<&str>) -> Vec<ItemRef> {
     use std::collections::HashSet;
-    let mut out: Vec<u64> = vec![];
-    let mut seen: HashSet<u64> = HashSet::new();
+    let mut out: Vec<ItemRef> = vec![];
+    let mut seen: HashSet<ItemRef> = HashSet::new();
     // Split off fenced/inline code first so `` `#123` `` stays plain text.
     let code = code_re();
     let mut last = 0;
@@ -93,7 +95,7 @@ pub fn referenced_numbers(body: &str, repo: Option<&str>) -> Vec<u64> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkTarget {
     /// An issue/PR number: opens in the viewer.
-    Issue(u64),
+    Issue(ItemRef),
     /// A real URL: opens in the browser.
     Url(String),
 }
@@ -163,7 +165,7 @@ fn link_spans(line: &str, repo: Option<&str>) -> Vec<(usize, usize, LinkTarget)>
     for cap in ref_url_re().captures_iter(line) {
         let m = cap.get(0).unwrap();
         if same_repo(&cap, repo) {
-            if let Ok(n) = cap[3].parse::<u64>() {
+            if let Ok(n) = cap[3].parse::<u64>().map(ItemRef::github) {
                 claim(m.start(), m.end(), LinkTarget::Issue(n), &mut hits, &mut taken);
             }
         }
@@ -173,7 +175,7 @@ fn link_spans(line: &str, repo: Option<&str>) -> Vec<(usize, usize, LinkTarget)>
         if followed_by_url_dest(line, m.end()) {
             continue;
         }
-        if let Ok(n) = m.as_str().parse::<u64>() {
+        if let Ok(n) = m.as_str().parse::<u64>().map(ItemRef::github) {
             claim(m.start(), m.end(), LinkTarget::Issue(n), &mut hits, &mut taken);
         }
     }

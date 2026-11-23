@@ -61,8 +61,15 @@ pub(super) fn render_map_strip(f: &mut ratatui::Frame, area: Rect, app: &mut App
     }
     for (hub, chain) in &ranking.critical {
         let title = model::slug(&graph.nodes[*hub].title, width);
-        lines.push((Line::from(Span::styled(title, Style::new().fg(amber()))), None));
-        let numbers: Vec<String> = chain.iter().filter_map(|&i| graph.nodes[i].number).map(|n| format!("#{n}")).collect();
+        lines.push((
+            Line::from(Span::styled(title, Style::new().fg(amber()))),
+            None,
+        ));
+        let numbers: Vec<String> = chain
+            .iter()
+            .filter_map(|&i| graph.nodes[i].number)
+            .map(|n| n.display(""))
+            .collect();
         let text = format!(" {}", model::slug(&numbers.join(" → "), width - 1));
         lines.push((Line::from(Span::styled(text, Style::new().fg(paper()))), None));
     }
@@ -84,7 +91,7 @@ pub(super) fn render_map_strip(f: &mut ratatui::Frame, area: Rect, app: &mut App
 /// bottleneck. The picked row is bold behind the marker.
 fn item_line(graph: &MapGraph, node: usize, unblocks: Option<usize>, width: usize, picked: bool) -> Line<'static> {
     let item = &graph.nodes[node];
-    let number = item.number.map_or(String::new(), |n| format!("#{n}"));
+    let number = item.number.map_or(String::new(), |n| n.display(""));
     let mut style = Style::new().fg(node_color(item.state));
     if picked {
         style = style.add_modifier(Modifier::BOLD);

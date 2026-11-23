@@ -13,6 +13,8 @@ use crate::input::handle_key;
 use crate::model::{
     Author, IssueData, LinkKind, MapItem, MapLink, SubSummary,
 };
+use crate::model::ItemRef;
+use crate::model::NodeId;
 
 const GOLDEN: &str = include_str!("key_parity.golden");
 
@@ -20,18 +22,21 @@ const GOLDEN: &str = include_str!("key_parity.golden");
 /// tests check their routing instead.
 const SKIP: [char; 4] = ['y', 'p', 'r', 'w'];
 
-fn issue(number: u64, is_pr: bool) -> IssueData {
+fn issue(number: ItemRef, is_pr: bool) -> IssueData {
     IssueData {
         number,
-        title: format!("Item {number}"),
+        title: format!("Item {number}", number = number.number),
         state: "OPEN".to_string(),
         author: Author { login: "bo".to_string() },
         labels: vec![],
         assignees: vec![],
         created_at: "2026-01-02T00:00:00Z".to_string(),
         updated_at: "2026-01-05T00:00:00Z".to_string(),
-        url: format!("https://github.com/o/r/issues/{number}"),
-        body: format!("see #{}", number + 100),
+        url: format!(
+            "https://github.com/o/r/issues/{number}",
+            number = number.number
+        ),
+        body: format!("see #{}", number.number + 100),
         comments: vec![],
         review_threads: vec![],
         paired: vec![],
@@ -48,11 +53,13 @@ fn base() -> App {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for (n, pr) in [(7u64, false), (8, false), (9, true), (10, true)] {
-        app.issues.data.insert(n, issue(n, pr));
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.visited.push(n);
+        app.issues
+            .data
+            .insert(ItemRef::github(n), issue(ItemRef::github(n), pr));
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.visited.push(ItemRef::github(n));
     }
-    app.show_issue(8);
+    app.show_issue(ItemRef::github(8));
     app
 }
 
@@ -64,18 +71,25 @@ fn pane(pane: Pane) -> App {
 
 fn tree() -> App {
     let mut app = pane(Pane::Issues);
-    app.issues.data.get_mut(&7).unwrap().sub_summary = Some(SubSummary { total: 2, completed: 0 });
-    app.issues.data.get_mut(&8).unwrap().parent = Some(7);
-    app.nav.recent = vec![7, 8];
+    app.issues
+        .data
+        .get_mut(&ItemRef::github(7))
+        .unwrap()
+        .sub_summary = Some(SubSummary {
+        total: 2,
+        completed: 0,
+    });
+    app.issues.data.get_mut(&ItemRef::github(8)).unwrap().parent = Some(ItemRef::github(7));
+    app.nav.recent = vec![ItemRef::github(7), ItemRef::github(8)];
     app.nav.visited.clear();
     app.sidebar.sub_issue_tree = true;
-    app.show_issue(7);
+    app.show_issue(ItemRef::github(7));
     app
 }
 
 fn diff() -> App {
     let mut app = base();
-    app.show_issue(9);
+    app.show_issue(ItemRef::github(9));
     app.nav.pane = Pane::Main;
     app.nav.tab = Tab::Visual;
     app.hits.body_area = ratatui::layout::Rect::new(30, 0, 60, 10);
@@ -86,19 +100,33 @@ fn diff() -> App {
 
 fn graph() -> App {
     let mut app = base();
-    app.show_issue(7);
+    app.show_issue(ItemRef::github(7));
     app.nav.pane = Pane::Main;
     app.nav.tab = Tab::Map;
-    let item = |number: u64| MapItem {
+    let item = |number: ItemRef| MapItem {
         number,
         is_pr: false,
         state: "OPEN".to_string(),
-        title: format!("Node {number}"),
+        title: format!("Node {number}", number = number.number),
         milestone: None,
         labels: vec![],
     };
-    let link = |src: u64, dst: u64| MapLink { src, dst, kind: LinkKind::Blocks };
-    app.set_map_data(vec![item(7), item(8), item(11)], vec![link(7, 8), link(11, 7)]);
+    let link = |src: ItemRef, dst: ItemRef| MapLink {
+        src,
+        dst,
+        kind: LinkKind::Blocks,
+    };
+    app.set_map_data(
+        vec![
+            item(ItemRef::github(7)),
+            item(ItemRef::github(8)),
+            item(ItemRef::github(11)),
+        ],
+        vec![
+            link(ItemRef::github(7), ItemRef::github(8)),
+            link(ItemRef::github(11), ItemRef::github(7)),
+        ],
+    );
     app.hits.map_area = ratatui::layout::Rect::new(30, 5, 60, 20);
     app.settle_map();
     app
@@ -106,7 +134,7 @@ fn graph() -> App {
 
 fn refs() -> App {
     let mut app = pane(Pane::Refs);
-    app.refs.numbers = vec![7, 9];
+    app.refs.numbers = vec![ItemRef::github(7), ItemRef::github(9)];
     app
 }
 
@@ -118,10 +146,10 @@ fn labels() -> App {
 
 fn history() -> App {
     let mut app = pane(Pane::History);
-    app.ensure_visited(7);
-    app.load_issue(7, false);
-    app.ensure_visited(9);
-    app.load_issue(9, false);
+    app.ensure_visited(ItemRef::github(7));
+    app.load_issue(ItemRef::github(7), false);
+    app.ensure_visited(ItemRef::github(9));
+    app.load_issue(ItemRef::github(9), false);
     app.nav.pane = Pane::History;
     app
 }
@@ -182,9 +210,9 @@ fn board() -> App {
         "title": "B",
         "order": ["Todo", "Done"],
         "items": [
-            {"title": "a", "number": 7, "status": "Todo"},
-            {"title": "b", "number": 8, "status": "Todo"},
-            {"title": "c", "number": 9, "status": "Done"},
+            {"title": "a", "number": ItemRef::github(7), "status": "Todo"},
+            {"title": "b", "number": ItemRef::github(8), "status": "Todo"},
+            {"title": "c", "number": ItemRef::github(9), "status": "Done"},
         ],
         "url": "https://github.com/orgs/o/projects/1",
     }))
@@ -302,6 +330,34 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         items.sort();
         format!("{items:?}")
     }
+    let number = |item: ItemRef| {
+        assert_eq!(item.source, crate::model::Source::GitHub);
+        item.number
+    };
+    let node_number = |id| match id {
+        NodeId::Item(item) => number(item),
+        NodeId::Hub(hash) => hash,
+    };
+    let history: Vec<_> = app.nav.history.iter().copied().map(number).collect();
+    let future: Vec<_> = app.nav.future.iter().copied().map(number).collect();
+    let folded = app
+        .sidebar
+        .folded_issues
+        .iter()
+        .copied()
+        .map(number)
+        .collect();
+    let expanded = app.diff.expanded_rows.iter().copied().map(number).collect();
+    let card = match app.map.card {
+        Some(crate::app::MapCard::Edge { src, dst }) => {
+            format!(
+                "Some(Edge {{ src: {}, dst: {} }})",
+                node_number(src),
+                node_number(dst)
+            )
+        }
+        other => format!("{other:?}"),
+    };
     let message = if app.message.starts_with("theme: ") { "theme: *".to_string() } else { app.message.clone() };
     let draft = app.draft().map(|d| (d.body.clone(), d.cursor, d.kill.clone()));
     let confirm = app.confirm().map(|d| (d.title.clone(), d.choices.len()));
@@ -309,10 +365,13 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("pane", format!("{:?}", app.nav.pane)),
         ("tab", format!("{:?}", app.nav.tab)),
         ("focus", (app.nav.focus == Focus::Bar).to_string()),
-        ("current", format!("{:?}", app.nav.current)),
-        ("requested", format!("{:?}", app.nav.requested)),
+        ("current", format!("{:?}", app.nav.current.map(number))),
+        ("requested", format!("{:?}", app.nav.requested.map(number))),
         ("scroll", app.nav.scroll.to_string()),
-        ("history", format!("{:?}/{:?}/{}", app.nav.history, app.nav.future, app.nav.history_cursor)),
+        (
+            "history",
+            format!("{:?}/{:?}/{}", history, future, app.nav.history_cursor),
+        ),
         ("shortcuts", app.shortcuts_open().to_string()),
         ("quit", app.quit.to_string()),
         ("message", message),
@@ -324,22 +383,72 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("show", format!("{}{}{}{}{}", app.sidebar.show_open_prs, app.sidebar.show_merged_prs,
             app.sidebar.show_open_issues, app.sidebar.show_closed_issues, app.sidebar.show)),
         ("sort", format!("{:?}/{}/{:?}", app.sidebar.sort, app.sidebar.sort_desc, app.sidebar.group_by)),
-        ("folded", sorted(&app.sidebar.folded_issues)),
+        ("folded", sorted(&folded)),
         ("filters", format!("{}/{}", sorted(&app.sidebar.label_filter), app.sidebar.milestone_filter.len())),
         ("window", app.sections.merged_window_hours.to_string()),
-        ("refs", format!("{}/{:?}", app.refs.show, app.refs.highlight)),
+        (
+            "refs",
+            format!("{}/{:?}", app.refs.show, app.refs.highlight.map(number)),
+        ),
         ("labels-cursor", app.labels.cursor.to_string()),
         ("compose", format!("{draft:?}/{}", app.compose.editor_requested)),
         ("confirm", format!("{confirm:?}")),
-        ("finder", format!("{:?}", app.finder().map(|f| (f.query.clone(), f.cursor)))),
-        ("board", format!("{}/{}/{}/{:?}/{}", app.board.data.is_some(), app.board.col, app.board.row,
-            app.board.expanded, app.board.filter_focus)),
-        ("board-filter", format!("{:?}/{}", app.board.filter, sorted(&app.board.milestone_draft.iter().cloned().collect()))),
-        ("diff", format!("{:?}/{}/{}/{}", app.diff.line, app.diff.touched, app.diff.split, sorted(&app.diff.expanded_rows))),
-        ("graph", format!("{:?}/{:?}/{}/{}", app.map.selected, app.map.filter.scope, app.map.follow,
-            app.map.layout.bodies().iter().filter(|body| body.pinned).count())),
-        ("camera", format!("{:.2}/{:.2}/{:.2}", app.map.camera.x, app.map.camera.y, app.map.camera.zoom)),
-        ("card", format!("{:?}", app.map.card)),
+        (
+            "finder",
+            format!("{:?}", app.finder().map(|f| (f.query.clone(), f.cursor))),
+        ),
+        (
+            "board",
+            format!(
+                "{}/{}/{}/{:?}/{}",
+                app.board.data.is_some(),
+                app.board.col,
+                app.board.row,
+                app.board.expanded,
+                app.board.filter_focus
+            ),
+        ),
+        (
+            "board-filter",
+            format!(
+                "{:?}/{}",
+                app.board.filter,
+                sorted(&app.board.milestone_draft.iter().cloned().collect())
+            ),
+        ),
+        (
+            "diff",
+            format!(
+                "{:?}/{}/{}/{}",
+                app.diff.line,
+                app.diff.touched,
+                app.diff.split,
+                sorted(&expanded)
+            ),
+        ),
+        (
+            "graph",
+            format!(
+                "{:?}/{:?}/{}/{}",
+                app.map.selected.map(node_number),
+                app.map.filter.scope,
+                app.map.follow,
+                app.map
+                    .layout
+                    .bodies()
+                    .iter()
+                    .filter(|body| body.pinned)
+                    .count()
+            ),
+        ),
+        (
+            "camera",
+            format!(
+                "{:.2}/{:.2}/{:.2}",
+                app.map.camera.x, app.map.camera.y, app.map.camera.zoom
+            ),
+        ),
+        ("card", card),
         ("map-filter", format!("{:?}", app.map_filter_focus())),
         ("pending", format!("{:?}", app.pending_prefix)),
         ("undo", app.undo.is_some().to_string()),

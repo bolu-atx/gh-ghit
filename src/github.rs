@@ -6,6 +6,7 @@ mod backfill;
 
 use crate::{api, cache, model, store};
 use crate::model::IssueData;
+use crate::model::ItemRef;
 
 pub use backfill::{backfill_step, BackfillStep};
 pub use crate::api::{Row, REQUIRED_SCOPES, forget_token, is_auth_error, rate_limited, reauth_command, token};
@@ -109,9 +110,9 @@ pub async fn check_repo_access(repo: &str) -> Result<Vec<String>, String> {
 /// keeps the fetch silent. Same requests either way.
 pub async fn fetch_number(
     repo: &str,
-    number: u64,
+    number: ItemRef,
     force: bool,
-    progress: Option<std::sync::mpsc::Sender<(u64, IssueEvent)>>,
+    progress: Option<std::sync::mpsc::Sender<(ItemRef, IssueEvent)>>,
 ) -> Result<IssueBundle, String> {
     require_repo(repo)?;
     let token = require_token()?;
@@ -129,7 +130,13 @@ pub async fn fetch_number(
             let _ = tx.send((number, IssueEvent::Progress { done, total }));
         }
     };
-    let fetched = api::issue(repo, number, &token, Some(&report as &(dyn Fn(usize, usize) + Send + Sync))).await;
+    let fetched = api::issue(
+        repo,
+        number.number,
+        &token,
+        Some(&report as &(dyn Fn(usize, usize) + Send + Sync)),
+    )
+    .await;
     let repo_c = repo.to_string();
     match &fetched {
         Ok(bundle) => {
@@ -157,7 +164,7 @@ fn is_not_found(error: &str) -> bool {
 /// The stored issue bundle when it is fresh against the latest sync.
 /// Project statuses come from the synced row, not the stored copy.
 /// Blocking: call from the blocking pool.
-fn stored_bundle(repo: &str, number: u64) -> Option<IssueBundle> {
+fn stored_bundle(repo: &str, number: ItemRef) -> Option<IssueBundle> {
     let store = store::open(repo).ok()?;
     let (data, statuses): IssueBundle = store.fresh_detail(store::Detail::Issue, number, false)?;
     Some((data, store.item_statuses(number).unwrap_or(statuses)))
@@ -200,7 +207,7 @@ fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row 
 /// Store a fetched issue bundle at its own `updated_at`, and its row
 /// into `items` newer-only so the item joins the local copy. Best
 /// effort. Blocking.
-fn save_bundle(repo: &str, number: u64, bundle: &IssueBundle) {
+fn save_bundle(repo: &str, number: ItemRef, bundle: &IssueBundle) {
     if let Ok(mut store) = store::open(repo) {
         let row = row_from_bundle(bundle, store.row(number).as_ref());
         let _ = store.upsert_rows_newer(&[row]);
@@ -209,14 +216,18 @@ fn save_bundle(repo: &str, number: u64, bundle: &IssueBundle) {
 }
 
 /// Stored diff payload when fresh, else `None`. Blocking.
-fn stored_detail<T: serde::de::DeserializeOwned>(repo: &str, kind: store::Detail, number: u64) -> Option<T> {
+fn stored_detail<T: serde::de::DeserializeOwned>(
+    repo: &str,
+    kind: store::Detail,
+    number: ItemRef,
+) -> Option<T> {
     store::open(repo).ok()?.fresh_detail(kind, number, false)
 }
 
 /// Store a diff payload at the item's synced `updated_at`; an
 /// item no sync listed stores nothing, since an open could not serve it.
 /// Best effort. Blocking.
-fn save_detail<T: serde::Serialize>(repo: &str, kind: store::Detail, number: u64, value: &T) {
+fn save_detail<T: serde::Serialize>(repo: &str, kind: store::Detail, number: ItemRef, value: &T) {
     if let Ok(store) = store::open(repo) {
         if let Some(updated_at) = store.item_updated_at(number) {
             let _ = store.put_detail(kind, number, &updated_at, value);
@@ -273,15 +284,21 @@ fn save_rows(repo: &str, started_at: &str, rows: &[api::Row]) {
 
 /// `stored` with each `fetched` row replacing the stored row of its number.
 fn overlay(stored: Vec<api::Row>, fetched: &[api::Row]) -> Vec<api::Row> {
-    let fresh: std::collections::HashSet<u64> = fetched.iter().map(|r| r.issue.number).collect();
-    stored.into_iter().filter(|r| !fresh.contains(&r.issue.number)).chain(fetched.iter().cloned()).collect()
+    let fresh: std::collections::HashSet<ItemRef> =
+        fetched.iter().map(|r| r.issue.number).collect();
+    stored
+        .into_iter()
+        .filter(|r| !fresh.contains(&r.issue.number))
+        .chain(fetched.iter().cloned())
+        .collect()
 }
 
 /// REST rows lack the CI rollup, project status and sub-issue parent:
 /// each fetched row keeps its stored row's `checks`, `statuses`, `parent`,
 /// `links` and, when REST sends none, `sub_summary`. The status pass refreshes them.
 fn keep_stored_fields(stored: &[api::Row], fetched: &mut [api::Row]) {
-    let old: std::collections::HashMap<u64, &api::Row> = stored.iter().map(|r| (r.issue.number, r)).collect();
+    let old: std::collections::HashMap<ItemRef, &api::Row> =
+        stored.iter().map(|r| (r.issue.number, r)).collect();
     for row in fetched {
         if let Some(prev) = old.get(&row.issue.number) {
             row.issue.checks = prev.issue.checks;
@@ -340,7 +357,7 @@ pub async fn fetch_recent_sections(
             rows
         }
         None => {
-            let stored_numbers: Option<std::collections::HashSet<u64>> =
+            let stored_numbers: Option<std::collections::HashSet<ItemRef>> =
                 (!stored.is_empty()).then(|| stored.iter().map(|r| r.issue.number).collect());
             let report = |done: usize, total: usize| {
                 if let Some(tx) = &progress {
@@ -361,7 +378,8 @@ pub async fn fetch_recent_sections(
             fresh.rows
         }
     };
-    let mut changed: std::collections::HashSet<u64> = fetched.iter().map(|r| r.issue.number).collect();
+    let mut changed: std::collections::HashSet<ItemRef> =
+        fetched.iter().map(|r| r.issue.number).collect();
     let mut rows = overlay(stored, &fetched);
     // A walk just read every status; otherwise refresh the open rows'.
     if refresh == Refresh::Status && !walked {
@@ -512,14 +530,14 @@ impl StoreLink {
 
     /// The stored row of one item and the body of its stored detail, of
     /// any age, for a map card. Reads only the local copy.
-    pub fn item_card(&self, number: u64) -> Option<(api::Row, Option<String>)> {
+    pub fn item_card(&self, number: ItemRef) -> Option<(api::Row, Option<String>)> {
         let row = self.store.row(number)?;
         let body = self.store.stored_detail::<IssueBundle>(store::Detail::Issue, number);
         Some((row, body.map(|(issue, _)| issue.body)))
     }
 
     /// Stamp of the row and stored detail a map card shows for `number`.
-    pub fn card_stamp(&self, number: u64) -> Option<String> {
+    pub fn card_stamp(&self, number: ItemRef) -> Option<String> {
         self.store.card_stamp(number)
     }
 
@@ -530,14 +548,14 @@ impl StoreLink {
         if self.store.upsert_search(&hits).is_err() {
             return hits;
         }
-        let numbers: Vec<u64> = hits.iter().map(|row| row.issue.number).collect();
+        let numbers: Vec<ItemRef> = hits.iter().map(|row| row.issue.number).collect();
         let mut rows = self.store.rows_by_number(&numbers);
         rows.sort_by_key(|row| numbers.iter().position(|n| *n == row.issue.number));
         rows
     }
 
     /// The stored rows with these numbers, most recently updated first.
-    pub fn rows_by_number(&self, numbers: &[u64]) -> Vec<api::Row> {
+    pub fn rows_by_number(&self, numbers: &[ItemRef]) -> Vec<api::Row> {
         self.store.rows_by_number(numbers)
     }
 
@@ -583,12 +601,12 @@ pub fn invalidate(keys: &[Key]) {
 }
 
 /// Pinned-issue passthroughs so UI layers never touch `cache` directly.
-pub fn load_pins(repo: &str) -> Vec<u64> {
+pub fn load_pins(repo: &str) -> Vec<ItemRef> {
     cache::load_pins(repo)
 }
 
 /// Pinned-issue passthroughs so UI layers never touch `cache` directly.
-pub fn save_pins(repo: &str, numbers: &[u64]) {
+pub fn save_pins(repo: &str, numbers: &[ItemRef]) {
     cache::save_pins(repo, numbers);
 }
 
@@ -684,20 +702,29 @@ pub async fn fetch_board(owner: &str) -> Result<model::BoardData, String> {
 }
 
 /// Batch board card details in one GraphQL request.
-pub async fn fetch_board_details(cards: &[(String, u64)]) -> Result<Vec<Option<model::BoardDetail>>, String> {
+pub async fn fetch_board_details(
+    cards: &[(String, ItemRef)],
+) -> Result<Vec<Option<model::BoardDetail>>, String> {
     let token = require_token()?;
-    api::board_details(cards, &token).await
+    api::board_details(
+        &cards
+            .iter()
+            .map(|(repo, item)| (repo.clone(), item.number))
+            .collect::<Vec<_>>(),
+        &token,
+    )
+    .await
 }
 
 /// Per-card detail: dates plus comment count.
-pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardDetail, String> {
+pub async fn fetch_board_detail(repo: &str, number: ItemRef) -> Result<model::BoardDetail, String> {
     require_repo(repo)?;
     let token = require_token()?;
     let repo_c = repo.to_string();
     if let Ok(Some((data, _))) = tokio::task::spawn_blocking(move || stored_bundle(&repo_c, number)).await {
         return Ok(model::BoardDetail::from_issue(&data));
     }
-    let bundle = api::issue(repo, number, &token, None).await?;
+    let bundle = api::issue(repo, number.number, &token, None).await?;
     let (repo_c, bundle_c) = (repo.to_string(), bundle.clone());
     let _ = tokio::task::spawn_blocking(move || save_bundle(&repo_c, number, &bundle_c)).await;
     let data = bundle.0;
@@ -706,14 +733,21 @@ pub async fn fetch_board_detail(repo: &str, number: u64) -> Result<model::BoardD
 
 /// REST sub-issues for the opt-in sidebar tree. The app caches the
 /// result per parent for the session.
-pub async fn fetch_sub_issues(repo: &str, number: u64) -> Result<Vec<model::IssueData>, String> {
+pub async fn fetch_sub_issues(
+    repo: &str,
+    number: ItemRef,
+) -> Result<Vec<model::IssueData>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::sub_issues(repo, number, &token).await
+    api::sub_issues(repo, number.number, &token).await
 }
 
 /// Changed files for one PR, stored like single issues.
-pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<model::DiffFile>, String> {
+pub async fn fetch_diff(
+    repo: &str,
+    number: ItemRef,
+    force: bool,
+) -> Result<Vec<model::DiffFile>, String> {
     require_repo(repo)?;
     let token = require_token()?;
     if !force {
@@ -726,7 +760,7 @@ pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<mode
             return Ok(files);
         }
     }
-    let files = api::pull_files(repo, number, &token).await?;
+    let files = api::pull_files(repo, number.number, &token).await?;
     let (repo_c, files_c) = (repo.to_string(), files.clone());
     let _ = tokio::task::spawn_blocking(move || save_detail(&repo_c, store::Detail::Diff, number, &files_c)).await;
     Ok(files)
@@ -734,51 +768,66 @@ pub async fn fetch_diff(repo: &str, number: u64, force: bool) -> Result<Vec<mode
 
 /// Head-side bodies of `names` in PR `number`, for diff context. Not
 /// stored: the app keeps them for the session only.
-pub async fn fetch_head_files(repo: &str, number: u64, names: Vec<String>) -> Result<Vec<(String, Result<String, String>)>, String> {
+pub async fn fetch_head_files(
+    repo: &str,
+    number: ItemRef,
+    names: Vec<String>,
+) -> Result<Vec<(String, Result<String, String>)>, String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::head_files(repo, number, names, &token).await
+    api::head_files(repo, number.number, names, &token).await
 }
 
 /// Post a thread comment on an issue/PR. Failures are strings for the
 /// status line, never panics; auth and repo resolve first so misuse
 /// never reaches the network.
-pub async fn post_thread_comment(repo: &str, number: u64, body: &str) -> Result<(), String> {
+pub async fn post_thread_comment(repo: &str, number: ItemRef, body: &str) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::add_comment(repo, number, body, &token).await
+    api::add_comment(repo, number.number, body, &token).await
 }
 
 /// Close (`open` false) or reopen an issue or PR. Same error contract
 /// as `post_thread_comment`.
-pub async fn set_state(repo: &str, number: u64, open: bool) -> Result<(), String> {
+pub async fn set_state(repo: &str, number: ItemRef, open: bool) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::set_state(repo, number, open, &token).await
+    api::set_state(repo, number.number, open, &token).await
 }
 
 /// Post a single-shot line comment on a PR file. Same error contract
 /// as `post_thread_comment`.
-pub async fn post_line_comment(repo: &str, number: u64, body: &str, path: &str, line: u64) -> Result<(), String> {
+pub async fn post_line_comment(
+    repo: &str,
+    number: ItemRef,
+    body: &str,
+    path: &str,
+    line: u64,
+) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::add_review_thread(repo, number, body, path, line, &token).await
+    api::add_review_thread(repo, number.number, body, path, line, &token).await
 }
 
 /// Submit the viewer's pending review on a PR so pending line comments
 /// go live. Same error contract as `post_thread_comment`.
-pub async fn submit_pending_review(repo: &str, number: u64) -> Result<(), String> {
+pub async fn submit_pending_review(repo: &str, number: ItemRef) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::submit_pending_review(repo, number, &token).await
+    api::submit_pending_review(repo, number.number, &token).await
 }
 
 /// Reply inside an existing review thread: `comment_id` is the
 /// numeric REST id of a comment in the thread (`in_reply_to`).
-pub async fn post_thread_reply(repo: &str, number: u64, comment_id: u64, body: &str) -> Result<(), String> {
+pub async fn post_thread_reply(
+    repo: &str,
+    number: ItemRef,
+    comment_id: u64,
+    body: &str,
+) -> Result<(), String> {
     require_repo(repo)?;
     let token = require_token()?;
-    api::add_thread_reply(repo, number, comment_id, body, &token).await
+    api::add_thread_reply(repo, number.number, comment_id, body, &token).await
 }
 
 #[cfg(test)]
@@ -801,9 +850,15 @@ mod tests {
         assert_eq!(parse_remote_url("https://github.com/o"), None);
     }
 
-    fn row(number: u64, is_pr: bool, state: &str, window_at: Option<String>) -> Row {
+    fn row(number: ItemRef, is_pr: bool, state: &str, window_at: Option<String>) -> Row {
         Row {
-            issue: IssueData { number, is_pr, state: state.to_string(), title: format!("t{number}"), ..Default::default() },
+            issue: IssueData {
+                number,
+                is_pr,
+                state: state.to_string(),
+                title: format!("t{number}", number = number.number),
+                ..Default::default()
+            },
             statuses: vec![("Board".to_string(), Some("Todo".to_string()))],
             detail: model::BoardDetail::default(),
             complete: false,
@@ -811,7 +866,7 @@ mod tests {
         }
     }
 
-    fn numbers(rows: &[Row]) -> Vec<u64> {
+    fn numbers(rows: &[Row]) -> Vec<ItemRef> {
         rows.iter().map(|r| r.issue.number).collect()
     }
 
@@ -830,8 +885,15 @@ mod tests {
 
     /// A row created and last updated `hours_ago`; merged PRs and closed
     /// issues anchor their window there too, as the listing parse does.
-    fn dated(number: u64, is_pr: bool, state: &str, now: chrono::DateTime<chrono::Utc>, hours_ago: i64) -> Row {
-        let at = (now - chrono::TimeDelta::hours(hours_ago)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    fn dated(
+        number: ItemRef,
+        is_pr: bool,
+        state: &str,
+        now: chrono::DateTime<chrono::Utc>,
+        hours_ago: i64,
+    ) -> Row {
+        let at = (now - chrono::TimeDelta::hours(hours_ago))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let windowed = matches!((is_pr, state), (true, "MERGED") | (false, "CLOSED"));
         let mut row = row(number, is_pr, state, windowed.then(|| at.clone()));
         row.issue.created_at = at.clone();
@@ -854,13 +916,13 @@ mod tests {
             other.claim(false, chrono::Utc::now().timestamp() + 1000);
             assert!(map.map_data(seen).is_none(), "a lease renewal is not a data change");
 
-            save_rows(repo, "t1", &[row(1, true, "OPEN", None)]);
+            save_rows(repo, "t1", &[row(ItemRef::github(1), true, "OPEN", None)]);
             let (generation, items, _) = map.map_data(seen).expect("a row write rereads");
             assert_eq!(items.len(), 1);
             let seen = Some(generation);
             assert!(map.map_data(seen).is_none());
 
-            map.save_search(vec![row(2, false, "OPEN", None)]);
+            map.save_search(vec![row(ItemRef::github(2), false, "OPEN", None)]);
             let (generation, items, _) = map.map_data(seen).expect("a search write on the map's own connection rereads");
             assert_eq!(items.len(), 2);
             let seen = Some(generation);
@@ -868,7 +930,7 @@ mod tests {
             let file = store::path(repo).unwrap();
             let raw = rusqlite::Connection::open(&file).unwrap();
             raw.execute_batch("ALTER TABLE edges RENAME TO edges_off").unwrap();
-            save_rows(repo, "t2", &[row(3, false, "OPEN", None)]);
+            save_rows(repo, "t2", &[row(ItemRef::github(3), false, "OPEN", None)]);
             raw.execute_batch("UPDATE meta SET value = value + 1 WHERE key = 'items_gen'").unwrap();
             assert!(map.map_data(seen).is_none(), "a failed read returns nothing");
             raw.execute_batch("ALTER TABLE edges_off RENAME TO edges").unwrap();
@@ -878,19 +940,19 @@ mod tests {
 
     #[test]
     fn rest_rows_keep_stored_checks_statuses_and_parent() {
-        let mut prev = row(1, true, "OPEN", None);
+        let mut prev = row(ItemRef::github(1), true, "OPEN", None);
         prev.issue.checks = Some(model::CheckState::Pass);
-        prev.issue.parent = Some(9);
+        prev.issue.parent = Some(ItemRef::github(9));
         prev.issue.sub_summary = Some(model::SubSummary { total: 2, completed: 1 });
-        let mut rest = row(1, true, "MERGED", None);
+        let mut rest = row(ItemRef::github(1), true, "MERGED", None);
         rest.statuses = vec![];
-        let mut new = row(2, false, "OPEN", None);
+        let mut new = row(ItemRef::github(2), false, "OPEN", None);
         new.statuses = vec![];
         let mut fetched = vec![rest, new];
         keep_stored_fields(&[prev.clone()], &mut fetched);
         assert_eq!(fetched[0].issue.state, "MERGED", "REST owns the state");
         assert_eq!(fetched[0].issue.checks, Some(model::CheckState::Pass));
-        assert_eq!(fetched[0].issue.parent, Some(9));
+        assert_eq!(fetched[0].issue.parent, Some(ItemRef::github(9)));
         assert_eq!(fetched[0].issue.sub_summary, prev.issue.sub_summary);
         assert_eq!(fetched[0].statuses, prev.statuses);
         assert!(fetched[1].statuses.is_empty() && fetched[1].issue.checks.is_none(), "unstored rows stay bare");
@@ -910,16 +972,28 @@ mod tests {
 
             // Cold walk: rows regroup by list; a stored row out of the window never shows.
             let walked = vec![
-                dated(3, false, "OPEN", now, 5),
-                dated(1, true, "OPEN", now, 4),
-                dated(4, false, "CLOSED", now, 2),
-                dated(2, true, "MERGED", now, 1),
-                dated(9, true, "MERGED", now, 30),
+                dated(ItemRef::github(3), false, "OPEN", now, 5),
+                dated(ItemRef::github(1), true, "OPEN", now, 4),
+                dated(ItemRef::github(4), false, "CLOSED", now, 2),
+                dated(ItemRef::github(2), true, "MERGED", now, 1),
+                dated(ItemRef::github(9), true, "MERGED", now, 30),
             ];
             save_rows(repo, &now.to_rfc3339(), &walked);
             let hydrated = cached_sections(repo, hours, show).expect("a sync hydrates");
-            assert_eq!(numbers(&hydrated), vec![1, 2, 3, 4], "derived order is sidebar order");
-            assert_eq!(hydrated[0].statuses, walked[1].statuses, "row fields round trip");
+            assert_eq!(
+                numbers(&hydrated),
+                vec![
+                    ItemRef::github(1),
+                    ItemRef::github(2),
+                    ItemRef::github(3),
+                    ItemRef::github(4)
+                ],
+                "derived order is sidebar order"
+            );
+            assert_eq!(
+                hydrated[0].statuses, walked[1].statuses,
+                "row fields round trip"
+            );
 
             // Change-only sync: #1 retitled stays in place, #3 moves list,
             // #6 is new, #7 is a closed (unmerged) PR no list shows.
@@ -927,14 +1001,38 @@ mod tests {
             assert!(api::delta_since(last.as_deref(), false).is_some(), "a fresh sync takes the delta path");
             let mut retitled = walked[1].clone();
             retitled.issue.title = "renamed".to_string();
-            let mut closed = dated(3, false, "CLOSED", now, 0);
+            let mut closed = dated(ItemRef::github(3), false, "CLOSED", now, 0);
             closed.issue.created_at = walked[0].issue.created_at.clone();
-            let delta = vec![closed, retitled, dated(6, true, "OPEN", now, 0), dated(7, true, "CLOSED", now, 0)];
+            let delta = vec![
+                closed,
+                retitled,
+                dated(ItemRef::github(6), true, "OPEN", now, 0),
+                dated(ItemRef::github(7), true, "CLOSED", now, 0),
+            ];
             let shown = api::visible_rows(overlay(stored, &delta), now, hours, show);
-            assert_eq!(numbers(&shown), vec![6, 1, 2, 3, 4]);
+            assert_eq!(
+                numbers(&shown),
+                vec![
+                    ItemRef::github(6),
+                    ItemRef::github(1),
+                    ItemRef::github(2),
+                    ItemRef::github(3),
+                    ItemRef::github(4)
+                ]
+            );
             save_rows(repo, last.as_deref().unwrap(), &delta);
             let hydrated = cached_sections(repo, hours, show).expect("hydrates after delta");
-            assert_eq!(numbers(&hydrated), vec![6, 1, 2, 3, 4], "the store reads back what the sync returned");
+            assert_eq!(
+                numbers(&hydrated),
+                vec![
+                    ItemRef::github(6),
+                    ItemRef::github(1),
+                    ItemRef::github(2),
+                    ItemRef::github(3),
+                    ItemRef::github(4)
+                ],
+                "the store reads back what the sync returned"
+            );
             assert_eq!(hydrated[1].issue.title, "renamed");
             assert_eq!(hydrated[3].issue.state, "CLOSED");
         });
@@ -947,12 +1045,39 @@ mod tests {
         with_temp_data(|| {
             let repo = "o/r";
             let now = chrono::Utc::now();
-            let rows = vec![dated(1, true, "OPEN", now, 1), dated(2, true, "MERGED", now, 30), dated(3, true, "MERGED", now, 2), dated(4, false, "CLOSED", now, 2), dated(5, true, "CLOSED", now, 1)];
+            let rows = vec![
+                dated(ItemRef::github(1), true, "OPEN", now, 1),
+                dated(ItemRef::github(2), true, "MERGED", now, 30),
+                dated(ItemRef::github(3), true, "MERGED", now, 2),
+                dated(ItemRef::github(4), false, "CLOSED", now, 2),
+                dated(ItemRef::github(5), true, "CLOSED", now, 1),
+            ];
             save_rows(repo, &now.to_rfc3339(), &rows);
-            assert_eq!(numbers(&cached_sections(repo, 168, [true; 4]).unwrap()), vec![1, 3, 2, 4], "the closed PR is in no list");
-            assert_eq!(numbers(&cached_sections(repo, 24, [true; 4]).unwrap()), vec![1, 3, 4], "aged-out merged PR drops");
-            assert_eq!(numbers(&cached_sections(repo, 24, [true, false, true, false]).unwrap()), vec![1], "hidden lists drop");
-            assert_eq!(numbers(&cached_sections(repo, 0, [false, true, false, false]).unwrap()), vec![3, 2], "all time reads every stored row");
+            assert_eq!(
+                numbers(&cached_sections(repo, 168, [true; 4]).unwrap()),
+                vec![
+                    ItemRef::github(1),
+                    ItemRef::github(3),
+                    ItemRef::github(2),
+                    ItemRef::github(4)
+                ],
+                "the closed PR is in no list"
+            );
+            assert_eq!(
+                numbers(&cached_sections(repo, 24, [true; 4]).unwrap()),
+                vec![ItemRef::github(1), ItemRef::github(3), ItemRef::github(4)],
+                "aged-out merged PR drops"
+            );
+            assert_eq!(
+                numbers(&cached_sections(repo, 24, [true, false, true, false]).unwrap()),
+                vec![ItemRef::github(1)],
+                "hidden lists drop"
+            );
+            assert_eq!(
+                numbers(&cached_sections(repo, 0, [false, true, false, false]).unwrap()),
+                vec![ItemRef::github(3), ItemRef::github(2)],
+                "all time reads every stored row"
+            );
         });
     }
 
@@ -981,11 +1106,29 @@ mod tests {
             assert!(a.holding() && !b.holding(), "only one process holds the lease");
 
             // A syncs the whole repo, whatever its own view.
-            save_rows(repo, &now.to_rfc3339(), &[dated(1, true, "OPEN", now, 3), dated(2, true, "MERGED", now, 30), dated(3, false, "OPEN", now, 2), dated(4, false, "CLOSED", now, 50)]);
-            assert!(a.changed() && b.changed(), "every process sees the new sync");
+            save_rows(
+                repo,
+                &now.to_rfc3339(),
+                &[
+                    dated(ItemRef::github(1), true, "OPEN", now, 3),
+                    dated(ItemRef::github(2), true, "MERGED", now, 30),
+                    dated(ItemRef::github(3), false, "OPEN", now, 2),
+                    dated(ItemRef::github(4), false, "CLOSED", now, 50),
+                ],
+            );
+            assert!(
+                a.changed() && b.changed(),
+                "every process sees the new sync"
+            );
             assert!(!b.changed(), "once per sync");
-            assert_eq!(numbers(&a.rows(a_view.0, a_view.1).unwrap()), vec![1, 3]);
-            assert_eq!(numbers(&b.rows(b_view.0, b_view.1).unwrap()), vec![1, 2]);
+            assert_eq!(
+                numbers(&a.rows(a_view.0, a_view.1).unwrap()),
+                vec![ItemRef::github(1), ItemRef::github(3)]
+            );
+            assert_eq!(
+                numbers(&b.rows(b_view.0, b_view.1).unwrap()),
+                vec![ItemRef::github(1), ItemRef::github(2)]
+            );
             a.claim(false, t);
             assert!(a.holding() && !b.changed(), "a lease renewal is not a new sync");
 
@@ -998,10 +1141,20 @@ mod tests {
             assert!(!a.holding(), "A learns it lost the lease");
 
             // B's sync keeps A's view whole: it covers the repo, not B's view.
-            save_rows(repo, &chrono::Utc::now().to_rfc3339(), &[dated(5, false, "OPEN", now, 0)]);
+            save_rows(
+                repo,
+                &chrono::Utc::now().to_rfc3339(),
+                &[dated(ItemRef::github(5), false, "OPEN", now, 0)],
+            );
             assert!(a.changed());
-            assert_eq!(numbers(&a.rows(a_view.0, a_view.1).unwrap()), vec![1, 5, 3]);
-            assert_eq!(numbers(&b.rows(b_view.0, b_view.1).unwrap()), vec![1, 2]);
+            assert_eq!(
+                numbers(&a.rows(a_view.0, a_view.1).unwrap()),
+                vec![ItemRef::github(1), ItemRef::github(5), ItemRef::github(3)]
+            );
+            assert_eq!(
+                numbers(&b.rows(b_view.0, b_view.1).unwrap()),
+                vec![ItemRef::github(1), ItemRef::github(2)]
+            );
 
             // A quitting holder releases: the other takes over on its next try.
             drop(b);
@@ -1014,14 +1167,14 @@ mod tests {
     async fn fetches_fail_before_the_network_without_a_repo() {
         // Empty repo errors before any token lookup or request, so these
         // hold with or without auth configured.
-        assert!(fetch_number("", 1, false, None).await.is_err());
+        assert!(fetch_number("", ItemRef::github(1), false, None).await.is_err());
         assert!(fetch_recent_sections("", 24, [true; 4], Refresh::Delta, None).await.is_err());
         assert!(search_repo("", "bug", None).await.is_err());
         assert!(fetch_repo_meta("").await.is_err());
         assert!(fetch_board("").await.is_err());
-        assert!(fetch_board_detail("", 1).await.is_err());
-        assert!(fetch_diff("", 1, false).await.is_err());
-        assert!(fetch_sub_issues("", 1).await.is_err());
+        assert!(fetch_board_detail("", ItemRef::github(1)).await.is_err());
+        assert!(fetch_diff("", ItemRef::github(1), false).await.is_err());
+        assert!(fetch_sub_issues("", ItemRef::github(1)).await.is_err());
     }
 
     /// A stored detail whose `updated_at` matches the synced row opens
@@ -1034,13 +1187,26 @@ mod tests {
         let saved = (std::env::var("XDG_DATA_HOME").ok(), std::env::var("GH_TOKEN").ok());
         std::env::set_var("XDG_DATA_HOME", dir.path());
         std::env::set_var("GH_TOKEN", "test");
-        let mut listed = row(5, false, "OPEN", None);
+        let mut listed = row(ItemRef::github(5), false, "OPEN", None);
         listed.issue.updated_at = "t1".to_string();
         save_rows("o/r", &chrono::Utc::now().to_rfc3339(), &[listed]);
-        let data = IssueData { number: 5, body: "stored body".to_string(), updated_at: "t1".to_string(), ..Default::default() };
-        save_bundle("o/r", 5, &(data, vec![("Board".to_string(), Some("Old".to_string()))]));
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let (got, statuses) = runtime.block_on(fetch_number("o/r", 5, false, None)).unwrap();
+        let data = IssueData {
+            number: ItemRef::github(5),
+            body: "stored body".to_string(),
+            updated_at: "t1".to_string(),
+            ..Default::default()
+        };
+        save_bundle(
+            "o/r",
+            ItemRef::github(5),
+            &(data, vec![("Board".to_string(), Some("Old".to_string()))]),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let (got, statuses) = runtime
+            .block_on(fetch_number("o/r", ItemRef::github(5), false, None))
+            .unwrap();
         for (key, value) in [("XDG_DATA_HOME", saved.0), ("GH_TOKEN", saved.1)] {
             match value {
                 Some(v) => std::env::set_var(key, v),
@@ -1068,10 +1234,16 @@ mod tests {
         out
     }
 
-    fn fetched(number: u64, is_pr: bool, state: &str, updated: &str) -> IssueBundle {
+    fn fetched(number: ItemRef, is_pr: bool, state: &str, updated: &str) -> IssueBundle {
         let data = IssueData {
-            number, is_pr, state: state.to_string(), title: format!("t{number}"), body: "b".to_string(),
-            created_at: "2026-01-01T00:00:00Z".to_string(), updated_at: updated.to_string(), ..Default::default()
+            number,
+            is_pr,
+            state: state.to_string(),
+            title: format!("t{number}", number = number.number),
+            body: "b".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: updated.to_string(),
+            ..Default::default()
         };
         (data, vec![])
     }
@@ -1081,28 +1253,50 @@ mod tests {
     #[test]
     fn an_opened_unlisted_item_joins_the_store() {
         with_store_env(|| {
-            let bundle = fetched(7, true, "MERGED", "2026-02-01T00:00:00Z");
-            save_bundle("o/r", 7, &bundle);
-            let row = store::open("o/r").unwrap().row(7).expect("row stored");
+            let bundle = fetched(ItemRef::github(7), true, "MERGED", "2026-02-01T00:00:00Z");
+            save_bundle("o/r", ItemRef::github(7), &bundle);
+            let row = store::open("o/r")
+                .unwrap()
+                .row(ItemRef::github(7))
+                .expect("row stored");
             assert_eq!(row.issue.state, "MERGED");
             assert_eq!(row.issue.body, "", "rows carry no body");
             assert_eq!(row.window_at.as_deref(), Some("2026-02-01T00:00:00Z"));
-            let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-            let (got, _) = runtime.block_on(fetch_number("o/r", 7, false, None)).unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let (got, _) = runtime
+                .block_on(fetch_number("o/r", ItemRef::github(7), false, None))
+                .unwrap();
             assert_eq!(got.body, "b", "second open makes zero requests");
-            save_detail("o/r", store::Detail::Diff, 7, &vec![1u8]);
-            assert_eq!(stored_detail::<Vec<u8>>("o/r", store::Detail::Diff, 7), Some(vec![1]));
+            save_detail("o/r", store::Detail::Diff, ItemRef::github(7), &vec![1u8]);
+            assert_eq!(
+                stored_detail::<Vec<u8>>("o/r", store::Detail::Diff, ItemRef::github(7)),
+                Some(vec![1])
+            );
         });
     }
 
     #[test]
     fn an_older_fetched_row_does_not_overwrite() {
         with_store_env(|| {
-            let mut listed = row(5, false, "OPEN", None);
+            let mut listed = row(ItemRef::github(5), false, "OPEN", None);
             listed.issue.updated_at = "2026-03-01T00:00:00Z".to_string();
             save_rows("o/r", "s", &[listed]);
-            save_bundle("o/r", 5, &fetched(5, false, "CLOSED", "2026-02-01T00:00:00Z"));
-            assert_eq!(store::open("o/r").unwrap().row(5).unwrap().issue.state, "OPEN");
+            save_bundle(
+                "o/r",
+                ItemRef::github(5),
+                &fetched(ItemRef::github(5), false, "CLOSED", "2026-02-01T00:00:00Z"),
+            );
+            assert_eq!(
+                store::open("o/r")
+                    .unwrap()
+                    .row(ItemRef::github(5))
+                    .unwrap()
+                    .issue
+                    .state,
+                "OPEN"
+            );
         });
     }
 
@@ -1111,16 +1305,20 @@ mod tests {
     #[test]
     fn a_fetched_row_keeps_stored_checks_and_statuses() {
         with_store_env(|| {
-            let mut listed = row(5, true, "OPEN", None);
+            let mut listed = row(ItemRef::github(5), true, "OPEN", None);
             listed.issue.updated_at = "2026-02-01T00:00:00Z".to_string();
             listed.issue.checks = Some(model::CheckState::Pass);
-            listed.issue.parent = Some(2);
+            listed.issue.parent = Some(ItemRef::github(2));
             save_rows("o/r", "s", &[listed]);
-            save_bundle("o/r", 5, &fetched(5, true, "OPEN", "2026-03-01T00:00:00Z"));
-            let got = store::open("o/r").unwrap().row(5).unwrap();
+            save_bundle(
+                "o/r",
+                ItemRef::github(5),
+                &fetched(ItemRef::github(5), true, "OPEN", "2026-03-01T00:00:00Z"),
+            );
+            let got = store::open("o/r").unwrap().row(ItemRef::github(5)).unwrap();
             assert_eq!(got.issue.updated_at, "2026-03-01T00:00:00Z", "the newer fetch landed");
             assert_eq!(got.issue.checks, Some(model::CheckState::Pass));
-            assert_eq!(got.issue.parent, Some(2));
+            assert_eq!(got.issue.parent, Some(ItemRef::github(2)));
             assert_eq!(got.statuses, vec![("Board".to_string(), Some("Todo".to_string()))]);
         });
     }

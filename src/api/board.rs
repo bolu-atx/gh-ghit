@@ -1,6 +1,7 @@
 use super::client::{client, RATE_LIMIT_FIELD, graphql_auth_failure, graphql_url, post_json};
 use crate::model::{BoardData, BoardItem, Label};
 use serde_json::{json, Map, Value};
+use crate::model::ItemRef;
 
 fn query(kind: &str) -> String {
     let content = r#"
@@ -68,7 +69,7 @@ fn parse_item(node: &Value) -> BoardItem {
     };
     let typename = content.get("__typename").and_then(Value::as_str).unwrap_or("");
     let title = content.get("title").and_then(Value::as_str).unwrap_or("").to_string();
-    let number = content.get("number").and_then(Value::as_u64);
+    let number = content.get("number").and_then(Value::as_u64).map(ItemRef::github);
     let labels = content
         .pointer("/labels/nodes")
         .and_then(Value::as_array)
@@ -243,7 +244,7 @@ mod tests {
             items: vec![
                 BoardItem {
                     title: "Fix auth".to_string(),
-                    number: Some(101),
+                    number: Some(ItemRef::github(101)),
                     status: Some("Todo".to_string()),
                     labels: vec![Label { name: "bug".to_string() }],
                     repo: Some("o/r".to_string()),
@@ -256,7 +257,7 @@ mod tests {
                 },
                 BoardItem {
                     title: "Ship board".to_string(),
-                    number: Some(102),
+                    number: Some(ItemRef::github(102)),
                     status: Some("Done".to_string()),
                     labels: vec![],
                     repo: Some("o/r".to_string()),

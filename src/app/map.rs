@@ -14,6 +14,8 @@ use crate::core::map::{Camera, ZOOM_STEP};
 use crate::github;
 use crate::model::physics::{Layout, Physics};
 use crate::model::{self, MapFilter, MapGraph, MapItem, MapLink, MapScope, Ranking};
+use crate::model::ItemRef;
+use crate::model::NodeId;
 
 /// Most layout steps per frame while the map moves: a few, so the motion
 /// reads as animation.
@@ -37,10 +39,19 @@ pub(crate) enum MapDrag {
     /// rebuild mid-drag never moves another node. A release with no
     /// motion shows the node's card, or opens the node when its card
     /// already showed (`shown`).
-    Node { id: u64, moved: bool, shown: bool },
+    Node {
+        id: NodeId,
+        moved: bool,
+        shown: bool,
+    },
     /// Pressed off the nodes: the view follows the pointer from this cell.
     /// A release with no motion on an edge shows its card.
-    Pan { col: u16, row: u16, edge: Option<(u64, u64)>, moved: bool },
+    Pan {
+        col: u16,
+        row: u16,
+        edge: Option<(NodeId, NodeId)>,
+        moved: bool,
+    },
 }
 
 /// The card docked at the right of the map.
@@ -49,7 +60,7 @@ pub(crate) enum MapCard {
     /// The selected node's details.
     Node,
     /// One edge, named by the layout ids of its ends.
-    Edge { src: u64, dst: u64 },
+    Edge { src: NodeId, dst: NodeId },
 }
 
 /// A clickable part of the card.
@@ -59,7 +70,7 @@ pub(crate) enum CardHit {
     Close,
     NextEdge,
     /// An end of the shown edge, by layout id.
-    End(u64),
+    End(NodeId),
 }
 
 /// The map's edge cells as last drawn, one slot per cell of the map area.
@@ -68,7 +79,7 @@ pub(crate) enum CardHit {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct EdgeGrid {
     area: Rect,
-    cells: Vec<Option<(u64, u64)>>,
+    cells: Vec<Option<(NodeId, NodeId)>>,
 }
 
 impl EdgeGrid {
@@ -90,20 +101,20 @@ impl EdgeGrid {
     }
 
     /// Record that the edge from layout id `src` to `dst` covers screen cell `(col, row)`.
-    pub(crate) fn set(&mut self, col: u16, row: u16, src: u64, dst: u64) {
+    pub(crate) fn set(&mut self, col: u16, row: u16, src: NodeId, dst: NodeId) {
         if let Some(slot) = self.slot(col, row) {
             self.cells[slot] = Some((src, dst));
         }
     }
 
     /// The edge drawn at screen cell `(col, row)`.
-    pub(crate) fn at(&self, col: u16, row: u16) -> Option<(u64, u64)> {
+    pub(crate) fn at(&self, col: u16, row: u16) -> Option<(NodeId, NodeId)> {
         self.cells[self.slot(col, row)?]
     }
 
     /// Every drawn cell with its edge.
     #[cfg(test)]
-    pub(crate) fn drawn(&self) -> impl Iterator<Item = ((u16, u16), (u64, u64))> + '_ {
+    pub(crate) fn drawn(&self) -> impl Iterator<Item = ((u16, u16), (NodeId, NodeId))> + '_ {
         self.cells.iter().enumerate().filter_map(|(i, edge)| {
             let w = usize::from(self.area.width);
             Some(((self.area.x + (i % w) as u16, self.area.y + (i / w) as u16), (*edge)?))
@@ -114,7 +125,7 @@ impl EdgeGrid {
 /// The stored row and body of the item a node card shows. Read once per
 /// selection and store change, never per frame.
 pub(crate) struct CardDetail {
-    pub(crate) number: u64,
+    pub(crate) number: ItemRef,
     /// Stamp of the item's row and detail at the read.
     pub(crate) stamp: Option<String>,
     pub(crate) row: Option<github::Row>,
@@ -135,20 +146,20 @@ pub(crate) struct MapView {
     /// Center of the last build: the open item in component scope, none
     /// in repo scope or with no item open. A data reread keeps the
     /// selection; a new center takes it.
-    center: Option<u64>,
+    center: Option<ItemRef>,
     pub(crate) layout: Layout,
     pub(crate) camera: Camera,
     /// The camera fits the whole graph each frame until a pan or zoom.
     pub(crate) follow: bool,
     /// Layout id of the selected node.
-    pub(crate) selected: Option<u64>,
+    pub(crate) selected: Option<NodeId>,
     /// Bumped when `graph` is rebuilt; keys `chain`.
     generation: u64,
     /// Blockers of the selected node, with the graph generation and the
     /// selection they were computed for. Recomputed when either differs.
-    chain: Option<(u64, u64, HashSet<usize>)>,
+    chain: Option<(u64, NodeId, HashSet<usize>)>,
     /// Item number to its place in `items`.
-    item_index: HashMap<u64, usize>,
+    item_index: HashMap<ItemRef, usize>,
     pub(crate) drag: Option<MapDrag>,
     pub(crate) card: Option<MapCard>,
     pub(crate) detail: Option<CardDetail>,
@@ -198,7 +209,7 @@ impl Default for MapView {
 }
 
 impl MapView {
-    pub(crate) fn center(&self) -> Option<u64> {
+    pub(crate) fn center(&self) -> Option<ItemRef> {
         self.center
     }
 
@@ -208,7 +219,7 @@ impl MapView {
     }
 
     /// The stored item with number `number`.
-    pub(crate) fn item(&self, number: u64) -> Option<&MapItem> {
+    pub(crate) fn item(&self, number: ItemRef) -> Option<&MapItem> {
         self.items.get(*self.item_index.get(&number)?)
     }
 
@@ -251,7 +262,7 @@ impl MapView {
     }
 
     /// Item number the node card shows.
-    fn card_number(&self) -> Option<u64> {
+    fn card_number(&self) -> Option<ItemRef> {
         match self.card? {
             MapCard::Node => self.graph.nodes[self.selected_index()?].number,
             MapCard::Edge { .. } => None,
@@ -410,7 +421,9 @@ impl App {
         map.ranking = model::rank(&map.graph);
         map.built = Some(map.filter.clone());
         if new_center || map.selected_index().is_none() {
-            map.selected = center.filter(|n| map.graph.index_of(*n).is_some());
+            map.selected = center
+                .map(NodeId::Item)
+                .filter(|n| map.graph.index_of(*n).is_some());
         }
         // A card whose subject left the graph closes.
         let gone = match map.card {
@@ -578,8 +591,8 @@ impl App {
     /// with end ids `edge` or empty space) it starts a pan.
     pub(crate) fn map_press(
         &mut self,
-        node: Option<u64>,
-        edge: Option<(u64, u64)>,
+        node: Option<NodeId>,
+        edge: Option<(NodeId, NodeId)>,
         col: u16,
         row: u16,
     ) {

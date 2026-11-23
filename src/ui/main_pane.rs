@@ -16,6 +16,7 @@ use super::{spinning, loading_body};
 use super::sidebar::check_span;
 use super::diff::diff_text_aux;
 use super::search::SearchAux;
+use crate::model::ItemRef;
 
 /// Styled header for the body pane: the color-coded meta lines. The
 /// `#N title` line lives only in the masthead (`render_main`), so it is
@@ -119,7 +120,11 @@ pub(super) fn wrap_lines<'a>(lines: Vec<Line<'a>>, width: usize) -> Vec<Line<'a>
 /// handler resolves, so what looks like a link is exactly what opens.
 /// `is_pr` answers for loaded numbers; unknown refs keep the URL color.
 /// Spans split at range edges.
-pub(super) fn style_links(lines: &mut [Line<'_>], repo: Option<&str>, is_pr: impl Fn(u64) -> Option<bool>) {
+pub(super) fn style_links(
+    lines: &mut [Line<'_>],
+    repo: Option<&str>,
+    is_pr: impl Fn(ItemRef) -> Option<bool>,
+) {
     use crate::theme::{issue_ref, pr_ref, teal};
     for line in lines.iter_mut() {
         let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -169,7 +174,7 @@ pub(super) fn style_links(lines: &mut [Line<'_>], repo: Option<&str>, is_pr: imp
 }
 
 /// Light up every line that mentions issue `n`, for refs-row selection.
-fn highlight_mentions(lines: &mut [Line<'_>], n: u64, repo: Option<&str>) {
+fn highlight_mentions(lines: &mut [Line<'_>], n: ItemRef, repo: Option<&str>) {
     use crate::theme::{amber, ink};
     for line in lines.iter_mut() {
         let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -197,7 +202,10 @@ fn paired_line(d: &IssueData) -> Option<Line<'static>> {
             spans.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
         }
         let color = state_color(&pair.state);
-        spans.push(Span::styled(format!("#{}", pair.number), Style::new().bg(ink()).fg(color).bold()));
+        spans.push(Span::styled(
+            pair.number.display(""),
+            Style::new().bg(ink()).fg(color).bold(),
+        ));
         if !pair.state.is_empty() {
             spans.push(Span::styled(format!(" {}", pair.state), Style::new().bg(ink()).fg(color)));
         }
@@ -257,7 +265,10 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let mast: Vec<Line> = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
         Some(d) => {
             let mut title = vec![
-                Span::styled(format!("#{} ", d.number), Style::new().fg(muted())),
+                Span::styled(
+                    format!("{} ", d.number.display("")),
+                    Style::new().fg(muted()),
+                ),
                 Span::styled(model::slug(&d.title, 60), Style::new().fg(paper()).bold()),
             ];
             if let Some(check) = check_span(d) {
@@ -344,7 +355,9 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Tab::Map => ratatui::text::Text::default(),
         },
         None if app.pane_loading().main => {
-            let label = app.nav.requested.map_or("Loading…".to_string(), |n| format!("Loading #{n}…"));
+            let label = app.nav.requested.map_or("Loading…".to_string(), |n| {
+                format!("Loading {n}…", n = n.display(""))
+            });
             ratatui::text::Text::from(loading_body(&label, app.tick, usize::from(rows[4].height)))
         }
         None => {
@@ -358,7 +371,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     // Clickable refs and URLs read as links in the body.
     if app.nav.tab == Tab::Details {
-        let is_pr = |n: u64| app.issues.data.get(&n).map(|d| d.is_pr);
+        let is_pr = |n: ItemRef| app.issues.data.get(&n).map(|d| d.is_pr);
         style_links(&mut text.lines, app.repo_key().as_deref(), is_pr);
     }
     // A refs-row selection lights up the mentioning line instead of opening
@@ -375,7 +388,6 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         .wrap(Wrap { trim: false })
         .scroll((app.nav.scroll, 0));
     f.render_widget(pane, gutter[1]);
-
 }
 
 /// Rows `text` takes at `width` cells, counting each line's wraps.

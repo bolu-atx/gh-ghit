@@ -3,8 +3,9 @@
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
 use crate::model::{Author, IssueData};
+use crate::model::ItemRef;
 
-pub(super) fn sample(number: u64) -> IssueData {
+pub(super) fn sample(number: ItemRef) -> IssueData {
     IssueData {
         number,
         title: "Fix the thing".to_string(),
@@ -14,7 +15,10 @@ pub(super) fn sample(number: u64) -> IssueData {
         assignees: vec![],
         created_at: "2026-01-02T00:00:00Z".to_string(),
         updated_at: "2026-01-05T00:00:00Z".to_string(),
-        url: format!("https://github.com/o/r/issues/{number}"),
+        url: format!(
+            "https://github.com/o/r/issues/{number}",
+            number = number.number
+        ),
         body: String::new(),
         comments: vec![],
         review_threads: vec![],

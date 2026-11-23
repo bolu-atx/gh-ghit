@@ -7,6 +7,7 @@ use super::menu;
 
 use crate::app::{App, Focus};
 use crate::core::Pane;
+use crate::model::ItemRef;
 
 /// Sidebar rows are 3 lines each (`Item`) with 1-line labeled dividers,
 /// below a 1-line border plus a 1-line spacer. Dividers never hit.
@@ -19,7 +20,7 @@ pub(super) fn sidebar_hit(
     heights: &[usize],
     x: u16,
     y: u16,
-) -> Option<u64> {
+) -> Option<ItemRef> {
     if !in_rect(area, x, y) || y < area.y + 2 {
         return None;
     }
@@ -40,7 +41,7 @@ fn sidebar_row_rect(
     area: Rect,
     rows: &[crate::model::SideRow],
     heights: &[usize],
-    target: u64,
+    target: ItemRef,
 ) -> Option<Rect> {
     if area.width == 0 {
         return None;

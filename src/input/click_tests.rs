@@ -7,26 +7,44 @@ use super::*;
 use super::click::sidebar_hit;
 use super::test_support::{sample, wheel};
 use crate::model::SideRow;
+use crate::model::ItemRef;
 
 #[test]
 fn expanded_row_detail_shifts_hits_below() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for n in [7, 9] {
-        app.issues.data.insert(n, sample(n));
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.visited.push(n);
+        app.issues
+            .data
+            .insert(ItemRef::github(n), sample(ItemRef::github(n)));
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.visited.push(ItemRef::github(n));
     }
     let rows = app.issue_rows();
-    assert_eq!(rows, vec![SideRow::Item(7), SideRow::Item(9)]);
+    assert_eq!(
+        rows,
+        vec![
+            SideRow::Item(ItemRef::github(7)),
+            SideRow::Item(ItemRef::github(9))
+        ]
+    );
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
     terminal.draw(|f| crate::app::draw_frame(f, &mut app)).unwrap();
     let area = app.hits.side_issue_area;
     assert_eq!(app.hits.side_issue_heights, vec![3, 3]);
-    assert_eq!(sidebar_hit(area, &app.hits.side_issue_rows, &app.hits.side_issue_heights, 5, area.y + 2), Some(7));
+    assert_eq!(
+        sidebar_hit(
+            area,
+            &app.hits.side_issue_rows,
+            &app.hits.side_issue_heights,
+            5,
+            area.y + 2
+        ),
+        Some(ItemRef::github(7))
+    );
 
-    app.diff.expanded_rows.insert(7);
+    app.diff.expanded_rows.insert(ItemRef::github(7));
     terminal.draw(|f| crate::app::draw_frame(f, &mut app)).unwrap();
     let heights = app.hits.side_issue_heights.clone();
     let rows = app.hits.side_issue_rows.clone();
@@ -36,12 +54,20 @@ fn expanded_row_detail_shifts_hits_below() {
     // Every line of the detail block belongs to the expanded row.
     let detail_top = area.y + 4;
     for y in detail_top..detail_top + detail as u16 {
-        assert_eq!(sidebar_hit(area, &rows, &heights, 5, y), Some(7), "detail line {y}");
+        assert_eq!(
+            sidebar_hit(area, &rows, &heights, 5, y),
+            Some(ItemRef::github(7)),
+            "detail line {y}"
+        );
     }
     // Row 9 starts only after the detail block plus the item's blank tail.
     let row9_top = area.y + 2 + 3 + detail as u16;
     for y in row9_top..row9_top + 3 {
-        assert_eq!(sidebar_hit(area, &rows, &heights, 5, y), Some(9), "row 9 line {y}");
+        assert_eq!(
+            sidebar_hit(area, &rows, &heights, 5, y),
+            Some(ItemRef::github(9)),
+            "row 9 line {y}"
+        );
     }
 }
 
@@ -50,20 +76,33 @@ fn sidebar_click_focuses_recent_before_opening() {
     for (is_pr, pane) in [(false, Pane::Issues), (true, Pane::PRs)] {
         let mut app = App::new(Some("o/r".to_string()));
         app.repo_slug = Some("o/r".to_string());
-        let mut recent = sample(9);
+        let mut recent = sample(ItemRef::github(9));
         recent.is_pr = is_pr;
-        app.issues.data.insert(7, sample(7));
-        app.issues.data.insert(9, recent);
-        app.issues.statuses.insert(7, vec![]);
-        app.issues.statuses.insert(9, vec![]);
-        app.ensure_visited(7);
-        app.ensure_recent(9);
-        app.show_issue(7);
+        app.issues
+            .data
+            .insert(ItemRef::github(7), sample(ItemRef::github(7)));
+        app.issues.data.insert(ItemRef::github(9), recent);
+        app.issues.statuses.insert(ItemRef::github(7), vec![]);
+        app.issues.statuses.insert(ItemRef::github(9), vec![]);
+        app.ensure_visited(ItemRef::github(7));
+        app.ensure_recent(ItemRef::github(9));
+        app.show_issue(ItemRef::github(7));
         let area = Rect::new(0, 0, 30, 20);
-        let rows = if is_pr { app.pr_rows() } else { app.issue_rows() };
-        let row_index = rows.iter().position(|row| row.number() == Some(9)).unwrap();
-        let y = area.y + 2 + rows[..row_index].iter()
-            .map(|row| if row.number().is_some() { 3 } else { 1 }).sum::<u16>();
+        let rows = if is_pr {
+            app.pr_rows()
+        } else {
+            app.issue_rows()
+        };
+        let row_index = rows
+            .iter()
+            .position(|row| row.number() == Some(ItemRef::github(9)))
+            .unwrap();
+        let y = area.y
+            + 2
+            + rows[..row_index]
+                .iter()
+                .map(|row| if row.number().is_some() { 3 } else { 1 })
+                .sum::<u16>();
         if is_pr {
             app.hits.side_pr_area = area;
             app.hits.side_pr_heights = rows.iter().map(|row| if row.number().is_some() { 3 } else { 1 }).collect();
@@ -77,15 +116,15 @@ fn sidebar_click_focuses_recent_before_opening() {
 
         handle_mouse(&mut app, click);
         assert_eq!(app.nav.pane, pane);
-        assert_eq!(app.nav.current, Some(9));
-        assert!(!app.nav.visited.contains(&9));
+        assert_eq!(app.nav.current, Some(ItemRef::github(9)));
+        assert!(!app.nav.visited.contains(&ItemRef::github(9)));
         assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);
 
         // The second press enters the item: Main takes focus, the row
         // stays in its group.
         handle_mouse(&mut app, click);
-        assert!(!app.nav.visited.contains(&9));
-        assert_eq!(app.nav.current, Some(9));
+        assert!(!app.nav.visited.contains(&ItemRef::github(9)));
+        assert_eq!(app.nav.current, Some(ItemRef::github(9)));
         assert_eq!(app.nav.pane, Pane::Main);
         assert_eq!(app.nav.back.iter().map(|f| f.pane).collect::<Vec<_>>(), vec![pane]);
         assert_eq!(if is_pr { app.pr_rows() } else { app.issue_rows() }, rows);

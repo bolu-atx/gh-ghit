@@ -34,6 +34,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{DiffFile, IssueData};
+use crate::model::ItemRef;
 
 /// Default merged/closed window: the last 24 hours.
 pub const DEFAULT_WINDOW_HOURS: u64 = 24;
@@ -42,11 +43,11 @@ pub const DEFAULT_WINDOW_HOURS: u64 = 24;
 #[derive(Debug, PartialEq, Eq)]
 pub enum BarCommand {
     /// One or more issue numbers to load.
-    Numbers(Vec<u64>),
+    Numbers(Vec<ItemRef>),
     /// Open the current issue in the browser.
     OpenCurrent,
     /// Open an explicit issue number in the browser.
-    Open(u64),
+    Open(ItemRef),
     Quit,
     /// Empty bar: dismiss back to the main pane.
     Dismiss,
@@ -60,8 +61,10 @@ pub fn parse_bar(text: &str) -> BarCommand {
     let trimmed = text.trim().to_string();
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     if !parts.is_empty() && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())) {
-        let numbers: Vec<u64> =
-            parts.iter().filter_map(|p| p.parse::<u64>().ok()).collect();
+        let numbers: Vec<ItemRef> = parts
+            .iter()
+            .filter_map(|p| p.parse::<u64>().ok().map(ItemRef::github))
+            .collect();
         return BarCommand::Numbers(numbers);
     }
     match trimmed.as_str() {
@@ -73,7 +76,7 @@ pub fn parse_bar(text: &str) -> BarCommand {
             && parts[1].chars().all(|c| c.is_ascii_digit()) =>
         {
             match parts[1].parse::<u64>() {
-                Ok(n) => BarCommand::Open(n),
+                Ok(n) => BarCommand::Open(ItemRef::github(n)),
                 Err(_) => BarCommand::Hint,
             }
         }
@@ -83,7 +86,7 @@ pub fn parse_bar(text: &str) -> BarCommand {
 
 /// Next selection walking issues-then-PRs as one flat list, clamped at the
 /// ends. `None` when the list is empty.
-pub fn next_in_order(order: &[u64], current: Option<u64>, delta: isize) -> Option<u64> {
+pub fn next_in_order(order: &[ItemRef], current: Option<ItemRef>, delta: isize) -> Option<ItemRef> {
     if order.is_empty() {
         return None;
     }
@@ -333,7 +336,7 @@ pub fn loading_label(items: &[LoadingItem]) -> String {
 }
 
 /// Toggle `n` in the pin list, returning the new list.
-pub fn toggle_pin(pins: &[u64], n: u64) -> Vec<u64> {
+pub fn toggle_pin(pins: &[ItemRef], n: ItemRef) -> Vec<ItemRef> {
     let mut out = pins.to_vec();
     if out.contains(&n) {
         out.retain(|x| *x != n);
@@ -351,7 +354,7 @@ pub const HISTORY_LIMIT: usize = 100;
 /// there is nothing to leave (`None`), when `next` is the current
 /// issue, or when `current` already tops the stack (async completions
 /// must not double-record one jump).
-pub fn history_push(back: &[u64], current: Option<u64>, next: u64) -> Vec<u64> {
+pub fn history_push(back: &[ItemRef], current: Option<ItemRef>, next: ItemRef) -> Vec<ItemRef> {
     let mut out = back.to_vec();
     let Some(cur) = current else { return out };
     if cur == next || out.last() == Some(&cur) {
@@ -368,30 +371,41 @@ pub fn history_push(back: &[u64], current: Option<u64>, next: u64) -> Vec<u64> {
 /// the pin order shows only in the pinned group, and a requested number
 /// never repeats in recent.
 pub fn section_split(
-    pin_order: &[u64],
-    visited: &[u64],
-    recent: &[u64],
-    pinned: &HashSet<u64>,
-) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
-    let pin_set: HashSet<u64> = pin_order.iter().copied().collect();
-    let pinned_sec: Vec<u64> = pin_order.to_vec();
-    let visited_sec: Vec<u64> = visited
+    pin_order: &[ItemRef],
+    visited: &[ItemRef],
+    recent: &[ItemRef],
+    pinned: &HashSet<ItemRef>,
+) -> (Vec<ItemRef>, Vec<ItemRef>, Vec<ItemRef>) {
+    let pin_set: HashSet<ItemRef> = pin_order.iter().copied().collect();
+    let pinned_sec: Vec<ItemRef> = pin_order.to_vec();
+    let visited_sec: Vec<ItemRef> = visited
         .iter()
         .filter(|n| !pin_set.contains(n) && !pinned.contains(n))
         .copied()
         .collect();
-    let seen: HashSet<u64> = pin_set.union(pinned).copied().collect::<HashSet<_>>()
+    let seen: HashSet<ItemRef> = pin_set
+        .union(pinned)
+        .copied()
+        .collect::<HashSet<_>>()
         .union(&visited_sec.iter().copied().collect::<HashSet<_>>())
         .copied()
         .collect();
-    let recent_sec: Vec<u64> = recent.iter().filter(|n| !seen.contains(n)).copied().collect();
+    let recent_sec: Vec<ItemRef> = recent
+        .iter()
+        .filter(|n| !seen.contains(n))
+        .copied()
+        .collect();
     (pinned_sec, visited_sec, recent_sec)
 }
 
 /// Display rows for one pane (Issues or PRs): pinned, then requested, then
 /// recent, with a labeled divider slot between non-empty groups. Empty
 /// groups leave no divider behind.
-pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<crate::model::SideRow> {
+pub fn pane_order(
+    pinned: &[ItemRef],
+    requested: &[ItemRef],
+    recent: &[ItemRef],
+) -> Vec<crate::model::SideRow> {
     use crate::model::SideRow;
     let mut out: Vec<SideRow> = vec![];
     for (label, group) in [("pinned", pinned), ("requested", requested), ("recent", recent)] {
@@ -410,9 +424,9 @@ pub fn pane_order(pinned: &[u64], requested: &[u64], recent: &[u64]) -> Vec<crat
 /// requested groups on top, then one divider per milestone. Group labels
 /// carry the member count. `(no milestone)` always sorts last.
 pub fn grouped_pane_order(
-    pinned: &[u64],
-    requested: &[u64],
-    groups: &[(String, Vec<u64>)],
+    pinned: &[ItemRef],
+    requested: &[ItemRef],
+    groups: &[(String, Vec<ItemRef>)],
 ) -> Vec<crate::model::SideRow> {
     use crate::model::SideRow;
     let mut out = pane_order(pinned, requested, &[]);
@@ -431,16 +445,16 @@ pub fn grouped_pane_order(
 /// dated ones, and `(no milestone)` stays last. Members keep the incoming
 /// order.
 pub fn milestone_groups(
-    rows: &[u64],
-    milestone_of: &dyn Fn(u64) -> Option<String>,
+    rows: &[ItemRef],
+    milestone_of: &dyn Fn(ItemRef) -> Option<String>,
     due_of: &dyn Fn(&str) -> Option<String>,
-) -> Vec<(String, Vec<u64>)> {
+) -> Vec<(String, Vec<ItemRef>)> {
     use std::collections::HashMap;
-    let mut buckets: HashMap<Option<String>, Vec<u64>> = HashMap::new();
+    let mut buckets: HashMap<Option<String>, Vec<ItemRef>> = HashMap::new();
     for &n in rows {
         buckets.entry(milestone_of(n)).or_default().push(n);
     }
-    let mut groups: Vec<(Option<String>, Vec<u64>)> = buckets.into_iter().collect();
+    let mut groups: Vec<(Option<String>, Vec<ItemRef>)> = buckets.into_iter().collect();
     groups.sort_by(|(a, _), (b, _)| match (a, b) {
         (None, None) => std::cmp::Ordering::Equal,
         (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -467,12 +481,18 @@ pub fn milestone_groups(
 /// the title, a label name, or the author login, or a digit substring of
 /// the number (`#` prefix optional). Empty query matches every row, so a
 /// cleared `/` filter restores the full sidebar.
-pub fn matches_search(number: u64, title: &str, labels: &[&str], author: &str, query: &str) -> bool {
+pub fn matches_search(
+    number: ItemRef,
+    title: &str,
+    labels: &[&str],
+    author: &str,
+    query: &str,
+) -> bool {
     let q = query.trim().trim_start_matches('#').to_lowercase();
     if q.is_empty() {
         return true;
     }
-    if number.to_string().contains(&q) {
+    if number.number.to_string().contains(&q) {
         return true;
     }
     if title.to_lowercase().contains(&q) {
@@ -490,7 +510,7 @@ pub fn matches_search(number: u64, title: &str, labels: &[&str], author: &str, q
 /// Empty query matches every card, so clearing the filter restores the
 /// full board.
 pub fn matches_board_filter(
-    number: Option<u64>,
+    number: Option<ItemRef>,
     title: &str,
     labels: &[&str],
     query: &str,
@@ -501,7 +521,7 @@ pub fn matches_board_filter(
     }
     if let Some(rest) = q.strip_prefix('#') {
         let parsed = rest.parse::<u64>().ok();
-        return parsed.is_some() && parsed == number;
+        return parsed.is_some() && parsed == number.map(|item| item.number);
     }
     title.to_lowercase().contains(&q)
         || labels.iter().any(|l| l.to_lowercase().contains(&q))
@@ -556,15 +576,15 @@ impl SideSort {
 /// number as the tie-break so the order is deterministic. Loading rows
 /// (no data yet) keep their relative place at the end.
 pub fn sort_rows(
-    rows: Vec<u64>,
+    rows: Vec<ItemRef>,
     sort: SideSort,
     desc: bool,
-    data: &HashMap<u64, IssueData>,
-) -> Vec<u64> {
+    data: &HashMap<ItemRef, IssueData>,
+) -> Vec<ItemRef> {
     if sort == SideSort::Default {
         return rows;
     }
-    let key = |n: u64| -> Option<String> {
+    let key = |n: ItemRef| -> Option<String> {
         let d = data.get(&n)?;
         Some(match sort {
             SideSort::Updated => d.updated_at.clone(),
@@ -579,7 +599,7 @@ pub fn sort_rows(
             SideSort::Default => String::new(),
         })
     };
-    let mut keyed: Vec<(Option<String>, u64)> = rows.into_iter().map(|n| (key(n), n)).collect();
+    let mut keyed: Vec<(Option<String>, ItemRef)> = rows.into_iter().map(|n| (key(n), n)).collect();
     keyed.sort_by(|(ka, a), (kb, b)| match (ka, kb) {
         (Some(a_key), Some(b_key)) => {
             let ord = a_key.cmp(b_key);
@@ -611,14 +631,18 @@ pub fn toast_snippet(s: &str, limit: usize) -> String {
 }
 
 /// Agent-ready issue/PR identity: `…` only enters via the toast, never here.
-pub fn yank_issue_text(number: u64, title: &str, url: &str) -> String {
-    format!("#{number} {} — {url}", collapse_single_line(title))
+pub fn yank_issue_text(number: ItemRef, title: &str, url: &str) -> String {
+    format!(
+        "{number} {} — {url}",
+        collapse_single_line(title),
+        number = number.display("")
+    )
 }
 
 /// Agent-ready diff context: PR identity plus the file under `diff_cursor`.
 /// `first_hunk` is the `@@ … @@` header when the file is expanded.
 pub fn yank_diff_text(
-    number: u64,
+    number: ItemRef,
     title: &str,
     url: &str,
     file: &DiffFile,
@@ -628,27 +652,29 @@ pub fn yank_diff_text(
         .map(|h| format!(" {}", collapse_single_line(h)))
         .unwrap_or_default();
     format!(
-        "#{number} {} — {} ({} +{} -{}{hunk}) — {url}",
+        "{number} {} — {} ({} +{} -{}{hunk}) — {url}",
         collapse_single_line(title),
         file.filename,
         file.status,
         file.additions,
-        file.deletions
+        file.deletions,
+        number = number.display("")
     )
 }
 
 /// Agent-ready diff line: PR identity plus the active patch line.
 pub fn yank_diff_line_text(
-    number: u64,
+    number: ItemRef,
     title: &str,
     url: &str,
     filename: &str,
     line: &str,
 ) -> String {
     format!(
-        "#{number} {} — {filename}: \"{}\" — {url}",
+        "{number} {} — {filename}: \"{}\" — {url}",
         collapse_single_line(title),
-        collapse_single_line(line)
+        collapse_single_line(line),
+        number = number.display("")
     )
 }
 
@@ -661,8 +687,8 @@ pub fn first_hunk(patch: &str) -> Option<String> {
 /// Returns the full yank text, or `None` when no line mentions it.
 /// Line numbers are 1-based raw `body` lines, not wrapped render rows.
 pub fn yank_ref_text(
-    current: u64,
-    target: u64,
+    current: ItemRef,
+    target: ItemRef,
     body: &str,
     repo: Option<&str>,
     target_title: Option<&str>,
@@ -675,7 +701,12 @@ pub fn yank_ref_text(
             .any(|(_, t)| *t == crate::model::LinkTarget::Issue(target))
         {
             let snippet = toast_snippet(&collapse_single_line(line), 120);
-            let mut out = format!("#{current} refs #{target} (body line {}): \"{snippet}\"", idx + 1);
+            let mut out = format!(
+                "{current} refs {target} (body line {}): \"{snippet}\"",
+                idx + 1,
+                current = current.display(""),
+                target = target.display("")
+            );
             match (target_title, target_url) {
                 (Some(t), Some(u)) if !t.is_empty() && !u.is_empty() => {
                     out.push_str(&format!(" — {} {u}", collapse_single_line(t)));
@@ -718,622 +749,4 @@ pub fn match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bar_parses_numbers_and_commands() {
-        assert_eq!(parse_bar("12 34"), BarCommand::Numbers(vec![12, 34]));
-        assert_eq!(parse_bar("o"), BarCommand::OpenCurrent);
-        assert_eq!(parse_bar("open"), BarCommand::OpenCurrent);
-        assert_eq!(parse_bar("o 42"), BarCommand::Open(42));
-        assert_eq!(parse_bar("q"), BarCommand::Quit);
-        assert_eq!(parse_bar("quit"), BarCommand::Quit);
-        assert_eq!(parse_bar("exit"), BarCommand::Quit);
-        assert_eq!(parse_bar(""), BarCommand::Dismiss);
-        assert_eq!(parse_bar("o abc"), BarCommand::Hint);
-        assert_eq!(parse_bar("hello"), BarCommand::Hint);
-    }
-
-    #[test]
-    fn selection_walks_and_clamps() {
-        let order = vec![7, 9];
-        assert_eq!(next_in_order(&order, Some(7), 1), Some(9));
-        assert_eq!(next_in_order(&order, Some(9), 1), Some(9));
-        assert_eq!(next_in_order(&order, Some(7), -1), Some(7));
-        assert_eq!(next_in_order(&order, None, 1), Some(7));
-        assert_eq!(next_in_order(&order, None, -1), Some(9));
-        assert_eq!(next_in_order(&[], Some(7), 1), None);
-        assert_eq!(next_in_order(&order, Some(999), 1), Some(7));
-    }
-
-    #[test]
-    fn history_push_records_leaves_and_dedupes() {
-        assert_eq!(history_push(&[], None, 7), Vec::<u64>::new());
-        assert_eq!(history_push(&[], Some(7), 7), Vec::<u64>::new());
-        assert_eq!(history_push(&[], Some(7), 9), vec![7]);
-        assert_eq!(history_push(&[7], Some(7), 9), vec![7]);
-        assert_eq!(history_push(&[5], Some(7), 9), vec![5, 7]);
-    }
-
-    #[test]
-    fn history_push_caps_at_limit() {
-        let back: Vec<u64> = (1..=HISTORY_LIMIT as u64).collect();
-        let out = history_push(&back, Some(999), 1000);
-        assert_eq!(out.len(), HISTORY_LIMIT);
-        assert_eq!(out[0], 2);
-        assert_eq!(out[out.len() - 1], 999);
-    }
-
-    #[test]
-    fn cursor_clamps_to_grid() {
-        assert_eq!(board_cursor(3, 5, 0, 0, 1, 2), (1, 2));
-        assert_eq!(board_cursor(3, 5, 0, 0, -1, -1), (0, 0));
-        assert_eq!(board_cursor(3, 5, 2, 4, 1, 1), (2, 4));
-        assert_eq!(board_cursor(3, 0, 0, 0, 0, 1), (0, 0));
-        assert_eq!(board_cursor(0, 0, 0, 0, 1, 1), (0, 0));
-    }
-
-    #[test]
-    fn window_cycles_and_labels() {
-        assert_eq!(cycle_window(1), 24);
-        assert_eq!(cycle_window(24), 168);
-        assert_eq!(cycle_window(168), 1);
-        assert_eq!(cycle_window(99), 1);
-        assert_eq!(window_label(1), "open + merged ≤1h");
-        assert_eq!(window_label(24), "open + merged ≤24h");
-        assert_eq!(window_label(168), "open + merged ≤7d");
-        assert_eq!(window_label(0), "open + merged all time");
-    }
-
-    #[test]
-    fn pane_loading_label_names_the_fetch_scope() {
-        assert_eq!(pane_loading_label(false, true, true, 24, ""), "Loading open + last 24h closed issues…");
-        assert_eq!(pane_loading_label(true, true, true, 168, ""), "Loading open + last 7d merged pull requests…");
-        assert_eq!(pane_loading_label(true, true, true, 0, ""), "Loading open + all merged pull requests…");
-        assert_eq!(pane_loading_label(false, true, false, 24, ""), "Loading open issues…");
-        assert_eq!(pane_loading_label(false, false, true, 1, ""), "Loading last 1h closed issues…");
-        assert_eq!(pane_loading_label(false, false, false, 24, ""), "Loading issues…");
-        assert_eq!(pane_loading_label(true, true, true, 24, " is:draft "), "Loading pull requests for “is:draft”…");
-    }
-
-    #[test]
-    fn search_query_adds_the_window_token_only_when_dated() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        assert_eq!(window_token(24, now).as_deref(), Some("updated:>=2026-11-09"));
-        assert_eq!(window_token(168, now).as_deref(), Some("updated:>=2026-11-03"));
-        assert_eq!(window_token(0, now), None, "all time adds no token");
-        assert_eq!(search_query("label:bug", 24, now), "label:bug updated:>=2026-11-09");
-        assert_eq!(search_query("  label:bug  ", 0, now), "label:bug");
-        assert_eq!(search_query("", 24, now), "", "no query means no search");
-    }
-
-    #[test]
-    fn milestone_groups_order_by_due_then_title_with_none_last() {
-        // 1 and 2 share v1, 3 is v2, 4 has no milestone, 5 is undated.
-        let milestone = |n: u64| match n {
-            1 | 2 => Some("v1".to_string()),
-            3 => Some("v2".to_string()),
-            5 => Some("backlog".to_string()),
-            _ => None,
-        };
-        let due = |title: &str| match title {
-            "v1" => Some("2026-02-01T00:00:00Z".to_string()),
-            "v2" => Some("2026-01-01T00:00:00Z".to_string()),
-            _ => None,
-        };
-        let groups = milestone_groups(&[1, 2, 3, 4, 5], &milestone, &due);
-        let labels: Vec<&str> = groups.iter().map(|(label, _)| label.as_str()).collect();
-        assert_eq!(labels, vec!["v2", "v1", "backlog", "(no milestone)"]);
-        assert_eq!(groups[1].1, vec![1, 2], "members keep the incoming order");
-        assert_eq!(groups[3].1, vec![4]);
-        assert!(milestone_groups(&[], &milestone, &due).is_empty());
-    }
-
-    #[test]
-    fn loading_names_each_pending_source() {
-        for (state, source) in [
-            (FetchState { issues: 1, ..FetchState::default() }, LoadSource::Issue),
-            (FetchState { diffs: 2, ..FetchState::default() }, LoadSource::Diff),
-            (FetchState { details: 3, ..FetchState::default() }, LoadSource::Details),
-            (FetchState { board: true, ..FetchState::default() }, LoadSource::Board),
-            (FetchState { sections_live: true, ..FetchState::default() }, LoadSource::Sections),
-            (FetchState { bootstrap_live: true, ..FetchState::default() }, LoadSource::Sections),
-        ] {
-            let got = loading(&state);
-            assert_eq!(got.len(), 1, "{state:?}");
-            assert_eq!(got[0].source, source, "{state:?}");
-            assert_eq!(got[0].progress, None, "{state:?}");
-        }
-    }
-
-    #[test]
-    fn loading_idle_means_empty() {
-        assert_eq!(loading(&FetchState::default()), vec![]);
-    }
-
-    #[test]
-    fn pane_loading_maps_fetches_to_panes() {
-        assert_eq!(pane_loading(&PaneInputs::default()), PaneLoading::default());
-        let sidebar = PaneInputs { bootstrap_live: true, ..PaneInputs::default() };
-        assert_eq!(
-            pane_loading(&sidebar),
-            PaneLoading { sidebar: true, sidebar_spinner: true, ..PaneLoading::default() }
-        );
-        let both = PaneInputs { bootstrap_live: true, requested_pending: true, ..PaneInputs::default() };
-        let quiet = pane_loading(&both);
-        assert!(quiet.sidebar_spinner && !quiet.sidebar, "lower tier: spinner only");
-        assert!(quiet.main && quiet.main_spinner, "current tier keeps its loading body");
-        let fresh = PaneInputs { requested_pending: true, ..PaneInputs::default() };
-        assert!(pane_loading(&fresh).main && pane_loading(&fresh).main_spinner);
-        let cached = PaneInputs { requested_pending: true, shown_cached: true, ..PaneInputs::default() };
-        assert!(!pane_loading(&cached).main, "cached text stays during refresh");
-        assert!(pane_loading(&cached).main_spinner, "spinner still shows");
-        let refs = PaneInputs { refs_pending: true, ..PaneInputs::default() };
-        assert!(pane_loading(&refs).refs);
-    }
-
-    #[test]
-    fn loading_message_wins_over_spinner() {
-        let state = FetchState {
-            issues: 1,
-            diffs: 1,
-            board: true,
-            sections_live: true,
-            message_visible: true,
-            ..FetchState::default()
-        };
-        assert_eq!(loading(&state), vec![]);
-    }
-
-    #[test]
-    fn backfill_label_shows_progress_while_running_only() {
-        let running = FetchState { backfill: true, backfill_progress: Some((300, 5000)), ..FetchState::default() };
-        assert_eq!(loading_label(&loading(&running)), "backfill 300/5000");
-        let unknown = FetchState { backfill: true, ..FetchState::default() };
-        assert_eq!(loading_label(&loading(&unknown)), "backfill");
-        let done = FetchState { backfill_progress: Some((300, 5000)), ..FetchState::default() };
-        assert_eq!(loading(&done), vec![], "hidden when not running");
-    }
-
-    #[test]
-    fn progress_label_bounds_unknown_and_complete() {
-        assert_eq!(progress_label(0, 0), None, "unknown total stays indeterminate");
-        assert_eq!(progress_label(0, 5), Some("0/5".to_string()));
-        assert_eq!(progress_label(2, 5), Some("2/5".to_string()));
-        assert_eq!(progress_label(5, 5), None, "complete hides the numbers");
-        assert_eq!(progress_label(7, 5), None, "over-complete hides too");
-    }
-
-    #[test]
-    fn loading_carries_determinate_progress_only() {
-        let state = FetchState {
-            issues: 1,
-            issue_progress: Some((2, 7)),
-            sections_live: true,
-            section_progress: Some((120, 500)),
-            ..FetchState::default()
-        };
-        let got = loading(&state);
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[0].progress, Some((2, 7)));
-        assert_eq!(got[1].progress, Some((120, 500)));
-        assert_eq!(loading_label(&got), "issue 2/7 · sections 120/500");
-        // Unknown (0/0) and complete totals collapse to the plain label.
-        let flat = FetchState { issues: 1, issue_progress: Some((0, 0)), ..FetchState::default() };
-        assert_eq!(loading(&flat)[0].progress, None);
-        assert_eq!(loading_label(&loading(&flat)), "issue");
-        let done = FetchState { issues: 1, issue_progress: Some((7, 7)), ..FetchState::default() };
-        assert_eq!(loading_label(&loading(&done)), "issue");
-    }
-
-    #[test]
-    fn pins_toggle() {
-        assert_eq!(toggle_pin(&[7], 9), vec![7, 9]);
-        assert_eq!(toggle_pin(&[7, 9], 9), vec![7]);
-    }
-
-    #[test]
-    fn sections_split_and_dedup() {
-        let pinned: HashSet<u64> = [9].into_iter().collect();
-        let (p, v, r) = section_split(&[9], &[9, 7], &[7, 5], &pinned);
-        assert_eq!(p, vec![9]);
-        assert_eq!(v, vec![7]);
-        assert_eq!(r, vec![5]);
-    }
-
-    #[test]
-    fn pane_order_dividers_between_groups_only() {
-        use crate::model::SideRow::{Divider, Item};
-        assert_eq!(
-            pane_order(&[9], &[7], &[5]),
-            vec![
-                Item(9),
-                Divider("requested".to_string()),
-                Item(7),
-                Divider("recent".to_string()),
-                Item(5)
-            ]
-        );
-        assert_eq!(pane_order(&[], &[7], &[]), vec![Item(7)]);
-        assert_eq!(pane_order(&[], &[], &[]), Vec::<crate::model::SideRow>::new());
-        assert_eq!(
-            pane_order(&[9], &[], &[5]),
-            vec![Item(9), Divider("recent".to_string()), Item(5)]
-        );
-    }
-
-    #[test]
-    fn search_matches_title_or_number() {
-        assert!(matches_search(123, "Fix login", &[], "alice", "fix"));
-        assert!(matches_search(123, "Fix login", &[], "alice", "FIX"));
-        assert!(matches_search(123, "Fix login", &[], "alice", "#23"));
-        assert!(matches_search(123, "Fix login", &[], "alice", "12"));
-        assert!(!matches_search(123, "Fix login", &[], "alice", "zzz"));
-        assert!(matches_search(123, "Fix login", &[], "alice", ""));
-    }
-
-    #[test]
-    fn search_matches_label_name() {
-        let labels = ["bug", "needs-triage"];
-        assert!(matches_search(123, "Fix login", &labels, "alice", "bug"));
-        assert!(matches_search(123, "Fix login", &labels, "alice", "BUG"));
-        assert!(matches_search(123, "Fix login", &labels, "alice", "triage"));
-        assert!(!matches_search(123, "Fix login", &labels, "alice", "feature"));
-        assert!(!matches_search(123, "Fix login", &[], "alice", "bug"));
-    }
-
-    #[test]
-    fn search_matches_author_login() {
-        assert!(matches_search(123, "Fix login", &[], "octocat", "octo"));
-        assert!(matches_search(123, "Fix login", &[], "octocat", "OCTOCAT"));
-        assert!(!matches_search(123, "Fix login", &[], "octocat", "monalisa"));
-        assert!(!matches_search(123, "Fix login", &[], "", "octo"));
-    }
-
-    #[test]
-    fn search_empty_query_matches_all() {
-        assert!(matches_search(7, "Anything", &["bug"], "alice", ""));
-        assert!(matches_search(7, "Anything", &["bug"], "alice", "   "));
-        assert!(matches_search(7, "Anything", &[], "", ""));
-    }
-
-    #[test]
-    fn board_filter_matches_label_title_and_exact_number_but_not_milestone() {
-        let labels = ["feature"];
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, "board"));
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, "FEATURE"));
-        // Milestones filter through the dialog pills, never the text.
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "v0.3"));
-        assert!(matches_board_filter(Some(103), "Filter board cards", &labels, "#103"));
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "#10"));
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "103"));
-        assert!(!matches_board_filter(Some(103), "Filter board cards", &labels, "zzz"));
-    }
-
-    #[test]
-    fn board_filter_empty_matches_all_and_drafts_never_match_numbers() {
-        assert!(matches_board_filter(Some(103), "Card", &[], ""));
-        assert!(matches_board_filter(None, "Draft", &[], "   "));
-        assert!(!matches_board_filter(None, "Draft", &[], "#1"));
-        assert!(!matches_board_filter(None, "Draft", &[], "#"));
-    }
-
-    fn sort_issue(number: u64, updated: &str, author: &str, state: &str, labels: &[&str]) -> IssueData {
-        IssueData {
-            number,
-            title: format!("issue {number}"),
-            state: state.to_string(),
-            author: crate::model::Author { login: author.to_string() },
-            labels: labels.iter().map(|n| crate::model::Label { name: n.to_string() }).collect(),
-            assignees: vec![],
-            created_at: String::new(),
-            updated_at: updated.to_string(),
-            url: String::new(),
-            body: String::new(),
-            comments: vec![],
-            is_pr: false,
-            review_threads: vec![],
-            paired: vec![],
-            checks: None,
-            milestone: None,
-            parent: None,
-            sub_summary: None,
-            links: Default::default(),
-        }
-    }
-
-    #[test]
-    fn tree_orders_siblings_promotes_orphans_and_caps_depth() {
-        let mut data = HashMap::new();
-        for n in 1..=7 {
-            let mut issue = sort_issue(n, "", "", "OPEN", &[]);
-            issue.parent = match n { 1 => None, 2 | 3 => Some(1), _ => Some(n - 1) };
-            data.insert(n, issue);
-        }
-        let rows = tree_rows(&[1, 3, 2, 4, 5, 6, 7], &data, &HashSet::new(), &HashMap::new());
-        assert_eq!(rows.iter().filter_map(|r| r.number()).collect::<Vec<_>>(),
-            vec![1, 3, 4, 5, 6, 7, 2]);
-        assert!(matches!(rows[5], crate::model::SideRow::Tree { depth: 4, .. }));
-        let orphan = tree_rows(&[2], &data, &HashSet::new(), &HashMap::new());
-        assert!(matches!(orphan[0], crate::model::SideRow::Tree { depth: 0, .. }));
-        let folded = tree_rows(&[1, 2, 3], &data, &HashSet::from([1]), &HashMap::new());
-        assert_eq!(folded.len(), 1);
-    }
-
-    #[test]
-    fn unloaded_parent_reads_folded_until_its_children_load() {
-        use crate::model::{LazyChildren, SideRow, SubSummary};
-        let mut data = HashMap::new();
-        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
-        parent.sub_summary = Some(SubSummary { total: 1, completed: 0 });
-        data.insert(1, parent);
-        let folded = |lazy: &HashMap<u64, LazyChildren>| match &tree_rows(&[1], &data,
-            &HashSet::new(), lazy)[0] {
-            SideRow::Tree { folded, has_children, .. } => { assert!(has_children); *folded }
-            other => panic!("{other:?}"),
-        };
-        assert!(folded(&HashMap::new()), "no children yet: show folded");
-        assert!(!folded(&HashMap::from([(1, LazyChildren::Loading)])), "loading opens it");
-    }
-
-    #[test]
-    fn tree_guides_continue_past_open_siblings() {
-        // 1 ─┬ 2 ── 4
-        //    └ 3
-        let mut data = HashMap::new();
-        for (n, parent) in [(1, None), (2, Some(1)), (3, Some(1)), (4, Some(2))] {
-            let mut issue = sort_issue(n, "", "", "OPEN", &[]);
-            issue.parent = parent;
-            data.insert(n, issue);
-        }
-        let guides: Vec<String> = tree_rows(&[1, 2, 4, 3], &data, &HashSet::new(), &HashMap::new())
-            .into_iter()
-            .map(|row| match row {
-                crate::model::SideRow::Tree { guide, .. } => guide,
-                other => panic!("{other:?}"),
-            }).collect();
-        assert_eq!(guides, vec!["", "├─", "│ └─", "└─"]);
-    }
-
-    #[test]
-    fn tree_merges_lazy_children_without_duplicates() {
-        use crate::model::{LazyChildren, SideRow};
-        let mut data = HashMap::new();
-        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
-        parent.sub_summary = Some(crate::model::SubSummary { total: 3, completed: 1 });
-        let mut fetched = sort_issue(2, "", "", "OPEN", &[]);
-        fetched.parent = Some(1);
-        data.insert(1, parent);
-        data.insert(2, fetched);
-        data.insert(3, sort_issue(3, "", "", "CLOSED", &[]));
-        let lazy = HashMap::from([(1, LazyChildren::Loaded(vec![2, 3]))]);
-        let rows = tree_rows(&[1, 2], &data, &HashSet::new(), &lazy);
-        let numbers: Vec<u64> = rows.iter().filter_map(|r| r.number()).collect();
-        assert_eq!(numbers, vec![1, 2, 3]);
-        assert_eq!(numbers.iter().filter(|n| **n == 2).count(), 1, "no duplicate row");
-        assert!(matches!(rows[1], SideRow::Tree { number: 2, depth: 1, outside: false, .. }));
-        assert!(matches!(rows[2], SideRow::Tree { number: 3, depth: 1, outside: true, .. }));
-    }
-
-    #[test]
-    fn tree_summary_marks_parent_and_loading_child() {
-        use crate::model::{LazyChildren, SideRow, SubSummary};
-        let mut data = HashMap::new();
-        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
-        parent.sub_summary = Some(SubSummary { total: 2, completed: 0 });
-        data.insert(1, parent);
-        let lazy = HashMap::from([(1, LazyChildren::Loading)]);
-        let rows = tree_rows(&[1], &data, &HashSet::new(), &lazy);
-        assert!(matches!(rows[0], SideRow::Tree { number: 1, has_children: true, .. }));
-        assert!(matches!(rows[1], SideRow::Loading { .. }));
-        let folded = tree_rows(&[1], &data, &HashSet::from([1]), &lazy);
-        assert_eq!(folded.len(), 1, "a folded parent hides its loading child");
-    }
-
-    #[test]
-    fn tree_nests_a_query_hit_under_its_lazy_parent_once() {
-        use crate::model::{LazyChildren, SideRow};
-        let mut data = HashMap::new();
-        data.insert(1, sort_issue(1, "", "", "OPEN", &[]));
-        data.insert(2, sort_issue(2, "", "", "OPEN", &[]));
-        data.insert(9, sort_issue(9, "", "", "OPEN", &[]));
-        let lazy = HashMap::from([(1, LazyChildren::Loaded(vec![2, 9]))]);
-        // Search rows carry no parent link: #2 arrives top-level and must
-        // move under #1 at normal brightness.
-        let rows = tree_rows(&[1, 2], &data, &HashSet::new(), &lazy);
-        let numbers: Vec<u64> = rows.iter().filter_map(|r| r.number()).collect();
-        assert_eq!(numbers, vec![1, 2, 9]);
-        assert!(matches!(rows[1], SideRow::Tree { number: 2, depth: 1, outside: false, .. }));
-        assert!(matches!(rows[2], SideRow::Tree { number: 9, depth: 1, outside: true, .. }));
-    }
-
-    #[test]
-    fn lazy_fetch_waits_for_missing_children() {
-        use crate::model::{LazyChildren, SubSummary};
-        let mut data = HashMap::new();
-        let mut parent = sort_issue(1, "", "", "OPEN", &[]);
-        parent.sub_summary = Some(SubSummary { total: 2, completed: 0 });
-        let mut child = sort_issue(2, "", "", "OPEN", &[]);
-        child.parent = Some(1);
-        data.insert(1, parent);
-        data.insert(2, child);
-        let mut lazy = HashMap::new();
-        assert!(needs_lazy_children(1, &data, &lazy), "one of two children fetched");
-        lazy.insert(1, LazyChildren::Loading);
-        assert!(!needs_lazy_children(1, &data, &lazy), "one fetch per parent per session");
-        lazy.insert(1, LazyChildren::Loaded(vec![]));
-        assert!(!needs_lazy_children(1, &data, &lazy), "session cache never refetches");
-        lazy.clear();
-        data.get_mut(&1).unwrap().sub_summary = Some(SubSummary { total: 1, completed: 0 });
-        assert!(!needs_lazy_children(1, &data, &lazy), "every child already fetched");
-        data.get_mut(&1).unwrap().sub_summary = None;
-        assert!(!needs_lazy_children(1, &data, &lazy), "no summary means no known children");
-    }
-
-    fn sort_data() -> HashMap<u64, IssueData> {
-        [
-            sort_issue(7, "2026-01-05T00:00:00Z", "carol", "OPEN", &["ui"]),
-            sort_issue(9, "2026-01-09T00:00:00Z", "alice", "CLOSED", &["bug"]),
-            sort_issue(11, "2026-01-01T00:00:00Z", "bob", "MERGED", &["docs"]),
-        ]
-        .into_iter()
-        .map(|d| (d.number, d))
-        .collect()
-    }
-
-    #[test]
-    fn default_sort_restores_the_incoming_order() {
-        let rows = vec![11, 7, 9];
-        assert_eq!(sort_rows(rows.clone(), SideSort::Default, false, &sort_data()), rows);
-        assert_eq!(sort_rows(rows.clone(), SideSort::Default, true, &sort_data()), rows);
-    }
-
-    #[test]
-    fn updated_sort_puts_newest_first_and_reverses() {
-        let data = sort_data();
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Updated, true, &data), vec![9, 7, 11]);
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Updated, false, &data), vec![11, 7, 9]);
-    }
-
-    #[test]
-    fn author_sort_orders_by_login() {
-        let data = sort_data();
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Author, false, &data), vec![9, 11, 7]);
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Author, true, &data), vec![7, 11, 9]);
-    }
-
-    #[test]
-    fn state_sort_orders_lexically() {
-        let data = sort_data();
-        // closed < merged < open once case-folded.
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::State, false, &data), vec![9, 11, 7]);
-    }
-
-    #[test]
-    fn label_sort_orders_by_first_label_name() {
-        let data = sort_data();
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Label, false, &data), vec![9, 11, 7]);
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Label, true, &data), vec![7, 11, 9]);
-    }
-
-    #[test]
-    fn sort_cycle_ends_back_at_default() {
-        let mut sort = SideSort::Default;
-        let mut seen = vec![sort];
-        for _ in 0..4 {
-            sort = sort.next();
-            seen.push(sort);
-        }
-        assert_eq!(
-            seen,
-            vec![SideSort::Default, SideSort::Updated, SideSort::Author, SideSort::State, SideSort::Label]
-        );
-        assert_eq!(sort.next(), SideSort::Default);
-    }
-
-    #[test]
-    fn sort_direction_toggle_flips_key_order() {
-        let data = sort_data();
-        let asc = sort_rows(vec![7, 9, 11], SideSort::Updated, false, &data);
-        let desc = sort_rows(vec![7, 9, 11], SideSort::Updated, true, &data);
-        assert_eq!(asc.iter().rev().copied().collect::<Vec<_>>(), desc);
-    }
-
-    #[test]
-    fn sort_keeps_loading_rows_last_and_labels_cover_directions() {
-        let mut data = sort_data();
-        data.remove(&11);
-        assert_eq!(sort_rows(vec![7, 9, 11], SideSort::Updated, false, &data), vec![7, 9, 11]);
-        assert_eq!(sort_rows(vec![11, 9, 7], SideSort::Author, true, &data), vec![7, 9, 11]);
-        assert_eq!(SideSort::Default.label(true), "default");
-        assert_eq!(SideSort::Updated.label(true), "updated ↓");
-        assert_eq!(SideSort::Author.label(false), "author ↑");
-        assert_eq!(SideSort::State.label(false), "state ↑");
-        assert_eq!(SideSort::Label.label(false), "label ↑");
-    }
-
-    #[test]
-    fn search_no_match_on_unrelated_query() {
-        assert!(!matches_search(123, "Fix login", &["bug"], "alice", "zzz"));
-        assert!(!matches_search(123, "Fix login", &["bug"], "alice", "999"));
-    }
-
-    #[test]
-    fn search_ranges_find_all_hits() {
-        assert_eq!(match_ranges("Fix the thing", "th"), vec![(4, 6), (8, 10)]);
-        assert_eq!(match_ranges("Fix the thing", ""), Vec::new());
-        assert_eq!(match_ranges("abc", "z"), Vec::new());
-    }
-
-    #[test]
-    fn toast_snippet_trims_with_ellipsis() {
-        assert_eq!(toast_snippet("short", 80), "short");
-        assert_eq!(toast_snippet("12345", 5), "12345");
-        assert_eq!(toast_snippet("123456", 5), "1234…");
-        // Multibyte-safe: counts chars, never splits one.
-        assert_eq!(toast_snippet("héllo wörld", 6), "héllo…");
-        assert_eq!(toast_snippet("anything", 1), "…");
-    }
-
-    #[test]
-    fn yank_issue_collapses_title_to_one_line() {
-        assert_eq!(
-            yank_issue_text(7, "Fix  login\nbug", "https://example.com/7"),
-            "#7 Fix login bug — https://example.com/7"
-        );
-    }
-
-    #[test]
-    fn yank_diff_names_file_and_hunk() {
-        let file = DiffFile {
-            filename: "src/a.rs".to_string(),
-            status: "modified".to_string(),
-            additions: 10,
-            deletions: 2,
-            patch: String::new(),
-        };
-        let text = yank_diff_text(
-            9,
-            "Add thing",
-            "https://example.com/pull/9",
-            &file,
-            Some("@@ -1 +1 @@"),
-        );
-        assert_eq!(
-            text,
-            "#9 Add thing — src/a.rs (modified +10 -2 @@ -1 +1 @@) — https://example.com/pull/9"
-        );
-        let folded_file = DiffFile {
-            filename: "src/a.rs".to_string(),
-            status: "added".to_string(),
-            additions: 5,
-            deletions: 0,
-            patch: String::new(),
-        };
-        let folded = yank_diff_text(9, "Add thing", "u", &folded_file, None);
-        assert_eq!(folded, "#9 Add thing — src/a.rs (added +5 -0) — u");
-    }
-
-    #[test]
-    fn yank_ref_reports_raw_body_line_and_snippet() {
-        let body = "intro line\nsee #9 for details\nlast";
-        let text = yank_ref_text(7, 9, body, None, Some("Nine"), Some("u9")).unwrap();
-        assert_eq!(text, "#7 refs #9 (body line 2): \"see #9 for details\" — Nine u9");
-    }
-
-    #[test]
-    fn yank_ref_returns_none_without_mention() {
-        assert!(yank_ref_text(7, 9, "no refs here", None, None, None).is_none());
-    }
-
-    #[test]
-    fn yank_diff_line_quotes_active_line() {
-        assert_eq!(
-            yank_diff_line_text(9, "Add thing", "u", "src/a.rs", "  +new"),
-            "#9 Add thing — src/a.rs: \"+new\" — u"
-        );
-    }
-}
+mod tests;

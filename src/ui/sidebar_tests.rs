@@ -9,10 +9,11 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEven
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use super::test_support::{frame_text_sized, sample, loaded_app, key, click, draw_buffer, cells, check_pr, check_app, frame_text, sidebar_text};
+use crate::model::ItemRef;
 
 fn labels_app() -> App {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string(), "docs".to_string()];
     app.sidebar.milestones = vec![crate::model::Milestone {
@@ -43,11 +44,20 @@ fn pr_sidebar_text(app: &mut App) -> String {
 fn history_window_and_click_follow_drawn_rows() {
     let mut app = loaded_app();
     for number in 10..=15 {
-        app.issues.data.insert(number, sample(number));
+        app.issues
+            .data
+            .insert(ItemRef::github(number), sample(ItemRef::github(number)));
     }
-    app.nav.history = vec![7, 9, 10, 11, 12, 13];
-    app.show_issue(15);
-    app.refs.numbers = vec![9];
+    app.nav.history = vec![
+        ItemRef::github(7),
+        ItemRef::github(9),
+        ItemRef::github(10),
+        ItemRef::github(11),
+        ItemRef::github(12),
+        ItemRef::github(13),
+    ];
+    app.show_issue(ItemRef::github(15));
+    app.refs.numbers = vec![ItemRef::github(9)];
     let text = frame_text_sized(&mut app, 160, 40);
     assert!(text.contains("History"));
     assert_eq!(app.hits.history_rows.len(), 5);
@@ -57,8 +67,11 @@ fn history_window_and_click_follow_drawn_rows() {
     assert!(text.matches('█').count() <= 1, "History adds no list selection marker");
     let row = app.hits.history_rows[2].0;
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
-    assert_eq!(app.nav.current, Some(12));
-    assert_eq!(app.nav.future, vec![15, 13]);
+    assert_eq!(app.nav.current, Some(ItemRef::github(12)));
+    assert_eq!(
+        app.nav.future,
+        vec![ItemRef::github(15), ItemRef::github(13)]
+    );
 }
 
 #[test]
@@ -188,7 +201,7 @@ fn labels_pane_click_toggles_and_wheel_moves() {
 #[test]
 fn labels_pane_shows_loading_until_meta_lands() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
     let (_tx, rx) = std::sync::mpsc::channel();
     app.sidebar.meta_rx = Some(rx);
     assert!(frame_text(&mut app).contains("loading …"));
@@ -215,8 +228,8 @@ fn sidebar_loading_goes_quiet_while_the_current_issue_loads() {
     app.tick = 0;
     let (_tx, rx) = std::sync::mpsc::channel();
     app.sections.rx = Some(rx);
-    app.nav.requested = Some(7);
-    app.issues.pending.insert(7);
+    app.nav.requested = Some(ItemRef::github(7));
+    app.issues.pending.insert(ItemRef::github(7));
     let text = sidebar_text(&mut app);
     assert!(text.contains("⠋"), "title spinner stays: {text}");
     assert!(!text.contains("Loading open + last 24h closed issues…"), "no sidebar loading body under the main loading body: {text}");
@@ -228,10 +241,10 @@ fn sidebar_loading_goes_quiet_while_the_current_issue_loads() {
 #[test]
 fn refs_title_spins_while_mentions_fetch() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "see #9".to_string();
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "see #9".to_string();
+    app.show_issue(ItemRef::github(7));
     app.tick = 0;
-    app.issues.pending.insert(9);
+    app.issues.pending.insert(ItemRef::github(9));
     let text = frame_text(&mut app);
     assert!(text.contains("Refs") && text.contains("mentioned ⠋"), "refs spinner: {text}");
 }
@@ -242,19 +255,19 @@ fn cached_click_still_joins_its_section() {
     // board prefetch): an explicit open files it under requested.
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
-    let mut pr = sample(9);
+    let mut pr = sample(ItemRef::github(9));
     pr.is_pr = true;
     pr.url = "https://github.com/o/r/pull/9".to_string();
-    app.issues.data.insert(9, pr);
+    app.issues.data.insert(ItemRef::github(9), pr);
     assert!(app.nav.visited.is_empty());
-    app.ensure_visited(9);
-    app.load_issue(9, false);
-    assert_eq!(app.nav.visited, vec![9]);
-    assert_eq!(app.nav.current, Some(9));
+    app.ensure_visited(ItemRef::github(9));
+    app.load_issue(ItemRef::github(9), false);
+    assert_eq!(app.nav.visited, vec![ItemRef::github(9)]);
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     // A second click files nothing twice.
-    app.ensure_visited(9);
-    app.load_issue(9, false);
-    assert_eq!(app.nav.visited, vec![9]);
+    app.ensure_visited(ItemRef::github(9));
+    app.load_issue(ItemRef::github(9), false);
+    assert_eq!(app.nav.visited, vec![ItemRef::github(9)]);
 }
 
 #[test]
@@ -264,20 +277,26 @@ fn viewing_a_recent_row_does_not_relocate_it() {
     use crate::app::poll_issues;
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
-    let mut d = sample(42);
+    let mut d = sample(ItemRef::github(42));
     d.is_pr = true;
-    app.issues.data.insert(42, d.clone());
-    app.issues.statuses.insert(42, vec![]);
-    app.nav.recent.push(42);
-    app.show_issue(42);
-    assert_eq!(app.nav.visited, Vec::<u64>::new());
+    app.issues.data.insert(ItemRef::github(42), d.clone());
+    app.issues.statuses.insert(ItemRef::github(42), vec![]);
+    app.nav.recent.push(ItemRef::github(42));
+    app.show_issue(ItemRef::github(42));
+    assert_eq!(app.nav.visited, Vec::<ItemRef>::new());
     // Background fetch lands.
-    app.issues.tx.send((42, crate::github::IssueEvent::Done(Ok(Box::new((d, vec![])))))).unwrap();
+    app.issues
+        .tx
+        .send((
+            ItemRef::github(42),
+            crate::github::IssueEvent::Done(Ok(Box::new((d, vec![])))),
+        ))
+        .unwrap();
     poll_issues(&mut app);
-    assert_eq!(app.nav.visited, Vec::<u64>::new());
+    assert_eq!(app.nav.visited, Vec::<ItemRef>::new());
     let (_, _, recent) = app.pane_groups(true, false);
-    assert_eq!(recent, vec![42]);
-    assert_eq!(app.nav.current, Some(42));
+    assert_eq!(recent, vec![ItemRef::github(42)]);
+    assert_eq!(app.nav.current, Some(ItemRef::github(42)));
 }
 
 #[test]
@@ -301,8 +320,8 @@ fn tab_cycles_issues_prs_refs() {
         assert_eq!(app.nav.pane, want);
     }
     // With mentions, Refs joins the cycle after Main.
-    app.issues.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "blocked by #9".to_string();
+    app.show_issue(ItemRef::github(7));
     for want in [Pane::PRs, Pane::Main, Pane::Refs, Pane::Issues] {
         handle_key(&mut app, key(KeyCode::Tab));
         assert_eq!(app.nav.pane, want);
@@ -332,7 +351,7 @@ fn active_row_is_amber_shaded_when_focused_and_muted_bare_when_not() {
 #[test]
 fn hover_row_never_looks_like_the_selection() {
     let mut app = loaded_app();
-    app.nav.hover = Some(9);
+    app.nav.hover = Some(ItemRef::github(9));
     let buf = draw_buffer(&mut app);
     assert_eq!(cells(&buf, "█").len(), 1, "one selection marker");
     let hover = cells(&buf, "\u{203a}");
@@ -345,31 +364,41 @@ fn hover_row_never_looks_like_the_selection() {
 fn jk_in_refs_moves_highlight_instead_of_opening() {
     use crate::core::Pane;
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "see #9 then #12".to_string();
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "see #9 then #12".to_string();
+    app.show_issue(ItemRef::github(7));
     app.nav.pane = Pane::Refs;
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.refs.highlight, Some(9));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(9)));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.refs.highlight, Some(12));
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(12)));
     handle_key(&mut app, key(KeyCode::Char('k')));
-    assert_eq!(app.refs.highlight, Some(9));
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(9)));
 }
 
 #[test]
 fn panes_group_pins_requested_and_recent_with_dividers() {
     let mut app = loaded_app();
-    app.nav.pin_order = vec![9];
-    app.nav.pinned = [9].into_iter().collect();
-    app.nav.recent = vec![9, 7, 42];
+    app.nav.pin_order = vec![ItemRef::github(9)];
+    app.nav.pinned = [9].map(ItemRef::github).into_iter().collect();
+    app.nav.recent = vec![ItemRef::github(9), ItemRef::github(7), ItemRef::github(42)];
     let (ip, iv, ir) = app.pane_groups(false, false);
-    assert_eq!((ip, iv, ir), (vec![], vec![7], vec![42]));
+    assert_eq!(
+        (ip, iv, ir),
+        (vec![], vec![ItemRef::github(7)], vec![ItemRef::github(42)])
+    );
     let (pp, pv, pr) = app.pane_groups(true, false);
-    assert_eq!((pp, pv, pr), (vec![9], vec![], vec![]));
+    assert_eq!((pp, pv, pr), (vec![ItemRef::github(9)], vec![], vec![]));
     use crate::model::SideRow::{Divider, Item};
-    assert_eq!(app.issue_rows(), vec![Item(7), Divider("recent".to_string()), Item(42)]);
-    assert_eq!(app.pr_rows(), vec![Item(9)]);
+    assert_eq!(
+        app.issue_rows(),
+        vec![
+            Item(ItemRef::github(7)),
+            Divider("recent".to_string()),
+            Item(ItemRef::github(42))
+        ]
+    );
+    assert_eq!(app.pr_rows(), vec![Item(ItemRef::github(9))]);
     let text = frame_text(&mut app);
     assert!(text.contains("Issues"));
     assert!(text.contains("Pull requests"));
@@ -409,8 +438,8 @@ fn pane_titles_carry_count_and_sort_with_group_footers() {
 #[test]
 fn refs_pane_shares_title_and_footer_shape() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "see #9".to_string();
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "see #9".to_string();
+    app.show_issue(ItemRef::github(7));
     assert!(app.refs_visible());
     assert_eq!(app.refs_subtitle(), "1 mentioned");
     assert_eq!(app.refs_footer(), "mentioned (1) · paired (0)");
@@ -424,43 +453,61 @@ fn refs_pane_lists_paired_rows_and_enter_opens() {
     use crate::core::Pane;
     use crate::model::SideRow::{Divider, Item};
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.body = String::new();
-    d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
-    app.show_issue(7);
+    d.paired = vec![PairedRef {
+        number: ItemRef::github(9),
+        state: "MERGED".to_string(),
+    }];
+    app.show_issue(ItemRef::github(7));
     assert!(app.refs_visible());
-    assert_eq!(app.refs_rows(), vec![Divider("Paired".to_string()), Item(9)]);
+    assert_eq!(
+        app.refs_rows(),
+        vec![Divider("Paired".to_string()), Item(ItemRef::github(9))]
+    );
     let text = frame_text(&mut app);
     assert!(text.contains("Paired"), "{text}");
     app.nav.pane = Pane::Refs;
     handle_key(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.refs.highlight, Some(9));
-    assert_eq!(app.nav.current, Some(7), "j only moves the highlight");
+    assert_eq!(app.refs.highlight, Some(ItemRef::github(9)));
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "j only moves the highlight"
+    );
     handle_key(&mut app, key(KeyCode::Enter));
-    assert_eq!(app.nav.current, Some(9), "Enter opens the paired counterpart");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(9)),
+        "Enter opens the paired counterpart"
+    );
 }
 
 #[test]
 fn paired_refs_row_click_opens_instead_of_highlighting() {
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.body = String::new();
-    d.paired = vec![PairedRef { number: 9, state: "MERGED".to_string() }];
-    app.show_issue(7);
+    d.paired = vec![PairedRef {
+        number: ItemRef::github(9),
+        state: "MERGED".to_string(),
+    }];
+    app.show_issue(ItemRef::github(7));
     let _ = frame_text(&mut app); // records hit areas
     // Divider sits on the first list row; the paired item below it.
     let (x, y) = (app.hits.refs_area.x + 2, app.hits.refs_area.y + 3);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     assert_eq!(app.refs.highlight, None);
 }
 
 #[test]
 fn refs_pane_lists_mentioned_rows_and_toggles() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
-    app.show_issue(7);
-    assert_eq!(app.refs.numbers, vec![9]);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+        "blocked by #9, see details".to_string();
+    app.show_issue(ItemRef::github(7));
+    assert_eq!(app.refs.numbers, vec![ItemRef::github(9)]);
     assert!(app.refs_visible());
     let text = frame_text(&mut app);
     assert!(text.contains("Refs"), "{text}");
@@ -471,11 +518,17 @@ fn refs_pane_lists_mentioned_rows_and_toggles() {
     assert!(!hidden.contains("Refs"), "{hidden}");
     // Recompute on arrival: a fresh body fetch repopulates the pane.
     handle_key(&mut app, key(KeyCode::Char('e')));
-    let mut d = sample(7);
+    let mut d = sample(ItemRef::github(7));
     d.body = "see #9".to_string();
-    app.issues.tx.send((7, crate::github::IssueEvent::Done(Ok(Box::new((d, vec![])))))).unwrap();
+    app.issues
+        .tx
+        .send((
+            ItemRef::github(7),
+            crate::github::IssueEvent::Done(Ok(Box::new((d, vec![])))),
+        ))
+        .unwrap();
     crate::app::poll_issues(&mut app);
-    assert_eq!(app.refs.numbers, vec![9]);
+    assert_eq!(app.refs.numbers, vec![ItemRef::github(9)]);
 }
 
 #[test]
@@ -483,12 +536,12 @@ fn overflowing_pane_keeps_selected_row_visible() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for n in 1..=30 {
-        let d = sample(n);
-        app.issues.data.insert(n, d);
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.visited.push(n);
+        let d = sample(ItemRef::github(n));
+        app.issues.data.insert(ItemRef::github(n), d);
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.visited.push(ItemRef::github(n));
     }
-    app.show_issue(30);
+    app.show_issue(ItemRef::github(30));
     let _ = frame_text(&mut app);
     assert!(app.sidebar.issue_state.offset() > 0, "pane scrolled");
 }
@@ -497,18 +550,22 @@ fn overflowing_pane_keeps_selected_row_visible() {
 fn wheel_over_sidebar_hovers_without_visiting() {
     let mut app = loaded_app();
     // A second issue row so the wheel has somewhere to go.
-    let d = sample(8);
-    app.issues.data.insert(8, d);
-    app.issues.statuses.insert(8, vec![]);
-    app.nav.visited.push(8);
+    let d = sample(ItemRef::github(8));
+    app.issues.data.insert(ItemRef::github(8), d);
+    app.issues.statuses.insert(ItemRef::github(8), vec![]);
+    app.nav.visited.push(ItemRef::github(8));
     let _ = frame_text(&mut app); // records hit areas
     let (x, y) = (app.hits.side_issue_area.x + 2, app.hits.side_issue_area.y + 2);
     handle_mouse(&mut app, click(MouseEventKind::ScrollDown, x, y));
-    assert_eq!(app.nav.hover, Some(8));
-    assert_eq!(app.nav.current, Some(7), "wheel never visits");
+    assert_eq!(app.nav.hover, Some(ItemRef::github(8)));
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "wheel never visits"
+    );
     let _ = frame_text(&mut app); // selection stays on the active issue
     assert_eq!(app.sidebar.issue_state.selected(), Some(1), "hover never outranks current");
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     assert_eq!(app.nav.scroll, 0, "body scroll untouched");
 }
 
@@ -516,19 +573,22 @@ fn wheel_over_sidebar_hovers_without_visiting() {
 fn slash_search_filters_and_enters_first_hit() {
     use crossterm::event::{KeyEvent, KeyModifiers};
     let mut app = loaded_app();
-    app.issues.data.get_mut(&9).unwrap().title = "Zebra migration".to_string();
+    app.issues.data.get_mut(&ItemRef::github(9)).unwrap().title = "Zebra migration".to_string();
     handle_key(&mut app, key(KeyCode::Char('/')));
     assert!(app.sidebar.searching);
     for c in "zebra".chars() {
         handle_key(&mut app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()));
     }
     assert!(app.issue_rows().is_empty());
-    assert_eq!(app.pr_rows(), vec![crate::model::SideRow::Item(9)]);
+    assert_eq!(
+        app.pr_rows(),
+        vec![crate::model::SideRow::Item(ItemRef::github(9))]
+    );
     let text = frame_text(&mut app);
     assert!(text.contains("zebra"));
     handle_key(&mut app, key(KeyCode::Enter));
     assert!(!app.sidebar.searching);
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     // Highlight persists after commit.
     assert_eq!(app.sidebar.search, "zebra");
 }
@@ -536,32 +596,35 @@ fn slash_search_filters_and_enters_first_hit() {
 #[test]
 fn search_n_jumps_between_hits() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().title = "Fix login".to_string();
-    app.issues.data.get_mut(&9).unwrap().title = "Fix logout".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().title = "Fix login".to_string();
+    app.issues.data.get_mut(&ItemRef::github(9)).unwrap().title = "Fix logout".to_string();
     app.sidebar.search = "fix".to_string();
-    assert_eq!(app.search_hits(), vec![7, 9]);
+    assert_eq!(
+        app.search_hits(),
+        vec![ItemRef::github(7), ItemRef::github(9)]
+    );
     handle_key(&mut app, key(KeyCode::Char('n')));
-    assert_eq!(app.nav.current, Some(9));
+    assert_eq!(app.nav.current, Some(ItemRef::github(9)));
     handle_key(&mut app, key(KeyCode::Char('N')));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
 fn sub_issue_tree_renders_folds_and_promotes_filtered_children() {
     let mut app = App::new(Some("o/r".to_string()));
-    let mut parent = sample(1);
+    let mut parent = sample(ItemRef::github(1));
     parent.milestone = Some("parent".into());
     parent.sub_summary = Some(crate::model::SubSummary { total: 2, completed: 1 });
-    let mut child = sample(2);
-    child.parent = Some(1);
+    let mut child = sample(ItemRef::github(2));
+    child.parent = Some(ItemRef::github(1));
     child.milestone = Some("child".into());
-    app.issues.data.insert(1, parent);
-    app.issues.data.insert(2, child);
-    app.nav.recent = vec![1, 2];
+    app.issues.data.insert(ItemRef::github(1), parent);
+    app.issues.data.insert(ItemRef::github(2), child);
+    app.nav.recent = vec![ItemRef::github(1), ItemRef::github(2)];
     let off = sidebar_text(&mut app);
     assert!(!off.contains("▾") && !off.contains("└─"));
     // A leaf's `{0, 0}` summary (GraphQL default) never badges.
-    app.issues.data.get_mut(&2).unwrap().sub_summary =
+    app.issues.data.get_mut(&ItemRef::github(2)).unwrap().sub_summary =
         Some(crate::model::SubSummary { total: 0, completed: 0 });
     app.sidebar.sub_issue_tree = true;
     app.sidebar.group_by = crate::model::GroupBy::Milestone;
@@ -570,7 +633,7 @@ fn sub_issue_tree_renders_folds_and_promotes_filtered_children() {
     assert!(!on.contains("0/0"), "leaf rows carry no badge: {on}");
     assert_eq!(app.issue_rows().iter().filter(|r| matches!(r,
         crate::model::SideRow::Divider(_))).count(), 1);
-    app.sidebar.folded_issues.insert(1);
+    app.sidebar.folded_issues.insert(ItemRef::github(1));
     let folded = sidebar_text(&mut app);
     assert!(folded.contains("▸ #1") && !folded.contains("#2"), "{folded}");
     app.sidebar.milestone_filter.insert(Some("child".into()));
@@ -581,23 +644,31 @@ fn sub_issue_tree_renders_folds_and_promotes_filtered_children() {
 #[test]
 fn lazy_sub_issue_rows_render_dim_with_outside_marker() {
     let mut app = App::new(Some("o/r".into()));
-    let mut parent = sample(1);
+    let mut parent = sample(ItemRef::github(1));
     parent.title = "parent title".into();
     parent.sub_summary = Some(crate::model::SubSummary { total: 2, completed: 0 });
-    app.issues.data.insert(1, parent);
-    let mut fetched = sample(2);
+    app.issues.data.insert(ItemRef::github(1), parent);
+    let mut fetched = sample(ItemRef::github(2));
     fetched.title = "fetched child".into();
-    app.issues.data.insert(2, fetched);
-    let mut outside = sample(3);
+    app.issues.data.insert(ItemRef::github(2), fetched);
+    let mut outside = sample(ItemRef::github(3));
     outside.title = "outside child".into();
-    app.issues.data.insert(3, outside);
-    app.issues.partial.insert(3);
-    app.nav.recent = vec![1, 2];
+    app.issues.data.insert(ItemRef::github(3), outside);
+    app.issues.partial.insert(ItemRef::github(3));
+    app.nav.recent = vec![ItemRef::github(1), ItemRef::github(2)];
     app.sidebar.sub_issue_tree = true;
-    app.subs.state.insert(1, crate::model::LazyChildren::Loading);
+    app.subs
+        .state
+        .insert(ItemRef::github(1), crate::model::LazyChildren::Loading);
     let loading = sidebar_text(&mut app);
-    assert!(loading.contains("▾ #1") && loading.contains("loading …"), "{loading}");
-    app.subs.state.insert(1, crate::model::LazyChildren::Loaded(vec![2, 3]));
+    assert!(
+        loading.contains("▾ #1") && loading.contains("loading …"),
+        "{loading}"
+    );
+    app.subs.state.insert(
+        ItemRef::github(1),
+        crate::model::LazyChildren::Loaded(vec![ItemRef::github(2), ItemRef::github(3)]),
+    );
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).expect("test backend");
     terminal.draw(|f| crate::app::draw_frame(f, &mut app)).expect("draw");
@@ -619,27 +690,27 @@ fn lazy_sub_issue_rows_render_dim_with_outside_marker() {
     assert_eq!(buf[cell('3')].style().fg, Some(crate::theme::muted()), "lazy child dim");
     assert_ne!(buf[cell('2')].style().fg, Some(crate::theme::muted()), "query child normal");
     assert_eq!(app.issue_rows().iter().filter_map(|r| r.number()).collect::<Vec<_>>(),
-        vec![1, 2, 3]);
+        vec![ItemRef::github(1), ItemRef::github(2), ItemRef::github(3)]);
 }
 
 #[test]
 fn sub_issue_tree_keys_and_glyph_click_toggle_folds() {
     let mut app = App::new(Some("o/r".into()));
-    let parent = sample(1);
-    let mut child = sample(2);
-    child.parent = Some(1);
-    app.issues.data.insert(1, parent);
-    app.issues.data.insert(2, child);
-    app.nav.recent = vec![1, 2];
+    let parent = sample(ItemRef::github(1));
+    let mut child = sample(ItemRef::github(2));
+    child.parent = Some(ItemRef::github(1));
+    app.issues.data.insert(ItemRef::github(1), parent);
+    app.issues.data.insert(ItemRef::github(2), child);
+    app.nav.recent = vec![ItemRef::github(1), ItemRef::github(2)];
     app.sidebar.sub_issue_tree = true;
     app.nav.pane = crate::core::Pane::Issues;
-    app.show_issue(1);
+    app.show_issue(ItemRef::github(1));
     handle_key(&mut app, key(KeyCode::Left));
-    assert!(app.sidebar.folded_issues.contains(&1));
+    assert!(app.sidebar.folded_issues.contains(&ItemRef::github(1)));
     handle_key(&mut app, key(KeyCode::Right));
-    assert!(!app.sidebar.folded_issues.contains(&1));
+    assert!(!app.sidebar.folded_issues.contains(&ItemRef::github(1)));
     handle_key(&mut app, key(KeyCode::Char('z')));
-    assert!(app.sidebar.folded_issues.contains(&1));
+    assert!(app.sidebar.folded_issues.contains(&ItemRef::github(1)));
     handle_key(&mut app, key(KeyCode::Char('Z')));
     assert!(app.sidebar.folded_issues.is_empty());
     frame_text(&mut app);
@@ -648,7 +719,7 @@ fn sub_issue_tree_keys_and_glyph_click_toggle_folds() {
         kind: MouseEventKind::Down(MouseButton::Left), column: area.x + 3,
         row: area.y + 2, modifiers: KeyModifiers::empty(),
     });
-    assert!(app.sidebar.folded_issues.contains(&1));
+    assert!(app.sidebar.folded_issues.contains(&ItemRef::github(1)));
 }
 
 #[test]
@@ -657,11 +728,11 @@ fn milestone_groups_render_in_order_and_clicks_match_rows() {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for (n, milestone) in [(7, Some("v1")), (9, Some("v0.6")), (11, None)] {
-        let mut d = sample(n);
+        let mut d = sample(ItemRef::github(n));
         d.milestone = milestone.map(str::to_string);
-        app.issues.data.insert(n, d);
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.recent.push(n);
+        app.issues.data.insert(ItemRef::github(n), d);
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.recent.push(ItemRef::github(n));
     }
     app.sidebar.group_by = GroupBy::Milestone;
     app.sidebar.meta_loaded = true;
@@ -679,11 +750,11 @@ fn milestone_groups_render_in_order_and_clicks_match_rows() {
         app.issue_rows(),
         vec![
             Divider("v0.6 (1)".to_string()),
-            Item(9),
+            Item(ItemRef::github(9)),
             Divider("v1 (1)".to_string()),
-            Item(7),
+            Item(ItemRef::github(7)),
             Divider("(no milestone) (1)".to_string()),
-            Item(11),
+            Item(ItemRef::github(11)),
         ],
         "due date, then title, then no milestone"
     );
@@ -697,13 +768,13 @@ fn milestone_groups_render_in_order_and_clicks_match_rows() {
     let area = app.hits.side_issue_area;
     let mut rel = 2usize;
     for row in app.issue_rows() {
-        if row.number() == Some(7) {
+        if row.number() == Some(ItemRef::github(7)) {
             break;
         }
         rel += if row.number().is_some() { 3 } else { 1 };
     }
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), area.x + 2, area.y + rel as u16 + 1));
-    assert_eq!(app.nav.current, Some(7), "click lands on the grouped row");
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "click lands on the grouped row");
 }
 
 #[test]
@@ -713,7 +784,7 @@ fn arrows_move_like_j_and_k() {
     app.nav.pane = Pane::Main;
     handle_key(&mut app, key(KeyCode::Down));
     assert_eq!(app.nav.scroll, 3);
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     handle_key(&mut app, key(KeyCode::Up));
     assert_eq!(app.nav.scroll, 0);
     app.nav.pane = Pane::Issues;
@@ -724,24 +795,24 @@ fn arrows_move_like_j_and_k() {
 #[test]
 fn mouse_click_selects_sidebar_row() {
     let mut app = loaded_app();
-    app.show_issue(9);
+    app.show_issue(ItemRef::github(9));
     let _ = frame_text(&mut app); // records hit areas
     // +2 skips the border and the breathing-room spacer row.
     let (x, y) = (app.hits.side_issue_area.x + 2, app.hits.side_issue_area.y + 2);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
 }
 
 #[test]
 fn space_expands_sidebar_row_detail_and_collapse_restores_it() {
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.title = "Fix the thing that keeps breaking tailmarker".to_string();
     d.labels = ["bug", "ui", "docs", "chore", "ci-pipeline"]
         .iter()
         .map(|name| Label { name: name.to_string() })
         .collect();
-    app.show_issue(7);
+    app.show_issue(ItemRef::github(7));
     let collapsed = sidebar_text(&mut app);
     assert!(collapsed.contains("#7 Fix the thing"), "{collapsed}");
     assert!(!collapsed.contains("tailmarker"), "collapsed title is a slug");
@@ -765,16 +836,19 @@ fn space_expands_sidebar_row_detail_and_collapse_restores_it() {
 #[test]
 fn sidebar_rows_show_labels_updated_and_status_and_sort_hint() {
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.labels = vec![Label { name: "bug".to_string() }];
     d.updated_at = "2020-01-05T00:00:00Z".to_string();
-    app.issues.statuses.insert(7, vec![("Roadmap".to_string(), Some("Todo".to_string()))]);
-    let mut newer = sample(5);
+    app.issues.statuses.insert(
+        ItemRef::github(7),
+        vec![("Roadmap".to_string(), Some("Todo".to_string()))],
+    );
+    let mut newer = sample(ItemRef::github(5));
     newer.updated_at = "2020-02-05T00:00:00Z".to_string();
-    app.issues.data.insert(5, newer);
-    app.issues.statuses.insert(5, vec![]);
-    app.nav.visited.push(5);
-    app.show_issue(7);
+    app.issues.data.insert(ItemRef::github(5), newer);
+    app.issues.statuses.insert(ItemRef::github(5), vec![]);
+    app.nav.visited.push(ItemRef::github(5));
+    app.show_issue(ItemRef::github(7));
 
     let text = sidebar_text(&mut app);
     assert!(text.contains("● bug · 01/05/20"), "labels and date: {text}");
@@ -796,11 +870,14 @@ fn sidebar_rows_show_labels_updated_and_status_and_sort_hint() {
 #[test]
 fn sidebar_row_hides_labels_when_off_but_keeps_date_and_status() {
     let mut app = loaded_app();
-    let d = app.issues.data.get_mut(&7).unwrap();
+    let d = app.issues.data.get_mut(&ItemRef::github(7)).unwrap();
     d.labels = vec![Label { name: "bug".to_string() }];
     d.updated_at = "2020-01-05T00:00:00Z".to_string();
-    app.issues.statuses.insert(7, vec![("Roadmap".to_string(), Some("Todo".to_string()))]);
-    app.show_issue(7);
+    app.issues.statuses.insert(
+        ItemRef::github(7),
+        vec![("Roadmap".to_string(), Some("Todo".to_string()))],
+    );
+    app.show_issue(ItemRef::github(7));
     let text = sidebar_text(&mut app);
     assert!(text.contains("● bug · 01/05/20"), "labels and date: {text}");
     app.sidebar.row_issue.labels = false;
@@ -820,11 +897,13 @@ fn pr_rows_show_check_rollup_glyph_per_state() {
         (22, Some(CheckState::Fail)),
         (23, Some(CheckState::Pending)),
     ] {
-        app.issues.data.insert(n, check_pr(n, checks));
-        app.issues.statuses.insert(n, vec![]);
-        app.nav.visited.push(n);
+        app.issues
+            .data
+            .insert(ItemRef::github(n), check_pr(ItemRef::github(n), checks));
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.nav.visited.push(ItemRef::github(n));
     }
-    app.show_issue(21);
+    app.show_issue(ItemRef::github(21));
     let text = pr_sidebar_text(&mut app);
     assert!(text.contains("\u{f00c}"), "pass glyph: {text}");
     assert!(text.contains("\u{f00d}"), "fail glyph: {text}");
@@ -836,7 +915,7 @@ fn pr_row_without_checks_shows_no_glyph() {
     use crate::model::CheckState;
     // No rollup, or an unknown future state, renders nothing.
     for checks in [None, Some(CheckState::Unknown)] {
-        let mut app = check_app(21, checks);
+        let mut app = check_app(ItemRef::github(21), checks);
         let text = pr_sidebar_text(&mut app);
         assert!(
             !text.contains("\u{f00c}") && !text.contains("\u{f00d}") && !text.contains("\u{f017}"),
@@ -850,21 +929,21 @@ fn background_section_rows_render_without_changing_selection() {
     let mut app = loaded_app();
     let (tx, rx) = std::sync::mpsc::channel();
     app.sections.rx = Some(rx);
-    let mut issue = sample(42);
+    let mut issue = sample(ItemRef::github(42));
     issue.is_pr = true;
     issue.title = "background pull request".to_string();
     tx.send(crate::github::SectionEvent::Done(Ok(vec![crate::github::Row { issue, statuses: vec![], detail: crate::model::BoardDetail::default(), complete: false, window_at: None }]))).unwrap();
     poll_sections(&mut app);
-    assert_eq!(app.nav.current, Some(7));
-    assert!(app.issues.partial.contains(&42));
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
+    assert!(app.issues.partial.contains(&ItemRef::github(42)));
     assert!(frame_text(&mut app).contains("background pull request"));
 }
 
 #[test]
 fn section_headers_show_nerd_icons() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "blocked by #9".to_string();
-    app.show_issue(7);
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body = "blocked by #9".to_string();
+    app.show_issue(ItemRef::github(7));
     let text = frame_text(&mut app);
     // Font Awesome: fa-exclamation-circle, fa-code-fork, fa-link.
     assert!(text.contains('\u{f06a}'), "issues: {text}");
@@ -878,10 +957,13 @@ fn section_headers_show_nerd_icons() {
 #[test]
 fn pinned_row_uses_tack_icon() {
     let mut app = loaded_app();
-    app.nav.pin_order = vec![7];
-    app.nav.pinned = [7].into_iter().collect();
-    app.nav.recent = vec![7, 9];
-    assert!(app.issue_rows().iter().any(|r| r.number() == Some(7)));
+    app.nav.pin_order = vec![ItemRef::github(7)];
+    app.nav.pinned = [7].map(ItemRef::github).into_iter().collect();
+    app.nav.recent = vec![ItemRef::github(7), ItemRef::github(9)];
+    assert!(app
+        .issue_rows()
+        .iter()
+        .any(|r| r.number() == Some(ItemRef::github(7))));
     let text = frame_text(&mut app);
     assert!(text.contains('\u{f08d}'), "{text}");
 }

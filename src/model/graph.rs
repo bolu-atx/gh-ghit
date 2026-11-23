@@ -7,15 +7,22 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::physics::EdgeStyle;
+use crate::model::ItemRef;
 
 /// Top bit of a hub id, so a milestone hub never shares an id with an
 /// item number.
 const HUB_BIT: u64 = 1 << 63;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeId {
+    Item(ItemRef),
+    Hub(u64),
+}
+
 /// One stored item, as the map needs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapItem {
-    pub number: u64,
+    pub number: ItemRef,
     pub is_pr: bool,
     /// GraphQL state: `OPEN`, `CLOSED` or `MERGED`.
     pub state: String,
@@ -39,8 +46,8 @@ pub enum LinkKind {
 /// One stored link between two item numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapLink {
-    pub src: u64,
-    pub dst: u64,
+    pub src: ItemRef,
+    pub dst: ItemRef,
     pub kind: LinkKind,
 }
 
@@ -160,8 +167,8 @@ impl NodeState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapNode {
     /// Stable layout id: the item number, or a hub id.
-    pub id: u64,
-    pub number: Option<u64>,
+    pub id: NodeId,
+    pub number: Option<ItemRef>,
     pub title: String,
     pub state: NodeState,
 }
@@ -178,7 +185,7 @@ pub struct MapGraph {
     /// a hub edge.
     pub kinds: Vec<Vec<LinkKind>>,
     /// Layout id to node index, built with the graph.
-    index: HashMap<u64, usize>,
+    index: HashMap<NodeId, usize>,
 }
 
 impl MapGraph {
@@ -188,12 +195,12 @@ impl MapGraph {
     }
 
     /// Layout ids in node order.
-    pub fn ids(&self) -> Vec<u64> {
+    pub fn ids(&self) -> Vec<NodeId> {
         self.nodes.iter().map(|node| node.id).collect()
     }
 
     /// Index of the node with layout id `id`.
-    pub fn index_of(&self, id: u64) -> Option<usize> {
+    pub fn index_of(&self, id: NodeId) -> Option<usize> {
         self.index.get(&id).copied()
     }
 
@@ -204,7 +211,7 @@ impl MapGraph {
     }
 
     /// Index of the edge from layout id `src` to layout id `dst`.
-    pub fn edge_between(&self, src: u64, dst: u64) -> Option<usize> {
+    pub fn edge_between(&self, src: NodeId, dst: NodeId) -> Option<usize> {
         let (a, b) = (self.index_of(src)?, self.index_of(dst)?);
         self.edges.iter().position(|&(from, to, _)| from == a && to == b)
     }
@@ -215,7 +222,7 @@ impl MapGraph {
     pub fn relation(&self, edge: usize) -> String {
         let (a, b, style) = self.edges[edge];
         let (from, to) = (&self.nodes[a], &self.nodes[b]);
-        let name = |node: &MapNode| node.number.map_or(node.title.clone(), |n| format!("#{n}"));
+        let name = |node: &MapNode| node.number.map_or(node.title.clone(), |n| n.display(""));
         if style == EdgeStyle::Hub {
             return format!("{} is in milestone {}", name(from), to.title);
         }
@@ -244,9 +251,9 @@ impl MapGraph {
 }
 
 /// Layout id of the hub for milestone `title`: FNV-1a with the hub bit.
-pub fn hub_id(title: &str) -> u64 {
+pub fn hub_id(title: &str) -> NodeId {
     let hash = title.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
-    HUB_BIT | (hash >> 1)
+    NodeId::Hub(HUB_BIT | (hash >> 1))
 }
 
 /// Build the map. `center` is the open item: the component scope walks
@@ -256,18 +263,30 @@ pub fn hub_id(title: &str) -> u64 {
 /// component walks only drawn links. Closed items hide, except closed
 /// blockers of an open item in scope, unless `filter.closed` shows them.
 /// A node's state counts every stored blocks link, drawn or not.
-pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filter: &MapFilter) -> MapGraph {
-    let by_number: HashMap<u64, &MapItem> = items.iter().map(|item| (item.number, item)).collect();
-    let stored: Vec<MapLink> = links.iter().copied()
-        .filter(|link| link.src != link.dst && by_number.contains_key(&link.src) && by_number.contains_key(&link.dst))
+pub fn build_map(
+    items: &[MapItem],
+    links: &[MapLink],
+    center: Option<ItemRef>,
+    filter: &MapFilter,
+) -> MapGraph {
+    let by_number: HashMap<ItemRef, &MapItem> =
+        items.iter().map(|item| (item.number, item)).collect();
+    let stored: Vec<MapLink> = links
+        .iter()
+        .copied()
+        .filter(|link| {
+            link.src != link.dst
+                && by_number.contains_key(&link.src)
+                && by_number.contains_key(&link.dst)
+        })
         .collect();
-    let kept = |n: u64| {
+    let kept = |n: ItemRef| {
         Some(n) == center || by_number.get(&n).is_some_and(|item| filter.keeps(item))
     };
     let links: Vec<MapLink> = stored.iter().copied()
         .filter(|link| filter.draws(link.kind) && kept(link.src) && kept(link.dst))
         .collect();
-    let in_scope: HashSet<u64> = match (filter.scope, center) {
+    let in_scope: HashSet<ItemRef> = match (filter.scope, center) {
         (MapScope::Repo, _) | (MapScope::Component, None) => {
             by_number.keys().copied().filter(|&n| kept(n)).collect()
         }
@@ -284,22 +303,22 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filt
         (MapScope::Component, Some(_)) => HashSet::new(),
     };
     // Blocks links indexed both ways, so each node checks only its own.
-    let mut blocks: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut blocks: HashMap<ItemRef, Vec<ItemRef>> = HashMap::new();
     for link in links.iter().filter(|link| link.kind == LinkKind::Blocks) {
         blocks.entry(link.src).or_default().push(link.dst);
     }
-    let mut blocked_by: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut blocked_by: HashMap<ItemRef, Vec<ItemRef>> = HashMap::new();
     for link in stored.iter().filter(|link| link.kind == LinkKind::Blocks) {
         blocked_by.entry(link.dst).or_default().push(link.src);
     }
-    let open = |n: u64| by_number.get(&n).is_some_and(|item| item.state == "OPEN");
-    let visible = |n: u64| {
+    let open = |n: ItemRef| by_number.get(&n).is_some_and(|item| item.state == "OPEN");
+    let visible = |n: ItemRef| {
         open(n)
             || filter.closed
             || Some(n) == center
             || blocks.get(&n).is_some_and(|dsts| dsts.iter().any(|&dst| in_scope.contains(&dst) && open(dst)))
     };
-    let mut numbers: Vec<u64> = in_scope.iter().copied().filter(|&n| visible(n)).collect();
+    let mut numbers: Vec<ItemRef> = in_scope.iter().copied().filter(|&n| visible(n)).collect();
     numbers.sort_unstable();
 
     let mut nodes: Vec<MapNode> = numbers.iter().map(|&n| {
@@ -311,9 +330,9 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filt
             (true, false, true) => NodeState::Blocked,
             (true, false, false) => NodeState::Ready,
         };
-        MapNode { id: n, number: Some(n), title: item.title.clone(), state }
+        MapNode { id: NodeId::Item(n), number: Some(n), title: item.title.clone(), state }
     }).collect();
-    let index: HashMap<u64, usize> = numbers.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+    let index: HashMap<ItemRef, usize> = numbers.iter().enumerate().map(|(i, &n)| (n, i)).collect();
 
     // One edge per ordered pair, carrying every kind linked that way.
     let mut pairs: BTreeMap<(usize, usize), Vec<LinkKind>> = BTreeMap::new();
@@ -352,14 +371,14 @@ pub fn build_map(items: &[MapItem], links: &[MapLink], center: Option<u64>, filt
 }
 
 /// Numbers linked to any of `seeds` through any chain of links, either way.
-fn component(links: &[MapLink], seeds: impl Iterator<Item = u64>) -> HashSet<u64> {
-    let mut neighbors: HashMap<u64, Vec<u64>> = HashMap::new();
+fn component(links: &[MapLink], seeds: impl Iterator<Item = ItemRef>) -> HashSet<ItemRef> {
+    let mut neighbors: HashMap<ItemRef, Vec<ItemRef>> = HashMap::new();
     for link in links {
         neighbors.entry(link.src).or_default().push(link.dst);
         neighbors.entry(link.dst).or_default().push(link.src);
     }
-    let mut seen: HashSet<u64> = seeds.collect();
-    let mut queue: Vec<u64> = seen.iter().copied().collect();
+    let mut seen: HashSet<ItemRef> = seeds.collect();
+    let mut queue: Vec<ItemRef> = seen.iter().copied().collect();
     while let Some(node) = queue.pop() {
         for &next in neighbors.get(&node).into_iter().flatten() {
             if seen.insert(next) {

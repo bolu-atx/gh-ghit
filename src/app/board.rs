@@ -10,6 +10,7 @@ use crate::{github, model};
 use crate::model::BoardData;
 use crate::app::auth_failure;
 use crate::app::poll::kick_off_details;
+use crate::model::ItemRef;
 
 /// Board modal state: the loaded project payload, its fetch channel,
 /// per-column list states, cursor, text/milestone filters, and the card
@@ -37,16 +38,16 @@ pub(crate) struct BoardView {
     pub(crate) fields: model::CardFields,
     pub(crate) col: usize,
     pub(crate) row: usize,
-    pub(crate) details: HashMap<u64, model::BoardDetail>,
-    pub(crate) detail_pending: HashSet<u64>,
-    pub(crate) detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
-    pub(crate) detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
+    pub(crate) details: HashMap<ItemRef, model::BoardDetail>,
+    pub(crate) detail_pending: HashSet<ItemRef>,
+    pub(crate) detail_tx: std::sync::mpsc::Sender<(ItemRef, Result<model::BoardDetail, String>)>,
+    pub(crate) detail_rx: std::sync::mpsc::Receiver<(ItemRef, Result<model::BoardDetail, String>)>,
 }
 
 impl BoardView {
     pub(crate) fn new(
-        detail_tx: std::sync::mpsc::Sender<(u64, Result<model::BoardDetail, String>)>,
-        detail_rx: std::sync::mpsc::Receiver<(u64, Result<model::BoardDetail, String>)>,
+        detail_tx: std::sync::mpsc::Sender<(ItemRef, Result<model::BoardDetail, String>)>,
+        detail_rx: std::sync::mpsc::Receiver<(ItemRef, Result<model::BoardDetail, String>)>,
     ) -> Self {
         Self { data: None, loading: false, rx: None, states: Vec::new(), expanded: None,
             filter: String::new(), milestones: HashSet::new(), filter_focus: 0,
@@ -234,7 +235,7 @@ pub(crate) fn board_move(app: &mut App, dx: isize, dy: isize) {
         core::board_cursor(cols.len(), rows, app.board.col, app.board.row, dx, dy);
 }
 
-pub(crate) fn board_selected_number(app: &App) -> Option<u64> {
+pub(crate) fn board_selected_number(app: &App) -> Option<ItemRef> {
     let board = app.board.data.as_ref()?;
     let cols = board_columns(board, &app.board.filter, &app.board.milestones);
     cols.get(app.board.col)?.1.get(app.board.row)?.number

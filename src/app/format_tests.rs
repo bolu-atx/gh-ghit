@@ -3,6 +3,7 @@
 use super::*;
 use super::test_support::{restore_xdg, temp_xdg};
 use crate::model::BoardData;
+use crate::model::ItemRef;
 
 #[test]
 fn format_prefs_survive_across_sessions() {
@@ -78,7 +79,7 @@ fn stale_saved_milestones_prune_when_board_lands() {
     // clamps to the widget count, and the pruned set persists.
     let card = |milestone: Option<&str>| BoardItem {
         title: "card".to_string(),
-        number: Some(1),
+        number: Some(ItemRef::github(1)),
         status: Some("Todo".to_string()),
         labels: vec![],
         repo: None,
@@ -105,7 +106,7 @@ fn stale_saved_milestones_prune_when_board_lands() {
         board_columns(board, &app.board.filter, &app.board.milestones)[0]
             .1
             .iter()
-            .any(|c| c.number == Some(1)),
+            .any(|c| c.number == Some(ItemRef::github(1))),
         "lanes match again"
     );
     restore_xdg(saved);
