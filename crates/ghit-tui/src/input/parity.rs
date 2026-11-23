@@ -51,12 +51,12 @@ fn issue(number: ItemRef, is_pr: bool) -> IssueData {
 
 fn base() -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.repo_slug = Some("o/r".to_string());
+    app.session.repo_slug = Some("o/r".to_string());
     for (n, pr) in [(7u64, false), (8, false), (9, true), (10, true)] {
-        app.issues
+        app.session.issues
             .data
             .insert(ItemRef::github(n), issue(ItemRef::github(n), pr));
-        app.issues.statuses.insert(ItemRef::github(n), vec![]);
+        app.session.issues.statuses.insert(ItemRef::github(n), vec![]);
         app.nav.visited.push(ItemRef::github(n));
     }
     app.show_issue(ItemRef::github(8));
@@ -71,7 +71,7 @@ fn pane(pane: Pane) -> App {
 
 fn tree() -> App {
     let mut app = pane(Pane::Issues);
-    app.issues
+    app.session.issues
         .data
         .get_mut(&ItemRef::github(7))
         .unwrap()
@@ -79,7 +79,7 @@ fn tree() -> App {
         total: 2,
         completed: 0,
     });
-    app.issues.data.get_mut(&ItemRef::github(8)).unwrap().parent = Some(ItemRef::github(7));
+    app.session.issues.data.get_mut(&ItemRef::github(8)).unwrap().parent = Some(ItemRef::github(7));
     app.nav.recent = vec![ItemRef::github(7), ItemRef::github(8)];
     app.nav.visited.clear();
     app.sidebar.sub_issue_tree = true;
@@ -134,7 +134,7 @@ fn graph() -> App {
 
 fn refs() -> App {
     let mut app = pane(Pane::Refs);
-    app.refs.numbers = vec![ItemRef::github(7), ItemRef::github(9)];
+    app.session.refs.numbers = vec![ItemRef::github(7), ItemRef::github(9)];
     app
 }
 
@@ -385,7 +385,7 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("sort", format!("{:?}/{}/{:?}", app.sidebar.sort, app.sidebar.sort_desc, app.sidebar.group_by)),
         ("folded", sorted(&folded)),
         ("filters", format!("{}/{}", sorted(&app.sidebar.label_filter), app.sidebar.milestone_filter.len())),
-        ("window", app.sections.merged_window_hours.to_string()),
+        ("window", app.session.sections.merged_window_hours.to_string()),
         (
             "refs",
             format!("{}/{:?}", app.refs.show, app.refs.highlight.map(number)),
@@ -452,7 +452,7 @@ fn signature(app: &App) -> Vec<(&'static str, String)> {
         ("map-filter", format!("{:?}", app.map_filter_focus())),
         ("pending", format!("{:?}", app.pending_prefix)),
         ("undo", app.undo.is_some().to_string()),
-        ("reauth", app.auth.reauth_requested.to_string()),
+        ("reauth", app.session.auth.reauth_requested.to_string()),
     ]
 }
 

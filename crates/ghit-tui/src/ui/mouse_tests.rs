@@ -86,7 +86,7 @@ fn list_state_and_footer_open_format() {
 #[test]
 fn filters_button_clears_every_filter() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![ItemRef::github(9)];
+    app.session.refs.numbers = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string()];
     app.sidebar.label_filter.insert("bug".to_string());
@@ -117,7 +117,7 @@ fn diff_strip_toggles_split_and_steps_files() {
 #[test]
 fn pane_title_row_focuses_refs_and_history() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![ItemRef::github(9)];
+    app.session.refs.numbers = vec![ItemRef::github(9)];
     app.nav.history = vec![ItemRef::github(9)];
     draw(&mut app);
     let refs = app.hits.refs_area;
@@ -223,7 +223,7 @@ fn hover_never_changes_the_selection() {
 #[test]
 fn right_click_on_refs_history_labels_and_body_opens_their_menus() {
     let mut app = loaded_app();
-    app.refs.numbers = vec![ItemRef::github(9)];
+    app.session.refs.numbers = vec![ItemRef::github(9)];
     app.nav.history = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string()];
@@ -438,7 +438,7 @@ fn toolbar_on_an_issue_has_comment_and_close() {
 #[test]
 fn toolbar_on_a_closed_issue_reads_reopen() {
     let mut app = open_item(ItemRef::github(7), Tab::Details);
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().state = "CLOSED".to_string();
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().state = "CLOSED".to_string();
     let line = tab_line(&draw(&mut app));
     assert!(line.contains("reopen") && !line.contains("close"), "{line}");
 }
@@ -508,7 +508,7 @@ fn toolbar_close_click_asks_before_writing() {
     app.confirm_cancel();
     assert!(app.confirm().is_none());
     assert_eq!(
-        app.issues.data[&ItemRef::github(7)].state,
+        app.session.issues.data[&ItemRef::github(7)].state,
         "OPEN",
         "cancel changes nothing"
     );
@@ -520,7 +520,7 @@ fn toolbar_close_confirm_starts_the_write_and_reopen_asks_too() {
     app.request_set_state();
     app.confirm_choose(0);
     assert!(app.message.contains("closing #7"), "{}", app.message);
-    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().state = "CLOSED".to_string();
+    app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap().state = "CLOSED".to_string();
     app.request_set_state();
     assert_eq!(app.confirm().unwrap().title, "Reopen #7?");
 }
@@ -579,7 +579,7 @@ fn toolbar_expand_button_shows_on_diff_only_and_click_runs_it() {
 fn clicking_the_source_segment_or_its_hint_searches_github() {
     for target in ["segment", "hint"] {
         let mut app = loaded_app();
-        app.repo_slug = Some("o/r".to_string());
+        app.session.repo_slug = Some("o/r".to_string());
         app.sidebar.query_active = "label:bug".to_string();
         draw(&mut app);
         let (x, y) = if target == "segment" {
@@ -591,6 +591,6 @@ fn clicking_the_source_segment_or_its_hint_searches_github() {
             (r.x, r.y)
         };
         left(&mut app, x, y);
-        assert!(app.sections.rx.is_some() && app.sections.replace, "{target} click searches GitHub");
+        assert!(app.session.sections.rx.is_some() && app.session.sections.replace, "{target} click searches GitHub");
     }
 }

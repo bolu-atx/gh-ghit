@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::app::{App, spawn_bg};
+use ghit_core::runtime::spawn_bg;
+use crate::app::App;
 use ghit_core::core::{self, Pane};
 use ghit_core::{github, model};
 use crate::app::auth_failure;
@@ -79,21 +80,6 @@ impl DiffView {
             headers: vec![], pending_jump: None, pending: HashSet::new(), tx, rx, split: false,
             expand_all: None, synced: HashSet::new(), context: 0, raw: HashMap::new(),
             heads: HashMap::new(), heads_pending: HashSet::new(), heads_tx, heads_rx }
-    }
-}
-
-/// REST sub-issue loads for the opt-in sidebar tree: per-parent session
-/// state (loading or loaded children) plus the fetch channel.
-pub(crate) struct SubIssueLoads {
-    pub(crate) state: HashMap<ItemRef, model::LazyChildren>,
-    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, Result<Vec<model::IssueData>, String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, Result<Vec<model::IssueData>, String>)>,
-}
-
-impl SubIssueLoads {
-    pub(crate) fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel();
-        Self { state: HashMap::new(), tx, rx }
     }
 }
 
@@ -357,7 +343,7 @@ impl App {
     fn load_head_files(&mut self, n: ItemRef, names: Vec<String>) {
         self.diff.heads_pending.extend(names.iter().map(|name| (n, name.clone())));
         let tx = self.diff.heads_tx.clone();
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
         self.enqueue(core::Kind::Diff, Some(n), async move {
             let result = github::fetch_head_files(&repo, n, names.clone()).await;
             let _ = tx.send((n, names, result));
@@ -377,7 +363,7 @@ impl App {
     /// Queue a diff fetch for PR `number`. No-op for issues, cached rows,
     /// and rows already in flight.
     pub(crate) fn load_diff(&mut self, number: ItemRef, force: bool) {
-        let Some(d) = self.issues.data.get(&number) else { return };
+        let Some(d) = self.session.issues.data.get(&number) else { return };
         if !d.is_pr {
             return;
         }
@@ -388,7 +374,7 @@ impl App {
             return;
         }
         let tx = self.diff.tx.clone();
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
         self.enqueue(core::Kind::Diff, Some(number), async move {
             let _ = tx.send((number, github::fetch_diff(&repo, number, force).await));
         });
@@ -397,16 +383,16 @@ impl App {
     /// Expand-time REST load for the opt-in tree: at most one fetch per
     /// parent per session, and only when the summary reports children
     /// the fetched rows do not cover. The row renders a loading child
-    /// until `poll_sub_issues` lands the result.
+    /// until `poll_session` lands the result.
     pub(crate) fn load_sub_issues(&mut self, number: ItemRef) {
         if !self.sidebar.sub_issue_tree
-            || !core::needs_lazy_children(number, &self.issues.data, &self.subs.state)
+            || !core::needs_lazy_children(number, &self.session.issues.data, &self.session.subs.state)
         {
             return;
         }
-        self.subs.state.insert(number, model::LazyChildren::Loading);
-        let tx = self.subs.tx.clone();
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        self.session.subs.state.insert(number, model::LazyChildren::Loading);
+        let tx = self.session.subs.tx.clone();
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
         self.enqueue(core::Kind::Other, None, async move {
             let _ = tx.send((number, github::fetch_sub_issues(&repo, number).await));
         });
@@ -415,7 +401,7 @@ impl App {
     /// Pending review threads on the current PR, if any.
     pub(crate) fn pending_threads(&self) -> usize {
         let Some(n) = self.nav.current else { return 0 };
-        let Some(d) = self.issues.data.get(&n) else { return 0 };
+        let Some(d) = self.session.issues.data.get(&n) else { return 0 };
         d.review_threads.iter().filter(|t| t.has_pending()).count()
     }
 
@@ -434,7 +420,7 @@ impl App {
             return;
         }
         self.compose.submitting.insert(n);
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
         let tx = self.compose.review_tx.clone();
         spawn_bg(async move {
             let result = github::submit_pending_review(&repo, n).await;
@@ -510,37 +496,6 @@ pub(crate) fn poll_head_files(app: &mut App) -> bool {
             }
         }
         app.rewiden(n);
-    }
-    landed
-}
-
-pub(crate) fn poll_sub_issues(app: &mut App) -> bool {
-    let ready: Vec<_> = app.subs.rx.try_iter().collect();
-    let landed = !ready.is_empty();
-    for (parent, result) in ready {
-        match result {
-            Ok(list) => {
-                let mut numbers = Vec::with_capacity(list.len());
-                for mut data in list {
-                    numbers.push(data.number);
-                    data.parent = Some(parent);
-                    // An outside child is a slim row: opening it runs the
-                    // full fetch. A number the query already fetched keeps
-                    // its richer payload.
-                    if !app.issues.data.contains_key(&data.number) {
-                        app.issues.partial.insert(data.number);
-                        app.issues.data.insert(data.number, data);
-                    }
-                }
-                app.subs.state.insert(parent, model::LazyChildren::Loaded(numbers));
-            }
-            Err(e) => {
-                // Drop the state so the next explicit expand can retry.
-                app.subs.state.remove(&parent);
-                auth_failure(app, &e);
-                app.notify(e);
-            }
-        }
     }
     landed
 }

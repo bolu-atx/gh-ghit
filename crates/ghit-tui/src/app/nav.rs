@@ -1,6 +1,5 @@
 //! Focus, panes, history and layout: where the user is and how they move.
 
-use std::collections::HashSet;
 
 use ratatui::layout::Rect;
 
@@ -12,7 +11,7 @@ use ghit_core::model::ItemRef;
 /// Navigation state: where the user is and how they got there. `current`
 /// is the open issue, `requested`/`step_pending` are in-flight fetches,
 /// `visited`/`recent` feed the sidebar sections, `history`/`future` are
-/// the Ctrl+O/Ctrl+I stacks, `pinned`/`pin_order` are user pins, and
+/// the Ctrl+O/Ctrl+I stacks, and
 /// `tab`/`focus`/`pane`/`scroll`/`hover` place the cursor.
 pub(crate) struct Nav {
     pub(crate) current: Option<ItemRef>,
@@ -32,8 +31,6 @@ pub(crate) struct Nav {
     /// through `ensure_visited`; cursor walks never touch them.
     pub(crate) history: Vec<ItemRef>,
     pub(crate) future: Vec<ItemRef>,
-    pub(crate) pinned: HashSet<ItemRef>,
-    pub(crate) pin_order: Vec<ItemRef>,
     pub(crate) tab: Tab,
     pub(crate) focus: Focus,
     pub(crate) pane: Pane,
@@ -67,8 +64,8 @@ pub(crate) struct BackFrame {
 impl Nav {
     pub(crate) fn new() -> Self {
         Self { current: None, requested: None, step_pending: None, visited: vec![],
-            recent: vec![], history: vec![], future: vec![], pinned: HashSet::new(),
-            pin_order: vec![], tab: Tab::Details, focus: Focus::Main, pane: Pane::Issues,
+            recent: vec![], history: vec![], future: vec![],
+            tab: Tab::Details, focus: Focus::Main, pane: Pane::Issues,
             scroll: 0, hover: None, history_cursor: 0, back: vec![] }
     }
 }
@@ -243,7 +240,7 @@ impl App {
             }
         }
         self.nav.requested = Some(n);
-        if self.issues.partial.contains(&n) { self.load_issue(n, false); }
+        if self.session.issues.partial.contains(&n) { self.load_issue(n, false); }
         self.nav.current = Some(n);
         if self.nav.step_pending == Some(n) {
             self.nav.step_pending = None;
@@ -317,7 +314,7 @@ impl App {
     /// explicit-visit path (`ensure_visited` + `load_issue`), the same
     /// call sequence as board Enter and body-link clicks. Below #1 there
     /// is nothing to fetch, so it toasts immediately; past the top end
-    /// the fetch 404s and `poll_issues` toasts instead. Either way
+    /// the fetch 404s and `poll_session` toasts instead. Either way
     /// `current` only moves on a real landing.
     pub(crate) fn step_issue(&mut self, delta: isize) {
         if !self.guard_nav(NavIntent::Step(delta)) {
@@ -355,7 +352,7 @@ impl App {
         self.refs.highlight = Some(n);
         // Scroll the body pane so the first mentioning row sits at the top.
         // `body_rows` is the visible slice taken at `body_base`.
-        let repo = self.repo_key();
+        let repo = self.session.repo_key();
         if let Some(row) = self.hits.body_rows.iter().position(|line| {
             model::links_in_line(line, repo.as_deref())
                 .iter()
@@ -367,7 +364,7 @@ impl App {
 
     /// The right refs pane shows only when toggled on and non-empty.
     pub(crate) fn refs_visible(&self) -> bool {
-        self.refs.show && !(self.refs.numbers.is_empty() && self.refs.paired.is_empty())
+        self.refs.show && !(self.session.refs.numbers.is_empty() && self.session.refs.paired.is_empty())
     }
 
     /// The Labels pane shows once the repo has labels or milestones, or
@@ -571,7 +568,7 @@ impl App {
     }
 
     pub(crate) fn visual_diff(&self) -> bool {
-        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.issues.data.get(&n)).is_some_and(|d| d.is_pr)
+        self.nav.tab == Tab::Visual && self.nav.current.and_then(|n| self.session.issues.data.get(&n)).is_some_and(|d| d.is_pr)
     }
 
     /// The Map tab shows, with or without an open item.
@@ -600,9 +597,9 @@ impl App {
     }
 
     pub(crate) fn open_number(&mut self, n: ItemRef) {
-        let url = if let Some(d) = self.issues.data.get(&n) {
+        let url = if let Some(d) = self.session.issues.data.get(&n) {
             d.url.clone()
-        } else if let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) {
+        } else if let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) {
             format!("https://github.com/{repo}/issues/{n}", n = n.number)
         } else {
             format!("https://github.com/issues/{n}", n = n.number)

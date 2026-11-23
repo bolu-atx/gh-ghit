@@ -215,25 +215,25 @@ fn paired_line(d: &IssueData) -> Option<Line<'static>> {
 
 pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     use crate::theme::{amber, ink, muted, paper, base};
-    let repo = app.repo_key().unwrap_or_default();
+    let repo = app.session.repo_key().unwrap_or_default();
     // The meta/label block lives above the tabs so long titles wrap in
     // place instead of overflowing the masthead. Its height is measured
     // first (same inner width as the body) so the rows below just fit.
     let inner_w = (area.width as usize).saturating_sub(5);
-    let mut header: Vec<Line> = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
+    let mut header: Vec<Line> = match app.nav.current.and_then(|n| app.session.issues.data.get(&n)) {
         Some(d) => {
-            let st = app.issues.statuses.get(&d.number).cloned().unwrap_or_default();
+            let st = app.session.issues.statuses.get(&d.number).cloned().unwrap_or_default();
             header_lines(d, &st)
         }
         None => vec![],
     };
     if let (Some(n), crate::app::Tab::Details) = (app.refs.highlight, app.nav.tab) {
-        highlight_mentions(&mut header, n, app.repo_key().as_deref());
+        highlight_mentions(&mut header, n, app.session.repo_key().as_deref());
     }
     let header = wrap_lines(header, inner_w);
     // The paired line renders with the header block and joins
     // `header_rows`, so clicking `#N` navigates to the counterpart.
-    let paired = match (app.nav.tab, app.nav.current.and_then(|n| app.issues.data.get(&n))) {
+    let paired = match (app.nav.tab, app.nav.current.and_then(|n| app.session.issues.data.get(&n))) {
         (crate::app::Tab::Details, Some(d)) => paired_line(d)
             .map(|line| wrap_lines(vec![line], inner_w))
             .unwrap_or_default(),
@@ -262,7 +262,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // stay plain text so identifiers scan without a patched font. The PR
     // head-commit CI glyph rides the issue line, the single title source
     // now that the header block starts at the meta lines.
-    let mast: Vec<Line> = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
+    let mast: Vec<Line> = match app.nav.current.and_then(|n| app.session.issues.data.get(&n)) {
         Some(d) => {
             let mut title = vec![
                 Span::styled(
@@ -335,7 +335,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
     let markdown;
     let mut aux = SearchAux::default();
-    let mut text = match app.nav.current.and_then(|n| app.issues.data.get(&n)) {
+    let mut text = match app.nav.current.and_then(|n| app.session.issues.data.get(&n)) {
         Some(d) => match app.nav.tab {
             Tab::Details => {
                 let comment_key = hints::key_in(Context::Global, Action::Comment);
@@ -371,14 +371,14 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     // Clickable refs and URLs read as links in the body.
     if app.nav.tab == Tab::Details {
-        let is_pr = |n: ItemRef| app.issues.data.get(&n).map(|d| d.is_pr);
-        style_links(&mut text.lines, app.repo_key().as_deref(), is_pr);
+        let is_pr = |n: ItemRef| app.session.issues.data.get(&n).map(|d| d.is_pr);
+        style_links(&mut text.lines, app.session.repo_key().as_deref(), is_pr);
     }
     // A refs-row selection lights up the mentioning line instead of opening
     // the issue. Body tab only: the mentions come from the body markdown
     // (and the header above the tabs).
     if let (Some(n), crate::app::Tab::Details) = (app.refs.highlight, app.nav.tab) {
-        highlight_mentions(&mut text.lines, n, app.repo_key().as_deref());
+        highlight_mentions(&mut text.lines, n, app.session.repo_key().as_deref());
     }
     let wrap_width = usize::from(rows[4].width.saturating_sub(5)).max(1);
     super::search::apply(app, &mut text, wrap_width, usize::from(rows[4].height), &aux);

@@ -349,7 +349,7 @@ fn render_board_links(f: &mut ratatui::Frame, popup: Rect, app: &mut App) {
     app.hits.board_links.clear();
     let mut links: Vec<(String, String)> = vec![];
     // Nerd Font Font Awesome fa-flag: the repo milestones page.
-    if let Some(repo) = app.repo_flag.clone().or_else(|| app.repo_slug.clone()) {
+    if let Some(repo) = app.session.repo_flag.clone().or_else(|| app.session.repo_slug.clone()) {
         links.push((
             crate::theme::nf("\u{f024}", "⚑").to_string(),
             format!("https://github.com/{repo}/milestones"),

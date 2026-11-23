@@ -1,15 +1,14 @@
 //! Store backfill scheduling: the sync-lease holder fills the store with
 //! the repo's working set, one page per step, at the lowest fetch tier.
 
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use crate::app::App;
-use ghit_core::{core, github};
+use crate::github;
 
 /// Pause between two pages (and before the first), so the backfill never
 /// bursts and the startup sync goes first.
-pub(super) const BACKFILL_DELAY: Duration = Duration::from_secs(2);
+pub const BACKFILL_DELAY: Duration = Duration::from_secs(2);
 
 /// Wait after a failed page before the next try.
 const BACKFILL_RETRY: Duration = Duration::from_secs(60);
@@ -18,8 +17,8 @@ type StepResult = Result<github::BackfillStep, String>;
 
 /// Backfill state of one process. The store holds the real progress; this
 /// only paces the steps and feeds the status bar.
-pub(crate) struct BackfillFeed {
-    pub(super) rx: Option<Receiver<StepResult>>,
+pub struct BackfillFeed {
+    pub rx: Option<Receiver<StepResult>>,
     next_at: Instant,
     /// A step ran and the backfill is not done: the status bar shows it.
     running: bool,
@@ -27,12 +26,12 @@ pub(crate) struct BackfillFeed {
     /// `GHIT_NO_BACKFILL` is set (the e2e harness sets it).
     off: bool,
     /// Age limit in months from the prefs; 0 = all history.
-    pub(crate) months: u32,
+    pub months: u32,
     progress: Option<(usize, usize)>,
 }
 
 impl BackfillFeed {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             rx: None,
             next_at: Instant::now() + BACKFILL_DELAY,
@@ -46,12 +45,12 @@ impl BackfillFeed {
 
     /// A step may start: only the lease holder, with no step in flight,
     /// no quota limit, and the pause since the last page over.
-    fn due(&self, holder: bool, limited: bool, now: Instant) -> bool {
+    pub fn due(&self, holder: bool, limited: bool, now: Instant) -> bool {
         holder && !self.off && !self.done && self.rx.is_none() && !limited && now >= self.next_at
     }
 
     /// Take a finished step's result and schedule the next one.
-    fn land(&mut self, result: StepResult, now: Instant) {
+    pub fn land(&mut self, result: StepResult, now: Instant) {
         match result {
             Ok(step) => {
                 self.progress = step.progress;
@@ -62,50 +61,26 @@ impl BackfillFeed {
             Err(_) => self.next_at = now + BACKFILL_RETRY,
         }
     }
+
+    /// A step ran and the backfill is not done.
+    pub fn running(&self) -> bool {
+        self.running
+    }
+
+    /// Rows done vs total of the last step, when known.
+    pub fn progress(&self) -> Option<(usize, usize)> {
+        self.progress
+    }
+
+    /// A step failed or its worker died: wait before the next try.
+    pub fn retry_later(&mut self, now: Instant) {
+        self.next_at = now + BACKFILL_RETRY;
+    }
 }
 
-impl App {
-    /// True while this process holds the sync lease through a store link.
-    /// Without a link there is no store to fill.
-    fn backfill_holder(&self) -> bool {
-        self.sections.link.as_ref().is_some_and(github::StoreLink::holding)
-    }
-
-    /// Status bar input: the backfill runs here, with its progress.
-    pub(crate) fn backfill_state(&self) -> (bool, Option<(usize, usize)>) {
-        let feed = &self.sections.backfill;
-        (feed.running && self.backfill_holder(), feed.progress)
-    }
-
-    /// Per loop pass: land a finished step, then queue the next page when
-    /// one is due. True when visible state changed.
-    pub(super) fn drive_backfill(&mut self, now: Instant) -> bool {
-        let mut landed = false;
-        if let Some(rx) = &self.sections.backfill.rx {
-            match rx.try_recv() {
-                Ok(result) => {
-                    self.sections.backfill.rx = None;
-                    self.sections.backfill.land(result, now);
-                    landed = true;
-                }
-                Err(TryRecvError::Empty) => return false,
-                Err(TryRecvError::Disconnected) => {
-                    self.sections.backfill.rx = None;
-                    self.sections.backfill.next_at = now + BACKFILL_RETRY;
-                }
-            }
-        }
-        let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) else { return landed };
-        if !self.sections.backfill.due(self.backfill_holder(), github::rate_limited(), now) {
-            return landed;
-        }
-        let months = self.sections.backfill.months;
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.sections.backfill.rx = Some(rx);
-        self.enqueue(core::Kind::Backfill, None, async move {
-            let _ = tx.send(github::backfill_step(&repo, months).await);
-        });
-        landed
+impl Default for BackfillFeed {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

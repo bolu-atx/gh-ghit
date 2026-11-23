@@ -179,10 +179,10 @@ fn section_list(
         };
         let (marker, marker_style) = theme::row_marker(state, focused, "█ ");
         let (title_text, labels, updated, status, author, milestone) =
-            match app.issues.data.get(&n) {
+            match app.session.issues.data.get(&n) {
             Some(d) => {
-                let st = app.issues.statuses.get(&n).cloned().unwrap_or_default();
-                let pinned = app.nav.pinned.contains(&n);
+                let st = app.session.issues.statuses.get(&n).cloned().unwrap_or_default();
+                let pinned = app.session.pins.set.contains(&n);
                 let status_icon = crate::theme::column_icon(&model::status_text(&st));
                 let (_, labels, updated, status, author, milestone) =
                     model::sidebar_lines(d, &st, now, 38, pinned, &frame.fields, status_icon);
@@ -192,8 +192,8 @@ fn section_list(
         };
         // Nerd Font Font Awesome fa-thumb-tack marks pinned rows. Same two
         // cells as the marker it replaces, so sidebar hit-testing is untouched.
-        let pin = if app.nav.pinned.contains(&n) { theme::nf("\u{f08d} ", "• ") } else { "" };
-        let data = app.issues.data.get(&n);
+        let pin = if app.session.pins.set.contains(&n) { theme::nf("\u{f08d} ", "• ") } else { "" };
+        let data = app.session.issues.data.get(&n);
         let outside = matches!(row, SideRow::Tree { outside: true, .. });
         let num_style = if outside {
             Style::new().fg(muted())
@@ -605,7 +605,7 @@ pub(super) fn render_history(f: &mut ratatui::Frame, area: Rect, app: &mut App) 
         let bg = theme::row_bg(state, focused);
         let head = number.display("");
         let room = (inner.width as usize).saturating_sub(2 + head.chars().count() + 1);
-        let title = app.issues.data.get(&number)
+        let title = app.session.issues.data.get(&number)
             .filter(|issue| !issue.title.is_empty() && room > 1)
             .map(|issue| format!(" {}", model::slug(&issue.title, room)))
             .unwrap_or_default();

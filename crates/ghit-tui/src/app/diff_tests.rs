@@ -7,7 +7,7 @@ use ghit_core::model::ItemRef;
 #[test]
 fn pending_submit_counts_threads_and_lands() {
     let mut app = sidebar_app(&[ItemRef::github(9)]);
-    let d = app.issues.data.get_mut(&ItemRef::github(9)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(9)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![ghit_core::model::ReviewThread {
         id: "t1".into(),
@@ -27,9 +27,9 @@ fn pending_submit_counts_threads_and_lands() {
     assert!(poll_review_submit(&mut app));
     assert!(!app.compose.submitting.contains(&ItemRef::github(9)));
     assert_eq!(app.message, "pending review submitted on #9");
-    assert!(app.issues.pending.contains(&ItemRef::github(9)));
+    assert!(app.session.issues.pending.contains(&ItemRef::github(9)));
     // No pending threads means a note, never a send.
-    let d = app.issues.data.get_mut(&ItemRef::github(9)).unwrap();
+    let d = app.session.issues.data.get_mut(&ItemRef::github(9)).unwrap();
     d.review_threads.clear();
     assert_eq!(app.pending_threads(), 0);
     app.submit_pending_review();

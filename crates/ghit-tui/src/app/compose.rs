@@ -6,7 +6,8 @@ use std::io::Stdout;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{App, spawn_bg};
+use ghit_core::runtime::spawn_bg;
+use crate::app::App;
 use ghit_core::{github, model};
 use crate::app::auth_failure;
 use ghit_core::model::ItemRef;
@@ -112,7 +113,7 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        if !self.issues.data.contains_key(&n) {
+        if !self.session.issues.data.contains_key(&n) {
             self.notify("still loading: wait for the issue first".to_string());
             return;
         }
@@ -141,7 +142,7 @@ impl App {
         }
         let section: Vec<String> = self.hits.body_rows[header + 1..].to_vec();
         let cursor = vis - (header + 1);
-        let d = self.issues.data.get(&n)?;
+        let d = self.session.issues.data.get(&n)?;
         if let Some(thread_id) = model::thread_at_cursor(&section, cursor, file, &d.review_threads, crate::theme::comment_marker()) {
             return Some(ComposeTarget::Reply { thread_id });
         }
@@ -526,12 +527,13 @@ impl App {
         }
         c.sending = true;
         let (number, target, body) = (c.number, c.target.clone(), c.body.clone());
-        let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
         // A REST reply names a numeric comment id, not the GraphQL
         // thread id the cursor carries: resolve it from the loaded
         // thread before sending.
         let reply_comment_id = match &target {
             ComposeTarget::Reply { thread_id } => self
+                .session
                 .issues
                 .data
                 .get(&number)
