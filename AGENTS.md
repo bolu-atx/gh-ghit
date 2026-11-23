@@ -33,6 +33,7 @@ cargo clippy --all-targets -- -D warnings          # lint gate, same as CI
 ```
 
 `GHIT_API_BASE` overrides REST and GraphQL endpoints for the local e2e fixture server.
+`JIRA_API_BASE` overrides the Jira Cloud endpoint for jtui.
 
 Run the app with isolated state so pins/cache writes don't touch real data:
 
@@ -46,6 +47,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | ---- | ---- |
 | `crates/ghit/src/main.rs` | Thin entry: parse `cli`, run `app` |
 | `crates/ghit/src/cli.rs` | Clap `Args` + numeric startup parsing |
+| `crates/jtui/src/main.rs` + `crates/jtui/src/cli.rs` | Thin jtui entry: set the app name, resolve the repo, run the Jira startup check, then run `app` with the Jira backend |
 | `crates/ghit-tui/src/app.rs` + `crates/ghit-tui/src/app/{nav,sidebar,finder,format,issue,diff,map,board,compose,confirm,poll,menu,dialogs}.rs` | `App` state, event loop, `poll_all` wiring; `draw_frame` fits column widths, then renders. Submodules hold one concern each: `nav` focus/history/layout, `sidebar` sections/search/filters/sort, `finder` the Ctrl+P finder state and ranked results, `format` format dialog and prefs, `issue` load/refs/pins/evict/yank, `diff` diff/review threads, `map` the dependency map (data, layout, camera, drag, cards), `board` board modal, `compose` drafts and send, `confirm` dialogs/undo/auth, `menu` actions-menu and main-menu state (entries from the keymap), `settings` the Settings dialog (theme, icons, backfill limit), `dialogs` the one stored dialog stack (which dialogs and text rows are open, in order) plus the `layer_stack` derivation, `poll` per-frame landing (`apply_session`, `land_rows`, `poll_ctx`). Tests sit in `*_tests.rs` beside them; shared helpers in `test_support.rs` |
 | `crates/ghit-core/src/session.rs` + `crates/ghit-core/src/session/{issues,sections,backfill,auth,board,diff,sends,commands,listing}.rs` | `Session`: the UI-free domain state (item details, section feed and store link, sub-issue loads, refs, pins, auth, repo, board payload and card details, diff files, write channels, fetch queue). Front ends call its commands (`load`, `load_diff`, `load_board`, `refresh_recent`, `search`, `send_draft`, `submit_review`, `set_state`, `toggle_pin`, `land_rows`, `local_query_rows`) and call `poll_frame(&PollCtx)` once per frame. `poll_frame` fixes the landing order inside the session: listing rows and feed results first, store watch, auto-refresh, backfill, then full item fetches, diffs, board and write results, so a fetched item always wins over a listing row. `App` turns the returned `SessionEvent`s into view changes |
 | `crates/ghit-core/src/fetch_queue.rs` | Fetch scheduler: priority queue; current-issue fetches start at once, the rest at most 4 in flight; tier picked at start time; only tier 1 while rate limited |
@@ -58,6 +60,7 @@ XDG_DATA_HOME=/tmp/ghit-e2e target/debug/ghit -R owner/repo 123
 | `crates/ghit-core/src/core/wrap.rs` | Soft wrap of a draft into visual rows; cursor to (row, col) and click to char index |
 | `crates/ghit-core/src/model.rs` + `crates/ghit-core/src/model/` | Shared issue types and `slug` in `model.rs`; submodules `issue` (payload parsing), `links` (`linkify`, refs), `board` (`BoardData`, card helpers), `diff`, `sidebar` (rows), `text` (meta/markdown), `graph` (dependency map nodes and edges), `rank` (ready work, bottlenecks, critical paths), `physics` (force layout) |
 | `crates/ghit-core/src/github.rs` | Data-access facade over `api`/`cache`/`store`; UI layers never import those directly |
+| `crates/ghit-core/src/jira.rs` | Jira Cloud client, jtui config (`$XDG_CONFIG_HOME/jtui/config.toml`) and the startup check; token from `JIRA_API_TOKEN` only |
 | `crates/ghit-core/src/api.rs` + `crates/ghit-core/src/api/{client,sections,sub_issues,board}.rs` | Token-backed GraphQL/REST calls |
 | `crates/ghit-core/src/cache.rs` | 30-min JSON cache + pinned-issue files under `$XDG_DATA_HOME` or `~/.local/share/ghit` |
 | `crates/ghit-core/src/store.rs` | Local repo copy: one SQLite file per host + `owner/repo` (`store/<host>/<owner>/<repo>.sqlite`, WAL), shared by every clone and process; holds the sidebar rows, the last sync and the sync lease (one process per repo syncs; the rest watch `PRAGMA data_version`); item details (issue, diff) keyed by `updated_at`; item links (`edges`) the dependency map reads; backfill cursors and progress per connection (the lease holder fills the working set at the lowest fetch tier; `GHIT_NO_BACKFILL` turns it off) |

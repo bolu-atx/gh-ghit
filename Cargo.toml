@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ghit-core", "crates/ghit-tui", "crates/ghit"]
+members = ["crates/ghit-core", "crates/ghit-tui", "crates/ghit", "crates/jtui"]
 
 [workspace.package]
 version = "0.14.1"
@@ -21,6 +21,7 @@ tui-markdown = "0.3"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.43", features = ["bundled"] }
+toml = "0.8"
 tempfile = "3"
 ghit-core = { path = "crates/ghit-core" }
 ghit-tui = { path = "crates/ghit-tui" }

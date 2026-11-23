@@ -309,9 +309,17 @@ pub struct App {
 }
 
 impl App {
+    pub fn with_backend(repo_flag: Option<String>, backend: ghit_core::backend::IssueBackend) -> Self {
+        Self::with_session(Session::with_backend(repo_flag, backend))
+    }
+
     pub fn new(repo_flag: Option<String>) -> Self {
+        Self::with_session(Session::new(repo_flag))
+    }
+
+    fn with_session(session: Session) -> Self {
         Self {
-            session: Session::new(repo_flag),
+            session,
             prefs_loaded: false,
             nav: Nav::new(),
             bar: String::new(),

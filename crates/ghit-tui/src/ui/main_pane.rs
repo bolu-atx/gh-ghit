@@ -395,12 +395,12 @@ fn text_rows(text: &ratatui::text::Text, width: usize) -> usize {
     text.lines.iter().map(|line| line.width().max(1).div_ceil(width)).sum()
 }
 
-/// The masthead brand: `ghit`, its version in gray, then the repo.
+/// The masthead brand: the app name, its version in gray, then the repo.
 fn brand(repo: String) -> Line<'static> {
     use crate::theme::{amber, muted};
     Line::from(vec![
-        Span::styled(format!("{}ghit ", crate::theme::nf("\u{f1d3} ", "")), Style::new().fg(amber()).bold()),
-        Span::styled(concat!("v", env!("CARGO_PKG_VERSION"), "  "), Style::new().fg(muted())),
+        Span::styled(format!("{}{} ", crate::theme::nf("\u{f1d3} ", ""), ghit_core::app_name()), Style::new().fg(amber()).bold()),
+        Span::styled(format!("v{}  ", env!("CARGO_PKG_VERSION")), Style::new().fg(muted())),
         Span::styled(repo, Style::new().fg(muted())),
     ])
 }

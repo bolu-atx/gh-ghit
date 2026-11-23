@@ -9,15 +9,15 @@ pub const CACHE_TTL_SECS: u64 = 1800; // 30 minutes
 
 pub(crate) fn base_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        PathBuf::from(xdg).join("ghit")
+        PathBuf::from(xdg).join(crate::app_name())
     } else if cfg!(any(test, feature = "test-support")) {
         // A test that forgets a temp XDG_DATA_HOME must never write into
         // the user's real data dir (stores, prefs, caches).
         std::env::temp_dir().join(format!("ghit-test-{}", std::process::id()))
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".local").join("share").join("ghit")
+        PathBuf::from(home).join(".local").join("share").join(crate::app_name())
     } else {
-        PathBuf::from(".ghit-data")
+        PathBuf::from(format!(".{}-data", crate::app_name()))
     }
 }
 
