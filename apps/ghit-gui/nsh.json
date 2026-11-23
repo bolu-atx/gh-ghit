@@ -1,0 +1,37 @@
+{
+  "name": "ghit",
+  "id": "dev.bolu.ghitgui",
+  "version": "0.1.0",
+  "build": 1,
+  "appearance": "system",
+  "capabilities": {
+    "process": {
+      "execute": [
+        "gh"
+      ]
+    },
+    "fs": {
+      "write": [
+        "${dataDir}"
+      ]
+    },
+    "network": {
+      "hosts": [
+        "api.github.com",
+        "github.com",
+        "avatars.githubusercontent.com",
+        "user-images.githubusercontent.com",
+        "private-user-images.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "dependabot-badges.githubapp.com"
+      ]
+    },
+    "openUrl": {
+      "schemes": [
+        "https"
+      ]
+    }
+  },
+  "theme": "theme.json",
+  "icon": "icon.png"
+}
