@@ -63,6 +63,20 @@ impl Session {
         }, view);
     }
 
+    /// Load children only when the parent's summary reports missing rows.
+    pub fn load_sub_issues(&mut self, number: ItemRef, view: &View) {
+        if !crate::core::needs_lazy_children(number, &self.issues.data, &self.subs.state) {
+            return;
+        }
+        self.subs.state.insert(number, model::LazyChildren::Loading);
+        let tx = self.subs.tx.clone();
+        let repo = self.repo_arg();
+        let backend = self.issue_backend;
+        self.enqueue(Kind::Other, None, async move {
+            let _ = tx.send((number, backend.fetch_sub_issues(&repo, number).await));
+        }, view);
+    }
+
     /// Queue a diff fetch for PR `number`. No-op for issues, cached rows,
     /// and rows already in flight.
     pub fn load_diff(&mut self, number: ItemRef, force: bool, view: &View) {
@@ -108,9 +122,12 @@ impl Session {
                 .and_then(|d| model::thread_reply_comment_id(&d.review_threads, thread_id)),
             _ => None,
         };
+        let backend = self.issue_backend;
+        let is_pr = self.is_github_pr(number);
         let tx = self.sends.tx.clone();
         spawn_bg(async move {
             let result = match &target {
+                ComposeTarget::Thread if !is_pr => backend.post_comment(&repo, number, &body).await,
                 ComposeTarget::Thread => github::post_thread_comment(&repo, number, &body).await,
                 ComposeTarget::Line { path, line } => github::post_line_comment(&repo, number, &body, path, *line).await,
                 ComposeTarget::Reply { .. } => match reply_comment_id {
@@ -140,9 +157,15 @@ impl Session {
     /// Close (`open` false) or reopen an item on a background thread.
     pub fn set_state(&mut self, number: ItemRef, open: bool) {
         let repo = self.repo_arg();
+        let backend = self.issue_backend;
+        let is_pr = self.is_github_pr(number);
         let tx = self.sends.state_tx.clone();
         spawn_bg(async move {
-            let result = github::set_state(&repo, number, open).await;
+            let result = if is_pr {
+                github::set_state(&repo, number, open).await
+            } else {
+                backend.set_state(&repo, number, open).await
+            };
             let _ = tx.send((number, open, result));
         });
     }

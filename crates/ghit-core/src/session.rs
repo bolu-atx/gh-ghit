@@ -33,9 +33,10 @@ pub use sections::{
     auto_refresh_interval_default, refresh_interval_from, refresh_plan,
 };
 
+use crate::backend::IssueBackend;
 use crate::core::Kind;
 use crate::fetch_queue::{Fetches, View};
-use crate::model::{LazyChildren, ItemRef};
+use crate::model::{LazyChildren, ItemRef, Source};
 use crate::runtime::{rt, spawn_bg};
 use crate::{core, github};
 
@@ -106,6 +107,7 @@ pub enum SessionEvent {
 }
 
 pub struct Session {
+    pub issue_backend: IssueBackend,
     pub issues: IssueStore,
     pub sections: SectionFeed,
     pub subs: SubIssueLoads,
@@ -125,6 +127,7 @@ pub struct Session {
 impl Session {
     pub fn new(repo_flag: Option<String>) -> Self {
         Self {
+            issue_backend: IssueBackend::GitHub,
             issues: IssueStore::new(),
             sections: SectionFeed::new(),
             subs: SubIssueLoads::new(),
@@ -206,10 +209,22 @@ impl Session {
         if !self.issues.pending.insert(number) { return; }
         let tx = self.issues.tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
+        let backend = self.issue_backend;
+        let is_pr = self.is_github_pr(number);
         self.enqueue(Kind::Details, Some(number), async move {
-            let result = github::fetch_number(&repo, number, force, Some(tx.clone())).await;
+            let result = if is_pr {
+                github::fetch_number(&repo, number, force, Some(tx.clone())).await
+            } else {
+                backend.fetch_number(&repo, number, force, Some(tx.clone())).await
+            };
             let _ = tx.send((number, github::IssueEvent::Done(result.map(Box::new))));
         }, view);
+    }
+
+    /// Unknown GitHub numbers use the backend's issue-or-PR detail fetch.
+    fn is_github_pr(&self, number: ItemRef) -> bool {
+        number.source == Source::GitHub
+            && self.issues.data.get(&number).is_some_and(|data| data.is_pr)
     }
 
     /// Read the saved pins of the repo, minus `exclude`, into `pins`.

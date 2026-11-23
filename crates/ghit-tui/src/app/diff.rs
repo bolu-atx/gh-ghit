@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use crate::app::App;
-use ghit_core::core::{self, Pane};
-use ghit_core::{github, model};
+use ghit_core::core::Pane;
+use ghit_core::model;
 use ghit_core::model::ItemRef;
 
 /// Diff tab view state: the line cursor and its render bookkeeping and
@@ -336,17 +336,9 @@ impl App {
     /// the fetched rows do not cover. The row renders a loading child
     /// until `poll_session` lands the result.
     pub(crate) fn load_sub_issues(&mut self, number: ItemRef) {
-        if !self.sidebar.sub_issue_tree
-            || !core::needs_lazy_children(number, &self.session.issues.data, &self.session.subs.state)
-        {
-            return;
-        }
-        self.session.subs.state.insert(number, model::LazyChildren::Loading);
-        let tx = self.session.subs.tx.clone();
-        let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()).unwrap_or_default();
-        self.enqueue(core::Kind::Other, None, async move {
-            let _ = tx.send((number, github::fetch_sub_issues(&repo, number).await));
-        });
+        if !self.sidebar.sub_issue_tree { return; }
+        let view = self.fetch_view();
+        self.session.load_sub_issues(number, &view);
     }
 
     /// Pending review threads on the current PR, if any.
