@@ -10,6 +10,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use super::test_support::{board_app, press_cell, TempPrefs, click, frame_text};
+use crate::model::ItemRef;
 
 #[test]
 fn board_filter_form_clicks_toggle_fields_and_focus_text() {
@@ -77,7 +78,7 @@ fn board_headers_show_card_counts() {
     board.order.push("Done".to_string());
     board.items.push(BoardItem {
         title: "Card 2".to_string(),
-        number: Some(102),
+        number: Some(ItemRef::github(102)),
         status: Some("Done".to_string()),
         labels: vec![Label { name: "x".to_string() }],
         repo: Some("o/r".to_string()),
@@ -133,7 +134,7 @@ fn board_filter_narrows_columns_then_x_restores() {
     board.order.push("Done".to_string());
     board.items.push(BoardItem {
         title: "Other card".to_string(),
-        number: Some(200),
+        number: Some(ItemRef::github(200)),
         status: Some("Done".to_string()),
         labels: vec![Label { name: "chore".to_string() }],
         repo: Some("o/r".to_string()),
@@ -162,7 +163,10 @@ fn board_filter_narrows_columns_then_x_restores() {
     assert!(narrowed.contains("milestones v0.3"), "footer names the filter: {narrowed}");
     // Cursor math reads the narrowed grid too: the hit is selected and
     // the single row cannot scroll past itself.
-    assert_eq!(crate::app::board_selected_number(&app), Some(100));
+    assert_eq!(
+        crate::app::board_selected_number(&app),
+        Some(ItemRef::github(100))
+    );
     board_move(&mut app, 0, 1);
     assert_eq!((app.board.col, app.board.row), (0, 0), "cursor clamps to the filtered column");
 
@@ -179,7 +183,7 @@ fn board_card_fields_render_when_on_and_hide_when_off() {
     let board = app.board.data.as_mut().expect("board");
     board.items[0] = BoardItem {
         title: "Ship board".to_string(),
-        number: Some(102),
+        number: Some(ItemRef::github(102)),
         status: Some("Done".to_string()),
         labels: vec![Label { name: "bug".to_string() }],
         repo: Some("o/r".to_string()),
@@ -189,7 +193,7 @@ fn board_card_fields_render_when_on_and_hide_when_off() {
             "body": "", "assignees": [{"login": "amy"}], "isDraft": true,
         }),
     };
-    app.board.details.insert(102, BoardDetail {
+    app.board.details.insert(ItemRef::github(102), BoardDetail {
         created: "2026-11-01".to_string(),
         updated: "2026-11-05".to_string(),
         comments: 2,
@@ -227,7 +231,7 @@ fn board_footer_shows_loading_then_dates() {
     let before = frame_text(&mut app);
     assert!(before.contains("● x"), "{before}");
     assert!(before.contains("…"), "date cell loads in");
-    app.board.details.insert(100, BoardDetail {
+    app.board.details.insert(ItemRef::github(100), BoardDetail {
         created: "2026-11-01".to_string(),
         updated: "2026-11-05".to_string(),
         comments: 2,

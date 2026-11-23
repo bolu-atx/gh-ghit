@@ -9,6 +9,7 @@ use ratatui::backend::CrosstermBackend;
 use crate::app::{App, spawn_bg};
 use crate::{github, model};
 use crate::app::auth_failure;
+use crate::model::ItemRef;
 
 /// Where a composed comment lands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,14 +26,16 @@ pub(crate) enum ComposeTarget {
 impl ComposeTarget {
     /// Title naming what the draft answers; a thread comment adds the
     /// item's title when it is loaded.
-    pub(crate) fn title(&self, number: u64, item_title: Option<&str>) -> String {
+    pub(crate) fn title(&self, number: ItemRef, item_title: Option<&str>) -> String {
         match self {
             ComposeTarget::Thread => match item_title {
-                Some(title) => format!("Comment on #{number}  {title}"),
-                None => format!("Comment on #{number}"),
+                Some(title) => format!("Comment on {number}  {title}", number = number.display("")),
+                None => format!("Comment on {number}", number = number.display("")),
             },
             ComposeTarget::Line { path, line } => format!("Line comment  {path}:{line}"),
-            ComposeTarget::Reply { .. } => format!("Reply on #{number}"),
+            ComposeTarget::Reply { .. } => {
+                format!("Reply on {number}", number = number.display(""))
+            }
         }
     }
 }
@@ -42,7 +45,7 @@ impl ComposeTarget {
 /// the background submit is in flight. `kill` is the readline kill ring
 /// (one slot): kills stash text here, `Ctrl+Y` pastes it back.
 pub(crate) struct ComposeState {
-    pub(crate) number: u64,
+    pub(crate) number: ItemRef,
     pub(crate) target: ComposeTarget,
     pub(crate) body: String,
     pub(crate) cursor: usize,
@@ -69,24 +72,24 @@ pub(crate) struct ComposeSlot {
     /// Set by input; the event loop suspends the TUI and runs `$EDITOR`
     /// on the draft outside it, then lands the edited text.
     pub(crate) editor_requested: bool,
-    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
     // Pending review submit (`ctrl-s`): PRs with pending line comments, plus
     // its background channel. One in-flight submit per PR.
-    pub(crate) review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
-    pub(crate) review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
-    pub(crate) submitting: HashSet<u64>,
+    pub(crate) review_tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
+    pub(crate) review_rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
+    pub(crate) submitting: HashSet<ItemRef>,
     /// Close and reopen results: number, the state asked for, outcome.
-    pub(crate) state_tx: std::sync::mpsc::Sender<(u64, bool, Result<(), String>)>,
-    pub(crate) state_rx: std::sync::mpsc::Receiver<(u64, bool, Result<(), String>)>,
+    pub(crate) state_tx: std::sync::mpsc::Sender<(ItemRef, bool, Result<(), String>)>,
+    pub(crate) state_rx: std::sync::mpsc::Receiver<(ItemRef, bool, Result<(), String>)>,
 }
 
 impl ComposeSlot {
     pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
-        rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
-        review_tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>,
-        review_rx: std::sync::mpsc::Receiver<(u64, Result<(), String>)>,
+        tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
+        rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
+        review_tx: std::sync::mpsc::Sender<(ItemRef, Result<(), String>)>,
+        review_rx: std::sync::mpsc::Receiver<(ItemRef, Result<(), String>)>,
     ) -> Self {
         let (state_tx, state_rx) = std::sync::mpsc::channel();
         Self { editor_requested: false, tx, rx, review_tx, review_rx,
@@ -555,7 +558,7 @@ impl App {
 /// status line, and refetches the issue so the Comments tab shows the
 /// new comment; failure keeps the draft and names the cause.
 pub(crate) fn poll_compose(app: &mut App) -> bool {
-    let ready: Vec<(u64, Result<(), String>)> = app.compose.rx.try_iter().collect();
+    let ready: Vec<(ItemRef, Result<(), String>)> = app.compose.rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, res) in ready {
         match res {
@@ -563,9 +566,12 @@ pub(crate) fn poll_compose(app: &mut App) -> bool {
                 let pending = matches!(app.draft().map(|c| &c.target), Some(ComposeTarget::Line { .. } | ComposeTarget::Reply { .. }));
                 app.close(crate::app::Slot::Compose);
                 if pending {
-                    app.notify(format!("line comment pending on #{n} — press ctrl-s to submit"));
+                    app.notify(format!(
+                        "line comment pending on {n} — press ctrl-s to submit",
+                        n = n.display("")
+                    ));
                 } else {
-                    app.notify(format!("comment posted to #{n}"));
+                    app.notify(format!("comment posted to {n}", n = n.display("")));
                 }
                 app.load_issue(n, true);
             }

@@ -1,13 +1,14 @@
 //! Board items, card and row field settings, and card text helpers.
 
 use super::*;
+use crate::model::ItemRef;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoardItem {
     #[serde(default)]
     pub title: String,
     #[serde(default)]
-    pub number: Option<u64>,
+    pub number: Option<ItemRef>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]

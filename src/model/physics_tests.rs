@@ -1,6 +1,8 @@
 //! Tests for model::physics.
 
 use super::physics::{EdgeStyle, Growth, Layout, Param, Physics};
+use crate::model::ItemRef;
+use crate::model::NodeId;
 
 fn run(l: &mut Layout, steps: usize) {
     for _ in 0..steps {
@@ -11,7 +13,14 @@ fn run(l: &mut Layout, steps: usize) {
 fn chain(growth: Growth) -> Layout {
     let physics = Physics { growth, ..Physics::default() };
     let mut l = Layout::new(7, physics);
-    l.rebuild(&[1, 2, 3], &[(0, 1, EdgeStyle::Directed), (1, 2, EdgeStyle::Directed)]);
+    l.rebuild(
+        &[
+            NodeId::Item(ItemRef::github(1)),
+            NodeId::Item(ItemRef::github(2)),
+            NodeId::Item(ItemRef::github(3)),
+        ],
+        &[(0, 1, EdgeStyle::Directed), (1, 2, EdgeStyle::Directed)],
+    );
     run(&mut l, 1500);
     l
 }
@@ -19,7 +28,7 @@ fn chain(growth: Growth) -> Layout {
 #[test]
 fn small_graph_settles() {
     let mut l = Layout::new(1, Physics::default());
-    let ids: Vec<u64> = (0..12).collect();
+    let ids: Vec<_> = (0..12).map(|n| NodeId::Item(ItemRef::github(n))).collect();
     let mut edges: Vec<_> = (1..12).map(|i| (i - 1, i, EdgeStyle::Link)).collect();
     edges.push((0, 11, EdgeStyle::Hub));
     l.rebuild(&ids, &edges);
@@ -60,7 +69,14 @@ fn growth_off_applies_no_bias() {
 #[test]
 fn pinned_nodes_do_not_move() {
     let mut l = Layout::new(3, Physics::default());
-    l.rebuild(&[1, 2, 3], &[(0, 1, EdgeStyle::Link), (1, 2, EdgeStyle::Link)]);
+    l.rebuild(
+        &[
+            NodeId::Item(ItemRef::github(1)),
+            NodeId::Item(ItemRef::github(2)),
+            NodeId::Item(ItemRef::github(3)),
+        ],
+        &[(0, 1, EdgeStyle::Link), (1, 2, EdgeStyle::Link)],
+    );
     l.set_position(0, 5.0, -4.0);
     l.pin(0);
     run(&mut l, 200);
@@ -75,7 +91,15 @@ fn pinned_nodes_do_not_move() {
 fn same_seed_same_layout() {
     let build = |seed| {
         let mut l = Layout::new(seed, Physics::default());
-        l.rebuild(&[10, 20, 30, 40], &[(0, 1, EdgeStyle::Directed), (2, 3, EdgeStyle::Hub)]);
+        l.rebuild(
+            &[
+                NodeId::Item(ItemRef::github(10)),
+                NodeId::Item(ItemRef::github(20)),
+                NodeId::Item(ItemRef::github(30)),
+                NodeId::Item(ItemRef::github(40)),
+            ],
+            &[(0, 1, EdgeStyle::Directed), (2, 3, EdgeStyle::Hub)],
+        );
         run(&mut l, 100);
         l.bodies().to_vec()
     };
@@ -86,20 +110,40 @@ fn same_seed_same_layout() {
 #[test]
 fn rebuild_keeps_surviving_positions() {
     let mut l = Layout::new(5, Physics::default());
-    l.rebuild(&[1, 2, 3], &[(0, 1, EdgeStyle::Link)]);
+    l.rebuild(
+        &[
+            NodeId::Item(ItemRef::github(1)),
+            NodeId::Item(ItemRef::github(2)),
+            NodeId::Item(ItemRef::github(3)),
+        ],
+        &[(0, 1, EdgeStyle::Link)],
+    );
     run(&mut l, 50);
     let before: Vec<_> = l.bodies().to_vec();
-    l.rebuild(&[3, 4, 1], &[(0, 2, EdgeStyle::Link)]);
+    l.rebuild(
+        &[
+            NodeId::Item(ItemRef::github(3)),
+            NodeId::Item(ItemRef::github(4)),
+            NodeId::Item(ItemRef::github(1)),
+        ],
+        &[(0, 2, EdgeStyle::Link)],
+    );
     let after = l.bodies();
     assert_eq!(after[0], before[2]);
     assert_eq!(after[2], before[0]);
-    assert_eq!(after[1].id, 4);
+    assert_eq!(after[1].id, NodeId::Item(ItemRef::github(4)));
 }
 
 #[test]
 fn coincident_nodes_separate_without_nan() {
     let mut l = Layout::new(1, Physics::default());
-    l.rebuild(&[1, 2], &[]);
+    l.rebuild(
+        &[
+            NodeId::Item(ItemRef::github(1)),
+            NodeId::Item(ItemRef::github(2)),
+        ],
+        &[],
+    );
     l.set_position(0, 2.0, 2.0);
     l.set_position(1, 2.0, 2.0);
     run(&mut l, 20);
@@ -118,7 +162,7 @@ fn physics_round_trips_through_json() {
 #[test]
 fn three_hundred_nodes_stay_finite() {
     let mut l = Layout::new(2, Physics::default());
-    let ids: Vec<u64> = (0..300).collect();
+    let ids: Vec<_> = (0..300).map(|n| NodeId::Item(ItemRef::github(n))).collect();
     let edges: Vec<_> = (1..300).map(|i| (i / 2, i, EdgeStyle::Directed)).collect();
     l.rebuild(&ids, &edges);
     run(&mut l, 50);

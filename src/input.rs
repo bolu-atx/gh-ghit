@@ -28,6 +28,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use crate::app::App;
 use crate::core::{self, Dialog, Layer, Pane, TextInput};
 use crate::keymap;
+use crate::model::ItemRef;
 
 pub(crate) use mouse::handle_mouse;
 
@@ -88,7 +89,7 @@ fn type_text(app: &mut App, key: crossterm::event::KeyEvent) {
 /// j/k walks one sidebar list: issues or PRs, never crossing over.
 /// Starts from the wheel hover when one names a row here, so keyboard
 /// and wheel continue from the same place; the visit clears the hover.
-pub(super) fn move_in_list(app: &mut App, order: Vec<u64>, delta: isize) {
+pub(super) fn move_in_list(app: &mut App, order: Vec<ItemRef>, delta: isize) {
     let base = app.nav.hover.filter(|n| order.contains(n)).or(app.nav.current);
     if let Some(n) = core::next_in_order(&order, base, delta) {
         app.request_issue(n);

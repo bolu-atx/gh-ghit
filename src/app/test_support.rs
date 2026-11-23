@@ -2,18 +2,22 @@
 
 use super::*;
 use crate::model::{Author, IssueData};
+use crate::model::ItemRef;
 
-pub(super) fn issue(number: u64, updated: &str) -> IssueData {
+pub(super) fn issue(number: ItemRef, updated: &str) -> IssueData {
     IssueData {
         number,
-        title: format!("issue {number}"),
+        title: format!("issue {number}", number = number.number),
         state: "OPEN".to_string(),
         author: Author { login: "bo".to_string() },
         labels: vec![],
         assignees: vec![],
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: updated.to_string(),
-        url: format!("https://github.com/o/r/issues/{number}"),
+        url: format!(
+            "https://github.com/o/r/issues/{number}",
+            number = number.number
+        ),
         body: String::new(),
         comments: vec![],
         review_threads: vec![],
@@ -27,7 +31,7 @@ pub(super) fn issue(number: u64, updated: &str) -> IssueData {
     }
 }
 
-pub(super) fn sidebar_app(numbers: &[u64]) -> App {
+pub(super) fn sidebar_app(numbers: &[ItemRef]) -> App {
     let mut app = App::new(Some("o/r".to_string()));
     app.repo_slug = Some("o/r".to_string());
     for &n in numbers {
@@ -73,9 +77,9 @@ pub(super) fn land_sections(app: &mut App, rows: Vec<crate::github::Row>) {
 }
 
 pub(super) fn pending_nav_app() -> App {
-    let mut app = sidebar_app(&[7, 9]);
-    app.show_issue(9);
-    let d = app.issues.data.get_mut(&9).unwrap();
+    let mut app = sidebar_app(&[ItemRef::github(7), ItemRef::github(9)]);
+    app.show_issue(ItemRef::github(9));
+    let d = app.issues.data.get_mut(&ItemRef::github(9)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![crate::model::ReviewThread {
         id: "t1".into(),

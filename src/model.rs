@@ -24,6 +24,8 @@ mod graph_tests;
 #[cfg(test)]
 mod issue_tests;
 #[cfg(test)]
+mod item_tests;
+#[cfg(test)]
 mod links_tests;
 #[cfg(test)]
 mod physics_tests;
@@ -42,7 +44,7 @@ use serde::{Deserialize, Serialize};
 pub use adf::adf_to_markdown;
 pub use board::{BoardData, BoardDetail, BoardItem, CardFields, RowFields, board_columns, board_milestones, card_assignee, card_footer_labels, card_footer_right, card_meta};
 pub use diff::{CONTEXT_STEPS, DiffFile, DiffKind, SplitRow, diff_lines, diff_summary, header_file_index, line_target_at_cursor, patch_line_numbers, split_rows, strip_diff_gutter, thread_at_cursor, thread_patch_row, widen_patch};
-pub use graph::{LinkKind, MapFilter, MapGraph, MapItem, MapLink, MapNode, MapScope, NodeState, build_map};
+pub use graph::{LinkKind, MapFilter, MapGraph, MapItem, MapLink, MapNode, NodeId, MapScope, NodeState, build_map};
 #[cfg(test)]
 pub use graph::hub_id;
 pub use rank::{Ranking, rank};
@@ -50,6 +52,56 @@ pub use issue::{merge_comment_pages, paired_refs, parse_check_state, parse_revie
 pub use links::{LinkTarget, link_ranges, linkify, links_in_line, nearest_link, referenced_numbers};
 pub use sidebar::{GroupBy, LazyChildren, SideRow, sidebar_lines};
 pub use text::{MetaKind, body_md, build_comments_md, meta_spans, status_text};
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize,
+)]
+pub enum Source {
+    #[default]
+    GitHub,
+    Jira,
+}
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize,
+)]
+pub struct ItemRef {
+    pub source: Source,
+    pub number: u64,
+}
+
+impl Source {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GitHub => "github",
+            Self::Jira => "jira",
+        }
+    }
+
+    pub fn parse(tag: &str) -> Option<Self> {
+        match tag {
+            "github" => Some(Self::GitHub),
+            "jira" => Some(Self::Jira),
+            _ => None,
+        }
+    }
+}
+
+impl ItemRef {
+    pub const fn github(number: u64) -> Self {
+        Self {
+            source: Source::GitHub,
+            number,
+        }
+    }
+
+    pub fn display(self, jira_key: &str) -> String {
+        match self.source {
+            Source::GitHub => format!("#{}", self.number),
+            Source::Jira => format!("{jira_key}-{}", self.number),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Author {
@@ -120,9 +172,9 @@ pub struct ReviewThread {
 /// A will-close counterpart of an issue or PR: closing PRs for an issue,
 /// closing issues for a PR. `state` is the GraphQL state (`OPEN`,
 /// `MERGED`, `CLOSED`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairedRef {
-    pub number: u64,
+    pub number: ItemRef,
     #[serde(default)]
     pub state: String,
 }
@@ -154,7 +206,7 @@ pub struct SubSummary {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueData {
-    pub number: u64,
+    pub number: ItemRef,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -196,7 +248,7 @@ pub struct IssueData {
     /// sections fill it; REST search has no parent link. Defaulted so
     /// old file caches without the field still parse.
     #[serde(default)]
-    pub parent: Option<u64>,
+    pub parent: Option<ItemRef>,
     /// Sub-issue counts for a parent issue. Defaulted so old file caches
     /// without the field still parse.
     #[serde(default)]
@@ -211,9 +263,9 @@ pub struct IssueData {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueLinks {
     /// Issues that block this one.
-    pub blocked_by: Vec<u64>,
+    pub blocked_by: Vec<ItemRef>,
     /// Pull requests that close this issue.
-    pub closed_by: Vec<u64>,
+    pub closed_by: Vec<ItemRef>,
 }
 
 pub fn slug(title: &str, width: usize) -> String {

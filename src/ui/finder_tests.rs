@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventK
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use super::test_support::{click, key, loaded_app, sample};
+use crate::model::ItemRef;
 
 fn ctrl(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
@@ -19,11 +20,11 @@ fn app() -> App {
         (198, "Auth probe retries on 401", true),
         (77, "Probe for token scopes", false),
     ] {
-        let mut data = sample(n);
+        let mut data = sample(ItemRef::github(n));
         data.title = title.to_string();
         data.is_pr = pr;
-        app.issues.data.insert(n, data);
-        app.issues.statuses.insert(n, vec![]);
+        app.issues.data.insert(ItemRef::github(n), data);
+        app.issues.statuses.insert(ItemRef::github(n), vec![]);
     }
     app
 }
@@ -151,7 +152,7 @@ fn enter_opens_the_item_and_closes() {
     typed(&mut app, "198");
     handle_key(&mut app, key(KeyCode::Enter));
     assert!(app.finder().is_none());
-    assert_eq!(app.nav.current, Some(198));
+    assert_eq!(app.nav.current, Some(ItemRef::github(198)));
 }
 
 #[test]
@@ -163,7 +164,7 @@ fn click_on_a_row_opens_it() {
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), rect.x + 4, rect.y));
     assert!(app.finder().is_none());
     let opened = app.nav.current.expect("an item opened");
-    assert_ne!(opened, 7);
+    assert_ne!(opened, ItemRef::github(7));
 }
 
 #[test]
@@ -180,7 +181,11 @@ fn wheel_moves_the_cursor_and_outside_click_closes() {
     assert!(app.finder().is_some(), "a click inside the dialog keeps it open");
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), 0, 0));
     assert!(app.finder().is_none());
-    assert_eq!(app.nav.current, Some(7), "closing opens nothing");
+    assert_eq!(
+        app.nav.current,
+        Some(ItemRef::github(7)),
+        "closing opens nothing"
+    );
 }
 
 #[test]

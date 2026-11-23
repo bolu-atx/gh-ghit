@@ -1,10 +1,11 @@
 //! Shared fixtures for the model tests.
 
 use super::*;
+use crate::model::ItemRef;
 
 pub(super) fn sample_issue() -> IssueData {
     IssueData {
-        number: 1,
+        number: ItemRef::github(1),
         title: "some title here".to_string(),
         state: "OPEN".to_string(),
         author: Author { login: "bo".to_string() },

@@ -4,6 +4,7 @@ use crate::app::Tab;
 use crate::input::{handle_key, handle_mouse};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use super::test_support::{board_app, press_cell, frame_text_sized, sample, loaded_app, key, TempPrefs, click, frame_text, diff_pr};
+use crate::model::ItemRef;
 
 #[test]
 fn format_dialog_clicks_pick_options_and_toggle_chips() {
@@ -55,14 +56,21 @@ fn filter_dialog_toggles_hide_recent_rows() {
     let _prefs = TempPrefs::new();
     let mut app = loaded_app();
     app.prefs_loaded = true;
-    let mut merged = sample(20);
+    let mut merged = sample(ItemRef::github(20));
     merged.is_pr = true;
     merged.state = "MERGED".to_string();
-    app.issues.data.insert(20, merged);
-    app.issues.statuses.insert(20, vec![]);
-    app.nav.recent.push(20);
+    app.issues.data.insert(ItemRef::github(20), merged);
+    app.issues.statuses.insert(ItemRef::github(20), vec![]);
+    app.nav.recent.push(ItemRef::github(20));
     use crate::model::SideRow::{Divider, Item};
-    assert_eq!(app.pr_rows(), vec![Item(9), Divider("recent".to_string()), Item(20)]);
+    assert_eq!(
+        app.pr_rows(),
+        vec![
+            Item(ItemRef::github(9)),
+            Divider("recent".to_string()),
+            Item(ItemRef::github(20))
+        ]
+    );
     handle_key(&mut app, key(KeyCode::Char('f')));
     assert!(app.format_open());
     let text = frame_text(&mut app);
@@ -70,7 +78,7 @@ fn filter_dialog_toggles_hide_recent_rows() {
     assert!(text.contains("1 Query"));
     handle_key(&mut app, key(KeyCode::Char('m')));
     assert!(!app.sidebar.show_merged_prs);
-    assert_eq!(app.pr_rows(), vec![Item(9)]);
+    assert_eq!(app.pr_rows(), vec![Item(ItemRef::github(9))]);
     // Requested rows ignore the toggle.
     handle_key(&mut app, key(KeyCode::Char('f')));
     assert!(!app.format_open());
@@ -207,10 +215,10 @@ fn saved_queries_save_overwrite_apply_delete_and_render() {
 fn sidebar_format_navigation_and_sort_match_shortcuts() {
     let _prefs = TempPrefs::new();
     let mut app = loaded_app();
-    let mut older = sample(11);
+    let mut older = sample(ItemRef::github(11));
     older.updated_at = "2020-01-01T00:00:00Z".into();
-    app.issues.data.insert(11, older);
-    app.nav.visited.push(11);
+    app.issues.data.insert(ItemRef::github(11), older);
+    app.nav.visited.push(ItemRef::github(11));
     app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     frame_text(&mut app);
     let left = app.format_left_widgets();
@@ -379,13 +387,15 @@ fn auth_modal_names_scopes_and_command() {
 fn compose_on_diff_line_targets_file_and_line() {
     use crate::model::DiffFile;
     let mut app = loaded_app();
-    app.issues.data.insert(9, diff_pr(9));
-    app.show_issue(9);
-    app.diff.pending.remove(&9);
-    app.diff.files.insert(9, vec![
+    app.issues
+        .data
+        .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
+    app.show_issue(ItemRef::github(9));
+    app.diff.pending.remove(&ItemRef::github(9));
+    app.diff.files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
-    app.diff.expanded_files.insert((9, "a.rs".into()));
+    app.diff.expanded_files.insert((ItemRef::github(9), "a.rs".into()));
     app.set_tab(Tab::Visual);
     app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
@@ -406,17 +416,17 @@ fn compose_on_diff_line_targets_file_and_line() {
 fn compose_on_thread_block_targets_the_reply() {
     use crate::model::{DiffFile, ReviewThread, ReviewComment};
     let mut app = loaded_app();
-    let mut pr = diff_pr(9);
+    let mut pr = diff_pr(ItemRef::github(9));
     pr.review_threads = vec![
         ReviewThread { id: "t1".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
     ];
-    app.issues.data.insert(9, pr);
-    app.show_issue(9);
-    app.diff.pending.remove(&9);
-    app.diff.files.insert(9, vec![
+    app.issues.data.insert(ItemRef::github(9), pr);
+    app.show_issue(ItemRef::github(9));
+    app.diff.pending.remove(&ItemRef::github(9));
+    app.diff.files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
-    app.diff.expanded_files.insert((9, "a.rs".into()));
+    app.diff.expanded_files.insert((ItemRef::github(9), "a.rs".into()));
     app.set_tab(Tab::Visual);
     app.nav.pane = crate::core::Pane::Main;
     let _ = frame_text(&mut app);
@@ -437,7 +447,7 @@ fn compose_on_thread_block_targets_the_reply() {
 fn compose_modal_shows_reply_target_and_discards() {
     let mut app = loaded_app();
     app.open_draft(crate::app::ComposeState {
-        number: 7,
+        number: ItemRef::github(7),
         target: crate::app::ComposeTarget::Reply { thread_id: "t".into() },
         body: "reply".into(),
         cursor: 5,
@@ -473,14 +483,14 @@ fn confirm_frame_shows_choices_and_click_picks() {
 fn undo_toast_frame_and_click_restores() {
     let mut app = loaded_app();
     app.nav.pane = crate::core::Pane::Issues;
-    app.nav.current = Some(7);
+    app.nav.current = Some(ItemRef::github(7));
     handle_key(&mut app, key(KeyCode::Char('x')));
     let text = frame_text(&mut app);
     assert!(text.contains("removed #7 · u undo"), "{text}");
     let toast = app.hits.undo_toast;
     assert!(toast.width > 0, "toast rect recorded");
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), toast.x, toast.y));
-    assert!(app.nav.visited.contains(&7), "click undoes");
+    assert!(app.nav.visited.contains(&ItemRef::github(7)), "click undoes");
     assert!(app.undo.is_none());
 }
 
@@ -496,7 +506,8 @@ fn compose_footer_names_the_editor_key() {
 #[test]
 fn compose_modal_steals_mouse_focus() {
     let mut app = loaded_app();
-    app.issues.data.get_mut(&7).unwrap().body = "blocked by #9, see details".to_string();
+    app.issues.data.get_mut(&ItemRef::github(7)).unwrap().body =
+        "blocked by #9, see details".to_string();
     handle_key(&mut app, key(KeyCode::Char('c')));
     assert!(app.compose_open());
     let _ = frame_text(&mut app);
@@ -507,7 +518,7 @@ fn compose_modal_steals_mouse_focus() {
         .expect("ref visible");
     let (x, y) = (app.hits.body_area.x + 2, app.hits.body_area.y + row as u16);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(7), "clicks never leak past the modal");
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "clicks never leak past the modal");
     assert!(app.compose_open(), "the draft survives the click");
     handle_mouse(&mut app, click(MouseEventKind::ScrollDown, 60, 20));
     assert_eq!(app.nav.scroll, 0, "wheel never scrolls behind the modal");
@@ -516,8 +527,8 @@ fn compose_modal_steals_mouse_focus() {
 #[test]
 fn pending_nav_dialog_renders_all_three_actions() {
     let mut app = loaded_app();
-    app.nav.current = Some(9);
-    let d = app.issues.data.get_mut(&9).unwrap();
+    app.nav.current = Some(ItemRef::github(9));
+    let d = app.issues.data.get_mut(&ItemRef::github(9)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![crate::model::ReviewThread {
         id: "t1".into(),
@@ -526,7 +537,7 @@ fn pending_nav_dialog_renders_all_three_actions() {
         comments: vec![crate::model::ReviewComment { id: "c".into(), body: "draft".into(), state: "PENDING".into(), ..Default::default() }],
         ..Default::default()
     }];
-    app.open_pending_nav(crate::app::NavIntent::Issue(7));
+    app.open_pending_nav(crate::app::NavIntent::Issue(ItemRef::github(7)));
     let text = frame_text(&mut app);
     assert!(text.contains("Unsubmitted comments"), "{text}");
     assert!(text.contains("Submit them") && text.contains("Discard") && text.contains("Cancel"), "{text}");

@@ -6,11 +6,12 @@ use crate::app::{App, spawn_bg};
 use crate::core::{self, Pane};
 use crate::{github, model};
 use crate::app::auth_failure;
+use crate::model::ItemRef;
 
 /// Diff tab state: fetched per-issue file lists, the line cursor and its
 /// render bookkeeping, folded-file state, and the fetch triplet.
 pub(crate) struct DiffView {
-    pub(crate) files: HashMap<u64, Vec<model::DiffFile>>,
+    pub(crate) files: HashMap<ItemRef, Vec<model::DiffFile>>,
     pub(crate) cursor: usize,
     /// Active diff line as an absolute body-buffer row. `None` until the
     /// next render anchors it to the first file header. Steps one row at a
@@ -26,20 +27,20 @@ pub(crate) struct DiffView {
     /// `None`; blank/rule rows inherit the previous header's file.
     pub(crate) row_files: Vec<Option<usize>>,
     /// (issue, filename) pairs with unfolded hunks; the rest stays folded.
-    pub(crate) expanded_files: HashSet<(u64, String)>,
+    pub(crate) expanded_files: HashSet<(ItemRef, String)>,
     /// Issue numbers whose sidebar row shows its detail block. Keyed by
     /// number, so the state is sticky across cursor moves and shared by the
     /// Issues, PRs, and Refs panes.
-    pub(crate) expanded_rows: HashSet<u64>,
+    pub(crate) expanded_rows: HashSet<ItemRef>,
     /// Visible buffer rows of the diff file headers, in file order.
     pub(crate) headers: Vec<usize>,
     /// A `J`/`K` jump awaiting the next render: target file index and
     /// direction. Only render knows the body layout after the jump's own
     /// fold change, so it resolves the scroll offset (`finish_diff_jump`).
     pub(crate) pending_jump: Option<(usize, isize)>,
-    pub(crate) pending: HashSet<u64>,
-    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
+    pub(crate) pending: HashSet<ItemRef>,
+    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
     pub(crate) split: bool,
     /// Expand-all mode, sticky across PRs once `a` set it: `Some(true)`
     /// opens every small file of each PR on first view, `Some(false)`
@@ -47,26 +48,30 @@ pub(crate) struct DiffView {
     pub(crate) expand_all: Option<bool>,
     /// PRs that already took the current expand-all mode. Cleared on
     /// each press so other PRs pick the new mode up on their next view.
-    pub(crate) synced: HashSet<u64>,
+    pub(crate) synced: HashSet<ItemRef>,
     /// Index into `model::CONTEXT_STEPS`: context lines around changes.
     pub(crate) context: usize,
     /// Patches as GitHub sent them; `files` holds them widened to `context`.
-    pub(crate) raw: HashMap<u64, Vec<model::DiffFile>>,
+    pub(crate) raw: HashMap<ItemRef, Vec<model::DiffFile>>,
     /// Head-side file lines per (PR, filename), for widening. `None`
     /// marks a failed fetch, so it is not retried this session.
-    pub(crate) heads: HashMap<(u64, String), Option<Vec<String>>>,
-    pub(crate) heads_pending: HashSet<(u64, String)>,
+    pub(crate) heads: HashMap<(ItemRef, String), Option<Vec<String>>>,
+    pub(crate) heads_pending: HashSet<(ItemRef, String)>,
     pub(crate) heads_tx: std::sync::mpsc::Sender<HeadFiles>,
     pub(crate) heads_rx: std::sync::mpsc::Receiver<HeadFiles>,
 }
 
 /// One head-files fetch result: the PR, the names asked for, and the bodies.
-pub(crate) type HeadFiles = (u64, Vec<String>, Result<Vec<(String, Result<String, String>)>, String>);
+pub(crate) type HeadFiles = (
+    ItemRef,
+    Vec<String>,
+    Result<Vec<(String, Result<String, String>)>, String>,
+);
 
 impl DiffView {
     pub(crate) fn new(
-        tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::DiffFile>, String>)>,
-        rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::DiffFile>, String>)>,
+        tx: std::sync::mpsc::Sender<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
+        rx: std::sync::mpsc::Receiver<(ItemRef, Result<Vec<model::DiffFile>, String>)>,
     ) -> Self {
         let (heads_tx, heads_rx) = std::sync::mpsc::channel();
         Self { files: HashMap::new(), cursor: 0, line: None, touched: false,
@@ -80,9 +85,9 @@ impl DiffView {
 /// REST sub-issue loads for the opt-in sidebar tree: per-parent session
 /// state (loading or loaded children) plus the fetch channel.
 pub(crate) struct SubIssueLoads {
-    pub(crate) state: HashMap<u64, model::LazyChildren>,
-    pub(crate) tx: std::sync::mpsc::Sender<(u64, Result<Vec<model::IssueData>, String>)>,
-    pub(crate) rx: std::sync::mpsc::Receiver<(u64, Result<Vec<model::IssueData>, String>)>,
+    pub(crate) state: HashMap<ItemRef, model::LazyChildren>,
+    pub(crate) tx: std::sync::mpsc::Sender<(ItemRef, Result<Vec<model::IssueData>, String>)>,
+    pub(crate) rx: std::sync::mpsc::Receiver<(ItemRef, Result<Vec<model::IssueData>, String>)>,
 }
 
 impl SubIssueLoads {
@@ -129,7 +134,7 @@ impl App {
     }
 
     /// Files expand-all would open: shown, with a patch, not large.
-    fn small_files(&self, n: u64) -> Vec<&model::DiffFile> {
+    fn small_files(&self, n: ItemRef) -> Vec<&model::DiffFile> {
         let files = self.diff.files.get(&n).map(|f| f.as_slice()).unwrap_or(&[]);
         files.iter().take(crate::core::MAX_DIFF_FILES).filter(|f| !f.is_large() && f.has_patch()).collect()
     }
@@ -274,7 +279,7 @@ impl App {
     /// head side of open files (`sync_diff`) and widen once they land.
     pub(crate) fn cycle_diff_context(&mut self) {
         self.diff.context = (self.diff.context + 1) % model::CONTEXT_STEPS.len();
-        let numbers: Vec<u64> = self.diff.raw.keys().copied().collect();
+        let numbers: Vec<ItemRef> = self.diff.raw.keys().copied().collect();
         for n in numbers {
             self.rewiden(n);
         }
@@ -290,7 +295,7 @@ impl App {
 
     /// Rebuild PR `n`'s shown patches from its raw ones at the current
     /// context. Files without a fetched head side keep the raw patch.
-    fn rewiden(&mut self, n: u64) {
+    fn rewiden(&mut self, n: ItemRef) {
         let Some(raw) = self.diff.raw.get(&n) else { return };
         let ctx = model::CONTEXT_STEPS[self.diff.context];
         let files = raw.iter().map(|f| {
@@ -349,7 +354,7 @@ impl App {
     }
 
     /// Queue one fetch of the head side of `names` in PR `n`.
-    fn load_head_files(&mut self, n: u64, names: Vec<String>) {
+    fn load_head_files(&mut self, n: ItemRef, names: Vec<String>) {
         self.diff.heads_pending.extend(names.iter().map(|name| (n, name.clone())));
         let tx = self.diff.heads_tx.clone();
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
@@ -371,7 +376,7 @@ impl App {
 
     /// Queue a diff fetch for PR `number`. No-op for issues, cached rows,
     /// and rows already in flight.
-    pub(crate) fn load_diff(&mut self, number: u64, force: bool) {
+    pub(crate) fn load_diff(&mut self, number: ItemRef, force: bool) {
         let Some(d) = self.issues.data.get(&number) else { return };
         if !d.is_pr {
             return;
@@ -393,7 +398,7 @@ impl App {
     /// parent per session, and only when the summary reports children
     /// the fetched rows do not cover. The row renders a loading child
     /// until `poll_sub_issues` lands the result.
-    pub(crate) fn load_sub_issues(&mut self, number: u64) {
+    pub(crate) fn load_sub_issues(&mut self, number: ItemRef) {
         if !self.sidebar.sub_issue_tree
             || !core::needs_lazy_children(number, &self.issues.data, &self.subs.state)
         {
@@ -442,13 +447,16 @@ impl App {
 /// Land a pending-review submit: success refetches the issue so the
 /// Diff tab shows submitted threads; failure just names the cause.
 pub(crate) fn poll_review_submit(app: &mut App) -> bool {
-    let ready: Vec<(u64, Result<(), String>)> = app.compose.review_rx.try_iter().collect();
+    let ready: Vec<(ItemRef, Result<(), String>)> = app.compose.review_rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, res) in ready {
         app.compose.submitting.remove(&n);
         match res {
             Ok(()) => {
-                app.notify(format!("pending review submitted on #{n}"));
+                app.notify(format!(
+                    "pending review submitted on {n}",
+                    n = n.display("")
+                ));
                 app.load_issue(n, true);
             }
             Err(e) => {

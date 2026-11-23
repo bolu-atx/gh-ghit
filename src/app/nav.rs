@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use crate::app::{App, Tab, Focus, NavIntent, Focused, Columns, open_in_browser};
 use crate::core::{self, Layer, Pane};
 use crate::model;
+use crate::model::ItemRef;
 
 /// Navigation state: where the user is and how they got there. `current`
 /// is the open issue, `requested`/`step_pending` are in-flight fetches,
@@ -14,25 +15,25 @@ use crate::model;
 /// the Ctrl+O/Ctrl+I stacks, `pinned`/`pin_order` are user pins, and
 /// `tab`/`focus`/`pane`/`scroll`/`hover` place the cursor.
 pub(crate) struct Nav {
-    pub(crate) current: Option<u64>,
-    pub(crate) requested: Option<u64>,
+    pub(crate) current: Option<ItemRef>,
+    pub(crate) requested: Option<ItemRef>,
     /// h/l neighbor-step fetch awaiting its result. While set, a 404 for
     /// that number toasts "no #N" instead of the raw error; any other
     /// error keeps the existing error path. Cleared on landing.
-    pub(crate) step_pending: Option<u64>,
+    pub(crate) step_pending: Option<ItemRef>,
     /// Numbers the user explicitly asked for or clicked, in first-seen
     /// order. Merely viewing a recent row never lands here.
-    pub(crate) visited: Vec<u64>,
+    pub(crate) visited: Vec<ItemRef>,
     /// Background-fetched recent rows (window listing or GitHub search),
     /// in fetch order.
-    pub(crate) recent: Vec<u64>,
+    pub(crate) recent: Vec<ItemRef>,
     /// Back stack for Ctrl+O (older issues, top = most recent) and the
     /// forward stack Ctrl+I redoes. Recorded on every explicit visit
     /// through `ensure_visited`; cursor walks never touch them.
-    pub(crate) history: Vec<u64>,
-    pub(crate) future: Vec<u64>,
-    pub(crate) pinned: HashSet<u64>,
-    pub(crate) pin_order: Vec<u64>,
+    pub(crate) history: Vec<ItemRef>,
+    pub(crate) future: Vec<ItemRef>,
+    pub(crate) pinned: HashSet<ItemRef>,
+    pub(crate) pin_order: Vec<ItemRef>,
     pub(crate) tab: Tab,
     pub(crate) focus: Focus,
     pub(crate) pane: Pane,
@@ -42,7 +43,7 @@ pub(crate) struct Nav {
     /// `current` and clear it; the highlight always follows `current`
     /// through `sync_selection`. While it moves, `current`, body scroll,
     /// and the other panes stay untouched.
-    pub(crate) hover: Option<u64>,
+    pub(crate) hover: Option<ItemRef>,
     /// History pane cursor: steps back from the current issue. Zero is
     /// the current row; `history_steps` clamps it to the rows drawn.
     pub(crate) history_cursor: usize,
@@ -59,8 +60,8 @@ pub(crate) struct Nav {
 pub(crate) struct BackFrame {
     pub(crate) pane: Pane,
     pub(crate) tab: Tab,
-    pub(crate) item: Option<u64>,
-    pub(crate) opened: Option<u64>,
+    pub(crate) item: Option<ItemRef>,
+    pub(crate) opened: Option<ItemRef>,
 }
 
 impl Nav {
@@ -79,7 +80,7 @@ impl App {
     /// explicit visit also records the issue we leave on the back stack
     /// for Ctrl+O and drops the forward chain, so history follows exactly
     /// the rows filed here.
-    pub(crate) fn ensure_visited(&mut self, number: u64) {
+    pub(crate) fn ensure_visited(&mut self, number: ItemRef) {
         self.nav.history = core::history_push(&self.nav.history, self.nav.current, number);
         self.nav.future.clear();
         self.file_visited(number);
@@ -89,14 +90,14 @@ impl App {
     /// Main pane, so j/k scroll its content instead of switching items.
     /// The row stays in its group; history records the move for Ctrl+O.
     /// Esc returns focus to `from`.
-    pub(crate) fn enter_item(&mut self, number: u64, from: Pane) {
+    pub(crate) fn enter_item(&mut self, number: ItemRef, from: Pane) {
         self.focus_content(from, Some(number));
         self.revisit(number);
     }
 
     /// Show `number` without filing its row under requested; history
     /// records the move for Ctrl+O.
-    fn revisit(&mut self, number: u64) {
+    fn revisit(&mut self, number: ItemRef) {
         self.nav.history = core::history_push(&self.nav.history, self.nav.current, number);
         self.nav.future.clear();
         // A load in flight for another item counts as shown: requesting
@@ -110,7 +111,7 @@ impl App {
     /// Undo a History jump: walk the forward chain up to `item`, so
     /// Ctrl+O / Ctrl+I keep the chain they had before the jump. A plain
     /// revisit when `item` is not ahead.
-    fn forward_to(&mut self, item: u64) {
+    fn forward_to(&mut self, item: ItemRef) {
         let Some(i) = self.nav.future.iter().rposition(|&n| n == item) else { return self.revisit(item) };
         let mut cur = self.nav.current;
         while self.nav.future.len() > i {
@@ -125,7 +126,7 @@ impl App {
     /// Move focus to the Main pane before opening `opened` from `from`.
     /// Esc returns to `from` and the item shown now. Call it before the
     /// open, so the frame records the item being left.
-    pub(crate) fn focus_content(&mut self, from: Pane, opened: Option<u64>) {
+    pub(crate) fn focus_content(&mut self, from: Pane, opened: Option<ItemRef>) {
         self.push_back(from, self.nav.tab, opened);
         self.nav.focus = Focus::Main;
         self.nav.pane = Pane::Main;
@@ -133,7 +134,7 @@ impl App {
 
     /// Record `pane` on `tab`, with the current item, as the place Esc
     /// returns to after opening `opened`.
-    pub(crate) fn push_back(&mut self, pane: Pane, tab: Tab, opened: Option<u64>) {
+    pub(crate) fn push_back(&mut self, pane: Pane, tab: Tab, opened: Option<ItemRef>) {
         if let Some(i) = self.nav.back.iter().position(|f| f.pane == pane) {
             self.nav.back.truncate(i);
         }
@@ -143,7 +144,7 @@ impl App {
     /// The item Esc restores from `frame`: the one it left, while the
     /// item it opened is still shown or loading. Restoring also cancels
     /// that load, so it cannot land after Esc.
-    fn restores(&self, frame: &BackFrame) -> Option<u64> {
+    fn restores(&self, frame: &BackFrame) -> Option<ItemRef> {
         let shown = self.nav.requested.or(self.nav.current);
         frame.item.filter(|&item| frame.opened.is_some() && frame.opened == shown && Some(item) != shown)
     }
@@ -193,7 +194,7 @@ impl App {
     /// File `number` under requested rows without touching history.
     /// History restores (Ctrl+O / Ctrl+I) use this: re-recording the
     /// jump would corrupt both stacks.
-    fn file_visited(&mut self, number: u64) {
+    fn file_visited(&mut self, number: ItemRef) {
         if !self.nav.visited.contains(&number) {
             self.nav.visited.push(number);
         }
@@ -205,13 +206,13 @@ impl App {
     /// derive from it. The wheel hover never outranks it — hover stays a
     /// transient preview (j/k continue from it, a commit promotes it) and
     /// can never present as the active highlight.
-    pub(crate) fn effective(&self, rows: &[model::SideRow]) -> Option<u64> {
+    pub(crate) fn effective(&self, rows: &[model::SideRow]) -> Option<ItemRef> {
         self.nav.current
             .filter(|n| rows.iter().any(|r| r.number() == Some(*n)))
     }
 
     /// Position of `current` in display rows, +1 for the top spacer row.
-    fn selected_index(rows: &[model::SideRow], current: Option<u64>) -> Option<usize> {
+    fn selected_index(rows: &[model::SideRow], current: Option<ItemRef>) -> Option<usize> {
         current
             .and_then(|n| rows.iter().position(|r| r.number() == Some(n)))
             .map(|p| p + 1)
@@ -233,7 +234,7 @@ impl App {
         }
     }
 
-    pub(crate) fn show_issue(&mut self, n: u64) {
+    pub(crate) fn show_issue(&mut self, n: ItemRef) {
         // Showing another item ends every back frame's restore: once you
         // move on, Esc keeps where you are, even if you come back.
         for frame in &mut self.nav.back {
@@ -329,9 +330,12 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        let next = cur.saturating_add_signed(delta as i64);
-        if next < 1 {
-            self.notify(format!("no #{next}"));
+        let next = ItemRef {
+            number: cur.number.saturating_add_signed(delta as i64),
+            ..cur
+        };
+        if next.number < 1 {
+            self.notify(format!("no {}", next.display("")));
             return;
         }
         self.nav.step_pending = Some(next);
@@ -342,7 +346,7 @@ impl App {
     /// Select a refs row: highlight where it is mentioned in the body
     /// instead of opening it. Clicking the same row again clears it.
     /// Tab cycles Issues → PRs → Refs, so the pane keeps focus until then.
-    pub(crate) fn select_ref(&mut self, n: u64) {
+    pub(crate) fn select_ref(&mut self, n: ItemRef) {
         self.nav.hover = None;
         if self.refs.highlight == Some(n) {
             self.refs.highlight = None;
@@ -446,7 +450,7 @@ impl App {
     }
 
     /// Item on the History row under the cursor.
-    pub(crate) fn history_row_number(&self) -> Option<u64> {
+    pub(crate) fn history_row_number(&self) -> Option<ItemRef> {
         match self.history_steps() {
             0 => self.nav.current,
             steps => self.nav.history.get(self.nav.history.len() - steps).copied(),
@@ -595,16 +599,16 @@ impl App {
         }
     }
 
-    pub(crate) fn open_number(&mut self, n: u64) {
+    pub(crate) fn open_number(&mut self, n: ItemRef) {
         let url = if let Some(d) = self.issues.data.get(&n) {
             d.url.clone()
         } else if let Some(repo) = self.repo_flag.clone().or_else(|| self.repo_slug.clone()) {
-            format!("https://github.com/{repo}/issues/{n}")
+            format!("https://github.com/{repo}/issues/{n}", n = n.number)
         } else {
-            format!("https://github.com/issues/{n}")
+            format!("https://github.com/issues/{n}", n = n.number)
         };
         open_in_browser(&url).ok();
-        self.notify(format!("opened #{n} in browser"));
+        self.notify(format!("opened {n} in browser", n = n.display("")));
     }
 
     pub(crate) fn submit_bar(&mut self) {
@@ -636,7 +640,7 @@ impl App {
     /// User-initiated issue preview through the pending guard: the view
     /// switches without filing the row, so cursor walks and first-press
     /// previews never relocate rows between groups.
-    pub(crate) fn request_issue(&mut self, n: u64) {
+    pub(crate) fn request_issue(&mut self, n: ItemRef) {
         if self.nav.current == Some(n) {
             self.show_issue(n);
             return;
@@ -649,7 +653,7 @@ impl App {
     /// User-initiated explicit open through the pending guard: files the
     /// row under requested before switching, like the bar, board Enter,
     /// and paired-refs opens always did.
-    pub(crate) fn open_issue(&mut self, n: u64) {
+    pub(crate) fn open_issue(&mut self, n: ItemRef) {
         if self.nav.current == Some(n) {
             self.show_issue(n);
             // Already viewing still completes the submit tail: the bar
@@ -664,7 +668,7 @@ impl App {
         }
     }
 
-    pub(super) fn open_issue_inner(&mut self, n: u64) {
+    pub(super) fn open_issue_inner(&mut self, n: ItemRef) {
         self.ensure_visited(n);
         self.load_issue(n, false);
     }

@@ -9,6 +9,7 @@ use crate::app::{App, Focus, UndoAction};
 use crate::core::{self, Layer};
 use crate::{github, model};
 use crate::app::poll::probe_says_changed;
+use crate::model::ItemRef;
 
 /// What a filter-dialog query commit asks the caller to fetch.
 #[derive(Debug, PartialEq, Eq)]
@@ -91,12 +92,12 @@ pub(crate) struct Sidebar {
     /// Numbers a GitHub-run query returned. `Some` means the view shows
     /// GitHub results, re-read from the store on change; `None` means the
     /// store answered locally.
-    pub(crate) query_github: Option<Vec<u64>>,
+    pub(crate) query_github: Option<Vec<ItemRef>>,
     pub(crate) saved_queries: Vec<github::SavedQuery>,
     pub(crate) name_draft: String,
     pub(crate) group_by: model::GroupBy,
     pub(crate) sub_issue_tree: bool,
-    pub(crate) folded_issues: HashSet<u64>,
+    pub(crate) folded_issues: HashSet<ItemRef>,
     /// Selected label pills. Empty means no label filter. Pins and
     /// requested rows skip it.
     pub(crate) label_filter: HashSet<String>,
@@ -201,7 +202,7 @@ pub(super) fn refresh_interval_from(raw: Option<&str>) -> Duration {
 impl App {
     /// File `number` under recent rows (background fetch). Requested rows
     /// never repeat here; see `sections`.
-    pub(crate) fn ensure_recent(&mut self, number: u64) {
+    pub(crate) fn ensure_recent(&mut self, number: ItemRef) {
         if !self.nav.recent.contains(&number) {
             self.nav.recent.push(number);
         }
@@ -520,7 +521,7 @@ impl App {
         self.sections.auto_refresh = false;
         self.sections.last_fetch = Instant::now();
         self.drop_unvisited_background();
-        let numbers: Vec<u64> = rows.iter().map(|row| row.issue.number).collect();
+        let numbers: Vec<ItemRef> = rows.iter().map(|row| row.issue.number).collect();
         crate::app::poll::land_rows(self, rows, true, auto);
         // Complete rows already held are not re-filed by the landing.
         for n in numbers {
@@ -562,19 +563,19 @@ impl App {
     }
 
     /// Sidebar split: pinned | requested | recent, pins never duplicated.
-    pub(crate) fn sections(&self) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    pub(crate) fn sections(&self) -> (Vec<ItemRef>, Vec<ItemRef>, Vec<ItemRef>) {
         core::section_split(&self.nav.pin_order, &self.nav.visited, &self.nav.recent, &self.nav.pinned)
     }
 
     /// Row title for search, empty when the row is still loading.
-    fn row_title(&self, n: u64) -> String {
+    fn row_title(&self, n: ItemRef) -> String {
         self.issues.data.get(&n).map(|d| d.title.clone()).unwrap_or_default()
     }
 
     /// Client-side `/` row match over already-fetched rows: title,
     /// number, label names, and author login. Rows still loading fall
     /// back to title/number only.
-    fn row_matches(&self, n: u64, query: &str) -> bool {
+    fn row_matches(&self, n: ItemRef, query: &str) -> bool {
         match self.issues.data.get(&n) {
             Some(d) => {
                 let labels: Vec<&str> = d.labels.iter().map(|l| l.name.as_str()).collect();
@@ -586,7 +587,7 @@ impl App {
 
     /// True for issues, false for PRs and rows still loading (filed with
     /// issues until their data arrives and re-files them).
-    pub(super) fn is_pr(&self, n: u64) -> bool {
+    pub(super) fn is_pr(&self, n: ItemRef) -> bool {
         self.issues.data.get(&n).map(|d| d.is_pr).unwrap_or(false)
     }
 
@@ -594,7 +595,7 @@ impl App {
     /// toggles, label pills, and milestone pills. Pins and requested rows
     /// always show: filters thin the firehose, never rows the user
     /// explicitly opened.
-    fn recent_visible(&self, n: u64) -> bool {
+    fn recent_visible(&self, n: ItemRef) -> bool {
         let Some(d) = self.issues.data.get(&n) else { return true };
         let closed = matches!(d.state.as_str(), "CLOSED" | "MERGED");
         let state_ok = if d.is_pr {
@@ -633,10 +634,14 @@ impl App {
     /// query narrows rows; the committed highlight in `search` always
     /// applies at render through `section_list`. Each group keeps its
     /// section order but is sorted by the active client-side key.
-    pub(crate) fn pane_groups(&self, want_pr: bool, filtered: bool) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    pub(crate) fn pane_groups(
+        &self,
+        want_pr: bool,
+        filtered: bool,
+    ) -> (Vec<ItemRef>, Vec<ItemRef>, Vec<ItemRef>) {
         let (p, v, r) = self.sections();
         let q = self.sidebar.search.clone();
-        let pick = |list: Vec<u64>| -> Vec<u64> {
+        let pick = |list: Vec<ItemRef>| -> Vec<ItemRef> {
             list.into_iter()
                 .filter(|n| {
                     self.is_pr(*n) == want_pr
@@ -644,7 +649,7 @@ impl App {
                 })
                 .collect()
         };
-        let sorted = |list: Vec<u64>| -> Vec<u64> {
+        let sorted = |list: Vec<ItemRef>| -> Vec<ItemRef> {
             core::sort_rows(list, self.sidebar.sort, self.sidebar.sort_desc, &self.issues.data)
         };
         let pinned = sorted(pick(p));
@@ -662,8 +667,8 @@ impl App {
         if !want_pr && self.sidebar.sub_issue_tree {
             let mut out = core::pane_order(&p, &v, &[]);
             if self.sidebar.group_by == model::GroupBy::Milestone {
-                let visible: HashSet<u64> = r.iter().copied().collect();
-                let milestone_of = |mut n: u64| {
+                let visible: HashSet<ItemRef> = r.iter().copied().collect();
+                let milestone_of = |mut n: ItemRef| {
                     let mut seen = HashSet::new();
                     while seen.insert(n) {
                         match self.issues.data.get(&n).and_then(|d| d.parent) {
@@ -692,7 +697,7 @@ impl App {
         if self.sidebar.group_by != model::GroupBy::Milestone {
             return core::pane_order(&p, &v, &r);
         }
-        let milestone_of = |n: u64| {
+        let milestone_of = |n: ItemRef| {
             self.issues.data.get(&n).and_then(|d| d.milestone.clone())
         };
         let due_of = |title: &str| {
@@ -736,18 +741,18 @@ impl App {
     }
 
     /// Scoped j/k order for the Issues pane: exactly the displayed rows.
-    pub(crate) fn issue_numbers(&self) -> Vec<u64> {
+    pub(crate) fn issue_numbers(&self) -> Vec<ItemRef> {
         self.issue_rows().iter().filter_map(model::SideRow::number).collect()
     }
 
     /// Scoped j/k order for the PRs pane: exactly the displayed rows.
-    pub(crate) fn pr_numbers(&self) -> Vec<u64> {
+    pub(crate) fn pr_numbers(&self) -> Vec<ItemRef> {
         self.pr_rows().iter().filter_map(model::SideRow::number).collect()
     }
 
     /// Flat order limited to `/` search hits, for Enter / n / N jumps.
     /// Uses the displayed order, so it follows sort and grouping.
-    pub(crate) fn search_hits(&self) -> Vec<u64> {
+    pub(crate) fn search_hits(&self) -> Vec<ItemRef> {
         if self.sidebar.search.trim().is_empty() {
             return vec![];
         }

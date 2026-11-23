@@ -7,6 +7,8 @@ use super::sections::{parse_node, ISSUE_FIELDS, PR_FIELDS};
 use super::Row;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+#[cfg(test)]
+use crate::model::ItemRef;
 
 /// The four connections of a repo's working set. Open items come first
 /// and ignore the age limit; closed ones stop at it.
@@ -192,8 +194,15 @@ mod tests {
         let cutoff = Some(at("2025-11-18T00:00:00Z"));
         let v = reply("issues", vec![node(3, "CLOSED", "2026-01-01T00:00:00Z"), node(2, "CLOSED", "2025-06-01T00:00:00Z")], true);
         let page = parse_page(&v, Conn::IssuesClosed, cutoff).unwrap();
-        assert_eq!(page.rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(), vec![3], "older node dropped");
-        assert!(page.done && page.next.is_none(), "the last node is past the limit");
+        assert_eq!(
+            page.rows.iter().map(|r| r.issue.number).collect::<Vec<_>>(),
+            vec![ItemRef::github(3)],
+            "older node dropped"
+        );
+        assert!(
+            page.done && page.next.is_none(),
+            "the last node is past the limit"
+        );
         // Without a limit the same page continues.
         let page = parse_page(&v, Conn::IssuesClosed, None).unwrap();
         assert_eq!((page.rows.len(), page.done, page.next.as_deref()), (2, false, Some("c1")));

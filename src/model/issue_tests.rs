@@ -1,6 +1,7 @@
 //! Tests for model::issue.
 
 use super::*;
+use crate::model::ItemRef;
 
 #[test]
 fn parses_review_threads_in_unresolved_first_order() {
@@ -60,8 +61,14 @@ fn paired_refs_parse_both_directions() {
     assert_eq!(
         paired_refs(&issue, false),
         vec![
-            PairedRef { number: 44, state: "MERGED".to_string() },
-            PairedRef { number: 45, state: "OPEN".to_string() },
+            PairedRef {
+                number: ItemRef::github(44),
+                state: "MERGED".to_string()
+            },
+            PairedRef {
+                number: ItemRef::github(45),
+                state: "OPEN".to_string()
+            },
         ]
     );
     let pr = serde_json::json!({"closingIssuesReferences":{"nodes":[
@@ -69,7 +76,10 @@ fn paired_refs_parse_both_directions() {
     ]}});
     assert_eq!(
         paired_refs(&pr, true),
-        vec![PairedRef { number: 59, state: "OPEN".to_string() }]
+        vec![PairedRef {
+            number: ItemRef::github(59),
+            state: "OPEN".to_string()
+        }]
     );
     assert!(paired_refs(&serde_json::json!({}), true).is_empty());
 }
@@ -93,19 +103,18 @@ fn check_rollup_parses_pass_fail_pending_and_absent() {
 }
 
 #[test]
-fn old_cached_issue_without_paired_still_parses() {
-    let old = serde_json::json!({
-        "number": 7, "title": "cached", "state": "OPEN",
+fn cached_issue_without_optional_details_still_parses() {
+    let payload = serde_json::json!({
+        "number": ItemRef::github(7), "title": "cached", "state": "OPEN",
         "author": {"login": "bo"}, "labels": [], "assignees": [],
         "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z",
         "url": "https://github.com/o/r/issues/7", "body": "",
         "comments": [], "isPr": false, "reviewThreads": []
     });
-    let data: IssueData = serde_json::from_value(old).expect("old cache parses");
+    let data: IssueData = serde_json::from_value(payload).expect("cache parses");
     assert!(data.paired.is_empty());
     assert!(data.checks.is_none());
 }
-
 
 #[test]
 fn merges_pages_in_oldest_first_order() {

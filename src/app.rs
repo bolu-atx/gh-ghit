@@ -6,7 +6,6 @@
 //! tokio runtime and lands via channels polled once per frame, so the loop
 //! never blocks.
 
-
 mod backfill;
 mod board;
 mod compose;
@@ -67,16 +66,6 @@ mod test_support;
 use std::io::Stdout;
 use std::time::{Duration, Instant};
 
-/// Blocking poll wait per frame: short enough that batched mouse/key
-/// input feels instant, long enough to avoid a busy loop.
-pub(crate) const POLL_TIMEOUT_MS: u64 = 15;
-/// Click-flash dwell: the clicked rect inverts for ~150ms so the press
-/// reads as acknowledged before its fetch lands.
-pub(crate) const CLICK_FLASH_MS: u64 = 150;
-/// Spinner frame dwell: while a fetch runs the loop repaints at this
-/// cadence for the animation, not on every 15ms poll pass.
-pub(crate) const SPIN_FRAME_MS: u64 = 100;
-
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 use crossterm::ExecutableCommand;
@@ -87,6 +76,21 @@ use ratatui::layout::Rect;
 use crate::core::{self, Layer, Pane};
 use crate::{github, model};
 use poll::poll_bootstrap;
+#[cfg(test)]
+use open as _;
+use crate::model::ItemRef;
+use crate::model::NodeId;
+
+/// Blocking poll wait per frame: short enough that batched mouse/key
+/// input feels instant, long enough to avoid a busy loop.
+pub(crate) const POLL_TIMEOUT_MS: u64 = 15;
+/// Click-flash dwell: the clicked rect inverts for ~150ms so the press
+/// reads as acknowledged before its fetch lands.
+pub(crate) const CLICK_FLASH_MS: u64 = 150;
+/// Spinner frame dwell: while a fetch runs the loop repaints at this
+/// cadence for the animation, not on every 15ms poll pass.
+pub(crate) const SPIN_FRAME_MS: u64 = 100;
+
 pub(crate) use diff::{poll_review_submit, poll_diffs, poll_head_files, poll_sub_issues};
 pub(crate) use board::{board_open, board_columns, board_move, board_selected_number, poll_board};
 pub(crate) use compose::{poll_compose, run_compose_editor};
@@ -168,7 +172,7 @@ pub(crate) enum Focus {
 /// history, selection, and caches untouched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NavIntent {
-    Issue(u64),
+    Issue(ItemRef),
     Tab(Tab),
     Step(isize),
     Back(usize),
@@ -236,7 +240,7 @@ pub(crate) struct HitAreas {
     /// Dependency map view rect; empty while the map is not drawn.
     pub(crate) map_area: Rect,
     /// Map node labels as drawn, topmost first: rect plus layout id.
-    pub(crate) map_nodes: Vec<(Rect, u64)>,
+    pub(crate) map_nodes: Vec<(Rect, NodeId)>,
     /// Map edge cells as drawn, by layout ids of the ends. Node labels
     /// win over them.
     pub(crate) map_edges: crate::app::EdgeGrid,
@@ -308,7 +312,7 @@ pub(crate) struct App {
     pub(crate) dialogs: Vec<Entry>,
     pub(crate) repo_flag: Option<String>,
     pub(crate) repo_slug: Option<String>,
-    pub(crate) initial_numbers: Vec<u64>,
+    pub(crate) initial_numbers: Vec<ItemRef>,
     /// True once the startup prefs load has applied. `persist_prefs`
     /// stays silent before that so pre-bootstrap input cannot write
     /// defaults over saved state.
@@ -388,7 +392,7 @@ impl App {
     fn enqueue(
         &mut self,
         kind: core::Kind,
-        number: Option<u64>,
+        number: Option<ItemRef>,
         task: impl std::future::Future<Output = ()> + Send + 'static,
     ) {
         self.fetches.push(kind, number, Box::pin(task));
@@ -555,7 +559,7 @@ pub(crate) fn poll_all(app: &mut App) -> bool {
     landed
 }
 
-pub(crate) fn run(app: &mut App, numbers: &[u64]) -> Result<(), String> {
+pub(crate) fn run(app: &mut App, numbers: &[ItemRef]) -> Result<(), String> {
     enable_raw_mode().map_err(|e| e.to_string())?;
     let mut stdout = std::io::stdout();
     stdout.execute(EnterAlternateScreen).map_err(|e| e.to_string())?;
@@ -643,10 +647,6 @@ fn event_loop(
 pub(crate) fn open_in_browser(url: &str) -> std::io::Result<()> {
     open::that(url)
 }
-
-#[cfg(test)]
-use open as _;
-
 
 #[cfg(test)]
 pub(crate) fn open_in_browser(_url: &str) -> std::io::Result<()> {

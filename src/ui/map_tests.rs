@@ -7,8 +7,10 @@ use crate::core::Pane;
 use crate::input::{handle_key, handle_mouse};
 use crate::model::{LinkKind, MapItem, MapLink, MapScope};
 use super::test_support::{click, draw_buffer, key, loaded_app};
+use crate::model::ItemRef;
+use crate::model::NodeId;
 
-fn item(number: u64, state: &str, title: &str, milestone: Option<&str>) -> MapItem {
+fn item(number: ItemRef, state: &str, title: &str, milestone: Option<&str>) -> MapItem {
     MapItem { number, is_pr: false, state: state.to_string(), title: title.to_string(), milestone: milestone.map(str::to_string), labels: vec![] }
 }
 
@@ -20,22 +22,27 @@ pub(super) fn map_app() -> App {
 
 /// `app` with the stored items of `map_app`, on the Map tab.
 fn with_map(mut app: App) -> App {
-    let mut pr = item(9, "OPEN", "Fix it", None);
+    let mut pr = item(ItemRef::github(9), "OPEN", "Fix it", None);
     pr.is_pr = true;
     let items = vec![
-        item(7, "OPEN", "Center issue", Some("Ship it")),
-        item(8, "OPEN", "Waits on seven", Some("Ship it")),
+        item(ItemRef::github(7), "OPEN", "Center issue", Some("Ship it")),
+        item(
+            ItemRef::github(8),
+            "OPEN",
+            "Waits on seven",
+            Some("Ship it"),
+        ),
         pr,
-        item(11, "OPEN", "Open blocker", None),
-        item(12, "CLOSED", "Done blocker", None),
-        item(30, "OPEN", "Elsewhere", None),
+        item(ItemRef::github(11), "OPEN", "Open blocker", None),
+        item(ItemRef::github(12), "CLOSED", "Done blocker", None),
+        item(ItemRef::github(30), "OPEN", "Elsewhere", None),
     ];
-    let link = |src: u64, dst: u64, kind: LinkKind| MapLink { src, dst, kind };
+    let link = |src: ItemRef, dst: ItemRef, kind: LinkKind| MapLink { src, dst, kind };
     let links = vec![
-        link(11, 7, LinkKind::Blocks),
-        link(12, 7, LinkKind::Blocks),
-        link(7, 8, LinkKind::Blocks),
-        link(9, 7, LinkKind::Closes),
+        link(ItemRef::github(11), ItemRef::github(7), LinkKind::Blocks),
+        link(ItemRef::github(12), ItemRef::github(7), LinkKind::Blocks),
+        link(ItemRef::github(7), ItemRef::github(8), LinkKind::Blocks),
+        link(ItemRef::github(9), ItemRef::github(7), LinkKind::Closes),
     ];
     app.set_map_data(items, links);
     app.nav.pane = Pane::Main;
@@ -48,7 +55,14 @@ fn with_map(mut app: App) -> App {
 pub(super) fn pin_layout(app: &mut App) {
     app.settle_map();
     let hub = crate::model::hub_id("Ship it");
-    let at = [(7, 0.0, 0.0), (8, 16.0, -4.0), (9, 0.0, 6.0), (11, -18.0, -4.0), (12, -18.0, 4.0), (hub, 16.0, 6.0)];
+    let at = [
+        (NodeId::Item(ItemRef::github(7)), 0.0, 0.0),
+        (NodeId::Item(ItemRef::github(8)), 16.0, -4.0),
+        (NodeId::Item(ItemRef::github(9)), 0.0, 6.0),
+        (NodeId::Item(ItemRef::github(11)), -18.0, -4.0),
+        (NodeId::Item(ItemRef::github(12)), -18.0, 4.0),
+        (hub, 16.0, 6.0),
+    ];
     for (id, x, y) in at {
         let index = app.map.graph.index_of(id).unwrap();
         app.map.layout.set_position(index, x, y);
@@ -98,14 +112,26 @@ fn map_draws_edges_arrows_labels_and_hubs() {
 
     use crate::theme::{amber, green, muted, pr_ref, red};
     let buf = draw_buffer(&mut app);
-    let color = |id: u64| {
+    let color = |id: NodeId| {
         let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == id).unwrap();
         buf[(rect.x, rect.y)].fg
     };
-    assert_eq!(color(7), red(), "blocked by the open #11");
-    assert_eq!(color(11), green(), "ready: no open blocker");
-    assert_eq!(color(12), muted(), "closed blocker reads dim");
-    assert_eq!(color(9), pr_ref());
+    assert_eq!(
+        color(NodeId::Item(ItemRef::github(7))),
+        red(),
+        "blocked by the open #11"
+    );
+    assert_eq!(
+        color(NodeId::Item(ItemRef::github(11))),
+        green(),
+        "ready: no open blocker"
+    );
+    assert_eq!(
+        color(NodeId::Item(ItemRef::github(12))),
+        muted(),
+        "closed blocker reads dim"
+    );
+    assert_eq!(color(NodeId::Item(ItemRef::github(9))), pr_ref());
     assert_eq!(color(crate::model::hub_id("Ship it")), amber());
     let selected = app.hits.map_nodes.iter().find(|(_, i)| Some(*i) == app.map.selected).unwrap().0;
     assert!(buf[(selected.x, selected.y)].modifier.contains(ratatui::style::Modifier::BOLD), "selection is bold");
@@ -150,7 +176,12 @@ fn an_unstored_issue_says_so() {
 
 /// Screen cell at the middle of node `id`'s label.
 fn node_cell(app: &App, id: u64) -> (u16, u16) {
-    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == id).unwrap();
+    let (rect, _) = app
+        .hits
+        .map_nodes
+        .iter()
+        .find(|(_, i)| *i == NodeId::Item(ItemRef::github(id)))
+        .unwrap();
     (rect.x + rect.width / 2, rect.y)
 }
 
@@ -158,12 +189,16 @@ fn node_cell(app: &App, id: u64) -> (u16, u16) {
 fn dragging_a_node_moves_and_pins_it() {
     let mut app = map_app();
     pin_layout(&mut app);
-    let eight = app.map.graph.index_of(8).unwrap();
+    let eight = app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(8)))
+        .unwrap();
     app.map.layout.unpin(eight);
     draw_buffer(&mut app);
     let (x, y) = node_cell(&app, 8);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.map.selected, Some(8), "a press selects");
+    assert_eq!(app.map.selected, Some(NodeId::Item(ItemRef::github(8))), "a press selects");
     handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x - 10, y + 3));
     handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x - 10, y + 3));
     let body = &app.map.layout.bodies()[eight];
@@ -171,7 +206,7 @@ fn dragging_a_node_moves_and_pins_it() {
     let area = app.hits.map_area;
     let cell = app.map.camera.cell(body.x, body.y, area.width, area.height);
     assert_eq!(cell, (i32::from(x - 10 - area.x), i32::from(y + 3 - area.y)), "the node lands under the pointer");
-    assert_eq!(app.nav.current, Some(7), "a drag never opens");
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "a drag never opens");
     handle_key(&mut app, key(KeyCode::Char('x')));
     assert!(!app.map.layout.bodies()[eight].pinned, "x unpins");
 }
@@ -191,10 +226,14 @@ fn dragging_empty_space_pans_and_a_second_press_opens() {
     let (x, y) = node_cell(&app, 11);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
     handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
-    assert_eq!(app.nav.current, Some(7), "the first press selects");
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)), "the first press selects");
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
     handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
-    assert_eq!(app.nav.requested.or(app.nav.current), Some(11), "the second press opens");
+    assert_eq!(
+        app.nav.requested.or(app.nav.current),
+        Some(ItemRef::github(11)),
+        "the second press opens"
+    );
 }
 
 #[test]
@@ -209,7 +248,7 @@ fn wheel_zooms_and_right_click_opens_the_map_menu() {
     draw_buffer(&mut app);
     let (x, y) = node_cell(&app, 8);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Right), x, y));
-    assert_eq!(app.map.selected, Some(8));
+    assert_eq!(app.map.selected, Some(NodeId::Item(ItemRef::github(8))));
     let menu = app.menu().expect("menu opens");
     assert!(menu.entries.iter().any(|e| e.action == crate::keymap::Action::GraphUnpin));
 }
@@ -220,10 +259,18 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     pin_layout(&mut app);
     draw_buffer(&mut app);
     handle_key(&mut app, key(KeyCode::Char('.')));
-    assert_eq!(app.map.selected, Some(8), ". steps by number");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(8))),
+        ". steps by number"
+    );
     handle_key(&mut app, key(KeyCode::Char(',')));
     handle_key(&mut app, key(KeyCode::Char(',')));
-    assert_eq!(app.map.selected, Some(12), ", wraps back");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(12))),
+        ", wraps back"
+    );
     let camera = app.map.camera;
     handle_key(&mut app, key(KeyCode::Char('l')));
     assert!(app.map.camera.x > camera.x, "l pans right");
@@ -231,7 +278,11 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     assert!(app.map.camera.zoom > camera.zoom);
     handle_key(&mut app, key(KeyCode::Char('0')));
     assert!(app.map.follow, "0 fits again");
-    let twelve = app.map.graph.index_of(12).unwrap();
+    let twelve = app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(12)))
+        .unwrap();
     app.map.layout.unpin(twelve);
     let before = app.map.layout.bodies()[twelve].x;
     handle_key(&mut app, key(KeyCode::Char('D')));
@@ -241,8 +292,19 @@ fn map_keys_step_pan_zoom_fit_scope_and_move() {
     assert_eq!(app.map.filter.scope, MapScope::Repo);
     app.settle_map();
     let text = map_rows(&mut app).join("\n");
-    assert!(text.contains("#30") && text.contains("whole repo"), "{text}");
-    assert!(app.map.layout.bodies()[app.map.graph.index_of(12).unwrap()].pinned, "rebuild keeps pins");
+    assert!(
+        text.contains("#30") && text.contains("whole repo"),
+        "{text}"
+    );
+    assert!(
+        app.map.layout.bodies()[app
+            .map
+            .graph
+            .index_of(NodeId::Item(ItemRef::github(12)))
+            .unwrap()]
+        .pinned,
+        "rebuild keeps pins"
+    );
 }
 
 #[test]
@@ -250,18 +312,41 @@ fn a_store_reread_keeps_the_selection_and_a_new_center_takes_it() {
     let mut app = map_app();
     app.settle_map();
     app.map_step(1);
-    assert_eq!(app.map.selected, Some(8));
+    assert_eq!(app.map.selected, Some(NodeId::Item(ItemRef::github(8))));
     let (items, links) = (app.map.items.clone(), app.map.links.clone());
     app.set_map_data(items, links);
     app.settle_map();
-    assert_eq!(app.map.selected, Some(8), "a reread keeps the selection");
-    let eight = app.map.layout.bodies()[app.map.graph.index_of(8).unwrap()].clone();
-    app.issues.data.insert(11, super::test_support::sample(11));
-    app.show_issue(11);
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(8))),
+        "a reread keeps the selection"
+    );
+    let eight = app.map.layout.bodies()[app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(8)))
+        .unwrap()]
+    .clone();
+    app.issues.data.insert(
+        ItemRef::github(11),
+        super::test_support::sample(ItemRef::github(11)),
+    );
+    app.show_issue(ItemRef::github(11));
     app.settle_map();
-    assert_eq!(app.map.selected, Some(11), "the new center takes the selection");
-    let moved = &app.map.layout.bodies()[app.map.graph.index_of(8).unwrap()];
-    assert!((moved.x - eight.x).abs() < 5.0, "one component keeps its layout");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(11))),
+        "the new center takes the selection"
+    );
+    let moved = &app.map.layout.bodies()[app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(8)))
+        .unwrap()];
+    assert!(
+        (moved.x - eight.x).abs() < 5.0,
+        "one component keeps its layout"
+    );
 }
 
 #[test]
@@ -277,8 +362,19 @@ fn an_unchanged_reread_keeps_the_map_still_and_a_change_wakes_it() {
     let mut renamed = items;
     renamed[1].title = "Waits on seven, renamed".to_string();
     app.set_map_data(renamed, links);
-    assert!(app.map_tick() && app.map.moving(), "a changed title rebuilds and wakes the layout");
-    assert_eq!(app.map.graph.nodes[app.map.graph.index_of(8).unwrap()].title, "Waits on seven, renamed");
+    assert!(
+        app.map_tick() && app.map.moving(),
+        "a changed title rebuilds and wakes the layout"
+    );
+    assert_eq!(
+        app.map.graph.nodes[app
+            .map
+            .graph
+            .index_of(NodeId::Item(ItemRef::github(8)))
+            .unwrap()]
+        .title,
+        "Waits on seven, renamed"
+    );
 }
 
 #[test]
@@ -290,19 +386,35 @@ fn a_drag_follows_its_node_through_a_rebuild_and_ends_when_it_vanishes() {
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
     // A new lowest number shifts every node index by one.
     let (mut items, mut links) = (app.map.items.clone(), app.map.links.clone());
-    items.push(item(1, "OPEN", "New blocker", None));
-    links.push(MapLink { src: 1, dst: 7, kind: LinkKind::Blocks });
+    items.push(item(ItemRef::github(1), "OPEN", "New blocker", None));
+    links.push(MapLink {
+        src: ItemRef::github(1),
+        dst: ItemRef::github(7),
+        kind: LinkKind::Blocks,
+    });
     app.set_map_data(items.clone(), links.clone());
     app.map_tick();
     handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x - 10, y + 3));
-    let eight = app.map.graph.index_of(8).unwrap();
+    let eight = app.map.graph.index_of(NodeId::Item(ItemRef::github(8))).unwrap();
     let body = &app.map.layout.bodies()[eight];
     let area = app.hits.map_area;
     let cell = app.map.camera.cell(body.x, body.y, area.width, area.height);
-    assert_eq!(cell, (i32::from(x - 10 - area.x), i32::from(y + 3 - area.y)), "#8 still follows the pointer");
-    assert!(!app.map.layout.bodies()[app.map.graph.index_of(1).unwrap()].pinned, "the shifted index is not moved");
-    items.retain(|item| item.number != 8);
-    links.retain(|link| link.dst != 8);
+    assert_eq!(
+        cell,
+        (i32::from(x - 10 - area.x), i32::from(y + 3 - area.y)),
+        "#8 still follows the pointer"
+    );
+    assert!(
+        !app.map.layout.bodies()[app
+            .map
+            .graph
+            .index_of(NodeId::Item(ItemRef::github(1)))
+            .unwrap()]
+        .pinned,
+        "the shifted index is not moved"
+    );
+    items.retain(|item| item.number != ItemRef::github(8));
+    links.retain(|link| link.dst != ItemRef::github(8));
     app.set_map_data(items, links);
     app.map_tick();
     handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x - 4, y + 1));
@@ -316,7 +428,7 @@ fn one_tick_steps_a_moving_layout_at_least_once() {
     draw_buffer(&mut app);
     // A nudge pins #8 somewhere new and wakes the layout.
     app.map_step(1);
-    assert_eq!(app.map.selected, Some(8));
+    assert_eq!(app.map.selected, Some(NodeId::Item(ItemRef::github(8))));
     app.map_nudge(4, 4);
     assert!(app.map.moving());
     let before: Vec<(f64, f64)> = app.map.layout.bodies().iter().map(|b| (b.x, b.y)).collect();
@@ -328,7 +440,7 @@ fn one_tick_steps_a_moving_layout_at_least_once() {
 
 /// Stored details for #7's card: status, labels, assignees and a body.
 fn stored_detail(app: &mut App) {
-    let mut issue = super::test_support::sample(7);
+    let mut issue = super::test_support::sample(ItemRef::github(7));
     issue.title = "Center issue".to_string();
     issue.labels = vec![crate::model::Label { name: "perf".to_string() }, crate::model::Label { name: "sync".to_string() }];
     issue.assignees = vec![crate::model::Author { login: "bo".to_string() }, crate::model::Author { login: "ana".to_string() }];
@@ -340,8 +452,14 @@ fn stored_detail(app: &mut App) {
         complete: false,
         window_at: None,
     };
-    let body = "Split the queue in two.\n\nThe current issue goes first; the rest wait their turn.".to_string();
-    app.map.detail = Some(crate::app::CardDetail { number: 7, stamp: None, row: Some(row), body: Some(body) });
+    let body = "Split the queue in two.\n\nThe current issue goes first; the rest wait their turn."
+        .to_string();
+    app.map.detail = Some(crate::app::CardDetail {
+        number: ItemRef::github(7),
+        stamp: None,
+        row: Some(row),
+        body: Some(body),
+    });
 }
 
 /// Rows of the card as text.
@@ -355,8 +473,13 @@ fn card_rows(app: &mut App) -> String {
 }
 
 /// Screen cell of some drawn cell of the edge from `src` to `dst`.
-fn edge_cell(app: &App, src: u64, dst: u64) -> (u16, u16) {
-    app.hits.map_edges.drawn().find(|(_, e)| *e == (src, dst)).map(|(cell, _)| cell).unwrap()
+fn edge_cell(app: &App, src: ItemRef, dst: ItemRef) -> (u16, u16) {
+    app.hits
+        .map_edges
+        .drawn()
+        .find(|(_, e)| *e == (NodeId::Item(src), NodeId::Item(dst)))
+        .map(|(cell, _)| cell)
+        .unwrap()
 }
 
 #[test]
@@ -398,7 +521,10 @@ fn node_card_shows_the_stored_item() {
 fn edge_card_names_the_link_and_both_ends() {
     let mut app = map_app();
     pin_layout(&mut app);
-    app.map.card = Some(crate::app::MapCard::Edge { src: 9, dst: 7 });
+    app.map.card = Some(crate::app::MapCard::Edge {
+        src: NodeId::Item(ItemRef::github(9)),
+        dst: NodeId::Item(ItemRef::github(7)),
+    });
     let text = card_rows(&mut app);
     let rows: Vec<&str> = text.lines().collect();
     let expected = [
@@ -414,7 +540,7 @@ fn edge_card_names_the_link_and_both_ends() {
     assert_eq!(rows[..expected.len()].join("\n"), expected.join("\n"));
     assert_eq!(rows[rows.len() - 2], "│ [next link e] [close esc]              │");
     let buf = draw_buffer(&mut app);
-    let (x, y) = edge_cell(&app, 9, 7);
+    let (x, y) = edge_cell(&app, ItemRef::github(9), ItemRef::github(7));
     assert_eq!(buf[(x, y)].fg, crate::theme::teal(), "the card's edge is highlighted");
 }
 
@@ -426,18 +552,39 @@ fn edge_hits_skip_labels_and_a_click_on_an_edge_shows_its_card() {
     for ((x, y), _) in app.hits.map_edges.drawn() {
         assert!(app.hits.map_nodes.iter().all(|(rect, _)| !rect.contains((x, y).into())), "labels win at {x},{y}");
     }
-    let (x, y) = edge_cell(&app, 11, 7);
+    let (x, y) = edge_cell(&app, ItemRef::github(11), ItemRef::github(7));
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
     handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
-    assert_eq!(app.map.card, Some(crate::app::MapCard::Edge { src: 11, dst: 7 }));
+    assert_eq!(
+        app.map.card,
+        Some(crate::app::MapCard::Edge {
+            src: NodeId::Item(ItemRef::github(11)),
+            dst: NodeId::Item(ItemRef::github(7))
+        })
+    );
     let text = card_rows(&mut app);
     assert!(text.contains("#11 blocks #7"), "{text}");
-    let (end, _) = app.hits.map_card_hits.iter().find(|(_, part)| *part == crate::app::CardHit::End(11)).unwrap();
+    let (end, _) = app
+        .hits
+        .map_card_hits
+        .iter()
+        .find(|(_, part)| *part == crate::app::CardHit::End(NodeId::Item(ItemRef::github(11))))
+        .unwrap();
     let (ex, ey) = (end.x + 2, end.y);
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), ex, ey));
-    assert_eq!((app.map.selected, app.map.card), (Some(11), Some(crate::app::MapCard::Node)), "an end card selects its node");
+    handle_mouse(
+        &mut app,
+        click(MouseEventKind::Down(MouseButton::Left), ex, ey),
+    );
+    assert_eq!(
+        (app.map.selected, app.map.card),
+        (
+            Some(NodeId::Item(ItemRef::github(11))),
+            Some(crate::app::MapCard::Node)
+        ),
+        "an end card selects its node"
+    );
     draw_buffer(&mut app);
-    let (x, y) = edge_cell(&app, 12, 7);
+    let (x, y) = edge_cell(&app, ItemRef::github(12), ItemRef::github(7));
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
     handle_mouse(&mut app, click(MouseEventKind::Drag(MouseButton::Left), x + 3, y));
     handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x + 3, y));
@@ -452,12 +599,31 @@ fn a_press_shows_the_card_and_the_open_button_or_a_second_press_opens() {
     let (x, y) = node_cell(&app, 8);
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), x, y));
     handle_mouse(&mut app, click(MouseEventKind::Up(MouseButton::Left), x, y));
-    assert_eq!((app.map.selected, app.map.card), (Some(8), Some(crate::app::MapCard::Node)), "the first press shows the card");
-    assert_eq!(app.nav.current, Some(7));
+    assert_eq!(
+        (app.map.selected, app.map.card),
+        (
+            Some(NodeId::Item(ItemRef::github(8))),
+            Some(crate::app::MapCard::Node)
+        ),
+        "the first press shows the card"
+    );
+    assert_eq!(app.nav.current, Some(ItemRef::github(7)));
     draw_buffer(&mut app);
-    let (open, _) = *app.hits.map_card_hits.iter().find(|(_, part)| *part == crate::app::CardHit::Open).unwrap();
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), open.x, open.y));
-    assert_eq!(app.nav.requested.or(app.nav.current), Some(8), "the open button opens");
+    let (open, _) = *app
+        .hits
+        .map_card_hits
+        .iter()
+        .find(|(_, part)| *part == crate::app::CardHit::Open)
+        .unwrap();
+    handle_mouse(
+        &mut app,
+        click(MouseEventKind::Down(MouseButton::Left), open.x, open.y),
+    );
+    assert_eq!(
+        app.nav.requested.or(app.nav.current),
+        Some(ItemRef::github(8)),
+        "the open button opens"
+    );
 }
 
 #[test]
@@ -468,7 +634,7 @@ fn card_keys_toggle_step_links_and_close() {
     assert_eq!(app.map.card, Some(crate::app::MapCard::Node), "i shows the card");
     handle_key(&mut app, key(KeyCode::Char('i')));
     assert_eq!(app.map.card, None, "i again hides it");
-    let seven = app.map.graph.index_of(7).unwrap();
+    let seven = app.map.graph.index_of(NodeId::Item(ItemRef::github(7))).unwrap();
     let links: Vec<String> = app.map.graph.edges_of(seven).into_iter().map(|e| app.map.graph.relation(e)).collect();
     let mut seen = vec![];
     for _ in 0..links.len() {
@@ -495,10 +661,27 @@ fn a_milestone_card_lists_its_items_and_a_click_selects_one() {
     for line in ["┌ milestone ", "◆ milestone · 2 items on the map", "#7 Center issue", "#8 Waits on seven"] {
         assert!(text.contains(line), "{line} missing:\n{text}");
     }
-    assert!(!text.contains("[open"), "a milestone has nothing to open:\n{text}");
-    let (row, _) = *app.hits.map_card_hits.iter().find(|(_, part)| *part == crate::app::CardHit::End(8)).unwrap();
-    handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
-    assert_eq!((app.map.selected, app.map.card), (Some(8), Some(crate::app::MapCard::Node)));
+    assert!(
+        !text.contains("[open"),
+        "a milestone has nothing to open:\n{text}"
+    );
+    let (row, _) = *app
+        .hits
+        .map_card_hits
+        .iter()
+        .find(|(_, part)| *part == crate::app::CardHit::End(NodeId::Item(ItemRef::github(8))))
+        .unwrap();
+    handle_mouse(
+        &mut app,
+        click(MouseEventKind::Down(MouseButton::Left), row.x, row.y),
+    );
+    assert_eq!(
+        (app.map.selected, app.map.card),
+        (
+            Some(NodeId::Item(ItemRef::github(8))),
+            Some(crate::app::MapCard::Node)
+        )
+    );
 }
 
 #[test]
@@ -678,7 +861,11 @@ fn the_map_is_its_own_view_with_no_item_open() {
     let mut app = with_map(crate::app::App::new(Some("o/r".to_string())));
     assert_eq!(app.nav.current, None);
     pin_layout(&mut app);
-    let thirty = app.map.graph.index_of(30).expect("the whole repo shows");
+    let thirty = app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(30)))
+        .expect("the whole repo shows");
     app.map.layout.set_position(thirty, 0.0, -8.0);
     app.map.layout.pin(thirty);
     let expected = [
@@ -701,8 +888,8 @@ fn the_map_is_its_own_view_with_no_item_open() {
     assert!(tabs.contains("3 Map") && tabs.contains("s \u{f0e8} repo") && tabs.contains("0 \u{f065} fit"), "{tabs}");
     assert!(!tabs.contains("comment"), "no item, so nothing to comment on: {tabs}");
     // A request still loading leaves the map up: it reads only the store.
-    app.nav.requested = Some(7);
-    app.issues.pending.insert(7);
+    app.nav.requested = Some(ItemRef::github(7));
+    app.issues.pending.insert(ItemRef::github(7));
     let text = super::test_support::frame_text(&mut app);
     assert!(text.contains("whole repo") && !text.contains("Loading #7"), "{text}");
 }
@@ -712,12 +899,23 @@ fn the_map_is_its_own_view_with_an_item_open() {
     let mut app = map_app();
     pin_layout(&mut app);
     let tabs = tab_line(&mut app);
-    assert!(tabs.contains("3 Map") && tabs.contains("s \u{f0e8} linked") && tabs.contains("comment"), "{tabs}");
-    assert_eq!(app.map.center(), Some(7), "component scope centers on the open item");
+    assert!(
+        tabs.contains("3 Map") && tabs.contains("s \u{f0e8} linked") && tabs.contains("comment"),
+        "{tabs}"
+    );
+    assert_eq!(
+        app.map.center(),
+        Some(ItemRef::github(7)),
+        "component scope centers on the open item"
+    );
     handle_key(&mut app, key(KeyCode::Char('s')));
     app.settle_map();
     assert_eq!(app.map.center(), None, "whole-repo scope has no center");
-    assert_eq!(app.map.selected, Some(7), "dropping the center keeps the selection");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(7))),
+        "dropping the center keeps the selection"
+    );
     let tabs = tab_line(&mut app);
     assert!(tabs.contains("s \u{f0e8} repo"), "{tabs}");
 }
@@ -728,11 +926,20 @@ fn opening_a_pr_from_the_map_keeps_the_map_for_the_map_key() {
     pin_layout(&mut app);
     handle_key(&mut app, key(KeyCode::Char('s')));
     app.settle_map();
-    let eleven = app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()].clone();
+    let eleven = app.map.layout.bodies()[app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(11)))
+        .unwrap()]
+    .clone();
     let camera = app.map.camera;
-    app.map.selected = Some(9);
+    app.map.selected = Some(NodeId::Item(ItemRef::github(9)));
     handle_key(&mut app, key(KeyCode::Enter));
-    assert_eq!(app.nav.requested.or(app.nav.current), Some(9), "enter opens the PR");
+    assert_eq!(
+        app.nav.requested.or(app.nav.current),
+        Some(ItemRef::github(9)),
+        "enter opens the PR"
+    );
     assert_eq!(app.nav.tab, Tab::Details, "on its Details tab");
     let text = super::test_support::frame_text(&mut app);
     assert!(text.contains("No comments yet") && !text.contains("6 items"), "{text}");
@@ -740,10 +947,22 @@ fn opening_a_pr_from_the_map_keeps_the_map_for_the_map_key() {
     assert_eq!(app.nav.tab, Tab::Map, "the map key returns to the map");
     app.settle_map();
     assert_eq!(app.map.filter.scope, MapScope::Repo);
-    assert_eq!(app.map.selected, Some(9), "the opened node stays selected");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(9))),
+        "the opened node stays selected"
+    );
     assert_eq!(app.map.camera, camera, "the view holds still");
-    let back = &app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()];
-    assert_eq!((back.x, back.y, back.pinned), (eleven.x, eleven.y, eleven.pinned), "pins survive");
+    let back = &app.map.layout.bodies()[app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(11)))
+        .unwrap()];
+    assert_eq!(
+        (back.x, back.y, back.pinned),
+        (eleven.x, eleven.y, eleven.pinned),
+        "pins survive"
+    );
     assert!(map_rows(&mut app).join("\n").contains("whole repo"));
 }
 
@@ -790,16 +1009,37 @@ fn picking_a_strip_row_selects_and_centers_its_node_and_lights_its_chain() {
     let mut app = map_app();
     pin_layout(&mut app);
     handle_key(&mut app, key(KeyCode::Char('J')));
-    assert_eq!(app.map.selected, Some(7), "J does nothing while the strip is hidden");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(7))),
+        "J does nothing while the strip is hidden"
+    );
     handle_key(&mut app, key(KeyCode::Char('B')));
     draw_buffer(&mut app);
     handle_key(&mut app, key(KeyCode::Char('J')));
-    assert_eq!(app.map.selected, Some(11), "from #7 in the bottlenecks, J wraps to the top: ready #11");
-    let eleven = app.map.layout.bodies()[app.map.graph.index_of(11).unwrap()].clone();
-    assert_eq!((app.map.camera.x, app.map.camera.y), (eleven.x, eleven.y), "the view centers on it");
+    assert_eq!(
+        app.map.selected,
+        Some(NodeId::Item(ItemRef::github(11))),
+        "from #7 in the bottlenecks, J wraps to the top: ready #11"
+    );
+    let eleven = app.map.layout.bodies()[app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(11)))
+        .unwrap()]
+    .clone();
+    assert_eq!(
+        (app.map.camera.x, app.map.camera.y),
+        (eleven.x, eleven.y),
+        "the view centers on it"
+    );
     assert!(!app.map.follow);
     handle_key(&mut app, key(KeyCode::Char('J')));
-    assert_eq!((app.map.selected, app.map.strip_cursor()), (Some(11), Some(1)), "#11 again, as a bottleneck");
+    assert_eq!(
+        (app.map.selected, app.map.strip_cursor()),
+        (Some(NodeId::Item(ItemRef::github(11))), Some(1)),
+        "#11 again, as a bottleneck"
+    );
     handle_key(&mut app, key(KeyCode::Char('K')));
     assert_eq!(app.map.strip_cursor(), Some(0));
 
@@ -808,10 +1048,21 @@ fn picking_a_strip_row_selects_and_centers_its_node_and_lights_its_chain() {
     let at = rows.iter().position(|row| row.contains("#7 unblocks")).unwrap() as u16;
     let strip = app.hits.map_strip;
     handle_mouse(&mut app, click(MouseEventKind::Down(MouseButton::Left), strip.x + 3, strip.y + at));
-    assert_eq!(app.map.selected, Some(7));
+    assert_eq!(app.map.selected, Some(NodeId::Item(ItemRef::github(7))));
     let buf = draw_buffer(&mut app);
-    let (rect, _) = app.hits.map_nodes.iter().find(|(_, i)| *i == 11).copied().unwrap();
-    assert!(buf[(rect.x, rect.y)].modifier.contains(ratatui::style::Modifier::UNDERLINED), "#11 is on #7's chain");
+    let (rect, _) = app
+        .hits
+        .map_nodes
+        .iter()
+        .find(|(_, i)| *i == NodeId::Item(ItemRef::github(11)))
+        .copied()
+        .unwrap();
+    assert!(
+        buf[(rect.x, rect.y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED),
+        "#11 is on #7's chain"
+    );
 }
 
 #[test]
@@ -837,30 +1088,50 @@ fn the_chain_and_id_caches_stay_valid_across_selection_and_rebuild() {
     let mut app = map_app();
     pin_layout(&mut app);
     let at = |app: &App, ids: &[u64]| -> std::collections::HashSet<usize> {
-        ids.iter().map(|&id| app.map.graph.index_of(id).unwrap()).collect()
+        ids.iter()
+            .map(|&id| {
+                app.map
+                    .graph
+                    .index_of(NodeId::Item(ItemRef::github(id)))
+                    .unwrap()
+            })
+            .collect()
     };
-    app.map.selected = Some(7);
+    app.map.selected = Some(NodeId::Item(ItemRef::github(7)));
     app.map.refresh_chain();
     assert_eq!(app.map.chain(), Some(&at(&app, &[11, 12])));
-    app.map.selected = Some(8);
+    app.map.selected = Some(NodeId::Item(ItemRef::github(8)));
     app.map.refresh_chain();
     assert_eq!(app.map.chain(), Some(&at(&app, &[7, 11, 12])), "a new selection recomputes");
     app.map.selected = None;
     app.map.refresh_chain();
     assert_eq!(app.map.chain(), None);
     // A rebuild recomputes for the same selection.
-    app.map.selected = Some(7);
+    app.map.selected = Some(NodeId::Item(ItemRef::github(7)));
     app.map.refresh_chain();
     app.map.filter.blocks = false;
     app.settle_map();
     app.map.refresh_chain();
-    assert_eq!(app.map.graph.index_of(12), None, "the blockers left the graph");
-    assert_eq!(app.map.chain(), Some(&std::collections::HashSet::new()), "a rebuild recomputes");
+    assert_eq!(
+        app.map.graph.index_of(NodeId::Item(ItemRef::github(12))),
+        None,
+        "the blockers left the graph"
+    );
+    assert_eq!(
+        app.map.chain(),
+        Some(&std::collections::HashSet::new()),
+        "a rebuild recomputes"
+    );
     for (i, node) in app.map.graph.nodes.iter().enumerate() {
         assert_eq!(app.map.graph.index_of(node.id), Some(i));
     }
-    assert_eq!(app.map.item(7).map(|item| item.title.as_str()), Some("Center issue"));
-    assert!(app.map.item(999).is_none());
+    assert_eq!(
+        app.map
+            .item(ItemRef::github(7))
+            .map(|item| item.title.as_str()),
+        Some("Center issue")
+    );
+    assert!(app.map.item(ItemRef::github(999)).is_none());
 }
 
 #[test]
@@ -868,14 +1139,56 @@ fn the_edge_hit_grid_finds_the_topmost_edge_in_one_lookup() {
     let mut grid = crate::app::EdgeGrid::default();
     assert_eq!(grid.at(3, 4), None);
     grid.reset(ratatui::layout::Rect::new(2, 3, 5, 4));
-    grid.set(3, 4, 1, 2);
-    grid.set(3, 4, 5, 6);
-    grid.set(6, 6, 7, 8);
-    grid.set(7, 3, 9, 9);
-    grid.set(1, 3, 9, 9);
-    assert_eq!(grid.at(3, 4), Some((5, 6)), "the later draw wins");
-    assert_eq!(grid.at(6, 6), Some((7, 8)));
-    assert_eq!((grid.at(7, 3), grid.at(1, 3), grid.at(4, 4)), (None, None, None), "outside or empty");
+    grid.set(
+        3,
+        4,
+        NodeId::Item(ItemRef::github(1)),
+        NodeId::Item(ItemRef::github(2)),
+    );
+    grid.set(
+        3,
+        4,
+        NodeId::Item(ItemRef::github(5)),
+        NodeId::Item(ItemRef::github(6)),
+    );
+    grid.set(
+        6,
+        6,
+        NodeId::Item(ItemRef::github(7)),
+        NodeId::Item(ItemRef::github(8)),
+    );
+    grid.set(
+        7,
+        3,
+        NodeId::Item(ItemRef::github(9)),
+        NodeId::Item(ItemRef::github(9)),
+    );
+    grid.set(
+        1,
+        3,
+        NodeId::Item(ItemRef::github(9)),
+        NodeId::Item(ItemRef::github(9)),
+    );
+    assert_eq!(
+        grid.at(3, 4),
+        Some((
+            NodeId::Item(ItemRef::github(5)),
+            NodeId::Item(ItemRef::github(6))
+        )),
+        "the later draw wins"
+    );
+    assert_eq!(
+        grid.at(6, 6),
+        Some((
+            NodeId::Item(ItemRef::github(7)),
+            NodeId::Item(ItemRef::github(8))
+        ))
+    );
+    assert_eq!(
+        (grid.at(7, 3), grid.at(1, 3), grid.at(4, 4)),
+        (None, None, None),
+        "outside or empty"
+    );
     assert_eq!(grid.drawn().count(), 2);
     grid.clear();
     assert_eq!(grid.at(3, 4), None);
@@ -901,13 +1214,21 @@ fn o_opens_the_selected_node_and_esc_returns_from_its_details() {
     pin_layout(&mut app);
     draw_buffer(&mut app);
     handle_key(&mut app, key(KeyCode::Char('.')));
-    assert_eq!(app.map.selected, Some(8));
+    assert_eq!(app.map.selected, Some(NodeId::Item(ItemRef::github(8))));
     handle_key(&mut app, key(KeyCode::Char('o')));
     assert_eq!(app.message, "opened #8 in browser");
     handle_key(&mut app, key(KeyCode::Enter));
     assert_eq!(app.nav.tab, Tab::Details, "Enter opens the node's details");
-    assert_eq!(app.nav.requested, Some(8), "#8 is loading");
+    assert_eq!(app.nav.requested, Some(ItemRef::github(8)), "#8 is loading");
     handle_key(&mut app, key(KeyCode::Esc));
-    assert_eq!((app.nav.pane, app.nav.tab), (Pane::Main, Tab::Map), "Esc comes back to the map");
-    assert_eq!((app.nav.current, app.nav.requested), (Some(7), Some(7)), "centered where it was; the #8 load is dropped");
+    assert_eq!(
+        (app.nav.pane, app.nav.tab),
+        (Pane::Main, Tab::Map),
+        "Esc comes back to the map"
+    );
+    assert_eq!(
+        (app.nav.current, app.nav.requested),
+        (Some(ItemRef::github(7)), Some(ItemRef::github(7))),
+        "centered where it was; the #8 load is dropped"
+    );
 }

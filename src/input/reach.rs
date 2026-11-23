@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use crate::app::{App, board_move};
 use crate::core::{Dialog, Layer, Pane};
 use crate::keymap;
+use crate::model::ItemRef;
 
 /// How far a move goes. The sign of `Half` and `Page` is the direction.
 #[derive(Clone, Copy)]
@@ -101,7 +102,7 @@ fn pane(app: &mut App, to: Reach) {
 }
 
 /// Sidebar rows are three lines each.
-fn list(app: &mut App, order: Vec<u64>, area: Rect, to: Reach) {
+fn list(app: &mut App, order: Vec<ItemRef>, area: Rect, to: Reach) {
     let rows = (area.height as usize / 3).max(1);
     let base = app.nav.hover.filter(|n| order.contains(n)).or(app.nav.current);
     if let Some(n) = target(&order, base, rows, to) {
@@ -110,7 +111,12 @@ fn list(app: &mut App, order: Vec<u64>, area: Rect, to: Reach) {
 }
 
 /// The row `to` lands on, clamped to the list. `None` for an empty list.
-fn target(order: &[u64], base: Option<u64>, rows_per_view: usize, to: Reach) -> Option<u64> {
+fn target(
+    order: &[ItemRef],
+    base: Option<ItemRef>,
+    rows_per_view: usize,
+    to: Reach,
+) -> Option<ItemRef> {
     let last = order.len().checked_sub(1)?;
     let at = base.and_then(|n| order.iter().position(|row| *row == n));
     let index = match (to.rows(rows_per_view), at) {

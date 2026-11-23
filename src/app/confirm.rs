@@ -9,6 +9,7 @@ use ratatui::backend::CrosstermBackend;
 use crate::app::{App, Focus, NavIntent, spawn_bg};
 use crate::github;
 use crate::model::IssueData;
+use crate::model::ItemRef;
 
 /// One button of a generic confirm dialog: the key that picks it plus
 /// its label. `Esc` always cancels and never needs a listed choice.
@@ -39,7 +40,7 @@ pub(crate) enum ConfirmKind {
     Quit,
     /// Close or reopen an issue or PR: `open` is the state it will get.
     /// Choice 0 does it, choice 1 (and `Esc`) cancels.
-    SetState { number: u64, open: bool },
+    SetState { number: ItemRef, open: bool },
 }
 
 /// What `u` restores while its toast is up. Each variant carries exactly
@@ -47,7 +48,7 @@ pub(crate) enum ConfirmKind {
 #[derive(Clone, Debug)]
 pub(crate) enum UndoAction {
     Evict {
-        number: u64,
+        number: ItemRef,
         visited_at: Option<usize>,
         recent_at: Option<usize>,
         data: Option<Box<IssueData>>,
@@ -156,7 +157,7 @@ impl App {
                     self.diff.expanded_rows.insert(n);
                 }
                 self.show_issue(n);
-                self.notify(format!("restored #{n}"));
+                self.notify(format!("restored {n}", n = n.display("")));
             }
             UndoAction::Query { index, query } => {
                 let name = query.name.clone();
@@ -219,14 +220,20 @@ impl App {
         };
         let Some(state) = self.issues.data.get(&n).map(|d| d.state.as_str()) else { return };
         if state == "MERGED" {
-            self.notify(format!("#{n} is merged: nothing to close"));
+            self.notify(format!(
+                "{n} is merged: nothing to close",
+                n = n.display("")
+            ));
             return;
         }
         let open = state == "CLOSED";
         let verb = if open { "Reopen" } else { "Close" };
         self.open_confirm(ConfirmDialog {
-            title: format!("{verb} #{n}?"),
-            body: vec![ConfirmLine::strong(format!("This changes #{n} on GitHub."))],
+            title: format!("{verb} {n}?", n = n.display("")),
+            body: vec![ConfirmLine::strong(format!(
+                "This changes {n} on GitHub.",
+                n = n.display("")
+            ))],
             choices: vec![
                 ConfirmChoice { key: if open { 'r' } else { 'c' }, label: verb.to_lowercase() },
                 ConfirmChoice { key: 'n', label: "cancel".to_string() },
@@ -236,14 +243,18 @@ impl App {
     }
 
     /// Send the state change on a background thread.
-    fn start_set_state(&mut self, number: u64, open: bool) {
+    fn start_set_state(&mut self, number: ItemRef, open: bool) {
         let repo = self.repo_flag.clone().or_else(|| self.repo_slug.clone()).unwrap_or_default();
         let tx = self.compose.state_tx.clone();
         spawn_bg(async move {
             let result = github::set_state(&repo, number, open).await;
             let _ = tx.send((number, open, result));
         });
-        self.notify(format!("{} #{number}…", if open { "reopening" } else { "closing" }));
+        self.notify(format!(
+            "{} {number}…",
+            if open { "reopening" } else { "closing" },
+            number = number.display("")
+        ));
     }
 
     /// A confirm modal is up, whatever it decides.
@@ -333,7 +344,11 @@ impl App {
         self.open_confirm(ConfirmDialog {
             title: "Unsubmitted comments".to_string(),
             body: vec![
-                ConfirmLine::plain(format!("#{n} has {count} unsubmitted comment{s}.", s = if count == 1 { "" } else { "s" })),
+                ConfirmLine::plain(format!(
+                    "{n} has {count} unsubmitted comment{s}.",
+                    s = if count == 1 { "" } else { "s" },
+                    n = n.display("")
+                )),
                 ConfirmLine::plain("Discard leaves them pending on GitHub.".to_string()),
             ],
             choices: vec![
@@ -423,7 +438,7 @@ pub(crate) fn poll_auth(app: &mut App) -> bool {
 /// Land a close or reopen: success refreshes the item and its sidebar
 /// row; failure names the cause and runs the auth path.
 pub(crate) fn poll_set_state(app: &mut App) -> bool {
-    let ready: Vec<(u64, bool, Result<(), String>)> = app.compose.state_rx.try_iter().collect();
+    let ready: Vec<(ItemRef, bool, Result<(), String>)> = app.compose.state_rx.try_iter().collect();
     let landed = !ready.is_empty();
     for (n, open, res) in ready {
         match res {
@@ -434,7 +449,11 @@ pub(crate) fn poll_set_state(app: &mut App) -> bool {
                 }
                 app.queue_issue(n, true);
                 app.refresh_listing();
-                app.notify(format!("{} #{n}", if open { "reopened" } else { "closed" }));
+                app.notify(format!(
+                    "{} {n}",
+                    if open { "reopened" } else { "closed" },
+                    n = n.display("")
+                ));
             }
             Err(e) => {
                 auth_failure(app, &e);

@@ -1,17 +1,18 @@
 //! Sidebar rows: row kinds, grouping, relative dates and row lines.
 
 use super::*;
+use crate::model::ItemRef;
 
 /// A sidebar row: an issue/PR number, or a divider labeled with the
 /// section that follows it (`requested`, `recent`, or a milestone group).
 /// The leading pinned section needs no divider since its rows carry 📌.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SideRow {
-    Item(u64),
+    Item(ItemRef),
     /// Sub-issue tree row: `guide` is the ready-to-draw connector column.
     /// `outside` marks a child the current query did not fetch.
     Tree {
-        number: u64,
+        number: ItemRef,
         depth: usize,
         guide: String,
         has_children: bool,
@@ -24,7 +25,7 @@ pub enum SideRow {
 }
 
 impl SideRow {
-    pub fn number(&self) -> Option<u64> {
+    pub fn number(&self) -> Option<ItemRef> {
         match self {
             SideRow::Item(n) | SideRow::Tree { number: n, .. } => Some(*n),
             SideRow::Loading { .. } | SideRow::Divider(_) => None,
@@ -38,7 +39,7 @@ impl SideRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LazyChildren {
     Loading,
-    Loaded(Vec<u64>),
+    Loaded(Vec<ItemRef>),
 }
 
 /// Display grouping for the sidebar's recent rows.
@@ -104,8 +105,8 @@ pub fn sidebar_lines(
     fields: &RowFields,
 ) -> (String, String, String, String, String, String) {
     let first = format!(
-        "#{}{} {}",
-        issue.number,
+        "{}{} {}",
+        issue.number.display(""),
         if pinned { " 📌" } else { "" },
         slug(&issue.title, 30.min(width))
     );

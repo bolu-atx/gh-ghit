@@ -11,6 +11,7 @@ use crate::keymap::Action;
 use super::menu;
 use super::reach::{Reach, reach};
 use super::{jump_search_hit, move_diff_cursor, pane_down};
+use crate::model::ItemRef;
 
 pub(super) fn perform(app: &mut App, action: Action) {
     match action {
@@ -284,7 +285,7 @@ fn open_row(app: &mut App) {
 fn fold_all(app: &mut App) {
     let (_, _, recent) = app.pane_groups(false, true);
     let all = core::tree_rows(&recent, &app.issues.data, &Default::default(), &app.subs.state);
-    let parents: Vec<u64> = all.iter().filter_map(|row| match row {
+    let parents: Vec<ItemRef> = all.iter().filter_map(|row| match row {
         crate::model::SideRow::Tree { number, has_children: true, .. } => Some(*number),
         _ => None,
     }).collect();

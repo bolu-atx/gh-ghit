@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use super::test_support::{click, key, loaded_app};
+use crate::model::ItemRef;
 
 /// One drawn frame: text rows, the buffer and the terminal cursor.
 struct Shot {
@@ -45,7 +46,7 @@ fn type_text(app: &mut App, text: &str) {
 
 fn open() -> App {
     let mut app = loaded_app();
-    app.show_issue(7);
+    app.show_issue(ItemRef::github(7));
     handle_key(&mut app, key(KeyCode::Char('c')));
     assert!(app.compose_open());
     app

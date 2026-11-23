@@ -9,6 +9,8 @@ use crate::keymap::Action;
 use crate::model::{LinkKind, MapLink, MapScope};
 use super::map_tests::{map_app, map_rows, pin_layout, popup_rows};
 use super::test_support::{click, draw_buffer, key};
+use crate::model::ItemRef;
+use crate::model::NodeId;
 
 /// The map of `map_tests`, with labels on two items, settled and pinned,
 /// with the filter dialog open.
@@ -85,15 +87,29 @@ fn map_filter_dialog_draws_scope_switches_and_chips() {
 fn filter_keys_apply_live_and_keep_surviving_nodes_in_place() {
     let mut app = filter_app();
     let at = |app: &App, id: u64| {
-        let body = &app.map.layout.bodies()[app.map.graph.index_of(id).unwrap()];
+        let body = &app.map.layout.bodies()[app
+            .map
+            .graph
+            .index_of(NodeId::Item(ItemRef::github(id)))
+            .unwrap()];
         (body.x, body.y)
     };
     let before = at(&app, 8);
-    assert!(app.map.graph.index_of(9).is_some());
+    assert!(app
+        .map
+        .graph
+        .index_of(NodeId::Item(ItemRef::github(9)))
+        .is_some());
     handle_key(&mut app, key(KeyCode::Char('p')));
     assert!(!app.map.filter.prs);
     app.map_tick();
-    assert!(app.map.graph.index_of(9).is_none(), "PRs off drops #9 on the next frame");
+    assert!(
+        app.map
+            .graph
+            .index_of(NodeId::Item(ItemRef::github(9)))
+            .is_none(),
+        "PRs off drops #9 on the next frame"
+    );
     assert_eq!(at(&app, 8), before, "a surviving node keeps its place");
     assert!(app.map.moving(), "the change wakes the layout");
     let summary = map_rows(&mut app).join("\n");
@@ -117,7 +133,13 @@ fn filter_keys_apply_live_and_keep_surviving_nodes_in_place() {
     handle_key(&mut app, key(KeyCode::Char('s')));
     assert_eq!(app.map.filter.scope, MapScope::Repo);
     app.map_tick();
-    assert!(app.map.graph.index_of(30).is_some(), "the whole repo shows #30");
+    assert!(
+        app.map
+            .graph
+            .index_of(NodeId::Item(ItemRef::github(30)))
+            .is_some(),
+        "the whole repo shows #30"
+    );
     handle_key(&mut app, key(KeyCode::Char('r')));
     assert_eq!(app.map.filter, crate::model::MapFilter { scope: MapScope::Repo, ..Default::default() },
         "r resets every switch but keeps the scope");
@@ -199,13 +221,27 @@ fn the_toolbar_menu_and_hint_bar_reach_the_map_filter() {
 fn an_edge_card_names_every_kind_the_edge_carries() {
     let mut app = map_app();
     let mut links = app.map.links.clone();
-    links.push(MapLink { src: 7, dst: 8, kind: LinkKind::Parent });
+    links.push(MapLink {
+        src: ItemRef::github(7),
+        dst: ItemRef::github(8),
+        kind: LinkKind::Parent,
+    });
     let items = app.map.items.clone();
     app.set_map_data(items, links);
     pin_layout(&mut app);
-    let edge = app.map.graph.edge_between(7, 8).unwrap();
-    assert_eq!(app.map.graph.relation(edge), "#7 blocks and is the parent of #8");
-    app.map.selected = Some(7);
+    let edge = app
+        .map
+        .graph
+        .edge_between(
+            NodeId::Item(ItemRef::github(7)),
+            NodeId::Item(ItemRef::github(8)),
+        )
+        .unwrap();
+    assert_eq!(
+        app.map.graph.relation(edge),
+        "#7 blocks and is the parent of #8"
+    );
+    app.map.selected = Some(NodeId::Item(ItemRef::github(7)));
     while app.map.card_edge() != Some(edge) {
         handle_key(&mut app, key(KeyCode::Char('>')));
     }
@@ -221,6 +257,17 @@ fn an_edge_card_names_every_kind_the_edge_carries() {
     handle_key(&mut app, key(KeyCode::Char(' ')));
     assert!(!app.map.filter.parents);
     app.map_tick();
-    let edge = app.map.graph.edge_between(7, 8).unwrap();
-    assert_eq!(app.map.graph.relation(edge), "#7 blocks #8", "a hidden kind leaves the edge's words");
+    let edge = app
+        .map
+        .graph
+        .edge_between(
+            NodeId::Item(ItemRef::github(7)),
+            NodeId::Item(ItemRef::github(8)),
+        )
+        .unwrap();
+    assert_eq!(
+        app.map.graph.relation(edge),
+        "#7 blocks #8",
+        "a hidden kind leaves the edge's words"
+    );
 }

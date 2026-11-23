@@ -2,6 +2,7 @@
 
 use super::*;
 use super::board::card_pr_state;
+use crate::model::ItemRef;
 
 #[test]
 fn board_milestones_sort_and_push_none_last() {
@@ -25,18 +26,56 @@ fn board_milestones_sort_and_push_none_last() {
 #[test]
 fn board_groups_unknowns() {
     let items = vec![
-        BoardItem { title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![], repo: None, milestone: None, content: serde_json::Value::Null },
-        BoardItem { title: "b".into(), number: Some(2), status: Some("Done".into()), labels: vec![], repo: None, milestone: None, content: serde_json::Value::Null },
-        BoardItem { title: "c".into(), number: Some(3), status: Some("Mystery".into()), labels: vec![], repo: None, milestone: None, content: serde_json::Value::Null },
+        BoardItem {
+            title: "a".into(),
+            number: Some(ItemRef::github(1)),
+            status: Some("Todo".into()),
+            labels: vec![],
+            repo: None,
+            milestone: None,
+            content: serde_json::Value::Null,
+        },
+        BoardItem {
+            title: "b".into(),
+            number: Some(ItemRef::github(2)),
+            status: Some("Done".into()),
+            labels: vec![],
+            repo: None,
+            milestone: None,
+            content: serde_json::Value::Null,
+        },
+        BoardItem {
+            title: "c".into(),
+            number: Some(ItemRef::github(3)),
+            status: Some("Mystery".into()),
+            labels: vec![],
+            repo: None,
+            milestone: None,
+            content: serde_json::Value::Null,
+        },
     ];
     let cols = board_columns(&items, &["Todo".to_string(), "Done".to_string()]);
-    assert_eq!(cols.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), vec!["Todo", "Done", "Other"]);
-    assert_eq!(cols[2].1.iter().map(|c| c.number).collect::<Vec<_>>(), vec![Some(3)]);
+    assert_eq!(
+        cols.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        vec!["Todo", "Done", "Other"]
+    );
+    assert_eq!(
+        cols[2].1.iter().map(|c| c.number).collect::<Vec<_>>(),
+        vec![Some(ItemRef::github(3))]
+    );
 }
 
 #[test]
 fn card_footer_splits_labels_left_and_date_right() {
-    let item = BoardItem { title: "a".into(), number: Some(1), status: Some("Todo".into()), labels: vec![Label { name: "bug".into() }], repo: None, milestone: None, content: serde_json::Value::Null };
+    let item = BoardItem {
+        title: "a".into(),
+        number: Some(ItemRef::github(1)),
+        status: Some("Todo".into()),
+        labels: vec![Label { name: "bug".into() }],
+        repo: None,
+        milestone: None,
+        content: serde_json::Value::Null,
+    };
     assert_eq!(card_footer_labels(&item), "● bug");
     let bare = BoardItem { labels: vec![], ..item.clone() };
     assert_eq!(card_footer_labels(&bare), "–");
@@ -49,7 +88,7 @@ fn card_footer_splits_labels_left_and_date_right() {
 fn card_pr_state_missing_is_draft_shows_nothing() {
     let card = |content: serde_json::Value| BoardItem {
         title: "a".into(),
-        number: Some(1),
+        number: Some(ItemRef::github(1)),
         status: Some("Todo".into()),
         labels: vec![],
         repo: None,

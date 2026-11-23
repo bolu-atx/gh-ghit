@@ -8,6 +8,7 @@ use crate::app::{App, Tab};
 use crate::core::{Dialog, Pane};
 use crate::input::{handle_key, handle_mouse};
 use crate::keymap::{Action, Context};
+use crate::model::ItemRef;
 
 const HEIGHT: u16 = 50;
 
@@ -25,7 +26,7 @@ fn issues_app() -> App {
 
 fn diff_app() -> App {
     let mut app = loaded_app();
-    app.show_issue(9);
+    app.show_issue(ItemRef::github(9));
     app.set_tab(Tab::Visual);
     app.nav.pane = Pane::Main;
     app
@@ -33,7 +34,7 @@ fn diff_app() -> App {
 
 fn filters_app() -> App {
     let mut app = loaded_app();
-    app.refs.numbers = vec![9];
+    app.refs.numbers = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string()];
     app.nav.pane = Pane::Labels;
