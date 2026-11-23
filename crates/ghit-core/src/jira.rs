@@ -4,6 +4,7 @@
 #[path = "jira_tests.rs"]
 mod tests;
 
+pub mod auth;
 mod detail;
 mod search;
 mod sync;
@@ -20,6 +21,7 @@ pub struct JiraRepoConfig {
     pub site: String,
     pub project: String,
     pub email: String,
+    pub token_command: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -33,6 +35,7 @@ struct RepoRaw {
     site: Option<String>,
     project: Option<String>,
     email: Option<String>,
+    token_command: Option<String>,
 }
 
 /// A startup failure. `message` is the one clear line jtui prints.
@@ -43,6 +46,8 @@ pub enum StartupError {
     MissingField { repo: String, field: &'static str },
     BadToml { path: PathBuf, detail: String },
     MissingToken,
+    TokenCommand { command: String },
+    KeychainUnavailable,
     BadAuth,
     UnknownProject { project: String },
     Http { status: u16, url: String },
@@ -67,10 +72,17 @@ impl StartupError {
                 format!("bad Jira config at {}: {detail}", path.display())
             }
             Self::MissingToken => {
-                "JIRA_API_TOKEN is not set: export the Jira API token for your account email".to_string()
+                "no Jira token: run jtui auth login, or set JIRA_API_TOKEN".to_string()
             }
+            Self::TokenCommand { command } => {
+                format!("token_command failed or returned empty output: {command}")
+            }
+            Self::KeychainUnavailable => "keychain is unavailable".to_string(),
             Self::BadAuth => {
-                "Jira rejected the email or JIRA_API_TOKEN (401/403): check the config email and token".to_string()
+                concat!(
+                    "Jira rejected the email or JIRA_API_TOKEN (401/403): ",
+                    "check the config email and token (scoped tokens are not supported)",
+                ).to_string()
             }
             Self::UnknownProject { project } => {
                 format!("unknown Jira project {project}: check the project key in the config")
@@ -148,6 +160,7 @@ fn repo_config(parsed: &FileConfig, path: &std::path::Path, repo: &str) -> Resul
         site: field(&raw.site, "site")?,
         project: field(&raw.project, "project")?,
         email: field(&raw.email, "email")?,
+        token_command: raw.token_command.clone(),
     })
 }
 
@@ -167,14 +180,6 @@ fn load_repo_config_at(repo: &str, path: &std::path::Path) -> Result<JiraRepoCon
     })?;
     let parsed = parse_config(&text, path)?;
     repo_config(&parsed, path, repo)
-}
-
-/// The Jira API token. It comes from the environment only, never from the config file.
-pub fn token_from_env() -> Result<String, StartupError> {
-    match std::env::var("JIRA_API_TOKEN") {
-        Ok(token) if !token.trim().is_empty() => Ok(token.trim().to_string()),
-        _ => Err(StartupError::MissingToken),
-    }
 }
 
 fn base_url(site: &str) -> String {
@@ -199,6 +204,7 @@ pub struct JiraClient {
     base: String,
     email: String,
     token: String,
+    source: auth::TokenSource,
     project: String,
     config_path: PathBuf,
 }
@@ -218,21 +224,35 @@ impl std::fmt::Debug for JiraClient {
 
 impl JiraClient {
     pub fn new(site: &str, email: String, token: String, project: String) -> Self {
-        Self { base: base_url(site), email, token, project, config_path: config_path() }
+        Self {
+            base: base_url(site), email, token, project, config_path: config_path(),
+            source: auth::TokenSource::Env,
+        }
     }
 
-    pub fn from_config(config: JiraRepoConfig, token: String) -> Self {
-        Self::new(&config.site, config.email, token, config.project)
+    pub fn from_config(
+        config: JiraRepoConfig, token: String, source: auth::TokenSource,
+    ) -> Self {
+        let mut client = Self::new(&config.site, config.email, token, config.project);
+        client.source = source;
+        client
     }
 
     /// Load the config entry and token for `repo` and build the client.
-    pub fn for_repo(repo: &str) -> Result<Self, StartupError> {
+    pub fn for_repo(
+        repo: &str, store: Option<&dyn auth::TokenStore>,
+    ) -> Result<Self, StartupError> {
         let path = config_path();
         let config = load_repo_config_at(repo, &path)?;
-        let token = token_from_env()?;
-        let mut client = Self::from_config(config, token);
+        let resolved = auth::resolve_token(&config, store)?;
+        let (token, source) = resolved.token.ok_or(StartupError::MissingToken)?;
+        let mut client = Self::from_config(config, token, source);
         client.config_path = path;
         Ok(client)
+    }
+
+    pub fn token_source(&self) -> auth::TokenSource {
+        self.source
     }
 
     pub fn base(&self) -> &str {
@@ -267,11 +287,25 @@ impl JiraClient {
 
     /// Startup check: the token must answer for this account and the project must exist.
     pub async fn check_startup(&self) -> Result<(), StartupError> {
-        self.get_status(&self.myself_url(), None).await?;
+        self.check_identity().await?;
         self.get_status(&self.project_url(), Some(&self.project)).await
     }
 
+    pub async fn check_identity(&self) -> Result<(), StartupError> {
+        let url = self.myself_url();
+        let status = self.request_status(&url).await?;
+        auth::identity_status(status, &url)
+    }
+
     async fn get_status(&self, url: &str, project: Option<&str>) -> Result<(), StartupError> {
+        let status = self.request_status(url).await?;
+        match startup_error_for_status(status, url, project) {
+            None => Ok(()),
+            Some(error) => Err(error),
+        }
+    }
+
+    async fn request_status(&self, url: &str) -> Result<u16, StartupError> {
         let res = client()
             .get(url)
             .basic_auth(&self.email, Some(&self.token))
@@ -279,10 +313,7 @@ impl JiraClient {
             .send()
             .await
             .map_err(|e| StartupError::Network { detail: e.to_string() })?;
-        match startup_error_for_status(res.status().as_u16(), url, project) {
-            None => Ok(()),
-            Some(error) => Err(error),
-        }
+        Ok(res.status().as_u16())
     }
 }
 

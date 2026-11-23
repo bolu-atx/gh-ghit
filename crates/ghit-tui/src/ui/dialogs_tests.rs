@@ -686,11 +686,32 @@ fn settings_dialog_shows_the_jira_connection_without_the_token() {
     app.open_settings();
     let text = frame_text_sized(&mut app, 100, 40);
     for wanted in ["Jira", "site", "example.atlassian.net", "project key", "PROJ", "account email",
-        "me@example.com", "token", "set from JIRA_API_TOKEN", "config file", "open config file"]
+        "me@example.com", "token", "from JIRA_API_TOKEN", "config file", "open config file"]
     {
         assert!(text.contains(wanted), "{wanted} in:\n{text}");
     }
     assert!(!text.contains("secret-token-value"), "the token value never shows:\n{text}");
+}
+
+#[test]
+fn settings_dialog_shows_command_and_keychain_sources() {
+    use ghit_core::jira::{auth::TokenSource, JiraClient, JiraRepoConfig};
+
+    let _prefs = TempPrefs::new();
+    for source in [TokenSource::Command, TokenSource::Keychain] {
+        let config = JiraRepoConfig {
+            site: "example.atlassian.net".into(), project: "PROJ".into(),
+            email: "me@example.com".into(), token_command: None,
+        };
+        let client = JiraClient::from_config(config, "secret-token-value".into(), source);
+        let backend = ghit_core::backend::IssueBackend::Jira(std::sync::Arc::new(client));
+        let mut app = crate::app::App::with_backend(Some("o/r".into()), backend);
+        app.open_settings();
+        let text = frame_text_sized(&mut app, 120, 40);
+        assert!(text.contains(source.settings_text()), "{text}");
+        assert!(!text.contains("secret-token-value"), "{text}");
+        assert!(!text.contains("from JIRA_API_TOKEN"), "{text}");
+    }
 }
 
 #[test]

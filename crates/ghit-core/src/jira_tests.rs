@@ -21,6 +21,7 @@ fn good_config_parses_for_its_repo() {
             site: "example.atlassian.net".to_string(),
             project: "PROJ".to_string(),
             email: "me@example.com".to_string(),
+            token_command: None,
         }
     );
 }
@@ -152,4 +153,12 @@ fn debug_output_redacts_the_token() {
     let shown = format!("{client:?}");
     assert!(!shown.contains("s3cret-token"));
     assert!(shown.contains("<redacted>"));
+}
+
+#[test]
+fn token_command_is_optional_and_preserved() {
+    let text = format!("{GOOD}token_command = \"op read op://Private/jira/token\"\n");
+    let parsed = parse_config(&text, &path()).unwrap();
+    let config = repo_config(&parsed, &path(), "owner/repo").unwrap();
+    assert_eq!(config.token_command.as_deref(), Some("op read op://Private/jira/token"));
 }

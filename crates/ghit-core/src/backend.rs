@@ -25,6 +25,7 @@ pub struct JiraInfo {
     pub project: String,
     pub email: String,
     pub config_path: std::path::PathBuf,
+    pub token_source: crate::jira::auth::TokenSource,
 }
 
 impl IssueBackend {
@@ -52,6 +53,7 @@ impl IssueBackend {
                 project: client.project().to_string(),
                 email: client.email().to_string(),
                 config_path: client.config_path().to_path_buf(),
+                token_source: client.token_source(),
             }),
         }
     }

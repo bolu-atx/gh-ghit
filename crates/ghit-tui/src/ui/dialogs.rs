@@ -522,7 +522,7 @@ pub(super) fn render_settings(f: &mut ratatui::Frame, area: Rect, app: &mut App)
             ("site", info.site),
             ("project key", info.project),
             ("account email", info.email),
-            ("token", "set from JIRA_API_TOKEN".to_string()),
+            ("token", info.token_source.settings_text().to_string()),
             ("config file", info.config_path.display().to_string()),
         ] {
             column.info(label, &value);

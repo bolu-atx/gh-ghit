@@ -13,6 +13,11 @@ name = "jtui"
 path = "src/main.rs"
 
 [dependencies]
+keyring.workspace = true
+rpassword.workspace = true
 ghit-core.workspace = true
 ghit-tui.workspace = true
 clap.workspace = true
+
+[dev-dependencies]
+keyring-core = "1.1"

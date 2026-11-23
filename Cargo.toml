@@ -23,5 +23,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.43", features = ["bundled"] }
 toml = "0.8"
 tempfile = "3"
+keyring = { version = "4.2", default-features = false, features = ["v1"] }
+rpassword = "7"
 ghit-core = { path = "crates/ghit-core" }
 ghit-tui = { path = "crates/ghit-tui" }

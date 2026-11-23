@@ -1,11 +1,10 @@
 #!/bin/bash
-# jtui: a token the Jira fixture rejects must exit 1 with the 401 message
-# and never open a drive-mode socket.
+# jtui: auth status reports env and ok; a rejected token exits with the 401 message
+# and never opens a drive-mode socket.
 source "$(dirname "$0")/lib.sh"
 export E2E_SOCK=/tmp/jtui-auth.sock E2E_PANE="$E2E_FRAMES/jtui-auth-pane.txt"
 export XDG_CONFIG_HOME="$E2E_FRAMES/jtui-auth-config"
 e2e_jira_start
-export JIRA_API_TOKEN=e2e-wrong-token
 mkdir -p "$XDG_CONFIG_HOME/jtui"
 cat > "$XDG_CONFIG_HOME/jtui/config.toml" <<EOF
 [repos."$E2E_REPO"]
@@ -13,6 +12,13 @@ site = "fixture.atlassian.net"
 project = "PROJ"
 email = "$JIRA_E2E_EMAIL"
 EOF
+out="$E2E_FRAMES/jtui-status.out"
+XDG_DATA_HOME="$E2E_XDG" timeout 30 "$E2E_ROOT/target/debug/jtui" \
+  auth status -R "$E2E_REPO" >"$out" 2>&1 || fail "auth status: $(cat "$out")"
+grep -q '^token source: env$' "$out" || fail "no env source: $(cat "$out")"
+grep -q '^ok$' "$out" || fail "no ok: $(cat "$out")"
+! grep -q "$JIRA_API_TOKEN" "$out" || fail "auth status printed the token"
+export JIRA_API_TOKEN=e2e-wrong-token
 rm -f "$E2E_SOCK"
 out="$E2E_FRAMES/jtui-auth.out"
 XDG_DATA_HOME="$E2E_XDG" timeout 30 "$E2E_ROOT/target/debug/jtui" \

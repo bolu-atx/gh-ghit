@@ -2,6 +2,7 @@
 //!
 //! Usage: `jtui [numbers...] [-R owner/repo]`
 
+mod auth;
 mod cli;
 
 use std::sync::Arc;
@@ -23,7 +24,14 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let client = match JiraClient::for_repo(&repo) {
+    if let Some(cli::Command::Auth { action }) = &args.command {
+        if let Err(error) = auth::run(action, &repo) {
+            eprintln!("jtui: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    let client = match JiraClient::for_repo(&repo, Some(&auth::OsKeychain)) {
         Ok(client) => client,
         Err(error) => {
             eprintln!("jtui: {}", error.message());
