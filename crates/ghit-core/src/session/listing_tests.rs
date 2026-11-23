@@ -94,3 +94,14 @@ fn a_window_landing_evicts_only_the_vanished_rows_of_either_source() {
     assert_eq!(landed.gone, vec![jira(2)]);
     assert!(session.has_item(pr) && session.has_item(jira(1)) && !session.has_item(jira(2)));
 }
+
+#[test]
+fn jira_info_is_none_for_github_and_never_holds_the_token() {
+    assert_eq!(Session::new(None).jira_info(), None);
+    let info = jira_session().jira_info().expect("jira info");
+    assert_eq!(info.site, "https://example.atlassian.net");
+    assert_eq!(info.project, "proj");
+    assert_eq!(info.email, "me@example.com");
+    assert!(info.config_path.ends_with("jtui/config.toml"));
+    assert!(!format!("{info:?}").contains("secret"));
+}

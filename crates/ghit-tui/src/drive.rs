@@ -301,6 +301,7 @@ pub(crate) fn serve(
             app.notify(format!("re-auth by hand: {}", ghit_core::github::reauth_command()));
         }
         land_editor_request_drive(app);
+        crate::app::land_config_edit_drive(app);
         if app.quit {
             app.tick = app.tick.wrapping_add(1);
             terminal.draw(|f| crate::app::draw_frame(f, app)).map_err(|e| format!("{e:?}"))?;

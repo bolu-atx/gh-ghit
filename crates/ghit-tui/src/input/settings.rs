@@ -26,6 +26,8 @@ pub(super) fn handle_settings_mouse(app: &mut App, m: MouseEvent) {
                 app.set_settings_focus(row);
                 if let Some(option) = option {
                     app.settings_select(row, option);
+                } else if row == crate::app::CONFIG_ROW {
+                    app.request_config_edit();
                 }
             }
             None if !in_rect(app.hits.form_popup, m.column, m.row) => {

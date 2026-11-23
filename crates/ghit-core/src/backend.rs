@@ -18,6 +18,15 @@ pub enum IssueBackend {
     Jira(Arc<JiraClient>),
 }
 
+/// The Jira connection a front end may show. The token is never part of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JiraInfo {
+    pub site: String,
+    pub project: String,
+    pub email: String,
+    pub config_path: std::path::PathBuf,
+}
+
 impl IssueBackend {
     pub fn shares_github_sections(&self) -> bool {
         match self {
@@ -31,6 +40,19 @@ impl IssueBackend {
         match self {
             Self::GitHub => "",
             Self::Jira(client) => client.project(),
+        }
+    }
+
+    /// The Jira connection, or `None` for GitHub.
+    pub fn jira_info(&self) -> Option<JiraInfo> {
+        match self {
+            Self::GitHub => None,
+            Self::Jira(client) => Some(JiraInfo {
+                site: client.site().to_string(),
+                project: client.project().to_string(),
+                email: client.email().to_string(),
+                config_path: client.config_path().to_path_buf(),
+            }),
         }
     }
 

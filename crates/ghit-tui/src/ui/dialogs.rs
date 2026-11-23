@@ -276,6 +276,15 @@ impl FormatColumn {
         self.gap();
     }
 
+    /// Read-only row: muted label, then the value in paper. It is not
+    /// focusable and has no click cell.
+    fn info(&mut self, label: &str, value: &str) {
+        let mut line = self.label_spans(Some(label));
+        line.push(Span::styled(format!("   {value}"),
+            Style::new().bg(theme::ink()).fg(theme::paper())));
+        self.lines.push(Line::from(line));
+    }
+
     /// Muted prose under a section, wrapped to the column width.
     fn hint(&mut self, text: &str) {
         let mut line = String::new();
@@ -494,13 +503,35 @@ pub(super) fn render_settings(f: &mut ratatui::Frame, area: Rect, app: &mut App)
     let focus = app.settings_focus().unwrap_or(0);
     let column_width = sized_popup(area, 60, 1).width.saturating_sub(4) as usize;
     let mut column = FormatColumn::new(column_width, focus);
-    column.gutter(&["theme", "icons", "backfill"]);
+    let jira = app.session.jira_info();
+    let labels: &[&str] = if jira.is_some() {
+        &["theme", "icons", "backfill", "project key", "account email", "config file"]
+    } else {
+        &["theme", "icons", "backfill"]
+    };
+    column.gutter(labels);
     let themes: Vec<(bool, &str)> = theme::THEMES.iter().map(|(name, _)| (*name == theme::name(), *name)).collect();
     column.choice(crate::app::THEME_ROW, Some("theme"), &themes);
     column.choice(crate::app::ICONS_ROW, Some("icons"), &[(theme::nerd(), "nerd font"), (!theme::nerd(), "plain")]);
     column.stepper(crate::app::BACKFILL_ROW, "backfill", &crate::app::months_label(app.session.backfill_months()));
     column.hint("Changes apply and save at once. Backfill is how far back the local copy fetches \
         closed issues and merged PRs.");
+    if let Some(info) = jira {
+        column.quiet_section("Jira");
+        for (label, value) in [
+            ("site", info.site),
+            ("project key", info.project),
+            ("account email", info.email),
+            ("token", "set from JIRA_API_TOKEN".to_string()),
+            ("config file", info.config_path.display().to_string()),
+        ] {
+            column.info(label, &value);
+        }
+        column.field(crate::app::CONFIG_ROW, None, vec![Span::styled("open config file",
+            Style::new().bg(theme::ink()).fg(
+                if focus == crate::app::CONFIG_ROW { theme::amber() } else { theme::paper() }))]);
+        column.hint("Edits apply after a restart.");
+    }
     let context = Context::Dialog(Dialog::Settings);
     let legend_width = sized_popup(area, 60, 1).width.saturating_sub(4);
     let footer_lines = hints::legend(context, app, legend_width, 3);

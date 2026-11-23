@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 
 use super::{
     Action, Binding, Context, MainMode, Gesture, board_row_focused, board_text_focused, help_browsing, esc_has_target, main_menu, help_typing, content_search_live, main_pane, query_live, side_pane,
-    sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
+    jira_settings, sub_issue_tree, undo_live, map_card_open, map_strip_open, graph_focused,
 };
 use ghit_core::core::{Dialog, Pane, TextInput};
 
@@ -199,6 +199,8 @@ const SETTINGS: &[Binding] = &[
     key(KeyCode::Right, Action::SettingsNext, "Next value", "Value", Gesture::Wheel),
     key(KeyCode::Enter, Action::SettingsNext, "Next value", "Value", ALIAS),
     key(ch(' '), Action::SettingsNext, "Next value", "Value", ALIAS),
+    key(ch('e'), Action::SettingsEditConfig, "Open config file", "Value", Gesture::Click)
+        .when(jira_settings).hint_if(6, jira_settings),
 ];
 
 const PHYSICS: &[Binding] = &[

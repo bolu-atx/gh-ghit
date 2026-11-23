@@ -667,3 +667,79 @@ fn format_dialog_has_no_backfill_row() {
     app.open(crate::app::Entry::Format(crate::app::FormatEdit::None));
     assert!(!frame_text_sized(&mut app, 120, 50).contains("backfill"));
 }
+
+fn jira_app() -> crate::app::App {
+    let client = ghit_core::jira::JiraClient::new(
+        "example.atlassian.net",
+        "me@example.com".to_string(),
+        "secret-token-value".to_string(),
+        "PROJ".to_string(),
+    );
+    let backend = ghit_core::backend::IssueBackend::Jira(std::sync::Arc::new(client));
+    crate::app::App::with_backend(Some("o/r".to_string()), backend)
+}
+
+#[test]
+fn settings_dialog_shows_the_jira_connection_without_the_token() {
+    let _prefs = TempPrefs::new();
+    let mut app = jira_app();
+    app.open_settings();
+    let text = frame_text_sized(&mut app, 100, 40);
+    for wanted in ["Jira", "site", "example.atlassian.net", "project key", "PROJ", "account email",
+        "me@example.com", "token", "set from JIRA_API_TOKEN", "config file", "open config file"]
+    {
+        assert!(text.contains(wanted), "{wanted} in:\n{text}");
+    }
+    assert!(!text.contains("secret-token-value"), "the token value never shows:\n{text}");
+}
+
+#[test]
+fn github_settings_dialog_has_no_jira_rows() {
+    let _prefs = TempPrefs::new();
+    let mut app = loaded_app();
+    app.open_settings();
+    let text = frame_text_sized(&mut app, 100, 40);
+    assert!(!text.contains("Jira") && !text.contains("open config file"), "{text}");
+    handle_key(&mut app, key(KeyCode::Char('e')));
+    assert!(!app.config_edit_requested, "e does nothing without a Jira backend");
+}
+
+#[test]
+fn settings_selection_skips_the_read_only_jira_rows() {
+    let _prefs = TempPrefs::new();
+    let mut app = jira_app();
+    app.open_settings();
+    let _ = frame_text_sized(&mut app, 100, 40);
+    let mut seen = vec![app.settings_focus().unwrap()];
+    for _ in 0..4 {
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        seen.push(app.settings_focus().unwrap());
+    }
+    assert_eq!(seen, [0, 1, 2, crate::app::CONFIG_ROW, 0]);
+    handle_key(&mut app, key(KeyCode::Char('k')));
+    assert_eq!(app.settings_focus(), Some(crate::app::CONFIG_ROW), "k wraps back to the action");
+}
+
+#[test]
+fn open_config_file_arms_from_key_click_and_enter_and_drive_names_the_command() {
+    let _prefs = TempPrefs::new();
+    let mut app = jira_app();
+    app.open_settings();
+    let _ = frame_text_sized(&mut app, 100, 40);
+    handle_key(&mut app, key(KeyCode::Char('e')));
+    assert!(app.config_edit_requested, "e arms the edit");
+    app.config_edit_requested = false;
+    press_cell(&mut app, crate::app::CONFIG_ROW, None);
+    assert!(app.config_edit_requested, "a click on the row arms the edit");
+    app.config_edit_requested = false;
+    app.set_settings_focus(crate::app::THEME_ROW);
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert!(!app.config_edit_requested, "enter on another row does not arm it");
+    app.set_settings_focus(crate::app::CONFIG_ROW);
+    handle_key(&mut app, key(KeyCode::Enter));
+    assert!(app.config_edit_requested, "enter on the action row arms the edit");
+    assert!(crate::app::land_config_edit_drive(&mut app));
+    assert!(!app.config_edit_requested);
+    assert!(app.message.contains("config.toml"), "drive names the file: {}", app.message);
+    assert!(!crate::app::land_config_edit_drive(&mut app));
+}

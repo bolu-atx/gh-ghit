@@ -200,6 +200,7 @@ pub struct JiraClient {
     email: String,
     token: String,
     project: String,
+    config_path: PathBuf,
 }
 
 /// Never prints the token, so logs and panics cannot leak it.
@@ -210,13 +211,14 @@ impl std::fmt::Debug for JiraClient {
             .field("email", &self.email)
             .field("token", &"<redacted>")
             .field("project", &self.project)
+            .field("config_path", &self.config_path)
             .finish()
     }
 }
 
 impl JiraClient {
     pub fn new(site: &str, email: String, token: String, project: String) -> Self {
-        Self { base: base_url(site), email, token, project }
+        Self { base: base_url(site), email, token, project, config_path: config_path() }
     }
 
     pub fn from_config(config: JiraRepoConfig, token: String) -> Self {
@@ -225,13 +227,26 @@ impl JiraClient {
 
     /// Load the config entry and token for `repo` and build the client.
     pub fn for_repo(repo: &str) -> Result<Self, StartupError> {
-        let config = load_repo_config(repo)?;
+        let path = config_path();
+        let config = load_repo_config_at(repo, &path)?;
         let token = token_from_env()?;
-        Ok(Self::from_config(config, token))
+        let mut client = Self::from_config(config, token);
+        client.config_path = path;
+        Ok(client)
     }
 
     pub fn base(&self) -> &str {
         &self.base
+    }
+
+    /// The site URL the client talks to.
+    pub fn site(&self) -> &str {
+        &self.base
+    }
+
+    /// The config file the client was loaded from.
+    pub fn config_path(&self) -> &std::path::Path {
+        &self.config_path
     }
 
     pub fn email(&self) -> &str {

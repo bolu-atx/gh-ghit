@@ -7,6 +7,11 @@ use super::Session;
 use crate::model::{BoardData, BoardDetail, DiffFile, IssueData, ItemRef, LazyChildren};
 
 impl Session {
+    /// The Jira connection for a Jira session, `None` for GitHub.
+    pub fn jira_info(&self) -> Option<crate::backend::JiraInfo> {
+        self.issue_backend.jira_info()
+    }
+
     /// How a list shows `n`: `#N` for GitHub, `<KEY>-N` for Jira.
     pub fn label(&self, n: ItemRef) -> String {
         n.display(&self.issue_backend.project_key().to_ascii_uppercase())

@@ -27,7 +27,8 @@ pub(crate) use map_filter::FilterRow;
 pub(crate) use map::CardDetail;
 mod menu;
 mod settings;
-pub(crate) use settings::{months_label, BACKFILL_ROW, ICONS_ROW, THEME_ROW};
+pub(crate) use settings::{land_config_edit_drive, months_label, run_config_edit};
+pub(crate) use settings::{BACKFILL_ROW, CONFIG_ROW, ICONS_ROW, THEME_ROW};
 pub(crate) use menu::{MenuKind, MenuState};
 pub(crate) use finder::FinderRow;
 mod nav;
@@ -301,6 +302,9 @@ pub struct App {
     pub(crate) pending_prefix: Option<char>,
     pub(crate) message_at: Option<std::time::Instant>,
     pub(crate) quit: bool,
+    /// Set by the Settings dialog; the event loop suspends the TUI and
+    /// opens the jtui config file in the editor.
+    pub(crate) config_edit_requested: bool,
     /// Armed by `x` evict and saved-query delete; `u` consumes it.
     pub(crate) undo: Option<PendingUndo>,
     /// Frame counter, bumped once per event-loop pass. Drives the status
@@ -337,6 +341,7 @@ impl App {
             diff: DiffView::new(),
             map: MapView::default(),
             quit: false,
+            config_edit_requested: false,
             hits: HitAreas::default(),
             search: ContentSearch::default(),
             layout: Columns::default(),
@@ -579,6 +584,10 @@ fn event_loop(
         }
         if app.compose.editor_requested {
             run_compose_editor(app, terminal);
+            input_dirty = true;
+        }
+        if app.config_edit_requested {
+            run_config_edit(app, terminal);
             input_dirty = true;
         }
         needs_draw = input_dirty || poll_dirty;

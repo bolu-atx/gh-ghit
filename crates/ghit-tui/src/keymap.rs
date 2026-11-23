@@ -56,7 +56,7 @@ actions! {
     GraphFit, GraphUnpin, GraphScope, GraphCard, GraphNextEdge, GraphPrevEdge, GraphCloseCard,
     GraphPhysics, GraphStrip, GraphStripNext, GraphStripPrev,
     // Settings dialog.
-    CloseSettings, SettingsDown, SettingsUp, SettingsPrev, SettingsNext,
+    CloseSettings, SettingsDown, SettingsUp, SettingsPrev, SettingsNext, SettingsEditConfig,
     // Map physics dialog.
     ClosePhysics, PhysicsDown, PhysicsUp, PhysicsLower, PhysicsRaise, PhysicsReset,
     // Map filter dialog.
@@ -564,6 +564,10 @@ fn board_text_focused(app: &App) -> bool {
 /// Esc at the base has something to do: go back, or open the main menu.
 fn esc_has_target(app: &App) -> bool {
     app.back_target().is_some() || app.esc_opens_menu()
+}
+
+fn jira_settings(app: &App) -> bool {
+    app.session.jira_info().is_some()
 }
 
 fn main_menu(app: &App) -> bool {

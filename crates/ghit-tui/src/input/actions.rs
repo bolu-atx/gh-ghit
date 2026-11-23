@@ -32,6 +32,7 @@ pub(super) fn perform(app: &mut App, action: Action) {
         Action::SettingsUp => app.settings_step(-1),
         Action::SettingsPrev => app.settings_nudge(-1),
         Action::SettingsNext => app.settings_nudge(1),
+        Action::SettingsEditConfig => app.request_config_edit(),
         Action::ShowHelp => {
             app.close_main_menu();
             app.open(crate::app::Entry::Shortcuts);
