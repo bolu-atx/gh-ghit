@@ -108,7 +108,53 @@
     ],
     "status": 200
   },
-  "POST /graphql repository 1065eea4af6269d5": {
+  "POST /graphql repository 0afe712f906a84d7": {
+    "body": {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "projectItems": {
+              "nodes": []
+            },
+            "reviewThreads": {
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    "status": 200
+  },
+  "POST /graphql repository 264bc1ffdc35a18f": {
+    "body": {
+      "data": {
+        "repository": {
+          "issue": {
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "projectItems": {
+              "nodes": []
+            },
+            "reviewThreads": {
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    "status": 200
+  },
+  "POST /graphql repository 57e510c87429a84a": {
     "body": {
       "data": {
         "repository": {
@@ -239,53 +285,7 @@
     },
     "status": 200
   },
-  "POST /graphql repository 264bc1ffdc35a18f": {
-    "body": {
-      "data": {
-        "repository": {
-          "issue": {
-            "closedByPullRequestsReferences": {
-              "nodes": []
-            },
-            "closingIssuesReferences": {
-              "nodes": []
-            },
-            "projectItems": {
-              "nodes": []
-            },
-            "reviewThreads": {
-              "nodes": []
-            }
-          }
-        }
-      }
-    },
-    "status": 200
-  },
-  "POST /graphql repository 7f55ac5d96402430": {
-    "body": {
-      "data": {
-        "repository": {
-          "pullRequest": {
-            "closedByPullRequestsReferences": {
-              "nodes": []
-            },
-            "closingIssuesReferences": {
-              "nodes": []
-            },
-            "projectItems": {
-              "nodes": []
-            },
-            "reviewThreads": {
-              "nodes": []
-            }
-          }
-        }
-      }
-    },
-    "status": 200
-  },
-  "POST /graphql repository b2a5adbfcdeda89a": {
+  "POST /graphql repository 648a35f847e28394": {
     "body": {
       "data": {
         "repository": {

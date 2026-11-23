@@ -199,6 +199,12 @@ fn row_from_bundle(bundle: &IssueBundle, stored: Option<&api::Row>) -> api::Row 
         }
         issue.sub_summary = old.issue.sub_summary;
         issue.links = old.issue.links.clone();
+        if issue.head_ref_name.is_empty() {
+            issue.head_ref_name = old.issue.head_ref_name.clone();
+        }
+        if issue.jira_refs.is_empty() {
+            issue.jira_refs = old.issue.jira_refs.clone();
+        }
         if statuses.is_empty() {
             statuses = old.statuses.clone();
         }
@@ -307,6 +313,12 @@ fn keep_stored_fields(stored: &[api::Row], fetched: &mut [api::Row]) {
             row.statuses = prev.statuses.clone();
             row.issue.parent = prev.issue.parent;
             row.issue.links = prev.issue.links.clone();
+            if row.issue.head_ref_name.is_empty() {
+                row.issue.head_ref_name = prev.issue.head_ref_name.clone();
+            }
+            if row.issue.jira_refs.is_empty() {
+                row.issue.jira_refs = prev.issue.jira_refs.clone();
+            }
             row.issue.sub_summary = row.issue.sub_summary.or(prev.issue.sub_summary);
         }
     }
@@ -559,6 +571,11 @@ impl StoreLink {
     /// The stored rows with these numbers, most recently updated first.
     pub fn rows_by_number(&self, numbers: &[ItemRef]) -> Vec<api::Row> {
         self.store.rows_by_number(numbers)
+    }
+
+    /// Pull requests linked to `number` by a stored closes edge.
+    pub fn linked_prs(&self, number: ItemRef) -> Vec<model::PairedRef> {
+        self.store.linked_prs(number)
     }
 
     /// Which backfill walks finished: the open ones, then the closed ones.

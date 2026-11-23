@@ -225,12 +225,35 @@ impl App {
         };
         // Pairs win over mentions so each row has one behavior: the
         // pairing survives, and Enter on it opens the counterpart.
-        let paired: Vec<ItemRef> = d
+        let mut paired: Vec<ItemRef> = d
             .paired
             .iter()
             .map(|p| p.number)
             .filter(|m| *m != n)
             .collect();
+        if n.source == model::Source::Jira {
+            // Linked PRs reuse the paired list: a PR row that names
+            // this key, in the store edges or the cached rows, pairs
+            // with the issue and opens like a will-close counterpart.
+            for pair in self.session.linked_prs(n) {
+                if !paired.contains(&pair.number) {
+                    paired.push(pair.number);
+                }
+            }
+            let mut cached: Vec<ItemRef> = self
+                .session
+                .items()
+                .values()
+                .filter(|item| item.is_pr && item.jira_refs.contains(&n))
+                .map(|item| item.number)
+                .collect();
+            cached.sort_unstable();
+            for number in cached {
+                if !paired.contains(&number) {
+                    paired.push(number);
+                }
+            }
+        }
         let repo = self.session.repo_key();
         let nums: Vec<ItemRef> = model::referenced_numbers(&d.body, repo.as_deref())
             .into_iter()

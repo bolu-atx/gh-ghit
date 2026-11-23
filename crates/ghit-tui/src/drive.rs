@@ -461,6 +461,8 @@ mod tests {
             parent: None,
             sub_summary: None,
             links: Default::default(),
+            head_ref_name: String::new(),
+            jira_refs: vec![],
             is_pr: false,
         };
         let mut app = crate::app::App::new(Some("o/r".to_string()));

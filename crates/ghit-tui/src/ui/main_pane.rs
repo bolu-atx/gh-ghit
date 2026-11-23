@@ -193,11 +193,21 @@ fn highlight_mentions(lines: &mut [Line<'_>], n: ItemRef, repo: Option<&str>) {
 /// counterparts with their state chips. Empty pairs collapse the line.
 fn paired_line(d: &IssueData, session: &ghit_core::session::Session) -> Option<Line<'static>> {
     use crate::theme::{ink, muted, state_color};
-    if d.paired.is_empty() {
+    // The stored pairs plus the session pairs of the open item: a Jira
+    // issue's linked PRs live in the session list, with state read from
+    // the cached PR row.
+    let mut pairs: Vec<ghit_core::model::PairedRef> = d.paired.clone();
+    for number in session.paired() {
+        if pairs.iter().all(|pair| pair.number != *number) {
+            let state = session.item(*number).map_or(String::new(), |item| item.state.clone());
+            pairs.push(ghit_core::model::PairedRef { number: *number, state });
+        }
+    }
+    if pairs.is_empty() {
         return None;
     }
     let mut spans = vec![Span::styled("Paired  ", Style::new().bg(ink()).fg(muted()).bold())];
-    for (i, pair) in d.paired.iter().enumerate() {
+    for (i, pair) in pairs.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" · ", Style::new().bg(ink()).fg(muted())));
         }

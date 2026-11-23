@@ -248,6 +248,15 @@ impl Session {
         }
     }
 
+    /// Pull requests linked to a Jira issue by a stored closes edge.
+    pub fn linked_prs(&self, number: ItemRef) -> Vec<crate::model::PairedRef> {
+        self.sections
+            .link
+            .as_ref()
+            .map(|link| link.linked_prs(number))
+            .unwrap_or_default()
+    }
+
     /// Map items and links when the store changed since `seen`.
     pub fn map_data(&self, seen: Option<i64>) -> Option<(i64, Vec<crate::model::MapItem>, Vec<crate::model::MapLink>)> {
         self.sections.link.as_ref()?.map_data(seen)
@@ -311,6 +320,8 @@ impl Session {
                     d.state = row.issue.state;
                     d.checks = row.issue.checks;
                     d.labels = row.issue.labels;
+                    d.head_ref_name = row.issue.head_ref_name.clone();
+                    d.jira_refs = row.issue.jira_refs.clone();
                     d.updated_at = row.issue.updated_at;
                     self.issues.statuses.insert(n, row.statuses);
                     self.board.details.insert(n, row.detail);

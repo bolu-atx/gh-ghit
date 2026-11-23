@@ -96,6 +96,60 @@ fn referenced_numbers_caps_at_max_refs() {
     assert_eq!(refs[0], ItemRef::github(1));
 }
 
+fn jira(number: u64) -> ItemRef {
+    ItemRef { source: crate::model::Source::Jira, number }
+}
+
+#[test]
+fn jira_scan_matches_only_the_configured_key_case_insensitively() {
+    assert_eq!(
+        jira_refs_for_key("PROJ", "Fix proj-12 and PROJ-12", "", "also Proj-34"),
+        vec![jira(12), jira(34)]
+    );
+    assert_eq!(
+        jira_refs_for_key("PROJ", "OTHER-9 and PROJX-9", "", ""),
+        Vec::<ItemRef>::new()
+    );
+    assert_eq!(jira_refs_for_key("", "PROJ-1", "", ""), Vec::<ItemRef>::new());
+    assert_eq!(jira_refs_for_key("PROJ", "", "", ""), Vec::<ItemRef>::new());
+}
+
+#[test]
+fn jira_scan_respects_word_boundaries_and_branch_names() {
+    assert_eq!(
+        jira_refs_for_key("PROJ", "x", "feat/PROJ-12-thing", ""),
+        vec![jira(12)]
+    );
+    assert_eq!(
+        jira_refs_for_key("PROJ", "XPROJ-12 PROJ-12abc (PROJ-13) PROJ-14.", "", ""),
+        vec![jira(13), jira(14)]
+    );
+    // First-seen order across title, branch and body, deduped.
+    assert_eq!(
+        jira_refs_for_key("PROJ", "PROJ-2", "feat/PROJ-1-x", "PROJ-2 again, PROJ-3"),
+        vec![jira(2), jira(1), jira(3)]
+    );
+}
+
+#[test]
+fn jira_refs_are_clickable_links_when_a_key_is_set() {
+    crate::model::set_jira_key("PROJ");
+    assert_eq!(
+        nums("see PROJ-123 and proj-45, OTHER-9", None),
+        vec![jira(123), jira(45)]
+    );
+    let line = "see PROJ-123, done";
+    let got: Vec<&str> = link_ranges(line, None)
+        .into_iter()
+        .map(|(a, b, _)| &line[a..b])
+        .collect();
+    assert_eq!(got, ["PROJ-123"]);
+    assert_eq!(
+        referenced_numbers("fixes PROJ-7 and #8", None),
+        vec![jira(7), ItemRef::github(8)]
+    );
+}
+
 #[test]
 fn nearest_link_picks_closest_ref_on_shared_row() {
     let line = "backport of #12, see also #34 for context";

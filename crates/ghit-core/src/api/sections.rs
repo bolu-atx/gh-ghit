@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::model::ItemRef;
 
 pub(super) const PR_FIELDS: &str = r#"
- number title state author { login } labels(first: 20) { nodes { name } }
+ number title state headRefName author { login } labels(first: 20) { nodes { name } }
  assignees(first: 10) { nodes { login } } createdAt updatedAt url
  milestone { title }
  comments(first: 1) { totalCount } mergedAt
@@ -258,10 +258,17 @@ pub(crate) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> R
         total: s.get("total").and_then(Value::as_u64).unwrap_or(0),
         completed: s.get("completed").and_then(Value::as_u64).unwrap_or(0),
     });
+    let title = string("title");
+    let head_ref_name = if is_pr { string("headRefName") } else { String::new() };
+    let jira_refs = if is_pr {
+        crate::model::jira_refs(&title, &head_ref_name, "")
+    } else {
+        vec![]
+    };
     Ok(Row {
         issue: IssueData {
             number: ItemRef::github(number),
-            title: string("title"),
+            title,
             state: string("state"),
             issue_type: String::new(),
             priority: String::new(),
@@ -286,6 +293,8 @@ pub(crate) fn parse_node(n: &Value, is_pr: bool, window_at: Option<String>) -> R
             parent,
             sub_summary,
             links,
+            head_ref_name,
+            jira_refs,
             is_pr,
         },
         statuses,
@@ -755,6 +764,23 @@ mod tests {
         assert_eq!(row.issue.checks, Some(crate::model::CheckState::Pass));
     }
     #[test]
+    fn pr_nodes_carry_head_branch_and_scanned_jira_refs() {
+        crate::model::set_jira_key("PROJ");
+        let node = json!({"number": 9, "title": "Fix PROJ-12 thing", "state": "OPEN",
+            "headRefName": "feat/proj-12-thing", "createdAt": "2026-11-01T00:00:00Z",
+            "updatedAt": "2026-11-02T00:00:00Z", "url": "u"});
+        let row = parse_node(&node, true, None).unwrap();
+        assert_eq!(row.issue.head_ref_name, "feat/proj-12-thing");
+        assert_eq!(
+            row.issue.jira_refs,
+            vec![ItemRef { source: crate::model::Source::Jira, number: 12 }]
+        );
+        assert!(PR_FIELDS.contains("headRefName"));
+        let issue = parse_node(&node, false, None).unwrap();
+        assert!(issue.issue.head_ref_name.is_empty() && issue.issue.jira_refs.is_empty());
+    }
+
+    #[test]
     fn missing_or_null_link_fields_parse_as_no_links() {
         let node = json!({"number": 1, "blockedBy": null, "closedByPullRequestsReferences": {"nodes": null}});
         assert_eq!(parse_node(&node, false, None).unwrap().issue.links, IssueLinks::default());
@@ -1036,6 +1062,8 @@ mod tests {
                 is_pr, review_threads: vec![], paired: vec![], checks: None, milestone: None,
                 parent: None, sub_summary: None,
             links: Default::default(),
+            head_ref_name: String::new(),
+            jira_refs: vec![],
             },
             statuses: vec![],
             detail: BoardDetail::default(),
