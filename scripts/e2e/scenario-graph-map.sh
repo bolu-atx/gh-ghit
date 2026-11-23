@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 export E2E_REPO=demo/graph E2E_NUMS=24 GHIT_API_BASE=http://127.0.0.1:9
 host="$(printf '%s' "${GH_HOST:-github.com}" | tr '[:upper:]' '[:lower:]')"
 GHIT_DEMO_STORE="$E2E_XDG/ghit/store/$host/demo/graph.sqlite" \
-  cargo test --quiet --manifest-path "$E2E_ROOT/Cargo.toml" --bin ghit \
+  cargo test --quiet --manifest-path "$E2E_ROOT/Cargo.toml" -p ghit-core --lib \
   store::demo_tests::write_graph_demo_store -- --ignored >/dev/null || fail "demo store not written"
 e2e_start
 e2e_wait "One local copy per repo" 60 || fail "stored issue never opened"
