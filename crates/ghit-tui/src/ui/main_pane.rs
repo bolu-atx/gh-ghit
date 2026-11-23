@@ -220,9 +220,9 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // place instead of overflowing the masthead. Its height is measured
     // first (same inner width as the body) so the rows below just fit.
     let inner_w = (area.width as usize).saturating_sub(5);
-    let mut header: Vec<Line> = match app.nav.current.and_then(|n| app.session.issues.data.get(&n)) {
+    let mut header: Vec<Line> = match app.nav.current.and_then(|n| app.session.item(n)) {
         Some(d) => {
-            let st = app.session.issues.statuses.get(&d.number).cloned().unwrap_or_default();
+            let st = app.session.statuses(d.number).map(|s| s.to_vec()).unwrap_or_default();
             header_lines(d, &st)
         }
         None => vec![],
@@ -233,7 +233,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let header = wrap_lines(header, inner_w);
     // The paired line renders with the header block and joins
     // `header_rows`, so clicking `#N` navigates to the counterpart.
-    let paired = match (app.nav.tab, app.nav.current.and_then(|n| app.session.issues.data.get(&n))) {
+    let paired = match (app.nav.tab, app.nav.current.and_then(|n| app.session.item(n))) {
         (crate::app::Tab::Details, Some(d)) => paired_line(d)
             .map(|line| wrap_lines(vec![line], inner_w))
             .unwrap_or_default(),
@@ -262,7 +262,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     // stay plain text so identifiers scan without a patched font. The PR
     // head-commit CI glyph rides the issue line, the single title source
     // now that the header block starts at the meta lines.
-    let mast: Vec<Line> = match app.nav.current.and_then(|n| app.session.issues.data.get(&n)) {
+    let mast: Vec<Line> = match app.nav.current.and_then(|n| app.session.item(n)) {
         Some(d) => {
             let mut title = vec![
                 Span::styled(
@@ -335,7 +335,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
     let markdown;
     let mut aux = SearchAux::default();
-    let mut text = match app.nav.current.and_then(|n| app.session.issues.data.get(&n)) {
+    let mut text = match app.nav.current.and_then(|n| app.session.item(n)) {
         Some(d) => match app.nav.tab {
             Tab::Details => {
                 let comment_key = hints::key_in(Context::Global, Action::Comment);
@@ -371,7 +371,7 @@ pub(super) fn render_main(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     };
     // Clickable refs and URLs read as links in the body.
     if app.nav.tab == Tab::Details {
-        let is_pr = |n: ItemRef| app.session.issues.data.get(&n).map(|d| d.is_pr);
+        let is_pr = |n: ItemRef| app.session.item(n).map(|d| d.is_pr);
         style_links(&mut text.lines, app.session.repo_key().as_deref(), is_pr);
     }
     // A refs-row selection lights up the mentioning line instead of opening

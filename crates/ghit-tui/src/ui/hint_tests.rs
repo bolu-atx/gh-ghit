@@ -34,7 +34,7 @@ fn diff_app() -> App {
 
 fn filters_app() -> App {
     let mut app = loaded_app();
-    app.session.refs.numbers = vec![ItemRef::github(9)];
+    *app.session.refs_test().numbers = vec![ItemRef::github(9)];
     app.sidebar.meta_loaded = true;
     app.sidebar.labels = vec!["bug".to_string()];
     app.nav.pane = Pane::Labels;
@@ -156,7 +156,7 @@ fn clicking_a_bar_hint_runs_its_action() {
 #[test]
 fn empty_states_name_the_key_that_helps() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     let text = frame_text_sized(&mut app, 200, HEIGHT);
     assert!(text.contains("No issues. Press f to filter."), "{text}");
     assert!(text.contains("No pull requests. Press f to filter."), "{text}");

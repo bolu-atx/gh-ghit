@@ -16,19 +16,19 @@ pub enum ComposeTarget {
     Reply { thread_id: String },
 }
 
-pub type SendResult = (ItemRef, Result<(), String>);
-pub type StateResult = (ItemRef, bool, Result<(), String>);
+pub(crate) type SendResult = (ItemRef, Result<(), String>);
+pub(crate) type StateResult = (ItemRef, bool, Result<(), String>);
 
 /// Channels and in-flight sets of the writes.
-pub struct Sends {
-    pub tx: Sender<SendResult>,
-    pub rx: Receiver<SendResult>,
-    pub review_tx: Sender<SendResult>,
-    pub review_rx: Receiver<SendResult>,
+pub(crate) struct Sends {
+    pub(crate) tx: Sender<SendResult>,
+    pub(crate) rx: Receiver<SendResult>,
+    pub(crate) review_tx: Sender<SendResult>,
+    pub(crate) review_rx: Receiver<SendResult>,
     /// PRs with a review submit in flight: one per PR.
-    pub submitting: HashSet<ItemRef>,
-    pub state_tx: Sender<StateResult>,
-    pub state_rx: Receiver<StateResult>,
+    pub(crate) submitting: HashSet<ItemRef>,
+    pub(crate) state_tx: Sender<StateResult>,
+    pub(crate) state_rx: Receiver<StateResult>,
 }
 
 impl Sends {

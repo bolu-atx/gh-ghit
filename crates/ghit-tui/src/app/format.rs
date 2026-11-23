@@ -60,7 +60,7 @@ impl App {
         let left = left - saved;
         match focus {
             0 => self.start_query_edit(),
-            1 => self.set_window(core::cycle_window(self.session.sections.merged_window_hours)),
+            1 => self.set_window(core::cycle_window(self.session.merged_window_hours())),
             2..=5 => self.toggle_list(focus - 2),
             n if n < 6 + labels => {
                 let name = self.sidebar.labels[n - 6].clone();
@@ -122,7 +122,7 @@ impl App {
     /// Open GitHub's issue search for the Labels row under the cursor.
     pub(crate) fn open_filter_item(&mut self) {
         let Some(item) = self.filter_items().into_iter().nth(self.labels.cursor) else { return };
-        let Some(repo) = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone()) else {
+        let Some(repo) = self.session.repo().map(str::to_string) else {
             self.notify("no repo to open".to_string());
             return;
         };
@@ -257,12 +257,12 @@ impl App {
         prefs.show_open_issues = self.sidebar.show_open_issues;
         prefs.show_closed_issues = self.sidebar.show_closed_issues;
         prefs.hide_done_milestones = self.sidebar.hide_done_milestones;
-        prefs.merged_window_hours = self.session.sections.merged_window_hours;
+        prefs.merged_window_hours = self.session.merged_window_hours();
         prefs.group_by = self.sidebar.group_by;
         prefs.sub_issue_tree = self.sidebar.sub_issue_tree;
         prefs.sort = self.sidebar.sort;
         prefs.sort_desc = self.sidebar.sort_desc;
-        prefs.backfill_months = self.session.sections.backfill.months;
+        prefs.backfill_months = self.session.backfill_months();
         if let Some(repo) = self.session.repo_key() {
             let key = github::prefs_repo_key(&repo);
             prefs.queries.insert(key.clone(), self.sidebar.query_active.clone());
@@ -278,8 +278,7 @@ impl App {
             );
         }
         if board_open(self) {
-            let repo = self.session.repo_flag.clone().or_else(|| self.session.repo_slug.clone());
-            if let Some(owner) = github::board_owner(repo.as_deref()) {
+            if let Some(owner) = github::board_owner(self.session.repo()) {
                 let mut milestones: Vec<Option<String>> =
                     self.board.milestones.iter().cloned().collect();
                 milestones.sort();
@@ -314,8 +313,8 @@ impl App {
         self.sidebar.show_open_issues = prefs.show_open_issues;
         self.sidebar.show_closed_issues = prefs.show_closed_issues;
         self.sidebar.hide_done_milestones = prefs.hide_done_milestones;
-        self.session.sections.merged_window_hours = prefs.merged_window_hours;
-        self.session.sections.backfill.months = prefs.backfill_months;
+        self.session.set_merged_window(prefs.merged_window_hours);
+        self.session.set_backfill_months(prefs.backfill_months);
         self.sidebar.row_issue = prefs.row_issue;
         self.sidebar.row_pr = prefs.row_pr;
         self.sidebar.group_by = prefs.group_by;

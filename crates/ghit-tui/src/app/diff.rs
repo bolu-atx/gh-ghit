@@ -72,7 +72,7 @@ impl App {
     pub(crate) fn set_diff_file(&mut self, open: Option<bool>) {
         let Some(n) = self.nav.current else { return };
         self.nav.pane = Pane::Main;
-        let Some(files) = self.session.diff.files.get(&n) else { return };
+        let Some(files) = self.session.diff_files(n) else { return };
         let count = files.len().min(ghit_core::core::MAX_DIFF_FILES);
         if count == 0 {
             return;
@@ -95,7 +95,7 @@ impl App {
 
     /// Files expand-all would open: shown, with a patch, not large.
     fn small_files(&self, n: ItemRef) -> Vec<&model::DiffFile> {
-        let files = self.session.diff.files.get(&n).map(|f| f.as_slice()).unwrap_or(&[]);
+        let files = self.session.diff_files(n).unwrap_or(&[]);
         files.iter().take(ghit_core::core::MAX_DIFF_FILES).filter(|f| !f.is_large() && f.has_patch()).collect()
     }
 
@@ -110,7 +110,7 @@ impl App {
     /// in view: it queues a jump to that file's header for the next render.
     pub(crate) fn diff_expand_all(&mut self) {
         let Some(n) = self.nav.current else { return };
-        let count = self.session.diff.files.get(&n).map_or(0, |f| f.len().min(ghit_core::core::MAX_DIFF_FILES));
+        let count = self.session.diff_files(n).map_or(0, |f| f.len().min(ghit_core::core::MAX_DIFF_FILES));
         if count == 0 {
             return;
         }
@@ -150,7 +150,7 @@ impl App {
             return;
         }
         let Some(n) = self.nav.current else { return };
-        let count = self.session.diff.files.get(&n).map(|f| f.len().min(ghit_core::core::MAX_DIFF_FILES)).unwrap_or(0);
+        let count = self.session.diff_files(n).map(|f| f.len().min(ghit_core::core::MAX_DIFF_FILES)).unwrap_or(0);
         if count == 0 {
             return;
         }
@@ -167,7 +167,7 @@ impl App {
         // so the measured offsets must come from the post-jump text.
         self.diff.cursor = next;
         self.nav.pane = Pane::Main;
-        if let Some(files) = self.session.diff.files.get(&n) {
+        if let Some(files) = self.session.diff_files(n) {
             if let Some(f) = files.get(next) {
                 self.diff.expanded_files.insert((n, f.filename.clone()));
             }
@@ -223,7 +223,7 @@ impl App {
     /// inside the old content would point at the wrong region.
     fn anchor_cursor_to_header(&mut self, fi: usize) {
         let base = self.hits.body_base as usize;
-        let found = match self.nav.current.and_then(|n| self.session.diff.files.get(&n)) {
+        let found = match self.nav.current.and_then(|n| self.session.diff_files(n)) {
             Some(files) => self.hits.body_rows.iter().enumerate().find_map(|(vis, line)| {
                 (model::header_file_index(line, files) == Some(fi)).then_some(vis)
             }),
@@ -239,7 +239,7 @@ impl App {
     /// head side of open files (`sync_diff`) and widen once they land.
     pub(crate) fn cycle_diff_context(&mut self) {
         self.diff.context = (self.diff.context + 1) % model::CONTEXT_STEPS.len();
-        let numbers: Vec<ItemRef> = self.session.diff.raw.keys().copied().collect();
+        let numbers: Vec<ItemRef> = self.session.raw_diff_prs();
         for n in numbers {
             self.rewiden(n);
         }
@@ -256,18 +256,18 @@ impl App {
     /// Rebuild PR `n`'s shown patches from its raw ones at the current
     /// context. Files without a fetched head side keep the raw patch.
     pub(super) fn rewiden(&mut self, n: ItemRef) {
-        let Some(raw) = self.session.diff.raw.get(&n) else { return };
+        let Some(raw) = self.session.raw_diff(n) else { return };
         let ctx = model::CONTEXT_STEPS[self.diff.context];
         let files = raw.iter().map(|f| {
             let mut f = f.clone();
             if ctx > model::CONTEXT_STEPS[0] {
-                if let Some(Some(lines)) = self.session.diff.heads.get(&(n, f.filename.clone())) {
+                if let Some(lines) = self.session.head_lines(n, &f.filename) {
                     f.patch = model::widen_patch(&f.patch, lines, ctx);
                 }
             }
             f
         }).collect();
-        self.session.diff.files.insert(n, files);
+        self.session.show_diff(n, files);
     }
 
     /// Bring the open PR's Diff tab in line with the sticky modes: apply
@@ -279,7 +279,7 @@ impl App {
             return false;
         }
         let Some(n) = self.nav.current else { return false };
-        if !self.session.diff.files.contains_key(&n) {
+        if !self.session.has_diff(n) {
             return false;
         }
         let mut changed = false;
@@ -295,15 +295,15 @@ impl App {
             }
         }
         if self.diff.context > 0 {
-            let want: Vec<String> = self.session.diff.raw.get(&n).into_iter().flatten()
+            let want: Vec<String> = self.session.raw_diff(n).into_iter().flatten()
                 .take(ghit_core::core::MAX_DIFF_FILES)
                 .filter(|f| f.has_patch() && f.status != "removed")
                 .map(|f| f.filename.clone())
                 .filter(|name| {
                     let key = (n, name.clone());
                     self.diff.expanded_files.contains(&key)
-                        && !self.session.diff.heads.contains_key(&key)
-                        && !self.session.diff.heads_pending.contains(&key)
+                        && !self.session.head_known(n, name)
+                        && !self.session.head_pending(n, name)
                 })
                 .collect();
             if !want.is_empty() {
@@ -344,7 +344,7 @@ impl App {
     /// Pending review threads on the current PR, if any.
     pub(crate) fn pending_threads(&self) -> usize {
         let Some(n) = self.nav.current else { return 0 };
-        let Some(d) = self.session.issues.data.get(&n) else { return 0 };
+        let Some(d) = self.session.item(n) else { return 0 };
         d.review_threads.iter().filter(|t| t.has_pending()).count()
     }
 
@@ -355,7 +355,7 @@ impl App {
             self.notify("view an issue first".to_string());
             return;
         };
-        if self.session.sends.submitting.contains(&n) {
+        if self.session.review_submitting(n) {
             return;
         }
         if self.pending_threads() == 0 {

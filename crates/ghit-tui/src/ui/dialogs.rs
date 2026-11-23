@@ -342,7 +342,7 @@ pub(super) fn render_filter(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         left.chips(Some("saved"), app.sidebar.saved_queries.iter().enumerate().map(|(i, saved)|
             (1 + i, saved.query == app.sidebar.query_active.trim(), saved.name.clone())).collect());
     }
-    let hours = app.session.sections.merged_window_hours;
+    let hours = app.session.merged_window_hours();
     left.choice(1 + saved_count, Some("window"), &[
         (hours == 1, "1h"),
         (hours == 24, "24h"),
@@ -498,7 +498,7 @@ pub(super) fn render_settings(f: &mut ratatui::Frame, area: Rect, app: &mut App)
     let themes: Vec<(bool, &str)> = theme::THEMES.iter().map(|(name, _)| (*name == theme::name(), *name)).collect();
     column.choice(crate::app::THEME_ROW, Some("theme"), &themes);
     column.choice(crate::app::ICONS_ROW, Some("icons"), &[(theme::nerd(), "nerd font"), (!theme::nerd(), "plain")]);
-    column.stepper(crate::app::BACKFILL_ROW, "backfill", &crate::app::months_label(app.session.sections.backfill.months));
+    column.stepper(crate::app::BACKFILL_ROW, "backfill", &crate::app::months_label(app.session.backfill_months()));
     column.hint("Changes apply and save at once. Backfill is how far back the local copy fetches \
         closed issues and merged PRs.");
     let context = Context::Dialog(Dialog::Settings);

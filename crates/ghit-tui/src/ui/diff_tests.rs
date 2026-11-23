@@ -11,12 +11,12 @@ use ghit_core::model::ItemRef;
 fn diff_loaded_app() -> App {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.diff.expanded_files.insert((ItemRef::github(9), "src/a.rs".to_string()));
@@ -33,9 +33,9 @@ fn review_threads_render_at_matching_lines_in_both_modes() {
         ReviewThread { id: "a".into(), path: "a.rs".into(), line: Some(1), comments: vec![ReviewComment { id: "c".into(), body: "inline note".into(), ..Default::default() }], ..Default::default() },
         ReviewThread { id: "b".into(), path: "a.rs".into(), line: Some(8), ..Default::default() },
     ];
-    app.session.issues.data.insert(ItemRef::github(9), pr);
+    app.session.issues_test().data.insert(ItemRef::github(9), pr);
     app.show_issue(ItemRef::github(9));
-    app.session.diff.files.insert(
+    app.session.diff_test().files.insert(
         ItemRef::github(9),
         vec![DiffFile {
             filename: "a.rs".into(),
@@ -69,9 +69,9 @@ fn pending_review_threads_show_a_pending_pill() {
             ReviewComment { id: "d".into(), body: "live note".into(), ..Default::default() },
         ], ..Default::default() },
     ];
-    app.session.issues.data.insert(ItemRef::github(9), pr);
+    app.session.issues_test().data.insert(ItemRef::github(9), pr);
     app.show_issue(ItemRef::github(9));
-    app.session.diff.files.insert(
+    app.session.diff_test().files.insert(
         ItemRef::github(9),
         vec![DiffFile {
             filename: "a.rs".into(),
@@ -101,10 +101,10 @@ fn diff_groups_review_threads_by_file() {
         {"id":"t2","path":"src/a.rs","line":7,"isResolved":false,"comments":{"nodes":[{"id":"c2","author":{"login":"bob"},"body":"**open body**"}]}},
         {"id":"t3","path":"src/b.rs","line":null,"isResolved":false,"comments":{"nodes":[{"id":"c3","author":{"login":"cam"},"body":"other body"}]}}
     ]}}));
-    app.session.issues.data.insert(ItemRef::github(9), pr);
+    app.session.issues_test().data.insert(ItemRef::github(9), pr);
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), ..Default::default() },
         DiffFile { filename: "src/b.rs".into(), ..Default::default() },
     ]);
@@ -123,12 +123,12 @@ fn diff_groups_review_threads_by_file() {
 fn diff_tab_folds_files_by_default() {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
     ]);
@@ -190,12 +190,12 @@ fn diff_tab_folds_files_by_default() {
 fn arrows_walk_diff_lines() {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 2, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
     ]);
@@ -240,16 +240,16 @@ fn arrows_walk_diff_lines() {
 fn shift_jk_jumps_between_diff_files() {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
     // Long expanded first file: the second header starts off-screen,
     // so the jump must scroll, not just hop visible headers.
     let patch_a =
         format!("@@ -1 +1 @@\n{}", (0..60).map(|i| format!("+line{i}")).collect::<Vec<_>>().join("\n"));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 60, deletions: 0, patch: patch_a },
         DiffFile { filename: "src/b.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() },
     ]);
@@ -290,12 +290,12 @@ fn shift_jk_jumps_between_diff_files() {
 fn diff_active_line_highlights_and_yanks() {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.set_tab(Tab::Visual);
@@ -336,12 +336,12 @@ fn mouse_click_highlights_the_row_it_expands() {
     use ghit_core::core::Pane;
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
     ]);
     app.set_tab(Tab::Visual);
@@ -371,12 +371,12 @@ fn mouse_click_highlights_the_row_it_expands() {
 fn diff_summary_shows_file_icon() {
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.pending.remove(&ItemRef::github(9));
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(9));
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
     ]);
@@ -398,12 +398,12 @@ fn diff_tab_notes_issues_have_no_diff() {
 #[test]
 fn diff_tab_shows_loading_while_pending() {
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
-    app.session.diff.files.remove(&ItemRef::github(9));
-    app.session.diff.pending.insert(ItemRef::github(9));
+    app.session.diff_test().files.remove(&ItemRef::github(9));
+    app.session.diff_test().pending.insert(ItemRef::github(9));
     app.set_tab(Tab::Visual);
     assert!(frame_text(&mut app).contains("Fetching diff"), "loading state");
 }
@@ -413,15 +413,15 @@ fn diff_fetch_lands_without_touching_selection() {
     use crate::app::poll_session;
     use ghit_core::model::DiffFile;
     let mut app = loaded_app();
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(9), diff_pr(ItemRef::github(9)));
     app.show_issue(ItemRef::github(9));
     let files = vec![DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+new".into() }];
-    app.session.diff.tx.send((ItemRef::github(9), Ok(files))).unwrap();
+    app.session.diff_test().tx.send((ItemRef::github(9), Ok(files))).unwrap();
     poll_session(&mut app);
-    assert!(!app.session.diff.pending.contains(&ItemRef::github(9)));
-    assert_eq!(app.session.diff.files.get(&ItemRef::github(9)).unwrap().len(), 1);
+    assert!(!app.session.diff_test().pending.contains(&ItemRef::github(9)));
+    assert_eq!(app.session.diff_test().files.get(&ItemRef::github(9)).unwrap().len(), 1);
     assert_eq!(app.nav.current, Some(ItemRef::github(9)));
 }
 
@@ -494,7 +494,7 @@ fn expand_app() -> App {
     let mut app = diff_loaded_app();
     app.diff.expanded_files.clear();
     let big: String = (0..320).map(|i| format!("+big{i}\n")).collect();
-    app.session.diff.files.insert(ItemRef::github(9), vec![
+    app.session.diff_test().files.insert(ItemRef::github(9), vec![
         DiffFile { filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new".into() },
         DiffFile { filename: "src/big.rs".into(), status: "modified".into(), additions: 320, deletions: 0, patch: format!("@@ -0,0 +1,320 @@\n{big}") },
         DiffFile { filename: "img.png".into(), status: "added".into(), additions: 0, deletions: 0, patch: String::new() },
@@ -575,12 +575,12 @@ fn expand_all_mode_is_sticky_across_prs() {
     let mut app = expand_app();
     let _ = frame_text(&mut app);
     handle_key(&mut app, key(KeyCode::Char('a')));
-    app.session.issues
+    app.session.issues_test()
         .data
         .insert(ItemRef::github(10), diff_pr(ItemRef::github(10)));
     app.show_issue(ItemRef::github(10));
-    app.session.diff.pending.remove(&ItemRef::github(10));
-    app.session.diff.files.insert(ItemRef::github(10), vec![
+    app.session.diff_test().pending.remove(&ItemRef::github(10));
+    app.session.diff_test().files.insert(ItemRef::github(10), vec![
         DiffFile { filename: "x.rs".into(), status: "modified".into(), additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+x".into() },
     ]);
     app.set_tab(Tab::Visual);
@@ -618,21 +618,21 @@ fn context_toggle_widens_open_files_from_the_head_side() {
         filename: "src/a.rs".into(), status: "modified".into(), additions: 1, deletions: 1,
         patch: "@@ -4,7 +4,7 @@\n l4\n l5\n l6\n-old\n+new\n l8\n l9\n l10".into(),
     }];
-    app.session.diff.raw.insert(ItemRef::github(9), raw.clone());
-    app.session.diff.files.insert(ItemRef::github(9), raw);
+    app.session.diff_test().raw.insert(ItemRef::github(9), raw.clone());
+    app.session.diff_test().files.insert(ItemRef::github(9), raw);
     app.diff
         .expanded_files
         .insert((ItemRef::github(9), "src/a.rs".to_string()));
     let _ = frame_text(&mut app);
     // 3 lines is what GitHub sent: no fetch.
     app.sync_diff();
-    assert!(app.session.diff.heads_pending.is_empty());
+    assert!(app.session.diff_test().heads_pending.is_empty());
     handle_key(&mut app, key(KeyCode::Char('x')));
     assert_eq!(app.message, "diff context: 5 lines");
     app.sync_diff();
     assert!(app
         .session
-        .diff
+        .diff_test()
         .heads_pending
         .contains(&(ItemRef::github(9), "src/a.rs".to_string())));
     let head: String = (1..=20)
@@ -645,7 +645,7 @@ fn context_toggle_widens_open_files_from_the_head_side() {
         })
         .collect();
     app.session
-        .diff
+        .diff_test()
         .heads_tx
         .send((
             ItemRef::github(9),
@@ -654,7 +654,7 @@ fn context_toggle_widens_open_files_from_the_head_side() {
         ))
         .unwrap();
     assert!(crate::app::poll_session(&mut app));
-    let patch = &app.session.diff.files[&ItemRef::github(9)][0].patch;
+    let patch = &app.session.diff_files(ItemRef::github(9)).unwrap()[0].patch;
     assert!(patch.starts_with("@@ -2,11 +2,11 @@\n l2\n"), "{patch}");
     let text = frame_text(&mut app);
     assert!(text.contains("l12"), "{text}");
@@ -663,7 +663,7 @@ fn context_toggle_widens_open_files_from_the_head_side() {
         handle_key(&mut app, key(KeyCode::Char('x')));
     }
     assert_eq!(
-        app.session.diff.files[&ItemRef::github(9)][0].patch,
-        app.session.diff.raw[&ItemRef::github(9)][0].patch
+        app.session.diff_files(ItemRef::github(9)).unwrap()[0].patch,
+        app.session.raw_diff(ItemRef::github(9)).unwrap()[0].patch
     );
 }

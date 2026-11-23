@@ -34,10 +34,10 @@ pub(super) fn issue(number: ItemRef, updated: &str) -> IssueData {
 
 pub(super) fn sidebar_app(numbers: &[ItemRef]) -> App {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     for &n in numbers {
-        app.session.issues.data.insert(n, issue(n, "2026-01-05T00:00:00Z"));
-        app.session.issues.statuses.insert(n, vec![]);
+        app.session.issues_test().data.insert(n, issue(n, "2026-01-05T00:00:00Z"));
+        app.session.issues_test().statuses.insert(n, vec![]);
         app.nav.visited.push(n);
     }
     app.nav.current = numbers.first().copied();
@@ -72,7 +72,7 @@ pub(super) fn section_row(issue: IssueData) -> ghit_core::github::Row {
 
 pub(super) fn land_sections(app: &mut App, rows: Vec<ghit_core::github::Row>) {
     let (tx, rx) = std::sync::mpsc::channel();
-    app.session.sections.rx = Some(rx);
+    *app.session.sections_test().rx = Some(rx);
     tx.send(github::SectionEvent::Done(Ok(rows))).unwrap();
     poll_session(app);
 }
@@ -80,7 +80,7 @@ pub(super) fn land_sections(app: &mut App, rows: Vec<ghit_core::github::Row>) {
 pub(super) fn pending_nav_app() -> App {
     let mut app = sidebar_app(&[ItemRef::github(7), ItemRef::github(9)]);
     app.show_issue(ItemRef::github(9));
-    let d = app.session.issues.data.get_mut(&ItemRef::github(9)).unwrap();
+    let d = app.session.item_mut(ItemRef::github(9)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![ghit_core::model::ReviewThread {
         id: "t1".into(),

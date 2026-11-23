@@ -294,8 +294,7 @@ pub(crate) fn serve(
         crate::app::poll_all(app);
         // Drive mode has no terminal to suspend for `gh auth refresh`,
         // so an accepted prompt degrades to naming the command.
-        if app.session.auth.reauth_requested {
-            app.session.auth.reauth_requested = false;
+        if app.session.take_reauth_request() {
             if matches!(app.confirm().map(|d| &d.kind), Some(crate::app::ConfirmKind::Reauth)) {
                 app.take_confirm();
             }
@@ -463,12 +462,12 @@ mod tests {
             is_pr: false,
         };
         let mut app = crate::app::App::new(Some("o/r".to_string()));
-        app.session.repo_slug = Some("o/r".to_string());
+        app.session.set_repo_slug("o/r");
         for n in [7, 9] {
-            app.session.issues
+            app.session.issues_test()
                 .data
                 .insert(ItemRef::github(n), issue(ItemRef::github(n)));
-            app.session.issues.statuses.insert(ItemRef::github(n), vec![]);
+            app.session.issues_test().statuses.insert(ItemRef::github(n), vec![]);
             app.nav.visited.push(ItemRef::github(n));
         }
         app.show_issue(ItemRef::github(7));

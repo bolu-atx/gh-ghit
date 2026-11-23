@@ -20,7 +20,7 @@ fn draft_app(body: &str) -> App {
 
 fn pending_review_app() -> App {
     let mut app = sidebar_app(&[ItemRef::github(7)]);
-    let d = app.session.issues.data.get_mut(&ItemRef::github(7)).unwrap();
+    let d = app.session.item_mut(ItemRef::github(7)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![model::ReviewThread {
         id: "t1".into(),
@@ -89,8 +89,8 @@ fn evict_undo_restores_row_in_place() {
         "same order"
     );
     assert!(
-        app.session.issues.data.contains_key(&ItemRef::github(9))
-            && app.session.issues.statuses.contains_key(&ItemRef::github(9))
+        app.session.issues_test().data.contains_key(&ItemRef::github(9))
+            && app.session.issues_test().statuses.contains_key(&ItemRef::github(9))
     );
     assert!(app.diff.expanded_rows.contains(&ItemRef::github(9)));
     assert_eq!(app.nav.current, Some(ItemRef::github(9)));
@@ -158,7 +158,7 @@ fn pending_nav_discard_navigates_without_submitting() {
     app.confirm_choose(1);
     assert!(!app.confirm_open());
     assert_eq!(app.nav.current, Some(ItemRef::github(7)));
-    assert!(app.session.sends.submitting.is_empty(), "discard never submits");
+    assert!(app.session.sends_test().submitting.is_empty(), "discard never submits");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn pending_nav_submit_navigates_and_submits() {
         "submit still navigates"
     );
     assert!(
-        app.session.sends.submitting.contains(&ItemRef::github(9)),
+        app.session.sends_test().submitting.contains(&ItemRef::github(9)),
         "submit starts the review submit"
     );
 }
@@ -209,10 +209,10 @@ fn auth_probe_landing_drives_the_prompt() {
         (Err("GitHub auth check failed: 401 Unauthorized".to_string()), true),
     ] {
         let (tx, rx) = std::sync::mpsc::channel();
-        app.session.auth.rx = Some(rx);
+        *app.session.auth_test().rx = Some(rx);
         tx.send(result).unwrap();
         poll_session(&mut app);
-        assert!(app.session.auth.rx.is_none(), "probe lands once");
+        assert!(app.session.auth_test().rx.is_none(), "probe lands once");
         assert_eq!(app.confirm_open(), expect_prompt);
         app.take_confirm();
     }
@@ -225,10 +225,10 @@ fn auth_failure_prompts_once_then_stays_quiet() {
     let dialog = app.confirm().expect("first auth failure prompts");
     assert!(dialog.body.iter().any(|l| l.text.contains("scopes could not be read")), "fetch failures cannot name the gap");
     app.take_confirm();
-    app.session.auth.dismissed = true;
+    *app.session.auth_test().dismissed = true;
     auth_failure(&mut app, "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad");
     assert!(!app.confirm_open(), "dismissed stays dismissed");
-    app.session.auth.dismissed = false;
+    *app.session.auth_test().dismissed = false;
     auth_failure(&mut app, "bad search payload");
     assert!(!app.confirm_open(), "non-auth never prompts");
 }
@@ -236,23 +236,23 @@ fn auth_failure_prompts_once_then_stays_quiet() {
 #[test]
 fn auth_degraded_holds_until_a_reauth_succeeds() {
     let mut app = App::new(Some("o/r".to_string()));
-    assert!(!app.session.auth.degraded, "healthy boot has no badge");
+    assert!(!*app.session.auth_test().degraded, "healthy boot has no badge");
     let denied = "GitHub request failed: 401 Unauthorized for https://api.github.com/x: Bad credentials";
     auth_failure(&mut app, denied);
     assert!(app.confirm_open(), "first failure prompts");
-    assert!(app.session.auth.degraded, "the problem is recorded with the prompt");
+    assert!(*app.session.auth_test().degraded, "the problem is recorded with the prompt");
     app.take_confirm();
-    app.session.auth.dismissed = true;
-    assert!(app.session.auth.degraded, "dismissing keeps the badge");
+    *app.session.auth_test().dismissed = true;
+    assert!(*app.session.auth_test().degraded, "dismissing keeps the badge");
     auth_failure(&mut app, denied);
     assert!(!app.confirm_open(), "dismissed never re-modals");
     auth_failure(&mut app, "bad search payload");
-    assert!(app.session.auth.degraded, "non-auth leaves the badge alone");
+    assert!(*app.session.auth_test().degraded, "non-auth leaves the badge alone");
     let (tx, rx) = std::sync::mpsc::channel();
-    app.session.auth.rx = Some(rx);
+    *app.session.auth_test().rx = Some(rx);
     tx.send(Ok(vec![])).unwrap();
     poll_session(&mut app);
-    assert!(app.session.auth.degraded, "a clean probe cannot prove every permission");
+    assert!(*app.session.auth_test().degraded, "a clean probe cannot prove every permission");
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn auth_question_blocked_by_another_dialog_still_degrades() {
         matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
         "the open question stays",
     );
-    assert!(app.session.auth.degraded, "the badge records the blocked auth question");
+    assert!(*app.session.auth_test().degraded, "the badge records the blocked auth question");
 }
 
 #[test]
@@ -272,17 +272,17 @@ fn reopen_reauth_only_reopens_while_degraded() {
     let mut app = App::new(Some("o/r".to_string()));
     app.reopen_reauth();
     assert!(!app.confirm_open(), "healthy key is a no-op");
-    app.session.auth.dismissed = true;
-    app.session.auth.degraded = true;
+    *app.session.auth_test().dismissed = true;
+    *app.session.auth_test().degraded = true;
     app.reopen_reauth();
     assert!(
         matches!(app.confirm().map(|d| &d.kind), Some(ConfirmKind::Reauth)),
         "degraded key reopens the dialog",
     );
-    assert!(app.session.auth.degraded, "reopening keeps the badge until a re-auth succeeds");
+    assert!(*app.session.auth_test().degraded, "reopening keeps the badge until a re-auth succeeds");
     let mut guarded = pending_nav_app();
     guarded.request_issue(ItemRef::github(7));
-    guarded.session.auth.degraded = true;
+    *guarded.session.auth_test().degraded = true;
     guarded.reopen_reauth();
     assert!(
         matches!(guarded.confirm().map(|d| &d.kind), Some(ConfirmKind::PendingNav { .. })),
@@ -314,7 +314,7 @@ fn auth_probe_non_auth_failure_notifies_without_modal() {
     // re-auth modal.
     let mut app = App::new(Some("o/r".to_string()));
     let (tx, rx) = std::sync::mpsc::channel();
-    app.session.auth.rx = Some(rx);
+    *app.session.auth_test().rx = Some(rx);
     tx.send(Err("GitHub auth check failed: 403 Forbidden for https://api.github.com/user: rate limit".to_string())).unwrap();
     poll_session(&mut app);
     assert!(!app.confirm_open(), "no modal for quota errors");

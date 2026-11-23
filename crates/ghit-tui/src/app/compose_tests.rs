@@ -9,7 +9,7 @@ use ghit_core::model::ItemRef;
 /// dented patch rows, then the thread block.
 fn thread_pr_app(diff_line: usize) -> App {
     let mut app = sidebar_app(&[ItemRef::github(9)]);
-    let d = app.session.issues.data.get_mut(&ItemRef::github(9)).unwrap();
+    let d = app.session.item_mut(ItemRef::github(9)).unwrap();
     d.is_pr = true;
     d.review_threads = vec![ghit_core::model::ReviewThread {
         id: "t1".into(),
@@ -17,7 +17,7 @@ fn thread_pr_app(diff_line: usize) -> App {
         line: Some(2),
         ..Default::default()
     }];
-    app.session.diff.files.insert(
+    app.session.diff_test().files.insert(
         ItemRef::github(9),
         vec![ghit_core::model::DiffFile {
             filename: "a.rs".into(),
@@ -46,7 +46,7 @@ fn thread_pr_app(diff_line: usize) -> App {
 #[test]
 fn compose_needs_a_loaded_issue() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     app.open_compose();
     assert!(app.draft().is_none());
     assert_eq!(app.message, "view an issue first");
@@ -197,12 +197,12 @@ fn compose_poll_success_closes_and_refreshes() {
     app.open_compose();
     app.draft_mut().unwrap().body = "looks good".to_string();
     app.draft_mut().unwrap().sending = true;
-    app.session.sends.tx.send((ItemRef::github(7), Ok(()))).unwrap();
+    app.session.sends_test().tx.send((ItemRef::github(7), Ok(()))).unwrap();
     poll_session(&mut app);
     assert!(app.draft().is_none());
     assert_eq!(app.message, "comment posted to #7");
     assert!(
-        app.session.issues.pending.contains(&ItemRef::github(7)),
+        app.session.issues_test().pending.contains(&ItemRef::github(7)),
         "refetch shows the new comment"
     );
 }
@@ -214,7 +214,7 @@ fn compose_poll_failure_keeps_the_draft() {
     app.draft_mut().unwrap().body = "looks good".to_string();
     app.draft_mut().unwrap().sending = true;
     app.session
-        .sends
+        .sends_test()
         .tx
         .send((
             ItemRef::github(7),

@@ -17,8 +17,8 @@ type StepResult = Result<github::BackfillStep, String>;
 
 /// Backfill state of one process. The store holds the real progress; this
 /// only paces the steps and feeds the status bar.
-pub struct BackfillFeed {
-    pub rx: Option<Receiver<StepResult>>,
+pub(crate) struct BackfillFeed {
+    pub(crate) rx: Option<Receiver<StepResult>>,
     next_at: Instant,
     /// A step ran and the backfill is not done: the status bar shows it.
     running: bool,
@@ -26,7 +26,7 @@ pub struct BackfillFeed {
     /// `GHIT_NO_BACKFILL` is set (the e2e harness sets it).
     off: bool,
     /// Age limit in months from the prefs; 0 = all history.
-    pub months: u32,
+    pub(crate) months: u32,
     progress: Option<(usize, usize)>,
 }
 

@@ -41,8 +41,8 @@ pub(super) fn diff_text_aux(
             Style::new().bg(ink()).fg(muted()),
         )));
     }
-    let Some(files) = app.session.diff.files.get(&d.number) else {
-        let note = if app.session.diff.pending.contains(&d.number) {
+    let Some(files) = app.session.diff_files(d.number) else {
+        let note = if app.session.diff_pending(d.number) {
             "Fetching diff …"
         } else {
             "No diff loaded yet."
@@ -221,7 +221,7 @@ pub(super) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u
         return None;
     }
     let n = app.nav.current?;
-    let files = app.session.diff.files.get(&n)?;
+    let files = app.session.diff_files(n)?;
     if fi >= files.len().min(MAX_DIFF_FILES) {
         return None;
     }
@@ -235,7 +235,7 @@ pub(super) fn diff_header_offset(app: &App, fi: usize, delta: isize) -> Option<u
     if files.get(fi).map(|f| f.filename.len() + 5 > width as usize).unwrap_or(true) {
         return None;
     }
-    let d = app.session.issues.data.get(&n)?;
+    let d = app.session.item(n)?;
     let text = diff_text(app, d, width as usize);
     use ratatui::buffer::Buffer;
     use ratatui::widgets::Widget;

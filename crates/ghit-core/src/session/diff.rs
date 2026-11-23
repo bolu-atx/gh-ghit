@@ -3,32 +3,33 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
 
+use super::Session;
 use crate::model::{DiffFile, ItemRef};
 
 /// One diff fetch result: the PR and its files.
-pub type DiffResult = (ItemRef, Result<Vec<DiffFile>, String>);
+pub(crate) type DiffResult = (ItemRef, Result<Vec<DiffFile>, String>);
 
 /// One head-files fetch result: the PR, the names asked for, and the bodies.
-pub type HeadFiles = (
+pub(crate) type HeadFiles = (
     ItemRef,
     Vec<String>,
     Result<Vec<(String, Result<String, String>)>, String>,
 );
 
-pub struct DiffData {
+pub(crate) struct DiffData {
     /// Files per PR, widened to the front end's context setting.
-    pub files: HashMap<ItemRef, Vec<DiffFile>>,
+    pub(crate) files: HashMap<ItemRef, Vec<DiffFile>>,
     /// Patches as GitHub sent them.
-    pub raw: HashMap<ItemRef, Vec<DiffFile>>,
+    pub(crate) raw: HashMap<ItemRef, Vec<DiffFile>>,
     /// Head-side file lines per (PR, filename), for widening. `None`
     /// marks a failed fetch, so it is not retried this session.
-    pub heads: HashMap<(ItemRef, String), Option<Vec<String>>>,
-    pub heads_pending: HashSet<(ItemRef, String)>,
-    pub pending: HashSet<ItemRef>,
-    pub tx: Sender<DiffResult>,
-    pub rx: Receiver<DiffResult>,
-    pub heads_tx: Sender<HeadFiles>,
-    pub heads_rx: Receiver<HeadFiles>,
+    pub(crate) heads: HashMap<(ItemRef, String), Option<Vec<String>>>,
+    pub(crate) heads_pending: HashSet<(ItemRef, String)>,
+    pub(crate) pending: HashSet<ItemRef>,
+    pub(crate) tx: Sender<DiffResult>,
+    pub(crate) rx: Receiver<DiffResult>,
+    pub(crate) heads_tx: Sender<HeadFiles>,
+    pub(crate) heads_rx: Receiver<HeadFiles>,
 }
 
 impl DiffData {
@@ -43,5 +44,12 @@ impl DiffData {
 impl Default for DiffData {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Session {
+    /// Show `files` as PR `n`'s diff, replacing the previous widening.
+    pub fn show_diff(&mut self, n: ItemRef, files: Vec<DiffFile>) {
+        self.diff.files.insert(n, files);
     }
 }

@@ -60,7 +60,7 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let mut segments: Vec<(String, bool)> = Vec::new();
     // Lasting auth warning first, so long project names never clip it.
     // It stays until a re-auth succeeds and names the `R` reopen key.
-    if app.session.auth.degraded {
+    if app.session.auth_degraded() {
         segments.push(("⚠ auth degraded · R re-auth".to_string(), true));
     }
     let mut repo_segment = None;
@@ -73,7 +73,7 @@ pub(super) fn render_bar(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         source_segment = Some(segments.len());
         segments.push((format!("{}{}", crate::theme::nf("\u{f002} ", ""), app.query_source()), false));
     }
-    if let Some(statuses) = app.nav.current.and_then(|n| app.session.issues.statuses.get(&n)) {
+    if let Some(statuses) = app.nav.current.and_then(|n| app.session.statuses(n)) {
         for (title, status) in statuses.iter().filter(|(title, _)| !title.is_empty()) {
             let suffix = status.as_ref().filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default();
             segments.push((format!("{}{title}{suffix}", crate::theme::nf("\u{f0db} ", "")), false));

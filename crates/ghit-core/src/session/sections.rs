@@ -3,44 +3,45 @@
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+use super::Session;
 use crate::github;
 
 /// Background section feed: the recent/search listing channel plus its
 /// refresh cadence, auto-refresh state, page progress, replace-vs-append
 /// mode, and the merged-PR window.
-pub struct SectionFeed {
-    pub rx: Option<Receiver<github::SectionEvent>>,
-    pub last_fetch: Instant,
-    pub auto_refresh_interval: Duration,
-    pub auto_refresh: bool,
+pub(crate) struct SectionFeed {
+    pub(crate) rx: Option<Receiver<github::SectionEvent>>,
+    pub(crate) last_fetch: Instant,
+    pub(crate) auto_refresh_interval: Duration,
+    pub(crate) auto_refresh: bool,
     /// The next spawned fetch runs the change probe first.
-    pub probe: bool,
+    pub(crate) probe: bool,
     /// How the next spawned fetch runs: change-only, with a status
     /// refresh, or a full walk of every list.
-    pub refresh: github::Refresh,
+    pub(crate) refresh: github::Refresh,
     /// When the last status refresh or full walk started.
-    pub last_status: Instant,
+    pub(crate) last_status: Instant,
     /// When the last full walk started.
-    pub last_full: Instant,
+    pub(crate) last_full: Instant,
     /// The lease holder's listing sync while a query shows: it writes the
     /// store and lands nothing, so the query result stays. Its own clock
     /// paces it, apart from the query's refresh.
-    pub sync_rx: Option<Receiver<github::SectionEvent>>,
-    pub last_sync: Instant,
+    pub(crate) sync_rx: Option<Receiver<github::SectionEvent>>,
+    pub(crate) last_sync: Instant,
     /// Section page progress: rows fetched vs the row cap, while pages
     /// remain. Cleared when the terminal result lands.
-    pub progress: Option<(usize, usize)>,
+    pub(crate) progress: Option<(usize, usize)>,
     /// The next section payload replaces (search) instead of appending.
-    pub replace: bool,
-    pub merged_window_hours: u64,
+    pub(crate) replace: bool,
+    pub(crate) merged_window_hours: u64,
     /// A cap notice already showed for this fetch setting, so the periodic
     /// auto-refresh never repeats it.
-    pub cap_notified: bool,
+    pub(crate) cap_notified: bool,
     /// The repo store's sync lease and change watch, opened at startup.
     /// `None` (no repo, or the store cannot open) syncs on its own.
-    pub link: Option<github::StoreLink>,
+    pub(crate) link: Option<github::StoreLink>,
     /// Store backfill pacing and progress.
-    pub backfill: super::backfill::BackfillFeed,
+    pub(crate) backfill: super::backfill::BackfillFeed,
 }
 
 impl SectionFeed {
@@ -101,6 +102,51 @@ pub fn refresh_interval_from(raw: Option<&str>) -> Duration {
         .filter(|&n| n > 0)
         .map(Duration::from_secs)
         .unwrap_or(RECENT_REFRESH_INTERVAL)
+}
+
+impl Session {
+    /// Set the merged/closed window the listing reads, in hours; 0 is all
+    /// time.
+    pub fn set_merged_window(&mut self, hours: u64) {
+        self.sections.merged_window_hours = hours;
+    }
+
+    /// Set the backfill age limit in months from the prefs; 0 is all
+    /// history.
+    pub fn set_backfill_months(&mut self, months: u32) {
+        self.sections.backfill.months = months;
+    }
+
+    /// The next listing fetch may announce the row cap again.
+    pub fn reset_cap_notice(&mut self) {
+        self.sections.cap_notified = false;
+    }
+
+    /// A search is still in flight when the listing takes over: drop it,
+    /// so its rows cannot replace the ones the local view lands.
+    pub fn cancel_pending_search(&mut self) {
+        if !std::mem::take(&mut self.sections.replace) {
+            return;
+        }
+        self.sections.rx = None;
+        self.sections.progress = None;
+        self.sections.auto_refresh = false;
+    }
+
+    /// Local rows are landing: drop any listing fetch in flight and
+    /// restart the cadence, so nothing lands over them.
+    pub fn settle_local_rows(&mut self) {
+        self.sections.rx = None;
+        self.sections.progress = None;
+        self.sections.replace = false;
+        self.sections.auto_refresh = false;
+        self.sections.last_fetch = Instant::now();
+    }
+
+    /// The next listing fetch walks every list instead of probing first.
+    pub fn request_full_listing(&mut self) {
+        self.sections.refresh = github::Refresh::Full;
+    }
 }
 
 #[cfg(test)]

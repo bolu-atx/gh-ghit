@@ -417,18 +417,16 @@ impl App {
     /// Plain fetch snapshot for the status bar spinner. The pure `core`
     /// derivation decides what shows; this only gathers the counts.
     pub(crate) fn fetch_state(&self) -> core::FetchState {
-        // Concurrent comment fetches report separately: sum what is known.
-        let (done, total) = self.session.issues.progress.values().copied().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
         core::FetchState {
-            issues: self.session.issues.pending.len(),
-            diffs: self.session.diff.pending.len(),
-            details: self.session.board.detail_pending.len(),
-            sections_live: self.session.sections.rx.is_some(),
-            bootstrap_live: self.session.auth.bootstrap_rx.is_some(),
-            board: self.session.board.loading,
+            issues: self.session.pending_count(),
+            diffs: self.session.diff_pending_count(),
+            details: self.session.board_details_pending(),
+            sections_live: self.session.sections_busy(),
+            bootstrap_live: self.session.bootstrapping(),
+            board: self.session.board_loading(),
             message_visible: self.message_visible(),
-            issue_progress: if self.session.issues.progress.is_empty() { None } else { Some((done, total)) },
-            section_progress: self.session.sections.progress,
+            issue_progress: self.session.comment_progress(),
+            section_progress: self.session.section_progress(),
             backfill: self.session.backfill_state().0,
             backfill_progress: self.session.backfill_state().1,
         }
@@ -439,16 +437,15 @@ impl App {
         let shown = self.nav.current.or(self.nav.requested);
         let refs_pending = self
             .session
-            .refs
-            .numbers
+            .mentioned()
             .iter()
-            .chain(self.session.refs.paired.iter())
-            .any(|n| self.session.issues.pending.contains(n));
+            .chain(self.session.paired().iter())
+            .any(|n| self.session.is_pending(*n));
         core::pane_loading(&core::PaneInputs {
-            sections_live: self.session.sections.rx.is_some(),
-            bootstrap_live: self.session.auth.bootstrap_rx.is_some(),
-            requested_pending: self.nav.requested.is_some_and(|n| self.session.issues.pending.contains(&n)),
-            shown_cached: shown.is_some_and(|n| self.session.issues.data.contains_key(&n)),
+            sections_live: self.session.sections_busy(),
+            bootstrap_live: self.session.bootstrapping(),
+            requested_pending: self.nav.requested.is_some_and(|n| self.session.is_pending(n)),
+            shown_cached: shown.is_some_and(|n| self.session.has_item(n)),
             refs_pending,
         })
     }
@@ -568,7 +565,7 @@ fn event_loop(
             }
         }
         let poll_dirty = poll_all(app);
-        if app.session.auth.reauth_requested {
+        if app.session.take_reauth_request() {
             run_reauth(app, terminal);
             input_dirty = true;
         }

@@ -9,7 +9,7 @@ use ghit_core::model::ItemRef;
 #[test]
 fn toggle_row_expansion_is_sticky_and_keyed_by_number() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     app.nav.visited = vec![ItemRef::github(7), ItemRef::github(9), ItemRef::github(11)];
     app.nav.current = Some(ItemRef::github(7));
     app.nav.pane = Pane::Issues;
@@ -60,13 +60,13 @@ fn bootstrap_starts_in_main_so_auto_refresh_runs() {
     assert!(matches!(app.nav.focus, Focus::Main), "boot must not sit in the command bar");
     // A Main boot leaves the refresh gate open; the Bar guard above
     // still holds once the user opens `:` or `/` on purpose.
-    let start = app.session.sections.last_fetch;
-    app.session.repo_slug = Some("o/r".to_string());
+    let start = *app.session.sections_test().last_fetch;
+    app.session.set_repo_slug("o/r");
     app.auto_refresh_recent(start + RECENT_REFRESH_INTERVAL);
-    assert!(app.session.sections.rx.is_some(), "startup focus must not block the refresh");
-    app.session.auth.bootstrap_rx = None;
-    app.session.auth.rx = None;
-    app.session.sections.rx = None;
+    assert!(app.session.sections_test().rx.is_some(), "startup focus must not block the refresh");
+    *app.session.auth_test().bootstrap_rx = None;
+    *app.session.auth_test().rx = None;
+    *app.session.sections_test().rx = None;
 }
 
 #[test]
@@ -259,10 +259,10 @@ fn step_issue_walks_cached_neighbors() {
 #[test]
 fn step_issue_without_current_toasts() {
     let mut app = App::new(Some("o/r".to_string()));
-    app.session.repo_slug = Some("o/r".to_string());
+    app.session.set_repo_slug("o/r");
     app.step_issue(1);
     assert_eq!(app.message, "view an issue first");
-    assert!(app.session.issues.pending.is_empty(), "no fetch without an issue");
+    assert!(app.session.issues_test().pending.is_empty(), "no fetch without an issue");
     assert_eq!(app.nav.step_pending, None);
 }
 
@@ -273,7 +273,7 @@ fn step_issue_below_one_toasts_without_fetch() {
     app.step_issue(-1);
     assert_eq!(app.message, "no #0");
     assert_eq!(app.nav.current, Some(ItemRef::github(1)), "nothing moves");
-    assert!(app.session.issues.pending.is_empty(), "h on #1 issues no fetch");
+    assert!(app.session.issues_test().pending.is_empty(), "h on #1 issues no fetch");
     assert_eq!(app.nav.requested, Some(ItemRef::github(1)));
     assert_eq!(app.nav.step_pending, None);
 }
@@ -291,7 +291,7 @@ fn step_issue_records_pending_until_the_fetch_lands() {
     assert_eq!(app.nav.requested, Some(ItemRef::github(591)));
     assert_eq!(app.nav.step_pending, Some(ItemRef::github(591)));
     assert!(
-        app.session.issues.pending.contains(&ItemRef::github(591)),
+        app.session.issues_test().pending.contains(&ItemRef::github(591)),
         "neighbor fetch in flight"
     );
     assert!(
@@ -300,7 +300,7 @@ fn step_issue_records_pending_until_the_fetch_lands() {
     );
     // The landing clears the step and moves the highlight.
     let fresh = issue(ItemRef::github(591), "2026-01-06T00:00:00Z");
-    app.session.issues
+    app.session.issues_test()
         .tx
         .send((
             ItemRef::github(591),
@@ -319,7 +319,7 @@ fn step_404_toasts_no_number_and_stays_put() {
     app.show_issue(ItemRef::github(590));
     app.nav.step_pending = Some(ItemRef::github(589));
     app.nav.requested = Some(ItemRef::github(589));
-    app.session.issues.tx
+    app.session.issues_test().tx
         .send((ItemRef::github(589), github::IssueEvent::Done(Err(
             "GitHub request failed: HTTP status client error (404 Not Found) for url (https://api.github.com/repos/o/r/issues/589)".to_string(),
         ))))
@@ -341,7 +341,7 @@ fn step_other_error_keeps_the_existing_error_path() {
     app.nav.step_pending = Some(ItemRef::github(591));
     app.nav.requested = Some(ItemRef::github(591));
     let raw = "GitHub request failed: error sending request for url (https://api.github.com/repos/o/r/issues/591)".to_string();
-    app.session.issues
+    app.session.issues_test()
         .tx
         .send((
             ItemRef::github(591),
