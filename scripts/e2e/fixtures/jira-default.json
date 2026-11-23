@@ -1,0 +1,189 @@
+{
+  "note": "Timestamps written as @now, @now-3h or @now-20d are resolved to Jira stamps at request time, so the 24h window never ages out. issue_details is the spot for #315 and #316 to grow issue detail and comment scenarios; search.pages only lists the keys.",
+  "auth": {
+    "email": "e2e@example.com",
+    "token": "e2e-token"
+  },
+  "myself": {
+    "accountId": "e2e-account",
+    "displayName": "E2E Tester",
+    "emailAddress": "e2e@example.com",
+    "active": true
+  },
+  "projects": {
+    "PROJ": {
+      "id": "10001",
+      "key": "PROJ",
+      "name": "Fixture Project",
+      "projectTypeKey": "software"
+    }
+  },
+  "search": {
+    "pages": [
+      ["PROJ-1", "PROJ-2"],
+      ["PROJ-3", "PROJ-4"]
+    ]
+  },
+  "issue_details": {
+    "PROJ-1": {
+      "id": "10101",
+      "fields": {
+        "summary": "Checkout retries never back off",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {"type": "text", "text": "The checkout retry loop keeps hammering the payment gateway."}
+              ]
+            },
+            {
+              "type": "bulletList",
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Retry at most three times."}]}
+                  ]
+                },
+                {
+                  "type": "listItem",
+                  "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Log every attempt."}]}
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "codeBlock",
+              "attrs": {"language": "rust"},
+              "content": [{"type": "text", "text": "for attempt in 0..3 {}"}]
+            }
+          ]
+        },
+        "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate", "name": "In progress"}},
+        "labels": ["bug", "checkout"],
+        "assignee": {"displayName": "Ada Lovelace"},
+        "reporter": {"displayName": "Grace Hopper"},
+        "created": "@now-20d",
+        "updated": "@now-1h",
+        "issuetype": {"name": "Bug"},
+        "priority": {"name": "High"}
+      },
+      "comments": [
+        {
+          "id": "20101",
+          "author": {"displayName": "Grace Hopper"},
+          "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {"type": "text", "text": "Reproduced on the staging gateway: three retries in one second."}
+                ]
+              }
+            ]
+          },
+          "created": "@now-2h",
+          "updated": "@now-2h"
+        }
+      ]
+    },
+    "PROJ-2": {
+      "id": "10102",
+      "fields": {
+        "summary": "Export the audit log",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [{"type": "text", "text": "Finance needs a monthly audit log export."}]
+            }
+          ]
+        },
+        "status": {"name": "To Do", "statusCategory": {"key": "new", "name": "To do"}},
+        "labels": ["feature"],
+        "assignee": {"displayName": "Ada Lovelace"},
+        "reporter": {"displayName": "Alan Turing"},
+        "created": "@now-15d",
+        "updated": "@now-4h",
+        "issuetype": {"name": "Story"},
+        "priority": {"name": "Medium"}
+      },
+      "comments": []
+    },
+    "PROJ-3": {
+      "id": "10103",
+      "fields": {
+        "summary": "Retire the legacy token endpoint",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [{"type": "text", "text": "Nothing calls the old token endpoint anymore."}]
+            }
+          ]
+        },
+        "status": {"name": "Done", "statusCategory": {"key": "done", "name": "Done"}},
+        "labels": ["chore"],
+        "assignee": {"displayName": "Grace Hopper"},
+        "reporter": {"displayName": "Ada Lovelace"},
+        "created": "@now-30d",
+        "updated": "@now-2h",
+        "issuetype": {"name": "Task"},
+        "priority": {"name": "Low"}
+      },
+      "comments": [
+        {
+          "id": "20103",
+          "author": {"displayName": "Ada Lovelace"},
+          "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Deleted with the 3.2 release."}]
+              }
+            ]
+          },
+          "created": "@now-2h",
+          "updated": "@now-2h"
+        }
+      ]
+    },
+    "PROJ-4": {
+      "id": "10104",
+      "fields": {
+        "summary": "Show the build number in the footer",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [{"type": "text", "text": "Testers cannot tell which build they run."}]
+            }
+          ]
+        },
+        "status": {"name": "In Review", "statusCategory": {"key": "indeterminate", "name": "In progress"}},
+        "labels": ["feature", "ui"],
+        "assignee": {"displayName": "Alan Turing"},
+        "reporter": {"displayName": "Grace Hopper"},
+        "created": "@now-2d",
+        "updated": "@now-6h",
+        "issuetype": {"name": "Story"},
+        "priority": {"name": "Medium"}
+      },
+      "comments": []
+    }
+  }
+}

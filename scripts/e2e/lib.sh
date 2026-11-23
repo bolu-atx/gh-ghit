@@ -16,7 +16,12 @@ E2E_STEP="${E2E_STEP:-1}"
 E2E_SOCK="${E2E_SOCK:-/tmp/ghit-e2e.sock}"
 E2E_CMD="${E2E_CMD:-/tmp/ghit-e2e.cmd}"
 E2E_PANE="${E2E_PANE:-$E2E_FRAMES/pane.txt}"
+# jtui scenarios set E2E_BIN=jtui; ghit stays the default.
+E2E_BIN="${E2E_BIN:-ghit}"
+E2E_APP_NAME="${E2E_APP_NAME:-$E2E_BIN}"
+E2E_JIRA_PORT_FILE="${E2E_JIRA_PORT_FILE:-/tmp/ghit-e2e-jira.port}"
 E2E_GHIT_PID=""
+E2E_JIRA_PID=""
 E2E_BRIDGE_PID=""
 E2E_CMD_FD=""
 # GHIT_API_BASE points the harness at its local fixture server.
@@ -36,8 +41,38 @@ fi
 e2e_cleanup() {
   [ -n "$E2E_BRIDGE_PID" ] && kill "$E2E_BRIDGE_PID" 2>/dev/null
   [ -n "$E2E_GHIT_PID" ] && kill "$E2E_GHIT_PID" 2>/dev/null
+  [ -n "$E2E_JIRA_PID" ] && kill "$E2E_JIRA_PID" 2>/dev/null
+  rm -f "$E2E_JIRA_PORT_FILE"
   [ -n "$E2E_CMD_FD" ] && eval "exec $E2E_CMD_FD>&-" 2>/dev/null
   rm -f "$E2E_SOCK" "$E2E_CMD"
+}
+
+# One fixture field under "auth", so scenarios never repeat the test pair.
+e2e_jira_auth() { # $1 email or token
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["auth"][sys.argv[2]])' \
+    "$E2E_ROOT/scripts/e2e/fixtures/jira-default.json" "$1"
+}
+
+# Start the Jira fixture server and point jtui at it: the client reads
+# both the base URL and the token at startup.
+e2e_jira_start() {
+  [ -n "$E2E_JIRA_PID" ] && return 0
+  rm -f "$E2E_JIRA_PORT_FILE"
+  python3 "$E2E_ROOT/scripts/e2e/mock_jira.py" --port-file "$E2E_JIRA_PORT_FILE" &
+  E2E_JIRA_PID=$!
+  trap e2e_cleanup EXIT
+  local deadline=$(( $(date +%s) + 10 ))
+  while [ ! -s "$E2E_JIRA_PORT_FILE" ]; do
+    if ! kill -0 "$E2E_JIRA_PID" 2>/dev/null || [ "$(date +%s)" -ge "$deadline" ]; then
+      fail "jira mock failed to start"
+    fi
+    sleep 0.1
+  done
+  export JIRA_API_BASE="http://127.0.0.1:$(cat "$E2E_JIRA_PORT_FILE")"
+  local token email
+  token="$(e2e_jira_auth token)"
+  email="$(e2e_jira_auth email)"
+  export JIRA_API_TOKEN="$token" JIRA_E2E_EMAIL="$email"
 }
 
 # Boot headless on the socket and bridge into it. Fails when the
@@ -47,7 +82,8 @@ e2e_start() {
   rm -f "$E2E_SOCK" "$E2E_CMD" "$E2E_PANE"
   mkfifo "$E2E_CMD"
   trap e2e_cleanup EXIT
-  XDG_DATA_HOME="$E2E_XDG" "$E2E_ROOT/target/debug/ghit" \
+  if [ "$E2E_BIN" = jtui ]; then e2e_jira_start; fi
+  XDG_DATA_HOME="$E2E_XDG" "$E2E_ROOT/target/debug/$E2E_BIN" \
     --drive "$E2E_SOCK" --size "$E2E_GEO" -R "$E2E_REPO" $E2E_NUMS &
   E2E_GHIT_PID=$!
   # Hold the write end open for the session so the bridge never sees EOF.
@@ -58,7 +94,7 @@ e2e_start() {
   python3 "$E2E_ROOT/scripts/e2e/drive.py" --sock "$E2E_SOCK" \
     --cmd "$E2E_CMD" --pane "$E2E_PANE" --log "$E2E_FRAMES/frames.jsonl" &
   E2E_BRIDGE_PID=$!
-  e2e_wait "ghit" 60 || fail "never rendered"
+  e2e_wait "$E2E_APP_NAME" 60 || fail "never rendered"
 }
 
 e2e_pane() { cat "$E2E_PANE" 2>/dev/null; }
