@@ -22,5 +22,5 @@ export GHIT_NO_BACKFILL=1
 
 cargo build --quiet
 GHIT_DEMO_STORE="$data/ghit/store/github.com/demo/graph.sqlite" \
-  cargo test --quiet --bin ghit store::demo_tests::write_graph_demo_store -- --ignored >/dev/null
+  cargo test --quiet -p ghit-core --lib store::demo_tests::write_graph_demo_store -- --ignored >/dev/null
 ./target/debug/ghit -R demo/graph "$@" "${ISSUE:-24}"

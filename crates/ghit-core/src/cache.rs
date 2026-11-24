@@ -1,0 +1,583 @@
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+
+use crate::model::ItemRef;
+
+pub const CACHE_TTL_SECS: u64 = 1800; // 30 minutes
+
+pub(crate) fn base_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        PathBuf::from(xdg).join(crate::app_name())
+    } else if cfg!(any(test, feature = "test-support")) {
+        // A test that forgets a temp XDG_DATA_HOME must never write into
+        // the user's real data dir (stores, prefs, caches).
+        std::env::temp_dir().join(format!("ghit-test-{}", std::process::id()))
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".local").join("share").join(crate::app_name())
+    } else {
+        PathBuf::from(format!(".{}-data", crate::app_name()))
+    }
+}
+
+/// Creates `dir` and keeps the data root owner-only (0700 on Unix).
+/// The cache holds issue bodies from private repos, so other local
+/// users must not read it. Returns false when the directory can't be made.
+pub(crate) fn ensure_private_dir(dir: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        if std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).is_err() {
+            return false;
+        }
+        let _ = std::fs::set_permissions(base_dir(), std::fs::Permissions::from_mode(0o700));
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir).is_ok()
+    }
+}
+
+fn cache_path(name: &str) -> PathBuf {
+    base_dir().join("cache").join(format!("{name}.json"))
+}
+
+pub fn cache_get<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
+    cache_get_within(name, CACHE_TTL_SECS)
+}
+
+/// `cache_get` with its own age limit in seconds instead of the TTL.
+pub fn cache_get_within<T: serde::de::DeserializeOwned>(name: &str, max_age_secs: u64) -> Option<T> {
+    let raw = std::fs::read_to_string(cache_path(name)).ok()?;
+    let payload: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let fetched = payload.get("fetched_at")?.as_u64()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    if now.saturating_sub(fetched) >= max_age_secs {
+        return None;
+    }
+    serde_json::from_value(payload.get("data")?.clone()).ok()
+}
+
+pub fn cache_put<T: serde::Serialize>(name: &str, data: &T) {
+    let p = cache_path(name);
+    if let Some(parent) = p.parent() {
+        ensure_private_dir(parent);
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = serde_json::json!({"fetched_at": now, "data": data});
+    let _ = std::fs::write(p, serde_json::to_string(&payload).unwrap_or_default());
+}
+
+pub(crate) fn host() -> String {
+    std::env::var("GH_HOST")
+        .unwrap_or_else(|_| "github.com".to_owned())
+        .to_lowercase()
+        .replace('/', "__")
+}
+
+fn slug(repo: &str) -> String {
+    repo.to_lowercase().replace('/', "__")
+}
+
+/// Prefs key for a repo-scoped query: host plus lowercased slug, so a
+/// GitHub Enterprise host never shares Format prefs with github.com.
+pub fn prefs_repo_key(repo: &str) -> String {
+    format!("{}/{}", host(), repo.to_lowercase())
+}
+
+/// Prefs key for a board-owner filter: host plus lowercased owner, for
+/// the same cross-host reason as `prefs_repo_key`.
+pub fn prefs_owner_key(owner: &str) -> String {
+    format!("{}/{}", host(), owner.to_lowercase())
+}
+
+/// Typed cache key. Every variant includes the host so a GitHub
+/// Enterprise repo never shares entries with a github.com repo of the
+/// same slug.
+pub enum Key {
+    Board { owner: String },
+    Labels { repo: String },
+    Milestones { repo: String },
+    /// A Jira project's fix versions. The site keeps two sites with the
+    /// same project key apart.
+    JiraVersions { site: String, project: String },
+}
+
+impl Key {
+    pub fn name(&self) -> String {
+        let h = host();
+        match self {
+            Key::Board { owner } => format!("board-{h}-{}", owner.to_lowercase()),
+            Key::Labels { repo } => format!("labels-{h}-{}", slug(repo)),
+            Key::Milestones { repo } => format!("milestones-{h}-{}", slug(repo)),
+            Key::JiraVersions { site, project } => {
+                let stem = site.trim_start_matches("https://").trim_start_matches("http://");
+                let stem = slug(stem.trim_end_matches('/'));
+                format!("jira-versions-{stem}-{}", project.to_lowercase())
+            }
+        }
+    }
+}
+
+pub fn cache_drop(name: &str) {
+    let _ = std::fs::remove_file(cache_path(name));
+}
+
+fn pin_path(repo: &str) -> PathBuf {
+    base_dir().join(format!("pinned-{}.json", repo.replace('/', "__")))
+}
+
+fn theme_path() -> PathBuf {
+    base_dir().join("theme")
+}
+
+/// Last-selected theme name, plain text. `None` means never chosen.
+pub fn load_theme() -> Option<String> {
+    let raw = std::fs::read_to_string(theme_path()).ok()?;
+    let name = raw.trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+pub fn save_theme(name: &str) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let _ = std::fs::write(theme_path(), format!("{name}\n"));
+}
+
+fn nerd_font_path() -> PathBuf {
+    base_dir().join("nerd-font")
+}
+
+/// Nerd Font icon mode. A missing or garbled file means on.
+pub fn load_nerd_font() -> bool {
+    std::fs::read_to_string(nerd_font_path()).map_or(true, |raw| raw.trim() != "off")
+}
+
+pub fn save_nerd_font(on: bool) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let _ = std::fs::write(nerd_font_path(), if on { "on\n" } else { "off\n" });
+}
+
+fn physics_path() -> PathBuf {
+    base_dir().join("map-physics.json")
+}
+
+/// Last-tuned map physics. A missing or garbled file means the defaults;
+/// out-of-range values are pulled into range.
+pub fn load_physics() -> crate::model::physics::Physics {
+    let mut physics: crate::model::physics::Physics = std::fs::read_to_string(physics_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    physics.sanitize();
+    physics
+}
+
+pub fn save_physics(physics: &crate::model::physics::Physics) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let _ = std::fs::write(physics_path(), serde_json::to_string(physics).unwrap_or_default());
+}
+
+fn prefs_path() -> PathBuf {
+    base_dir().join("prefs.json")
+}
+
+fn default_backfill_months() -> u32 {
+    0
+}
+
+fn default_window() -> u64 {
+    crate::core::DEFAULT_WINDOW_HOURS
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Board filter saved per board owner: the text row plus the selected
+/// milestone pills. Milestones serialize as a sorted list; `None` is the
+/// "(no milestone)" pill.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SavedBoardFilter {
+    #[serde(default)]
+    pub filter: String,
+    #[serde(default)]
+    pub milestones: Vec<Option<String>>,
+}
+
+/// Sidebar filter saved per repo: the selected label and milestone
+/// pills. `None` in `milestones` is the "(no milestone)" pill.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SavedSidebarFilter {
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub milestones: Vec<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedQuery {
+    pub name: String,
+    pub query: String,
+}
+
+/// Cross-session Format dialog state, one file for every repo and board.
+/// Missing or unreadable files load as defaults; unknown fields are
+/// ignored so newer files still parse. Every field carries a serde
+/// default so older files missing new keys keep working.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Prefs {
+    #[serde(default = "default_true")]
+    pub show_sidebar: bool,
+    #[serde(default = "default_true")]
+    pub show_right: bool,
+    #[serde(default)]
+    pub board_cards: crate::model::CardFields,
+    #[serde(default)]
+    pub board_filters: std::collections::HashMap<String, SavedBoardFilter>,
+    #[serde(default)]
+    pub row_issue: crate::model::RowFields,
+    #[serde(default)]
+    pub row_pr: crate::model::RowFields,
+    #[serde(default = "default_true")]
+    pub show_open_prs: bool,
+    #[serde(default = "default_true")]
+    pub show_merged_prs: bool,
+    #[serde(default = "default_true")]
+    pub show_open_issues: bool,
+    #[serde(default = "default_true")]
+    pub show_closed_issues: bool,
+    /// Filters pane and Format dialog hide done milestones.
+    #[serde(default)]
+    pub hide_done_milestones: bool,
+    #[serde(default = "default_window")]
+    pub merged_window_hours: u64,
+    #[serde(default)]
+    pub queries: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub saved_queries: Vec<SavedQuery>,
+    #[serde(default)]
+    pub sidebar_filters: std::collections::HashMap<String, SavedSidebarFilter>,
+    #[serde(default)]
+    pub group_by: crate::model::GroupBy,
+    #[serde(default)]
+    pub sub_issue_tree: bool,
+    #[serde(default)]
+    pub sort: crate::core::SideSort,
+    #[serde(default)]
+    pub sort_desc: bool,
+    /// Age limit of the store backfill, in months: closed issues and
+    /// merged or closed PRs updated within it. 0 = all history.
+    #[serde(default = "default_backfill_months")]
+    pub backfill_months: u32,
+    /// Map filter per repo, keyed like `queries`.
+    #[serde(default)]
+    pub map_filters: std::collections::HashMap<String, crate::model::MapFilter>,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self { show_sidebar: true, show_right: true, board_cards: crate::model::CardFields::default(),
+            board_filters: std::collections::HashMap::new(),
+            row_issue: crate::model::RowFields::default(),
+            row_pr: crate::model::RowFields::default(),
+            show_open_prs: true, show_merged_prs: true,
+            show_open_issues: true, show_closed_issues: true, hide_done_milestones: false,
+            merged_window_hours: default_window(),
+            queries: std::collections::HashMap::new(),
+            saved_queries: Vec::new(),
+            sidebar_filters: std::collections::HashMap::new(),
+            group_by: crate::model::GroupBy::None,
+            sub_issue_tree: false,
+            sort: crate::core::SideSort::Default,
+            sort_desc: false,
+            backfill_months: default_backfill_months(),
+            map_filters: std::collections::HashMap::new() }
+    }
+}
+
+/// Load the Format dialog prefs. Garbage or a missing file means
+/// defaults, never an error.
+pub fn load_prefs() -> Prefs {
+    std::fs::read_to_string(prefs_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_prefs(prefs: &Prefs) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let _ = std::fs::write(
+        prefs_path(),
+        serde_json::to_string(prefs).unwrap_or_default(),
+    );
+}
+
+pub fn load_pins(repo: &str) -> Vec<ItemRef> {
+    std::fs::read_to_string(pin_path(repo))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_pins(repo: &str, numbers: &[ItemRef]) {
+    let d = base_dir();
+    if !ensure_private_dir(&d) {
+        return;
+    }
+    let body = serde_json::to_string(numbers).unwrap_or_default();
+    let _ = std::fs::write(pin_path(repo), body);
+}
+
+/// Serializes tests that mutate `XDG_DATA_HOME`. Shared with `theme`
+/// tests so parallel runners never steal each other's data dir.
+/// A panicking test poisons the mutex. Take the guard anyway: each test
+/// resets the env vars it guards, so one failure does not cascade into
+/// every later env test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tests_never_resolve_the_real_data_dir() {
+        let _guard = test_env_lock();
+        let saved = std::env::var("XDG_DATA_HOME").ok();
+        std::env::remove_var("XDG_DATA_HOME");
+        let dir = base_dir();
+        if let Some(v) = saved {
+            std::env::set_var("XDG_DATA_HOME", v);
+        }
+        assert!(dir.starts_with(std::env::temp_dir()), "{dir:?}");
+        if let Ok(home) = std::env::var("HOME") {
+            let real = std::path::Path::new(&home).join(".local").join("share");
+            assert!(!dir.starts_with(real), "{dir:?}");
+        }
+    }
+
+    #[test]
+    fn saved_queries_round_trip_and_default_for_old_prefs() {
+        let old: Prefs = serde_json::from_str("{}").unwrap();
+        assert!(old.saved_queries.is_empty());
+        let mut prefs = old;
+        prefs.saved_queries.push(SavedQuery { name: "bugs".into(), query: "label:bug".into() });
+        let decoded: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(decoded.saved_queries, prefs.saved_queries);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_root_is_owner_only_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = test_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", tmp.path());
+        let root = base_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        cache_put("probe", &1u32);
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let root_mode = mode(&root);
+        let cache_mode = mode(&root.join("cache"));
+        match saved {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        assert_eq!(root_mode, 0o700);
+        assert_eq!(cache_mode, 0o700);
+    }
+
+    #[test]
+    fn keys_include_host_and_differ_across_hosts() {
+        let _guard = test_env_lock();
+        let saved = std::env::var("GH_HOST").ok();
+        let variants = |repo: &str| {
+            [
+                Key::Board { owner: "octo".to_string() }.name(),
+                Key::Labels { repo: repo.to_string() }.name(),
+                Key::Milestones { repo: repo.to_string() }.name(),
+            ]
+        };
+        std::env::set_var("GH_HOST", "github.com");
+        let dotcom = variants("o/r");
+        for name in &dotcom {
+            assert!(name.contains("github.com"), "key includes host: {name}");
+        }
+        let distinct: std::collections::HashSet<&str> =
+            dotcom.iter().map(|s| s.as_str()).collect();
+        assert_eq!(distinct.len(), dotcom.len(), "variants differ from each other");
+        std::env::set_var("GH_HOST", "ghe.corp");
+        let ghe = variants("o/r");
+        for name in &ghe {
+            assert!(name.contains("ghe.corp"), "key includes host: {name}");
+        }
+        for (a, b) in dotcom.iter().zip(ghe.iter()) {
+            assert_ne!(a, b, "same slug differs across hosts");
+        }
+        match saved {
+            Some(v) => std::env::set_var("GH_HOST", v),
+            None => std::env::remove_var("GH_HOST"),
+        }
+    }
+
+    #[test]
+    fn prefs_keys_include_host_and_differ_across_hosts() {
+        let _guard = test_env_lock();
+        let saved = std::env::var("GH_HOST").ok();
+        std::env::set_var("GH_HOST", "github.com");
+        let repo = prefs_repo_key("Acme/R");
+        let owner = prefs_owner_key("Acme");
+        assert_eq!(repo, "github.com/acme/r", "repo key carries host and slug");
+        assert_eq!(owner, "github.com/acme", "board key carries host and owner");
+        std::env::set_var("GH_HOST", "ghe.corp");
+        assert_ne!(prefs_repo_key("Acme/R"), repo, "same repo differs across hosts");
+        assert_ne!(prefs_owner_key("Acme"), owner, "same owner differs across hosts");
+        match saved {
+            Some(v) => std::env::set_var("GH_HOST", v),
+            None => std::env::remove_var("GH_HOST"),
+        }
+    }
+
+    #[test]
+    fn physics_round_trip_then_missing_and_garbage_load_defaults() {
+        use crate::model::physics::{Growth, Physics};
+        let _guard = test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        assert_eq!(load_physics(), Physics::default());
+        let tuned = Physics { repulsion: 120.0, growth: Growth::Down, damping: 0.8, ..Physics::default() };
+        save_physics(&tuned);
+        assert_eq!(load_physics(), tuned);
+        std::fs::write(physics_path(), r#"{"repulsion": 99999}"#).unwrap();
+        assert_eq!(load_physics().repulsion, 300.0, "a wild value is clamped, other fields default");
+        std::fs::write(physics_path(), "not json").unwrap();
+        assert_eq!(load_physics(), Physics::default());
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+
+    #[test]
+    fn prefs_roundtrip_then_missing_and_garbage_load_defaults() {
+        let _guard = test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        // Missing file loads defaults.
+        let fresh = load_prefs();
+        assert_eq!(fresh.merged_window_hours, 24);
+        assert_eq!(fresh.backfill_months, 0, "the backfill reaches all history by default");
+        assert!(fresh.show_open_prs && fresh.show_merged_prs);
+        assert!(fresh.show_open_issues && fresh.show_closed_issues);
+        assert_eq!(fresh.board_cards, crate::model::CardFields::default());
+        // A round trip keeps toggles, per-owner filters, and per-repo queries.
+        let mut prefs = Prefs::default();
+        prefs.board_cards.milestone = true;
+        prefs.row_pr.checks = false;
+        prefs.show_merged_prs = false;
+        prefs.merged_window_hours = 1;
+        prefs.group_by = crate::model::GroupBy::Milestone;
+        prefs.board_filters.insert(
+            "o".to_string(),
+            SavedBoardFilter {
+                filter: "bug".to_string(),
+                milestones: vec![Some("v1".to_string()), None],
+            },
+        );
+        prefs.queries.insert("o/r".to_string(), "label:bug".to_string());
+        save_prefs(&prefs);
+        let back = load_prefs();
+        assert!(back.board_cards.milestone);
+        assert!(!back.row_pr.checks);
+        assert!(!back.show_merged_prs);
+        assert_eq!(back.merged_window_hours, 1);
+        assert_eq!(back.group_by, crate::model::GroupBy::Milestone);
+        assert_eq!(back.board_filters["o"].filter, "bug");
+        assert_eq!(
+            back.board_filters["o"].milestones,
+            vec![Some("v1".to_string()), None]
+        );
+        assert_eq!(back.queries["o/r"], "label:bug");
+        // Garbage loads defaults, and unknown fields are ignored.
+        std::fs::write(super::prefs_path(), "{not json").unwrap();
+        assert_eq!(load_prefs().merged_window_hours, 24);
+        std::fs::write(super::prefs_path(), r#"{"future_key": 1, "merged_window_hours": 168}"#)
+            .unwrap();
+        let partial = load_prefs();
+        assert_eq!(partial.merged_window_hours, 168);
+        assert!(partial.show_open_prs);
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+
+    #[test]
+    fn pins_roundtrip() {
+        let _guard = test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        let pins = vec![
+            ItemRef::github(45),
+            ItemRef {
+                source: crate::model::Source::Jira,
+                number: 45,
+            },
+        ];
+        save_pins("o/r", &pins);
+        assert_eq!(load_pins("o/r"), pins);
+        std::fs::write(pin_path("o/r"), "garbage").unwrap();
+        assert!(load_pins("o/r").is_empty());
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+
+    #[test]
+    fn cache_roundtrip_and_expiry() {
+        let _guard = test_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let saved_xdg = std::env::var("XDG_DATA_HOME").ok();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        cache_put("k1", &serde_json::json!({"a": 1}));
+        assert_eq!(cache_get::<serde_json::Value>("k1").unwrap(), serde_json::json!({"a": 1}));
+        // Backdate to force expiry.
+        let p = cache_path("k1");
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        payload["fetched_at"] = serde_json::json!(now - CACHE_TTL_SECS - 1);
+        std::fs::write(&p, serde_json::to_string(&payload).unwrap()).unwrap();
+        assert!(cache_get::<serde_json::Value>("k1").is_none());
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
+}
